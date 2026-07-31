@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/gin-gonic/gin"
@@ -26,7 +27,16 @@ type App struct {
 	engine    *gin.Engine
 	startedAt time.Time
 	login     *loginGuard
+	version   string
+
+	// selfUpdating serializes panel self-update requests so two admins cannot
+	// launch competing binary swaps at once.
+	selfUpdating sync.Mutex
 }
+
+// SetVersion records the running panel version (set from main via ldflags) so
+// the maintenance API can report it and compare against the latest release.
+func (a *App) SetVersion(v string) { a.version = v }
 
 // NewApp wires the panel components and builds the router.
 func NewApp(cfg config.PanelConfig, db *gorm.DB) *App {
@@ -128,6 +138,12 @@ func (a *App) routes() *gin.Engine {
 		admin.POST("/users", a.createUser)
 		admin.PUT("/users/:id", a.updateUser)
 		admin.DELETE("/users/:id", a.deleteUser)
+
+		// Panel maintenance: report/update the panel's own version and export
+		// a full data backup (SQLite DB + jwt_secret) for migration.
+		admin.GET("/maintenance/info", a.maintenanceInfo)
+		admin.POST("/maintenance/update", a.selfUpdate)
+		admin.GET("/maintenance/backup", a.downloadBackup)
 	}
 
 	a.mountFrontend(r)

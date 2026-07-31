@@ -43,6 +43,7 @@ func main() {
 	}
 
 	app := panel.NewApp(cfg, db)
+	app.SetVersion(version)
 
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()

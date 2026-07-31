@@ -11,6 +11,7 @@ const Servers = lazy(() => import('./pages/admin/Servers'))
 const ServerDetail = lazy(() => import('./pages/admin/ServerDetail'))
 const Logs = lazy(() => import('./pages/admin/Logs'))
 const Users = lazy(() => import('./pages/admin/Users'))
+const Settings = lazy(() => import('./pages/admin/Settings'))
 const Dashboard = lazy(() => import('./pages/user/Dashboard'))
 
 function Protected({ children }: { children: JSX.Element }) {
@@ -49,6 +50,7 @@ export default function App() {
           <Route path="/admin/servers/:id" element={<AdminGuard><ServerDetail /></AdminGuard>} />
           <Route path="/admin/users" element={<AdminGuard><Users /></AdminGuard>} />
           <Route path="/admin/logs" element={<AdminGuard><Logs /></AdminGuard>} />
+          <Route path="/admin/settings" element={<AdminGuard><Settings /></AdminGuard>} />
         </Route>
         <Route path="*" element={<Navigate to="/" replace />} />
       </Routes>

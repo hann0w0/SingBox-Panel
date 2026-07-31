@@ -7,6 +7,7 @@ import {
   LinkOutlined,
   LogoutOutlined,
   MenuOutlined,
+  SettingOutlined,
   TeamOutlined,
 } from '@ant-design/icons'
 import { Outlet, useLocation, useNavigate } from 'react-router-dom'
@@ -66,6 +67,7 @@ const ADMIN_ITEMS = [
   { key: '/admin/users', icon: <TeamOutlined />, label: '用户' },
   { key: '/admin/logs', icon: <FileTextOutlined />, label: '日志' },
   { key: '/dashboard', icon: <LinkOutlined />, label: '订阅' },
+  { key: '/admin/settings', icon: <SettingOutlined />, label: '设置' },
 ]
 
 export default function AppLayout() {

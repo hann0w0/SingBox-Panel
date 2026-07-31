@@ -265,3 +265,39 @@ export const createUser = (body: UserBody) =>
 export const updateUser = (id: number, body: UserBody) =>
   http.put<{ user: User }>(`/api/admin/users/${id}`, body).then((r) => r.data.user)
 export const deleteUser = (id: number) => http.delete(`/api/admin/users/${id}`).then((r) => r.data)
+
+// ---- admin: panel maintenance（面板设置：版本更新 + 数据备份）----
+export interface MaintenanceInfo {
+  current_version: string
+  update_supported: boolean
+  update_reason?: string
+  latest_version?: string
+  has_update?: boolean
+  latest_error?: string
+}
+export const getMaintenanceInfo = () =>
+  http.get<MaintenanceInfo>('/api/admin/maintenance/info').then((r) => r.data)
+export const selfUpdate = (version?: string) =>
+  http
+    .post<{ ok: boolean; updated: boolean; message: string; version?: string }>(
+      '/api/admin/maintenance/update',
+      version ? { version } : {},
+    )
+    .then((r) => r.data)
+
+// downloadBackup fetches the .tar.gz as a blob and triggers a browser download,
+// preserving the server-provided filename.
+export const downloadBackup = async (): Promise<void> => {
+  const resp = await http.get('/api/admin/maintenance/backup', { responseType: 'blob' })
+  const dispo = (resp.headers['content-disposition'] as string) || ''
+  const m = dispo.match(/filename="?([^"]+)"?/)
+  const filename = m ? m[1] : 'singbox-panel-backup.tar.gz'
+  const url = URL.createObjectURL(resp.data as Blob)
+  const a = document.createElement('a')
+  a.href = url
+  a.download = filename
+  document.body.appendChild(a)
+  a.click()
+  document.body.removeChild(a)
+  URL.revokeObjectURL(url)
+}

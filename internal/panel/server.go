@@ -134,16 +134,14 @@ func (a *App) routes() *gin.Engine {
 	return r
 }
 
-// webDir resolves the built frontend directory.
-func webDir() string {
-	if v := os.Getenv("SINGBOX_PANEL_WEB_DIR"); v != "" {
-		return v
-	}
-	return "./web/dist"
+// webDir resolves the built frontend directory from config (or env override
+// applied at config-load time).
+func (a *App) webDir() string {
+	return a.cfg.WebDir
 }
 
 func (a *App) mountFrontend(r *gin.Engine) {
-	dir := webDir()
+	dir := a.webDir()
 	for _, staticDir := range []string{"assets", "logos"} {
 		path := filepath.Join(dir, staticDir)
 		if dirExists(path) {

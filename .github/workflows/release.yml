@@ -1,0 +1,124 @@
+name: Release binaries
+
+# 打 v* 标签时自动构建面板二进制与 Agent 包，并附加到 GitHub Release。
+# Docker 镜像由 docker-image.yml 独立构建，两个 workflow 并行触发。
+
+on:
+  push:
+    tags: ['v*']
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    name: Build release assets
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write  # 允许上传 Release Assets
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+          cache-dependency-path: web/package-lock.json
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Build frontend
+        working-directory: web
+        run: |
+          npm ci
+          npm run build
+
+      - name: Build panel binaries (amd64 + arm64)
+        env:
+          VERSION: ${{ github.ref_name }}
+          CGO_ENABLED: 0
+        run: |
+          mkdir -p dist/panel dist/agents
+
+          echo "==> panel linux/amd64"
+          GOOS=linux GOARCH=amd64 go build \
+            -ldflags "-s -w -X main.version=${VERSION}" \
+            -o dist/panel/singbox-panel-linux-amd64 \
+            ./cmd/panel
+
+          echo "==> panel linux/arm64"
+          GOOS=linux GOARCH=arm64 go build \
+            -ldflags "-s -w -X main.version=${VERSION}" \
+            -o dist/panel/singbox-panel-linux-arm64 \
+            ./cmd/panel
+
+          echo "==> agent linux/amd64"
+          GOOS=linux GOARCH=amd64 go build \
+            -ldflags "-s -w -X main.version=${VERSION}" \
+            -o dist/agents/singbox-panel-agent-linux-amd64 \
+            ./cmd/agent
+
+          echo "==> agent linux/arm64"
+          GOOS=linux GOARCH=arm64 go build \
+            -ldflags "-s -w -X main.version=${VERSION}" \
+            -o dist/agents/singbox-panel-agent-linux-arm64 \
+            ./cmd/agent
+
+      - name: Package agents tarball
+        run: |
+          tar -czf dist/singbox-panel-agents-${{ github.ref_name }}.tar.gz \
+            -C dist/agents .
+
+      - name: Compute checksums
+        run: |
+          cd dist/panel
+          sha256sum singbox-panel-linux-amd64 singbox-panel-linux-arm64 > ../checksums.txt
+          cd ..
+          sha256sum singbox-panel-agents-${{ github.ref_name }}.tar.gz >> checksums.txt
+          cat checksums.txt
+
+      - name: Package frontend web dist
+        run: |
+          tar -czf dist/singbox-panel-web-${{ github.ref_name }}.tar.gz \
+            -C web/dist .
+
+      - name: Create / update GitHub Release and upload assets
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ github.ref_name }}
+          name: "SingBox Panel ${{ github.ref_name }}"
+          draft: false
+          prerelease: ${{ contains(github.ref_name, 'beta') || contains(github.ref_name, 'alpha') || contains(github.ref_name, 'rc') }}
+          generate_release_notes: true
+          body: |
+            ## 安装方式
+
+            ### 一键安装（推荐）
+            ```bash
+            curl -fsSL https://raw.githubusercontent.com/hann0w0/SingBox-Panel/main/deploy/install.sh | sudo bash
+            ```
+            首次运行会询问选择 **Docker** 或 **Binary** 方式安装。再次运行自动检测方式执行更新。
+
+            ### Docker 手动部署
+            ```bash
+            docker pull hann0w0/singbox-panel:${{ github.ref_name }}
+            ```
+
+            ### Binary 手动部署
+            下载对应架构的 `singbox-panel-linux-{amd64|arm64}` 并参考 [部署文档](https://github.com/hann0w0/SingBox-Panel/blob/main/README.md)。
+
+          files: |
+            dist/panel/singbox-panel-linux-amd64
+            dist/panel/singbox-panel-linux-arm64
+            dist/singbox-panel-agents-${{ github.ref_name }}.tar.gz
+            dist/singbox-panel-web-${{ github.ref_name }}.tar.gz
+            dist/checksums.txt
+            deploy/install.sh

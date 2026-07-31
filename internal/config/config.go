@@ -22,6 +22,11 @@ type PanelConfig struct {
 	// installer, named singbox-panel-agent-linux-<arch>.
 	AgentsDir string `yaml:"agents_dir"`
 
+	// WebDir is the path to the compiled frontend static files (web/dist).
+	// Defaults to "./web/dist"; override with SINGBOX_PANEL_WEB_DIR env or
+	// the web_dir YAML field for binary installs.
+	WebDir string `yaml:"web_dir"`
+
 	Database     DatabaseConfig `yaml:"database"`
 	Admin        AdminBootstrap `yaml:"admin"`
 	Subscription SubConfig      `yaml:"subscription"`
@@ -53,6 +58,7 @@ func Default() PanelConfig {
 		Listen:    ":8080",
 		BaseURL:   "http://localhost:8080",
 		AgentsDir: "./dist/agents",
+		WebDir:    "./web/dist",
 		Database: DatabaseConfig{
 			Driver: "sqlite",
 			DSN:    "./data/singbox-panel.db",
@@ -106,6 +112,9 @@ func applyEnv(cfg *PanelConfig) {
 	if v := firstEnv("SINGBOX_PANEL_AGENTS_DIR"); v != "" {
 		cfg.AgentsDir = v
 	}
+	if v := firstEnv("SINGBOX_PANEL_WEB_DIR"); v != "" {
+		cfg.WebDir = v
+	}
 	if v := firstEnv("SINGBOX_PANEL_DB_DRIVER"); v != "" {
 		cfg.Database.Driver = v
 	}
@@ -135,5 +144,8 @@ func applyDefaults(cfg *PanelConfig) {
 	}
 	if cfg.AgentsDir == "" {
 		cfg.AgentsDir = "./dist/agents"
+	}
+	if cfg.WebDir == "" {
+		cfg.WebDir = "./web/dist"
 	}
 }

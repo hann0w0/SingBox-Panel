@@ -22,7 +22,10 @@ func proxyIdentity(user *model.User, inboundID uint) singbox.ProxyUser {
 		// to the login password.
 		seed = user.SubToken
 	}
-	identity := fmt.Sprintf("u%d", user.ID)
+	identity := user.Email
+	if identity == "" {
+		identity = fmt.Sprintf("u%d", user.ID)
+	}
 	uuidSum := sha256.Sum256([]byte(fmt.Sprintf("uuid:%s:%d", seed, inboundID)))
 	uuidBytes := uuidSum[:16]
 	uuidBytes[6] = (uuidBytes[6] & 0x0f) | 0x40

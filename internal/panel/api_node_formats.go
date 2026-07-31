@@ -2,7 +2,6 @@ package panel
 
 import (
 	"encoding/json"
-	"fmt"
 	"net/http"
 	"strings"
 
@@ -53,7 +52,7 @@ func (a *App) serverNodeFormats(c *gin.Context) {
 		st.SingleUser = true
 		nodes = append(nodes, node{
 			tag:      ib.Tag,
-			name:     fmt.Sprintf("%s-%s", srv.Name, ib.Tag),
+			name:     formatNodeDisplayName(srv.Name, ib.Tag, string(ib.Type)),
 			server:   host,
 			port:     ib.ListenPort,
 			typ:      string(ib.Type),

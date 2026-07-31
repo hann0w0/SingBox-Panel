@@ -140,7 +140,7 @@ func (a *App) gatherNodes(user *model.User) []node {
 			}
 			out = append(out, node{
 				tag:      ib.Tag,
-				name:     fmt.Sprintf("%s-%s", srv.Name, ib.Tag),
+				name:     formatNodeDisplayName(srv.Name, ib.Tag, string(ib.Type)),
 				server:   host,
 				port:     ib.ListenPort,
 				typ:      string(ib.Type),
@@ -152,18 +152,55 @@ func (a *App) gatherNodes(user *model.User) []node {
 	return out
 }
 
-func (n node) clientNode() singbox.ClientNode {
+func formatNodeDisplayName(serverName, tag, typ string) string {
+	prefix := typ + "-"
+	if strings.HasPrefix(tag, prefix) && len(tag) == len(prefix)+6 {
+		return fmt.Sprintf("%s - %s", serverName, formatProtocolDisplayName(typ))
+	}
+	return fmt.Sprintf("%s - %s", serverName, tag)
+}
+
+func formatProtocolDisplayName(typ string) string {
+	switch typ {
+	case "shadowsocks":
+		return "Shadowsocks"
+	case "socks":
+		return "SOCKS5"
+	case "vless":
+		return "VLESS"
+	case "vmess":
+		return "VMess"
+	case "trojan":
+		return "Trojan"
+	case "hysteria2":
+		return "Hysteria2"
+	case "tuic":
+		return "TUIC"
+	case "anytls":
+		return "AnyTLS"
+	case "snell":
+		return "Snell"
+	default:
+		return strings.ToUpper(typ)
+	}
+}
+
+func (n node) getUserIdentity() singbox.ProxyUser {
 	identity := n.user
 	if identity.Name == "" && identity.Username == "" && identity.UUID == "" && identity.Password == "" {
 		identity = n.settings.SingleUserIdentity()
 	}
+	return identity
+}
+
+func (n node) clientNode() singbox.ClientNode {
 	return singbox.ClientNode{
 		Name:       n.name,
 		Server:     n.server,
 		ServerPort: n.port,
 		Type:       n.typ,
 		Settings:   n.settings,
-		User:       identity,
+		User:       n.getUserIdentity(),
 	}
 }
 
@@ -251,7 +288,7 @@ func clashProxies(nodes []node) (proxies []map[string]any, names []string) {
 func clashProxy(n node, seen map[string]int) map[string]any {
 	name := uniqueName(seen, n.name)
 	st := n.settings
-	u := st.SingleUserIdentity()
+	u := n.getUserIdentity()
 	tlsOn := st.TLS.Enabled || st.TLS.SelfSigned || st.TLS.ACMEDomain != "" || st.TLS.Reality.Enabled
 	sni := st.TLS.ServerName
 	if sni == "" {
@@ -499,7 +536,7 @@ func (a *App) userNodeDetails(user *model.User) []NodeDetail {
 
 func nodeParams(n node) map[string]string {
 	st := n.settings
-	u := st.SingleUserIdentity()
+	u := n.getUserIdentity()
 	p := map[string]string{"服务器": n.server, "端口": strconv.Itoa(n.port), "协议": n.typ}
 	net := "tcp"
 	if st.Transport.Type == "ws" {
@@ -674,7 +711,7 @@ func surgeProxies(nodes []node) (lines, names, skipped []string) {
 
 func surgeProxy(n node, name string) string {
 	st := n.settings
-	u := st.SingleUserIdentity()
+	u := n.getUserIdentity()
 	sni := sniOf(st, n.server)
 	switch n.typ {
 	case "shadowsocks":

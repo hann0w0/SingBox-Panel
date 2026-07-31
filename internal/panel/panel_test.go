@@ -124,7 +124,7 @@ func TestImportSyncPreservesInboundGrantsByTag(t *testing.T) {
 	if len(user.InboundIDs) != 1 || user.InboundIDs[0] != keep.ID {
 		t.Fatalf("user grant changed: %v", user.InboundIDs)
 	}
-	if nodes := app.userNodeDetails(&user); len(nodes) != 1 || nodes[0].Name != "node-Snell" {
+	if nodes := app.userNodeDetails(&user); len(nodes) != 1 || nodes[0].Name != "node - Snell" {
 		t.Fatalf("authorized nodes after sync = %+v", nodes)
 	}
 }

@@ -59,3 +59,37 @@ func TestRecordServerTrafficSurvivesCounterReset(t *testing.T) {
 		t.Fatalf("unavailable sample should preserve totals: %+v", server)
 	}
 }
+
+func TestBuildTrafficPointsAggregatesRequestedStep(t *testing.T) {
+	start := time.Date(2026, 7, 31, 0, 0, 0, 0, time.UTC)
+	end := start.Add(time.Hour)
+	records := []model.TrafficRecord{
+		{Bucket: start, Upload: 10, Download: 20},
+		{Bucket: start.Add(5 * time.Minute), Upload: 30, Download: 40},
+		{Bucket: start.Add(35 * time.Minute), Upload: 50, Download: 60},
+		{Bucket: end, Upload: 999, Download: 999},
+	}
+	points := buildTrafficPoints(records, start, end, 30*time.Minute)
+	if len(points) != 2 {
+		t.Fatalf("unexpected point count: %d", len(points))
+	}
+	if points[0].Upload != 40 || points[0].Download != 60 {
+		t.Fatalf("unexpected first point: %+v", points[0])
+	}
+	if points[1].Upload != 50 || points[1].Download != 60 {
+		t.Fatalf("unexpected second point: %+v", points[1])
+	}
+}
+
+func TestTrafficRangesHaveExpectedPointCounts(t *testing.T) {
+	now := time.Date(2026, 7, 31, 12, 34, 0, 0, time.UTC)
+	wants := map[string]int{"1h": 12, "12h": 24, "24h": 24, "7d": 28, "30d": 30}
+	for name, want := range wants {
+		config := trafficRanges[name]
+		start, end := trafficWindow(now, config)
+		points := buildTrafficPoints(nil, start, end, config.step)
+		if len(points) != want {
+			t.Fatalf("range %s: got %d points, want %d", name, len(points), want)
+		}
+	}
+}

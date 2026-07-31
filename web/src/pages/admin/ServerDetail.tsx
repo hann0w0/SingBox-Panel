@@ -55,7 +55,6 @@ import type { Inbound, Outbound, RouteRule, RuleSet, Server } from '../../types'
 import InboundForm from './InboundForm'
 import { OutboundForm, RuleForm } from './RoutingForms'
 import { RuleSetsTab } from './RuleSetsTab'
-import { ServerTraffic } from './ServerTraffic'
 import { ConfigEditorModal, ImportPreviewModal, InstallSingboxModal, NodeFormatsExportModal } from './ServerDialogs'
 import { ServerOverviewCard } from './ServerOverviewCard'
 
@@ -491,8 +490,6 @@ export default function ServerDetail() {
         onRestart={() => run('restart', () => serviceAction(sid, 'restart'), 'sing-box 已重启')}
         onExport={openNodeFormats}
       />
-
-      <ServerTraffic serverId={sid} />
 
       {rawMode && (
         <Alert

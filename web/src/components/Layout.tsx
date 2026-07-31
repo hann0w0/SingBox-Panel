@@ -1,6 +1,7 @@
 import { useState } from 'react'
 import { Button, Drawer, Grid, Layout, Menu } from 'antd'
 import {
+  AreaChartOutlined,
   CloudServerOutlined,
   DashboardOutlined,
   FileTextOutlined,
@@ -64,6 +65,7 @@ const ADMIN_ITEMS = [
   { key: '/admin/overview', icon: <DashboardOutlined />, label: '概览' },
   { key: '/admin/servers', icon: <CloudServerOutlined />, label: '节点' },
   { key: '/admin/users', icon: <TeamOutlined />, label: '用户' },
+  { key: '/admin/traffic', icon: <AreaChartOutlined />, label: '流量' },
   { key: '/admin/logs', icon: <FileTextOutlined />, label: '日志' },
   { key: '/dashboard', icon: <LinkOutlined />, label: '订阅' },
 ]

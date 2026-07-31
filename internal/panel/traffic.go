@@ -3,7 +3,6 @@ package panel
 import (
 	"fmt"
 	"net/http"
-	"strconv"
 	"time"
 
 	"github.com/gin-gonic/gin"
@@ -14,7 +13,23 @@ import (
 	"github.com/hann0w0/singbox-panel/internal/protocol"
 )
 
-const trafficRetentionDays = 400
+const (
+	trafficRetentionDays = 31
+	trafficStorageBucket = 5 * time.Minute
+)
+
+type trafficRangeConfig struct {
+	duration time.Duration
+	step     time.Duration
+}
+
+var trafficRanges = map[string]trafficRangeConfig{
+	"1h":  {duration: time.Hour, step: 5 * time.Minute},
+	"12h": {duration: 12 * time.Hour, step: 30 * time.Minute},
+	"24h": {duration: 24 * time.Hour, step: time.Hour},
+	"7d":  {duration: 7 * 24 * time.Hour, step: 6 * time.Hour},
+	"30d": {duration: 30 * 24 * time.Hour, step: 24 * time.Hour},
+}
 
 func trafficDelta(current, previous uint64) uint64 {
 	if current >= previous {
@@ -62,7 +77,7 @@ func recordServerTraffic(db *gorm.DB, serverID uint, snapshot *protocol.TrafficS
 		if uploadDelta == 0 && downloadDelta == 0 {
 			return nil
 		}
-		bucket := sampledAt.Truncate(time.Hour)
+		bucket := sampledAt.Truncate(trafficStorageBucket)
 		record := model.TrafficRecord{
 			ServerID: serverID,
 			Bucket:   bucket,
@@ -83,24 +98,44 @@ func recordServerTraffic(db *gorm.DB, serverID uint, snapshot *protocol.TrafficS
 }
 
 type trafficPoint struct {
-	Date     string `json:"date"`
-	Upload   uint64 `json:"upload"`
-	Download uint64 `json:"download"`
+	Time     time.Time `json:"time"`
+	Upload   uint64    `json:"upload"`
+	Download uint64    `json:"download"`
 }
 
-type trafficSummary struct {
-	Available     bool           `json:"available"`
-	Upload        uint64         `json:"upload"`
-	Download      uint64         `json:"download"`
-	UploadRate    uint64         `json:"upload_rate"`
-	DownloadRate  uint64         `json:"download_rate"`
-	TodayUpload   uint64         `json:"today_upload"`
-	TodayDownload uint64         `json:"today_download"`
-	MonthUpload   uint64         `json:"month_upload"`
-	MonthDownload uint64         `json:"month_download"`
-	UpdatedAt     *time.Time     `json:"updated_at"`
-	History       []trafficPoint `json:"history"`
-	RetentionDays int            `json:"retention_days"`
+type trafficSeries struct {
+	Available   bool           `json:"available"`
+	Range       string         `json:"range"`
+	StepSeconds int64          `json:"step_seconds"`
+	UpdatedAt   *time.Time     `json:"updated_at"`
+	Points      []trafficPoint `json:"points"`
+}
+
+func trafficWindow(now time.Time, config trafficRangeConfig) (start, end time.Time) {
+	end = now.UTC().Truncate(config.step).Add(config.step)
+	start = end.Add(-config.duration)
+	return start, end
+}
+
+func buildTrafficPoints(records []model.TrafficRecord, start, end time.Time, step time.Duration) []trafficPoint {
+	count := int(end.Sub(start) / step)
+	points := make([]trafficPoint, count)
+	for i := range points {
+		points[i].Time = start.Add(time.Duration(i) * step)
+	}
+	for _, record := range records {
+		bucket := record.Bucket.UTC()
+		if bucket.Before(start) || !bucket.Before(end) {
+			continue
+		}
+		index := int(bucket.Sub(start) / step)
+		if index < 0 || index >= len(points) {
+			continue
+		}
+		points[index].Upload += record.Upload
+		points[index].Download += record.Download
+	}
+	return points
 }
 
 func (a *App) serverTraffic(c *gin.Context) {
@@ -110,73 +145,34 @@ func (a *App) serverTraffic(c *gin.Context) {
 	}
 	var server model.Server
 	if err := a.db.Select(
-		"id", "traffic_available", "traffic_upload", "traffic_download",
-		"traffic_upload_rate", "traffic_download_rate", "traffic_updated_at",
+		"id", "traffic_available", "traffic_updated_at",
 	).First(&server, serverID).Error; err != nil {
 		c.JSON(http.StatusNotFound, gin.H{"error": "server not found"})
 		return
 	}
 
-	days := 30
-	if raw := c.Query("days"); raw != "" {
-		value, err := strconv.Atoi(raw)
-		if err != nil || value < 1 || value > trafficRetentionDays {
-			c.JSON(http.StatusBadRequest, gin.H{"error": fmt.Sprintf("days must be between 1 and %d", trafficRetentionDays)})
-			return
-		}
-		days = value
+	rangeName := c.DefaultQuery("range", "24h")
+	rangeConfig, exists := trafficRanges[rangeName]
+	if !exists {
+		c.JSON(http.StatusBadRequest, gin.H{"error": fmt.Sprintf("unsupported range %q; use 1h, 12h, 24h, 7d or 30d", rangeName)})
+		return
 	}
-	now := time.Now().UTC()
-	today := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, time.UTC)
-	month := time.Date(now.Year(), now.Month(), 1, 0, 0, 0, 0, time.UTC)
-	historyStart := today.AddDate(0, 0, -(days - 1))
-	queryStart := historyStart
-	if month.Before(queryStart) {
-		queryStart = month
-	}
+	start, end := trafficWindow(time.Now(), rangeConfig)
 	var records []model.TrafficRecord
 	if err := a.db.Where(
-		"server_id = ? AND inbound_id = 0 AND user_id = 0 AND bucket >= ?",
-		serverID, queryStart,
+		"server_id = ? AND inbound_id = 0 AND user_id = 0 AND bucket >= ? AND bucket < ?",
+		serverID, start, end,
 	).Order("bucket").Find(&records).Error; err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
-
-	points := make(map[string]*trafficPoint, days)
-	for i := 0; i < days; i++ {
-		date := historyStart.AddDate(0, 0, i).Format("2006-01-02")
-		points[date] = &trafficPoint{Date: date}
-	}
-	summary := trafficSummary{
-		Available:     server.TrafficAvailable,
-		Upload:        server.TrafficUpload,
-		Download:      server.TrafficDownload,
-		UploadRate:    server.TrafficUploadRate,
-		DownloadRate:  server.TrafficDownloadRate,
-		UpdatedAt:     server.TrafficUpdatedAt,
-		RetentionDays: trafficRetentionDays,
-	}
-	for _, record := range records {
-		if !record.Bucket.Before(today) {
-			summary.TodayUpload += record.Upload
-			summary.TodayDownload += record.Download
-		}
-		if !record.Bucket.Before(month) {
-			summary.MonthUpload += record.Upload
-			summary.MonthDownload += record.Download
-		}
-		date := record.Bucket.UTC().Format("2006-01-02")
-		if point := points[date]; point != nil {
-			point.Upload += record.Upload
-			point.Download += record.Download
-		}
-	}
-	for i := 0; i < days; i++ {
-		date := historyStart.AddDate(0, 0, i).Format("2006-01-02")
-		summary.History = append(summary.History, *points[date])
-	}
-	c.JSON(http.StatusOK, summary)
+	c.JSON(http.StatusOK, trafficSeries{
+		Available:   server.TrafficAvailable,
+		Range:       rangeName,
+		StepSeconds: int64(rangeConfig.step / time.Second),
+		UpdatedAt:   server.TrafficUpdatedAt,
+		Points:      buildTrafficPoints(records, start, end, rangeConfig.step),
+	})
 }
 
 func pruneTrafficRecords(db *gorm.DB, now time.Time) error {

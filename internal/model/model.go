@@ -257,10 +257,11 @@ type Setting struct {
 	Value string `json:"value"`
 }
 
-// TrafficRecord is one hourly accounting bucket. Server-only rows use
-// InboundID=0 and UserID=0. The extra scope columns intentionally reserve a
-// lossless path for protocol/user counters when the installed sing-box build
-// exposes them; node totals work with the official Clash API today.
+// TrafficRecord is one raw accounting bucket. Node totals currently use
+// five-minute buckets and are aggregated to the requested chart interval.
+// Server-only rows use InboundID=0 and UserID=0. The extra scope columns
+// reserve a lossless path for protocol/user counters when the installed
+// sing-box build exposes them; node totals work with the official Clash API.
 type TrafficRecord struct {
 	ID        uint      `gorm:"primaryKey" json:"id"`
 	ServerID  uint      `gorm:"not null;uniqueIndex:idx_traffic_bucket,priority:1;index" json:"server_id"`

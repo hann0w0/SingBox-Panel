@@ -19,3 +19,6 @@
 
 # os
 .DS_Store
+
+# ide / AI metadata
+.claude/

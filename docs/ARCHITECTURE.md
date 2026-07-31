@@ -72,7 +72,7 @@ Setting     KV 配置。
 ### 迁移、流量与多用户边界
 
 - 数据库结构由 `schema_migrations` 版本表管理，而不是每次启动都无条件 `AutoMigrate`。SQLite 在升级前使用 `VACUUM INTO` 写入 `<dsn>.backups/`，自动保留最近 5 个快照；迁移失败会标记 dirty 并停止 Panel，恢复步骤见 [DATABASE-RECOVERY.md](DATABASE-RECOVERY.md)。
-- Agent 通过仅监听 `127.0.0.1` 的 Clash API 读取 sing-box 的累计连接流量；Panel 计算重启归零后的增量并写入小时桶，默认保留 400 天。原始配置模式不会被强制注入统计配置。
+- Agent 通过仅监听 `127.0.0.1` 的 Clash API 读取 sing-box 的累计连接流量；Panel 计算重启归零后的增量并写入 5 分钟桶，保留 31 天，可聚合查看 1 小时至 30 天的趋势。原始配置模式不会被强制注入统计配置。
 - VLESS、VMess、Trojan、Hysteria2、TUIC、AnyTLS、SOCKS5 和 Shadowsocks 2022 可显式启用独立用户凭证；Snell、旧版 Shadowsocks 和未知协议保持单凭证。到期、停用或撤销节点授权后，managed 配置会移除该用户的凭证。
 - 官方 sing-box 发布包含 Clash API，但不含 `with_v2ray_api`，所以当前只能准确统计节点总流量，不能把字节准确归属到每个用户，也不会用估算值执行到量停用。若需要用户级精确配额，必须维护带用户统计能力的 sing-box 构建或按协议缩小支持范围。
 

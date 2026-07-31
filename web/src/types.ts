@@ -36,12 +36,6 @@ export interface Server {
   load1: number
   mem_used: number
   mem_total: number
-  traffic_available: boolean
-  traffic_upload: number
-  traffic_download: number
-  traffic_upload_rate: number
-  traffic_download_rate: number
-  traffic_updated_at: string | null
   final_outbound: string
   config_mode: 'managed' | 'raw' | ''
   agent_url: string
@@ -51,24 +45,19 @@ export interface Server {
 }
 
 export interface TrafficPoint {
-  date: string
+  time: string
   upload: number
   download: number
 }
 
-export interface TrafficSummary {
+export type TrafficRange = '1h' | '12h' | '24h' | '7d' | '30d'
+
+export interface TrafficSeries {
   available: boolean
-  upload: number
-  download: number
-  upload_rate: number
-  download_rate: number
-  today_upload: number
-  today_download: number
-  month_upload: number
-  month_download: number
+  range: TrafficRange
+  step_seconds: number
   updated_at: string | null
-  history: TrafficPoint[]
-  retention_days: number
+  points: TrafficPoint[]
 }
 
 export type InboundType =

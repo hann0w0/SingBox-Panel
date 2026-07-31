@@ -301,3 +301,16 @@ export const downloadBackup = async (): Promise<void> => {
   document.body.removeChild(a)
   URL.revokeObjectURL(url)
 }
+
+// restoreBackup uploads a backup archive; on success the panel restarts to load
+// the imported database.
+export const restoreBackup = (file: File) => {
+  const fd = new FormData()
+  fd.append('file', file)
+  return http
+    .post<{ ok: boolean; restarting: boolean; secret_applied: boolean; message: string }>(
+      '/api/admin/maintenance/restore',
+      fd,
+    )
+    .then((r) => r.data)
+}

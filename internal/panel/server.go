@@ -28,6 +28,7 @@ type App struct {
 	startedAt time.Time
 	login     *loginGuard
 	version   string
+	cfgPath   string
 
 	// selfUpdating serializes panel self-update requests so two admins cannot
 	// launch competing binary swaps at once.
@@ -37,6 +38,10 @@ type App struct {
 // SetVersion records the running panel version (set from main via ldflags) so
 // the maintenance API can report it and compare against the latest release.
 func (a *App) SetVersion(v string) { a.version = v }
+
+// SetConfigPath records the panel.yaml path (from the --config flag) so the
+// restore flow can rewrite jwt_secret when importing a backup from another host.
+func (a *App) SetConfigPath(p string) { a.cfgPath = p }
 
 // NewApp wires the panel components and builds the router.
 func NewApp(cfg config.PanelConfig, db *gorm.DB) *App {
@@ -144,6 +149,7 @@ func (a *App) routes() *gin.Engine {
 		admin.GET("/maintenance/info", a.maintenanceInfo)
 		admin.POST("/maintenance/update", a.selfUpdate)
 		admin.GET("/maintenance/backup", a.downloadBackup)
+		admin.POST("/maintenance/restore", a.restoreBackup)
 	}
 
 	a.mountFrontend(r)

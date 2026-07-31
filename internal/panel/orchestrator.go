@@ -201,6 +201,13 @@ func (o *Orchestrator) ApplyRawConfig(ctx context.Context, serverID uint, raw []
 	lock := o.serverLock(serverID)
 	lock.Lock()
 	defer lock.Unlock()
+	return o.applyRawConfigUnlocked(ctx, serverID, raw)
+}
+
+// applyRawConfigUnlocked applies and persists raw JSON while the caller owns
+// the server configuration lock. The API uses it to keep the subsequent
+// structured-view synchronization in the same serialized operation.
+func (o *Orchestrator) applyRawConfigUnlocked(ctx context.Context, serverID uint, raw []byte) (protocol.CommandResultEvt, error) {
 	var old model.Server
 	if err := o.db.Select("id", "config_mode", "raw_config", "config_initialized").First(&old, serverID).Error; err != nil {
 		return protocol.CommandResultEvt{}, err

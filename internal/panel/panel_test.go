@@ -52,6 +52,83 @@ func TestRawConfigIsTheReconnectSourceOfTruth(t *testing.T) {
 	}
 }
 
+func TestImportSyncPreservesInboundGrantsByTag(t *testing.T) {
+	db := testDB(t)
+	srv := model.Server{Name: "node", AgentToken: "sync", Address: "node.example.com"}
+	if err := db.Create(&srv).Error; err != nil {
+		t.Fatal(err)
+	}
+	keep := model.Inbound{ServerID: srv.ID, Tag: "Snell", Type: model.InboundSnell, ListenPort: 10001, Enabled: true}
+	removed := model.Inbound{ServerID: srv.ID, Tag: "old", Type: model.InboundSnell, ListenPort: 10002, Enabled: true}
+	if err := db.Create(&keep).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Create(&removed).Error; err != nil {
+		t.Fatal(err)
+	}
+	user := model.User{
+		Email: "sync-user", Password: "unused", Role: model.RoleUser, Enabled: true,
+		ServerIDs: []uint{srv.ID}, InboundIDs: []uint{keep.ID}, SubToken: "sync-user-token",
+	}
+	if err := db.Create(&user).Error; err != nil {
+		t.Fatal(err)
+	}
+
+	raw := []byte(`{
+  "inbounds": [
+    {"type":"snell","tag":"Snell","listen":"::","listen_port":38376,"psk":"one","version":5},
+    {"type":"snell","tag":"Snell2","listen":"::","listen_port":38378,"psk":"two","version":5}
+  ],
+  "outbounds": [{"type":"direct","tag":"direct"}],
+  "route": {"final":"direct"}
+}`)
+	parsed, err := singbox.ParseServerConfig(raw)
+	if err != nil {
+		t.Fatal(err)
+	}
+	app := &App{db: db, orch: NewOrchestrator(db, NewHub(db))}
+	if err := app.applyImport(&srv, parsed, raw); err != nil {
+		t.Fatal(err)
+	}
+
+	var inbounds []model.Inbound
+	if err := db.Where("server_id = ?", srv.ID).Order("tag").Find(&inbounds).Error; err != nil {
+		t.Fatal(err)
+	}
+	if len(inbounds) != 2 {
+		t.Fatalf("inbounds = %d; want 2", len(inbounds))
+	}
+	byTag := map[string]model.Inbound{}
+	for _, inbound := range inbounds {
+		byTag[inbound.Tag] = inbound
+	}
+	if got := byTag["Snell"]; got.ID != keep.ID || got.ListenPort != 38376 {
+		t.Fatalf("existing inbound not updated in place: %+v", got)
+	}
+	if got := byTag["Snell2"]; got.ID == 0 || got.ID == keep.ID {
+		t.Fatalf("new inbound missing: %+v", got)
+	}
+	if _, ok := byTag["old"]; ok {
+		t.Fatal("removed inbound still exists")
+	}
+
+	if err := db.First(&srv, srv.ID).Error; err != nil {
+		t.Fatal(err)
+	}
+	if srv.EffectiveConfigMode() != model.ConfigModeRaw || string(srv.RawConfig) != string(raw) || !srv.ConfigInitialized {
+		t.Fatalf("raw source not persisted: mode=%q initialized=%v raw=%s", srv.ConfigMode, srv.ConfigInitialized, srv.RawConfig)
+	}
+	if err := db.First(&user, user.ID).Error; err != nil {
+		t.Fatal(err)
+	}
+	if len(user.InboundIDs) != 1 || user.InboundIDs[0] != keep.ID {
+		t.Fatalf("user grant changed: %v", user.InboundIDs)
+	}
+	if nodes := app.userNodeDetails(&user); len(nodes) != 1 || nodes[0].Name != "node-Snell" {
+		t.Fatalf("authorized nodes after sync = %+v", nodes)
+	}
+}
+
 func TestBuildServerConfigReturnsDatabaseReadError(t *testing.T) {
 	db := testDB(t)
 	srv := model.Server{Name: "managed", AgentToken: "db-error", ConfigMode: model.ConfigModeManaged}

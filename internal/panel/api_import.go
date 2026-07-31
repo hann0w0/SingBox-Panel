@@ -7,6 +7,8 @@ import (
 	"net/http"
 	"time"
 
+	"gorm.io/gorm"
+
 	"github.com/gin-gonic/gin"
 
 	"github.com/hann0w0/singbox-panel/internal/model"
@@ -146,8 +148,9 @@ func buildImportSummary(p *singbox.ParsedConfig) importSummary {
 	return sum
 }
 
-// applyImport writes the parsed model into the DB for this server, replacing
-// whatever the panel had for it.
+// applyImport writes the parsed view of a raw config into the DB. Existing
+// rows with the same tag keep their IDs so per-inbound user grants do not break
+// whenever an administrator imports or edits config.json.
 func (a *App) applyImport(srv *model.Server, p *singbox.ParsedConfig, raw []byte) error {
 	// Import changes both the structured rows and the raw source-of-truth mode.
 	// Serialize it with reconnect pushes, raw edits and explicit mode switches so
@@ -155,72 +158,148 @@ func (a *App) applyImport(srv *model.Server, p *singbox.ParsedConfig, raw []byte
 	lock := a.orch.serverLock(srv.ID)
 	lock.Lock()
 	defer lock.Unlock()
+	return a.applyImportUnlocked(srv, p, raw)
+}
 
-	tx := a.db.Begin()
-	if tx.Error != nil {
-		return tx.Error
-	}
-	for _, m := range []any{&model.Inbound{}, &model.Outbound{}, &model.RouteRule{}, &model.RuleSet{}} {
-		if err := tx.Where("server_id = ?", srv.ID).Delete(m).Error; err != nil {
-			tx.Rollback()
+// applyImportUnlocked performs the database transaction while the caller owns
+// the server configuration lock.
+func (a *App) applyImportUnlocked(srv *model.Server, p *singbox.ParsedConfig, raw []byte) error {
+	return a.db.Transaction(func(tx *gorm.DB) error {
+		if err := syncImportedInbounds(tx, srv.ID, p.Inbounds); err != nil {
 			return err
 		}
-	}
+		if err := syncImportedOutbounds(tx, srv.ID, p.Outbounds); err != nil {
+			return err
+		}
+		if err := replaceImportedRules(tx, srv.ID, p.Rules); err != nil {
+			return err
+		}
+		if err := syncImportedRuleSets(tx, srv.ID, p.RuleSets); err != nil {
+			return err
+		}
+		return tx.Model(&model.Server{}).Where("id = ?", srv.ID).Updates(map[string]any{
+			"final_outbound":     p.Final,
+			"config_mode":        model.ConfigModeRaw,
+			"raw_config":         model.JSONText(append([]byte(nil), raw...)),
+			"config_initialized": true,
+		}).Error
+	})
+}
 
-	for _, in := range p.Inbounds {
+func deleteRowsExcept(tx *gorm.DB, serverID uint, keepIDs []uint, row any) error {
+	query := tx.Where("server_id = ?", serverID)
+	if len(keepIDs) > 0 {
+		query = query.Where("id NOT IN ?", keepIDs)
+	}
+	return query.Delete(row).Error
+}
+
+func syncImportedInbounds(tx *gorm.DB, serverID uint, parsed []singbox.ParsedInbound) error {
+	var existing []model.Inbound
+	if err := tx.Where("server_id = ?", serverID).Find(&existing).Error; err != nil {
+		return err
+	}
+	byTag := make(map[string]*model.Inbound, len(existing))
+	for i := range existing {
+		byTag[existing[i].Tag] = &existing[i]
+	}
+	keepIDs := make([]uint, 0, len(parsed))
+	for _, in := range parsed {
 		settings, err := json.Marshal(in.Settings)
 		if err != nil {
-			tx.Rollback()
 			return err
 		}
-		row := &model.Inbound{
-			ServerID: srv.ID, Tag: in.Tag, Type: model.InboundType(in.Type),
-			ListenPort: in.ListenPort, Enabled: true, Settings: model.JSONText(settings),
-			Remark: "导入自服务器配置",
+		row := byTag[in.Tag]
+		if row == nil {
+			row = &model.Inbound{ServerID: serverID, Tag: in.Tag}
+			if err := tx.Create(row).Error; err != nil {
+				return err
+			}
+			byTag[in.Tag] = row
 		}
-		if err := tx.Create(row).Error; err != nil {
-			tx.Rollback()
+		if err := tx.Model(row).Updates(map[string]any{
+			"type":        model.InboundType(in.Type),
+			"listen_port": in.ListenPort,
+			"enabled":     true,
+			"settings":    model.JSONText(settings),
+			"remark":      "同步自服务器配置",
+		}).Error; err != nil {
 			return err
 		}
+		keepIDs = append(keepIDs, row.ID)
 	}
+	return deleteRowsExcept(tx, serverID, keepIDs, &model.Inbound{})
+}
 
-	for i, ob := range p.Outbounds {
+func syncImportedOutbounds(tx *gorm.DB, serverID uint, parsed []singbox.ParsedOutbound) error {
+	var existing []model.Outbound
+	if err := tx.Where("server_id = ?", serverID).Find(&existing).Error; err != nil {
+		return err
+	}
+	byTag := make(map[string]*model.Outbound, len(existing))
+	for i := range existing {
+		byTag[existing[i].Tag] = &existing[i]
+	}
+	keepIDs := make([]uint, 0, len(parsed))
+	for i, ob := range parsed {
 		blob, err := json.Marshal(map[string]any{
 			"server": ob.Server, "server_port": ob.ServerPort,
 			"username": ob.Username, "uuid": ob.UUID, "password": ob.Password,
 			"settings": ob.Settings,
 		})
 		if err != nil {
-			tx.Rollback()
 			return err
 		}
-		row := &model.Outbound{
-			ServerID: srv.ID, Tag: ob.Tag, Type: ob.Type,
-			Settings: model.JSONText(blob), Sort: i, Remark: "导入自服务器配置",
+		row := byTag[ob.Tag]
+		if row == nil {
+			row = &model.Outbound{ServerID: serverID, Tag: ob.Tag}
+			if err := tx.Create(row).Error; err != nil {
+				return err
+			}
+			byTag[ob.Tag] = row
 		}
-		if err := tx.Create(row).Error; err != nil {
-			tx.Rollback()
+		if err := tx.Model(row).Updates(map[string]any{
+			"type": ob.Type, "settings": model.JSONText(blob), "sort": i,
+			"remark": "同步自服务器配置",
+		}).Error; err != nil {
 			return err
 		}
+		keepIDs = append(keepIDs, row.ID)
 	}
+	return deleteRowsExcept(tx, serverID, keepIDs, &model.Outbound{})
+}
 
-	for i, r := range p.Rules {
-		match, err := json.Marshal(r.Match)
+func replaceImportedRules(tx *gorm.DB, serverID uint, parsed []singbox.ParsedRule) error {
+	if err := tx.Where("server_id = ?", serverID).Delete(&model.RouteRule{}).Error; err != nil {
+		return err
+	}
+	for i, rule := range parsed {
+		match, err := json.Marshal(rule.Match)
 		if err != nil {
-			tx.Rollback()
 			return err
 		}
 		row := &model.RouteRule{
-			ServerID: srv.ID, Sort: i, Match: model.JSONText(match),
-			Outbound: r.Outbound, Enabled: true, Remark: "导入自服务器配置",
+			ServerID: serverID, Sort: i, Match: model.JSONText(match),
+			Outbound: rule.Outbound, Enabled: true, Remark: "同步自服务器配置",
 		}
 		if err := tx.Create(row).Error; err != nil {
-			tx.Rollback()
 			return err
 		}
 	}
+	return nil
+}
 
-	for _, rs := range p.RuleSets {
+func syncImportedRuleSets(tx *gorm.DB, serverID uint, parsed []singbox.RuleSetInput) error {
+	var existing []model.RuleSet
+	if err := tx.Where("server_id = ?", serverID).Find(&existing).Error; err != nil {
+		return err
+	}
+	byTag := make(map[string]*model.RuleSet, len(existing))
+	for i := range existing {
+		byTag[existing[i].Tag] = &existing[i]
+	}
+	keepIDs := make([]uint, 0, len(parsed))
+	for _, rs := range parsed {
 		format := rs.Format
 		if format != "source" {
 			format = "binary"
@@ -229,24 +308,21 @@ func (a *App) applyImport(srv *model.Server, p *singbox.ParsedConfig, raw []byte
 		if typ != "local" {
 			typ = "remote"
 		}
-		row := &model.RuleSet{
-			ServerID: srv.ID, Tag: rs.Tag, Type: typ, URL: rs.URL, Path: rs.Path,
-			Format: format, DownloadDetour: rs.DownloadDetour,
-			UpdateInterval: rs.UpdateInterval,
+		row := byTag[rs.Tag]
+		if row == nil {
+			row = &model.RuleSet{ServerID: serverID, Tag: rs.Tag}
+			if err := tx.Create(row).Error; err != nil {
+				return err
+			}
+			byTag[rs.Tag] = row
 		}
-		if err := tx.Create(row).Error; err != nil {
-			tx.Rollback()
+		if err := tx.Model(row).Updates(map[string]any{
+			"type": typ, "format": format, "url": rs.URL, "path": rs.Path,
+			"download_detour": rs.DownloadDetour, "update_interval": rs.UpdateInterval,
+		}).Error; err != nil {
 			return err
 		}
+		keepIDs = append(keepIDs, row.ID)
 	}
-
-	if err := tx.Model(&model.Server{}).Where("id = ?", srv.ID).Updates(map[string]any{
-		"final_outbound": p.Final,
-		"config_mode":    model.ConfigModeRaw,
-		"raw_config":     model.JSONText(append([]byte(nil), raw...)),
-	}).Error; err != nil {
-		tx.Rollback()
-		return err
-	}
-	return tx.Commit().Error
+	return deleteRowsExcept(tx, serverID, keepIDs, &model.RuleSet{})
 }

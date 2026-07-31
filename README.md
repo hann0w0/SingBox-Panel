@@ -8,46 +8,19 @@
 
 ## 安装
 
-准备一个已解析到面板服务器的域名，并为域名配置 HTTPS 反向代理。随后在 Linux VPS 上执行：
+准备一个已解析到面板服务器的域名，并为域名配置 HTTPS 反向代理。后期更换域名只需在命令后面加上 “-s -- --configure”
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/hann0w0/SingBox-Panel/refs/heads/main/install.sh | sudo bash
 ```
-
-首次安装会依次询问：
-
-- 本机反向代理端口，默认 `32334`
-- 管理员账号，默认 `admin`
-- 管理员密码，留空时自动生成
-- 面板与 Agent 通信域名，例如 `panel.example.com`
-
-脚本会自动安装或检查 Docker Engine，并从 Docker Hub 拉取预构建镜像；无需 Docker Compose、Git、Go、Node 或本地编译环境。
-
-面板只监听 `127.0.0.1`，不会直接暴露到公网。请将 Caddy、Nginx 或 OpenResty 反向代理到安装时设置的本机端口，并确保：
-
-- 域名使用有效的 HTTPS 证书
-- 反向代理支持 WebSocket
-- 公网只开放 `80/443`，不要开放面板本机端口
-
-安装配置默认保存在 `/opt/singbox-panel/deploy/.env`，面板数据保存在 Docker 数据卷 `singbox-panel_data` 中。容器日志会自动轮转，单文件最大 10 MB，保留 3 份。
 
 ### 更新
 
-再次执行安装命令即可更新。脚本会沿用现有配置并拉取最新镜像；新容器健康检查失败时，会自动恢复旧容器，不会删除现有数据。
+再次执行安装命令即可更新，脚本会沿用现有配置并拉取最新镜像。
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/hann0w0/SingBox-Panel/refs/heads/main/install.sh | sudo bash
 ```
-
-### 重新配置
-
-需要修改本机端口或面板域名时执行：
-
-```bash
-curl -fsSL https://raw.githubusercontent.com/hann0w0/SingBox-Panel/refs/heads/main/install.sh | sudo bash -s -- --configure
-```
-
-管理员账号和密码只用于初始化空数据库。已有面板请在面板内修改管理员信息。
 
 ### 卸载
 

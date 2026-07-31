@@ -1,13 +1,12 @@
 import { useEffect } from 'react'
-import { Alert, Button, Divider, Form, Input, InputNumber, Modal, Segmented, Select, Space, Switch, message } from 'antd'
+import { Alert, Button, Divider, Form, Input, InputNumber, Modal, Segmented, Select, Space, Switch } from 'antd'
 import {
   createOutbound,
   createRule,
-  errMsg,
   updateOutbound,
   updateRule,
 } from '../../api'
-import { showConfigApplyResult } from '../../configApply'
+import { applyWithToast } from '../../configApply'
 import type { Outbound, OutboundType, RouteRule, RuleMatch, RuleSet } from '../../types'
 import { randomBase64, randomHex, randomUUID, ss2022KeyLen } from '../../util'
 
@@ -106,16 +105,13 @@ export function OutboundForm({
         settings: inner,
       },
     }
-    try {
-      const result = outbound
-        ? await updateOutbound(serverId, outbound.id, body)
-        : await createOutbound(serverId, body)
-      showConfigApplyResult(result)
-      onSaved()
-      onClose()
-    } catch (e) {
-      message.error(errMsg(e))
-    }
+    const editing = outbound
+    // 关闭弹窗后在后台下发，避免确认按钮卡顿
+    onClose()
+    await applyWithToast(`outbound-${editing ? editing.id : 'new'}`, () =>
+      editing ? updateOutbound(serverId, editing.id, body) : createOutbound(serverId, body),
+    )
+    onSaved()
   }
 
   return (
@@ -411,16 +407,13 @@ export function RuleForm({
     }
 
     const body = { match, outbound: targetOutbound, enabled: v.enabled, sort: rule?.sort }
-    try {
-      const result = rule
-        ? await updateRule(serverId, rule.id, body)
-        : await createRule(serverId, body)
-      showConfigApplyResult(result)
-      onSaved()
-      onClose()
-    } catch (e) {
-      message.error(errMsg(e))
-    }
+    const editing = rule
+    // 关闭弹窗后在后台下发，避免确认按钮卡顿
+    onClose()
+    await applyWithToast(`rule-${editing ? editing.id : 'new'}`, () =>
+      editing ? updateRule(serverId, editing.id, body) : createRule(serverId, body),
+    )
+    onSaved()
   }
 
   return (

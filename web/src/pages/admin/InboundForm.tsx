@@ -1,7 +1,7 @@
 import { useEffect } from 'react'
-import { Alert, Button, Divider, Form, Input, InputNumber, Modal, Select, Space, Switch, message } from 'antd'
-import { createInbound, errMsg, updateInbound } from '../../api'
-import { showConfigApplyResult } from '../../configApply'
+import { Alert, Button, Divider, Form, Input, InputNumber, Modal, Select, Space, Switch } from 'antd'
+import { createInbound, updateInbound } from '../../api'
+import { applyWithToast } from '../../configApply'
 import type { Inbound, InboundSettings, InboundType } from '../../types'
 import { randomBase64, randomHex, randomUUID, ss2022KeyLen } from '../../util'
 
@@ -276,16 +276,14 @@ export default function InboundForm({
       enabled: v.enabled,
       settings,
     }
-    try {
-      const result = inbound
-        ? await updateInbound(serverId, inbound.id, body)
-        : await createInbound(serverId, body)
-      showConfigApplyResult(result)
-      onSaved()
-      onClose()
-    } catch (e) {
-      message.error(errMsg(e))
-    }
+    const editing = inbound
+    // Close the modal immediately; the config is delivered in the background
+    // behind a "配置下发中" spinner toast, so the form never appears to hang.
+    onClose()
+    await applyWithToast(`inbound-${editing ? editing.id : 'new'}`, () =>
+      editing ? updateInbound(serverId, editing.id, body) : createInbound(serverId, body),
+    )
+    onSaved()
   }
 
   const showTLS = !NO_TLS.has(type)

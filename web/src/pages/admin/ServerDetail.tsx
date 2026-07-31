@@ -56,7 +56,7 @@ import {
   updateAgent,
 } from '../../api'
 import type { EgressTest, ImportSummary, NodeFormats, OutboundTest } from '../../api'
-import { isConfigApplyResult, showConfigApplyResult } from '../../configApply'
+import { applyWithToast, isConfigApplyResult, showConfigApplyResult } from '../../configApply'
 import type { Inbound, Outbound, RouteRule, RuleSet, Server } from '../../types'
 import { formatBytes } from '../../util'
 import InboundForm from './InboundForm'
@@ -331,7 +331,11 @@ export default function ServerDetail() {
       okText: '确定',
       cancelText: '取消',
       centered: true,
-      onOk: () => run('del', () => deleteInbound(sid, ib.id), '已删除'),
+      // Close the confirm immediately; the delete runs in the background behind
+      // the "配置下发中" toast, matching the create/update flow.
+      onOk: () => {
+        applyWithToast(`inbound-del-${ib.id}`, () => deleteInbound(sid, ib.id)).then(load)
+      },
     })
 
   const onDeleteOutbound = (o: Outbound) =>
@@ -341,7 +345,9 @@ export default function ServerDetail() {
       okText: '确定',
       cancelText: '取消',
       centered: true,
-      onOk: () => run('del', () => deleteOutbound(sid, o.id), '已删除'),
+      onOk: () => {
+        applyWithToast(`outbound-del-${o.id}`, () => deleteOutbound(sid, o.id)).then(load)
+      },
     })
 
   const onDeleteRule = (r: RouteRule) =>
@@ -351,7 +357,9 @@ export default function ServerDetail() {
       okText: '确定',
       cancelText: '取消',
       centered: true,
-      onOk: () => run('del', () => deleteRule(sid, r.id), '已删除'),
+      onOk: () => {
+        applyWithToast(`rule-del-${r.id}`, () => deleteRule(sid, r.id)).then(load)
+      },
     })
 
   const onResetFinal = () =>
@@ -410,8 +418,12 @@ export default function ServerDetail() {
   const saveConfig = async () => {
     setCfgSaving(true)
     try {
-      await applyRawConfig(sid, cfgText)
-      message.success('已校验并下发')
+      const result = await applyRawConfig(sid, cfgText)
+      if (result.summary.skipped?.length) {
+        message.warning(`已下发并同步；${result.summary.skipped.length} 项无法转换为面板表单，已在原始配置中完整保留`)
+      } else {
+        message.success('已校验、下发并同步到面板')
+      }
       setCfgOpen(false)
       load()
     } catch (e) {
@@ -526,7 +538,7 @@ export default function ServerDetail() {
           type="warning"
           showIcon
           message="该节点当前使用原始配置模式"
-          description="服务器完整 config.json 已保存到面板，Agent 重连时会原样下发。为避免丢失面板无法识别的字段，协议、出站和路由编辑暂时锁定。"
+          description="完整 config.json 是当前生效配置；面板已自动同步其中可识别的入站、出站和路由。为避免丢失无法识别的字段，结构化编辑暂时锁定。"
           action={<Button danger loading={busy === 'mode'} onClick={switchToManaged}>切换到面板管理</Button>}
         />
       )}
@@ -925,7 +937,7 @@ export default function ServerDetail() {
         destroyOnClose
       >
         <div style={{ fontSize: 13, color: 'rgba(0, 0, 0, 0.45)', marginBottom: 12 }}>
-          直接编辑该服务器运行的核心配置。下发成功后完整 JSON 会保存至面板并同步生效。
+          直接编辑该服务器运行的核心配置。下发成功后完整 JSON 会保存，并自动同步面板中可识别的入站、出站和路由。
         </div>
         {cfgLoading ? (
           <div style={{ padding: 24, textAlign: 'center', color: '#94a3b8' }}>读取中…</div>

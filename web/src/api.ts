@@ -114,7 +114,7 @@ export const serverStatus = (id: number) =>
 export const remoteConfig = (id: number) =>
   http.get<RemoteConfig>(`/api/admin/servers/${id}/remote-config`).then((r) => r.data)
 export const applyRawConfig = (id: number, config: string) =>
-  http.post<{ ok: boolean; output: string }>(`/api/admin/servers/${id}/apply-raw`, { config }).then((r) => r.data)
+  http.post<{ ok: boolean; output: string; summary: ImportSummary }>(`/api/admin/servers/${id}/apply-raw`, { config }).then((r) => r.data)
 
 // ---- admin: inbounds ----
 interface InboundBody {

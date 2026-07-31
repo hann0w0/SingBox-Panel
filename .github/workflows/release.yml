@@ -110,9 +110,16 @@ jobs:
 
             ### 一键安装（推荐）
             ```bash
-            curl -fsSL https://raw.githubusercontent.com/hann0w0/SingBox-Panel/main/deploy/install.sh | sudo bash
+            curl -fsSL https://raw.githubusercontent.com/hann0w0/SingBox-Panel/main/install.sh | sudo bash
             ```
-            首次运行会询问选择 **Docker** 或 **Binary** 方式安装。再次运行自动检测方式执行更新。
+            首次运行会询问选择 **Docker** 或 **Binary** 方式安装。再次运行自动检测已有方式执行更新，
+            并保留域名、端口、管理员凭据与 jwt_secret。
+
+            指定方式安装：
+            ```bash
+            curl -fsSL https://raw.githubusercontent.com/hann0w0/SingBox-Panel/main/install.sh | sudo bash -s -- \
+              --mode binary --base-url panel.example.com
+            ```
 
             ### Docker 手动部署
             ```bash
@@ -121,6 +128,7 @@ jobs:
 
             ### Binary 手动部署
             下载对应架构的 `singbox-panel-linux-{amd64|arm64}` 并参考 [部署文档](https://github.com/hann0w0/SingBox-Panel/blob/main/README.md)。
+            所有产物的 SHA256 见 `checksums.txt`，安装脚本会强制校验。
 
           files: |
             dist/panel/singbox-panel-linux-amd64
@@ -128,4 +136,4 @@ jobs:
             dist/singbox-panel-agents-${{ github.ref_name }}.tar.gz
             dist/singbox-panel-web-${{ github.ref_name }}.tar.gz
             dist/checksums.txt
-            deploy/install.sh
+            install.sh

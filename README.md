@@ -14,13 +14,32 @@
 curl -fsSL https://raw.githubusercontent.com/hann0w0/SingBox-Panel/refs/heads/main/install.sh | sudo bash
 ```
 
+脚本提供两种部署方式，首次安装时可选择：
+
+| 方式 | 运行形态 | 数据位置 | 适用场景 |
+| --- | --- | --- | --- |
+| **Docker**（默认，推荐） | 容器 | `singbox-panel_data` 卷 | 常规部署 |
+| **Binary** | 原生二进制 + systemd | `/opt/singbox-panel` | 无法安装 Docker 的环境，需要 systemd |
+
+两种方式都只监听 `127.0.0.1`，必须通过 HTTPS 反向代理访问，面板不直接暴露公网。
+
+直接指定方式（跳过交互）：
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/hann0w0/SingBox-Panel/refs/heads/main/install.sh | sudo bash -s -- --mode binary --base-url panel.example.com
+```
+
+常用参数可用 `-s -- --help` 查看，包括 `--port`、`--admin`、`--password`、`--install-dir`、`--version`、`--non-interactive`。
+
 ### 更新
 
-再次执行安装命令即可更新，脚本会沿用现有配置并拉取最新镜像。
+再次执行安装命令即可更新。脚本会自动识别已有的部署方式，沿用现有域名、端口、管理员凭据和 `jwt_secret`，只替换程序本体。
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/hann0w0/SingBox-Panel/refs/heads/main/install.sh | sudo bash
 ```
+
+Binary 方式安装的产物会强制校验 Release 中的 `checksums.txt`，校验失败即中止安装。
 
 ### 卸载
 
@@ -35,6 +54,8 @@ curl -fsSL https://raw.githubusercontent.com/hann0w0/SingBox-Panel/refs/heads/ma
 ```bash
 curl -fsSL https://raw.githubusercontent.com/hann0w0/SingBox-Panel/refs/heads/main/install.sh | sudo bash -s -- --uninstall --purge --yes
 ```
+
+卸载会自动识别当前的部署方式，无需手动指定。
 
 ## 工作方式
 

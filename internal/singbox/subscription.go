@@ -53,16 +53,25 @@ func networkOf(s TransportSettings) string {
 	return "ws"
 }
 
-// buildClientTLS renders a client-side tls object, or nil for no TLS.
-func buildClientTLS(t TLSSettings, server string) map[string]any {
+// buildClientTLS renders a client-side tls object, or nil for no TLS. nodeType
+// gates uTLS: QUIC-based protocols (hysteria2/tuic/hysteria) must NOT carry a
+// utls block — sing-box's QUIC dialer rejects a uTLS config at runtime with
+// "unsupported usage for uTLS", so the node passes `check` but never connects.
+// uTLS stays on for the TCP protocols (vless/vmess/trojan/anytls) and is
+// mandatory for REALITY (TCP-only, vless).
+func buildClientTLS(t TLSSettings, server, nodeType string) map[string]any {
 	if !t.tlsEnabled() {
 		return nil
 	}
 	tls := map[string]any{
 		"enabled":     true,
 		"server_name": clientSNI(t, server),
-		// uTLS improves camouflage and is required alongside REALITY.
-		"utls": map[string]any{"enabled": true, "fingerprint": "chrome"},
+	}
+	switch nodeType {
+	case "hysteria2", "tuic", "hysteria":
+		// QUIC: no uTLS (see doc comment).
+	default:
+		tls["utls"] = map[string]any{"enabled": true, "fingerprint": "chrome"}
 	}
 	if len(t.ALPN) > 0 {
 		tls["alpn"] = t.ALPN
@@ -88,7 +97,7 @@ func BuildClientOutbound(n ClientNode) (json.RawMessage, error) {
 		"server":      n.Server,
 		"server_port": n.ServerPort,
 	}
-	tls := buildClientTLS(n.Settings.TLS, n.Server)
+	tls := buildClientTLS(n.Settings.TLS, n.Server, n.Type)
 	tr := buildTransport(n.Settings.Transport)
 
 	switch n.Type {
@@ -278,13 +287,25 @@ func BuildShareLink(n ClientNode) (string, error) {
 	case "trojan":
 		q := url.Values{}
 		q.Set("type", networkOf(n.Settings.Transport))
-		q.Set("security", "tls")
+		// Trojan can run over REALITY too (reality is generic across inbound
+		// types). Mirror the VLESS branch so the client is told to do REALITY,
+		// not plain TLS against a REALITY-only server (which fails the handshake).
+		if t.Reality.Enabled {
+			q.Set("security", "reality")
+			q.Set("pbk", t.Reality.PublicKey)
+			if sid := firstShortID(t.Reality.ShortID); sid != "" {
+				q.Set("sid", sid)
+			}
+			q.Set("fp", "chrome")
+		} else {
+			q.Set("security", "tls")
+			if t.ClientInsecure() {
+				q.Set("allowInsecure", "1")
+			}
+		}
 		q.Set("sni", clientSNI(t, host))
 		if len(t.ALPN) > 0 {
 			q.Set("alpn", strings.Join(t.ALPN, ","))
-		}
-		if t.ClientInsecure() {
-			q.Set("allowInsecure", "1")
 		}
 		if networkOf(n.Settings.Transport) == "ws" {
 			if n.Settings.Transport.Path != "" {

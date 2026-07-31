@@ -219,9 +219,9 @@ func BuildInbound(in InboundInput) (json.RawMessage, error) {
 		if in.Settings.ObfsPassword != "" {
 			m["obfs"] = map[string]any{"type": "salamander", "password": in.Settings.ObfsPassword}
 		}
-		if tr != nil {
-			m["transport"] = tr
-		}
+		// NOTE: hysteria2 is QUIC and has no v2ray transport field. Emitting
+		// "transport" here makes `sing-box check` fail with an unknown-field
+		// error and the config is rolled back.
 
 	case "tuic":
 		users := make([]map[string]any, 0, len(eff))

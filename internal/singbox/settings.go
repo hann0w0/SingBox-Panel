@@ -326,5 +326,22 @@ func (s InboundSettings) Validate(typ string) error {
 	if tr := s.Transport.Type; tr != "" && !strings.EqualFold(tr, "tcp") && !strings.EqualFold(tr, "ws") {
 		return fmt.Errorf("unsupported transport %q (official builds support tcp/ws only)", tr)
 	}
+	// A v2ray (ws) transport only exists on vless/vmess/trojan. Attaching it to
+	// any other type (hysteria2/tuic/naive/anytls/shadowtls/snell/socks/
+	// shadowsocks) makes `sing-box check` reject the config with an
+	// unknown-field error, so guard it here rather than only in the UI.
+	if strings.EqualFold(s.Transport.Type, "ws") {
+		switch typ {
+		case "vless", "vmess", "trojan":
+		default:
+			return fmt.Errorf("%s: ws transport is only supported on vless/vmess/trojan", typ)
+		}
+	}
+	// VLESS flow=xtls-rprx-vision requires a real TLS/REALITY connection; with
+	// plain TCP the client aborts at runtime ("not a valid supported TLS
+	// connection"), even though `check` passes. Reject the impossible combo.
+	if typ == "vless" && s.Flow != "" && !s.TLS.Enabled && s.TLS.ACMEDomain == "" && !s.TLS.Reality.Enabled {
+		return fmt.Errorf("vless: flow %q requires TLS or REALITY", s.Flow)
+	}
 	return nil
 }

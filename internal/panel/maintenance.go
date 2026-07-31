@@ -31,9 +31,39 @@ import (
 
 const (
 	githubRepo      = "hann0w0/SingBox-Panel"
+	serviceUnitName = "singbox-panel"
 	serviceUnitPath = "/etc/systemd/system/singbox-panel.service"
 	updateSubdir    = ".update" // under the install dir; holds the staged binary
 )
+
+// httpGetGitHub issues a GET with our User-Agent and returns the response on a
+// 2xx; the caller closes Body. Centralizes the request boilerplate shared by
+// the release lookup, binary download, and checksum fetch.
+func httpGetGitHub(url string, timeout time.Duration) (*http.Response, error) {
+	client := &http.Client{Timeout: timeout}
+	req, _ := http.NewRequest(http.MethodGet, url, nil)
+	req.Header.Set("User-Agent", "singbox-panel")
+	resp, err := client.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	if resp.StatusCode != http.StatusOK {
+		resp.Body.Close()
+		return nil, fmt.Errorf("HTTP %d", resp.StatusCode)
+	}
+	return resp, nil
+}
+
+// sqliteDBPath returns the configured SQLite file path and whether this is a
+// file-backed SQLite deployment — the only kind backup/restore/self-update
+// support. Callers phrase their own user-facing message on false.
+func (a *App) sqliteDBPath() (string, bool) {
+	if d := a.cfg.Database.Driver; d != "" && d != "sqlite" {
+		return "", false
+	}
+	p := sqliteFilePath(a.cfg.Database.DSN)
+	return p, p != ""
+}
 
 var (
 	panelReleaseTag   string
@@ -49,17 +79,11 @@ func latestPanelRelease() (string, error) {
 	if time.Since(panelReleaseAt) < time.Hour && panelReleaseTag != "" {
 		return panelReleaseTag, nil
 	}
-	client := &http.Client{Timeout: 8 * time.Second}
-	req, _ := http.NewRequest("GET", "https://api.github.com/repos/"+githubRepo+"/releases/latest", nil)
-	req.Header.Set("User-Agent", "singbox-panel")
-	resp, err := client.Do(req)
+	resp, err := httpGetGitHub("https://api.github.com/repos/"+githubRepo+"/releases/latest", 8*time.Second)
 	if err != nil {
 		return "", fmt.Errorf("访问 GitHub 失败：%w", err)
 	}
 	defer resp.Body.Close()
-	if resp.StatusCode != http.StatusOK {
-		return "", fmt.Errorf("GitHub API 返回 %d（匿名调用可能被限流）", resp.StatusCode)
-	}
 	var rel githubRelease
 	if err := json.NewDecoder(resp.Body).Decode(&rel); err != nil {
 		return "", fmt.Errorf("解析 Release 失败：%w", err)
@@ -98,9 +122,15 @@ func selfUpdateSupported() (bool, string) {
 // whether in-place self-update is available on this host.
 func (a *App) maintenanceInfo(c *gin.Context) {
 	supported, reason := selfUpdateSupported()
+	driver := a.cfg.Database.Driver
+	if driver == "" {
+		driver = "sqlite"
+	}
 	resp := gin.H{
 		"current_version":  a.version,
 		"update_supported": supported,
+		"db_driver":        driver,
+		"uptime_seconds":   int64(time.Since(a.startedAt).Seconds()),
 	}
 	if !supported {
 		resp["update_reason"] = reason
@@ -127,12 +157,9 @@ func sameVersion(a, b string) bool {
 // agents authenticate with per-server tokens stored in the database, and user
 // sessions survive because the jwt_secret is preserved.
 func (a *App) downloadBackup(c *gin.Context) {
-	if d := a.cfg.Database.Driver; d != "" && d != "sqlite" {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "仅 SQLite 部署支持一键备份"})
-		return
-	}
-	dbPath := sqliteFilePath(a.cfg.Database.DSN)
-	if dbPath == "" {
+	// downloadBackup snapshots via VACUUM INTO rather than reading the live file
+	// directly, so it only needs to confirm this is a SQLite deployment.
+	if _, ok := a.sqliteDBPath(); !ok {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "仅 SQLite 部署支持一键备份"})
 		return
 	}
@@ -346,17 +373,11 @@ func installDirFromDSN(dsn string) string {
 }
 
 func downloadFile(url, dest string) error {
-	client := &http.Client{Timeout: 5 * time.Minute}
-	req, _ := http.NewRequest("GET", url, nil)
-	req.Header.Set("User-Agent", "singbox-panel")
-	resp, err := client.Do(req)
+	resp, err := httpGetGitHub(url, 5*time.Minute)
 	if err != nil {
 		return err
 	}
 	defer resp.Body.Close()
-	if resp.StatusCode != http.StatusOK {
-		return fmt.Errorf("HTTP %d", resp.StatusCode)
-	}
 	f, err := os.Create(dest)
 	if err != nil {
 		return err
@@ -369,17 +390,11 @@ func downloadFile(url, dest string) error {
 // verifyReleaseChecksum downloads checksums.txt and confirms the file's SHA256
 // matches the entry for assetName. A missing entry or mismatch is fatal.
 func verifyReleaseChecksum(checksumsURL, filePath, assetName string) error {
-	client := &http.Client{Timeout: 30 * time.Second}
-	req, _ := http.NewRequest("GET", checksumsURL, nil)
-	req.Header.Set("User-Agent", "singbox-panel")
-	resp, err := client.Do(req)
+	resp, err := httpGetGitHub(checksumsURL, 30*time.Second)
 	if err != nil {
 		return fmt.Errorf("下载 checksums.txt 失败：%w", err)
 	}
 	defer resp.Body.Close()
-	if resp.StatusCode != http.StatusOK {
-		return fmt.Errorf("下载 checksums.txt 失败：HTTP %d", resp.StatusCode)
-	}
 	raw, err := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
 	if err != nil {
 		return fmt.Errorf("读取 checksums.txt 失败：%w", err)
@@ -444,10 +459,6 @@ systemctl restart %[3]s`,
 	}
 	return nil
 }
-
-const (
-	serviceUnitName = "singbox-panel"
-)
 
 // panelBinaryPath returns the path to the running panel binary so the swap
 // overwrites the correct file even for a non-standard install.

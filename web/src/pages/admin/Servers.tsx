@@ -1,8 +1,8 @@
 import { useEffect, useState, type DragEvent } from 'react'
-import { Alert, Button, Card, Form, Input, Modal, Space, Table, Tag, Typography, message } from 'antd'
-import { ArrowUpOutlined, DeleteOutlined, EditOutlined, PlusOutlined, ReloadOutlined } from '@ant-design/icons'
+import { Alert, Button, Card, Form, Input, Modal, Radio, Select, Space, Table, Tag, Typography, message } from 'antd'
+import { ArrowUpOutlined, CloudDownloadOutlined, DeleteOutlined, EditOutlined, PlusOutlined, ReloadOutlined } from '@ant-design/icons'
 import { useNavigate } from 'react-router-dom'
-import { createServer, deleteServer, errMsg, getServersMeta, updateAllAgents, updateServer, updateServerOrder } from '../../api'
+import { createServer, deleteServer, errMsg, getServersMeta, installSingbox, updateAllAgents, updateServer, updateServerOrder } from '../../api'
 import type { Server } from '../../types'
 
 export default function Servers() {
@@ -11,12 +11,15 @@ export default function Servers() {
   const [latestAgentVer, setLatestAgentVer] = useState<string>('v1.0.0')
   const [loading, setLoading] = useState(false)
   const [updatingAll, setUpdatingAll] = useState(false)
+  const [updatingSingbox, setUpdatingSingbox] = useState(false)
+  const [singboxModalOpen, setSingboxModalOpen] = useState(false)
   const [open, setOpen] = useState(false)
   const [editing, setEditing] = useState<Server | null>(null)
   const [sorting, setSorting] = useState(false)
   const [draggingID, setDraggingID] = useState<number | null>(null)
   const [dropTarget, setDropTarget] = useState<{ id: number; after: boolean } | null>(null)
   const [form] = Form.useForm()
+  const [singboxForm] = Form.useForm()
 
   const handleUpdateAllAgents = () => {
     Modal.confirm({
@@ -36,6 +39,36 @@ export default function Servers() {
         }
       },
     })
+  }
+
+  const handleUpdateSingbox = () => {
+    setSingboxModalOpen(true)
+  }
+
+  const doUpdateSingbox = async () => {
+    const values = await singboxForm.validateFields()
+    const onlineServers = servers.filter((s) => s.online)
+    setSingboxModalOpen(false)
+    if (onlineServers.length === 0) {
+      message.warning('没有在线节点可更新')
+      return
+    }
+    // Fire-and-forget: the per-node install blocks for minutes on the backend,
+    // so kick them all off concurrently and let them finish in the background
+    // instead of holding the UI. Report the aggregate result when they settle.
+    message.success(`已在后台向 ${onlineServers.length} 台在线节点下发 sing-box 更新，完成后会自动刷新`)
+    setUpdatingSingbox(true)
+    const results = await Promise.allSettled(
+      onlineServers.map((s) => installSingbox(s.id, values)),
+    )
+    const failed = results.filter((r) => r.status === 'rejected').length
+    setUpdatingSingbox(false)
+    if (failed === 0) {
+      message.success('sing-box 更新完成')
+    } else {
+      message.warning(`sing-box 更新完成：${results.length - failed} 台成功，${failed} 台失败`)
+    }
+    load()
   }
 
   const load = () => {
@@ -176,8 +209,11 @@ export default function Servers() {
       title="服务器"
       extra={
         <Space>
+          <Button icon={<CloudDownloadOutlined />} onClick={handleUpdateSingbox} loading={updatingSingbox}>
+            更新 sing-box
+          </Button>
           <Button icon={<ReloadOutlined />} onClick={handleUpdateAllAgents} loading={updatingAll}>
-            更新全部 Agent
+            更新 Agent
           </Button>
           <Button type="primary" icon={<PlusOutlined />} onClick={openCreate}>
             新增服务器
@@ -347,6 +383,39 @@ export default function Servers() {
           </Form.Item>
           <Form.Item name="remark" label="备注">
             <Input />
+          </Form.Item>
+        </Form>
+      </Modal>
+
+      <Modal
+        title="更新 sing-box"
+        open={singboxModalOpen}
+        onOk={doUpdateSingbox}
+        onCancel={() => setSingboxModalOpen(false)}
+        okText="开始更新"
+        destroyOnClose
+      >
+        <div style={{ fontSize: 13, color: 'rgba(0,0,0,0.45)', marginBottom: 12 }}>
+          向所有<b>在线</b>节点下发官方 sing-box 安装/升级指令。点击开始后窗口即关闭，更新在后台进行，完成后节点列表会自动刷新。
+        </div>
+        <Form form={singboxForm} layout="vertical" initialValues={{ channel: 'stable', method: 'script' }}>
+          <Form.Item name="channel" label="版本渠道">
+            <Radio.Group>
+              <Radio.Button value="stable">稳定版</Radio.Button>
+              <Radio.Button value="beta">测试版 (beta)</Radio.Button>
+            </Radio.Group>
+          </Form.Item>
+          <Form.Item name="method" label="安装方式">
+            <Select
+              options={[
+                { value: 'script', label: '官方安装脚本' },
+                { value: 'apt', label: '官方 APT 源' },
+                { value: 'dnf', label: '官方 DNF 源' },
+              ]}
+            />
+          </Form.Item>
+          <Form.Item name="version" label="指定版本" extra="留空则安装所选渠道的最新版（仅脚本方式支持指定版本）">
+            <Input placeholder="如 1.13.14，可留空" />
           </Form.Item>
         </Form>
       </Modal>

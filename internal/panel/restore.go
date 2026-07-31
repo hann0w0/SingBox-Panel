@@ -40,12 +40,8 @@ const (
 // POST /api/admin/maintenance/restore — multipart upload field "file".
 func (a *App) restoreBackup(c *gin.Context) {
 	// Restore only makes sense for the file-backed SQLite deployment.
-	if d := a.cfg.Database.Driver; d != "" && d != "sqlite" {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "仅 SQLite 部署支持一键恢复"})
-		return
-	}
-	dbPath := sqliteFilePath(a.cfg.Database.DSN)
-	if dbPath == "" {
+	dbPath, ok := a.sqliteDBPath()
+	if !ok {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "仅 SQLite 部署支持一键恢复"})
 		return
 	}
@@ -142,7 +138,7 @@ func (a *App) restoreBackup(c *gin.Context) {
 		}
 	}
 
-	// 3) Persist the imported jwt_secret so admin/user sessions and, more
+	// 4) Persist the imported jwt_secret so admin/user sessions and, more
 	// importantly, nothing about agent auth changes across the migration.
 	secretApplied := false
 	if importedSecret != "" && a.cfgPath != "" {

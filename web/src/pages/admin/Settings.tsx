@@ -1,8 +1,9 @@
 import { useEffect, useState } from 'react'
-import { Alert, Button, Card, Descriptions, Modal, Space, Tag, Upload, message } from 'antd'
+import { Alert, Button, Card, Col, Modal, Row, Space, Statistic, Tag, Upload, message } from 'antd'
 import type { UploadFile } from 'antd'
 import { CloudDownloadOutlined, DownloadOutlined, InboxOutlined, ReloadOutlined, RocketOutlined, UploadOutlined } from '@ant-design/icons'
 import { downloadBackup, errMsg, getMaintenanceInfo, restoreBackup, selfUpdate, type MaintenanceInfo } from '../../api'
+import { formatDuration } from '../../util'
 
 export default function Settings() {
   const [info, setInfo] = useState<MaintenanceInfo | null>(null)
@@ -140,95 +141,117 @@ export default function Settings() {
   }
 
   return (
-    <Space direction="vertical" size="large" style={{ display: 'flex', maxWidth: 820 }}>
-      <Card
-        title="面板版本"
-        loading={loading}
-        extra={<Button size="small" icon={<ReloadOutlined />} onClick={load} disabled={updating}>刷新</Button>}
-      >
-        {info && (
-          <>
-            <Descriptions column={1} size="small" style={{ marginBottom: 16 }}>
-              <Descriptions.Item label="当前版本">
-                <Tag color="blue">{info.current_version}</Tag>
-              </Descriptions.Item>
-              <Descriptions.Item label="最新版本">
-                {info.latest_version ? (
-                  <Tag color={info.has_update ? 'orange' : 'green'}>{info.latest_version}</Tag>
-                ) : (
-                  <span style={{ color: '#8c8c8c' }}>{info.latest_error || '获取中…'}</span>
-                )}
-              </Descriptions.Item>
-            </Descriptions>
+    <Row gutter={[16, 16]}>
+      <Col xs={24}>
+        <Card
+          title="面板版本"
+          loading={loading}
+          extra={<Button size="small" icon={<ReloadOutlined />} onClick={load} disabled={updating}>刷新</Button>}
+        >
+          {info && (
+            <Row gutter={[16, 16]} align="middle">
+              <Col xs={12} sm={8} md={6}>
+                <Statistic
+                  title="当前版本"
+                  value={info.current_version}
+                  valueStyle={{ fontSize: 22 }}
+                />
+              </Col>
+              <Col xs={12} sm={8} md={6}>
+                <Statistic
+                  title="最新版本"
+                  value={info.latest_version || '—'}
+                  valueStyle={{ fontSize: 22, color: info.has_update ? '#d46b08' : undefined }}
+                />
+              </Col>
+              <Col xs={12} sm={8} md={6}>
+                <Statistic title="数据库" value={info.db_driver} valueStyle={{ fontSize: 22 }} />
+              </Col>
+              <Col xs={12} sm={8} md={6}>
+                <Statistic
+                  title="已运行"
+                  value={formatDuration(info.uptime_seconds)}
+                  valueStyle={{ fontSize: 22 }}
+                />
+              </Col>
+              <Col xs={24}>
+                {!info.update_supported ? (
+                  <Alert
+                    type="info"
+                    showIcon
+                    message="此部署不支持面板内更新"
+                    description={info.update_reason}
+                  />
+                ) : info.has_update ? (
+                  <Button type="primary" icon={<RocketOutlined />} loading={updating} onClick={doUpdate}>
+                    更新到 {info.latest_version}
+                  </Button>
+                ) : info.latest_version ? (
+                  <Tag color="success" style={{ fontSize: 13, padding: '4px 10px' }}>已是最新版本</Tag>
+                ) : info.latest_error ? (
+                  <span style={{ color: '#8c8c8c' }}>{info.latest_error}</span>
+                ) : null}
+              </Col>
+            </Row>
+          )}
+        </Card>
+      </Col>
 
-            {!info.update_supported && (
-              <Alert
-                type="info"
-                showIcon
-                message="此部署不支持面板内更新"
-                description={info.update_reason}
-                style={{ marginBottom: 16 }}
-              />
-            )}
-
-            {info.update_supported && info.has_update && (
-              <Button type="primary" icon={<RocketOutlined />} loading={updating} onClick={doUpdate}>
-                更新到 {info.latest_version}
-              </Button>
-            )}
-            {info.update_supported && !info.has_update && info.latest_version && (
-              <Alert type="success" showIcon message="已是最新版本" />
-            )}
-          </>
-        )}
-      </Card>
-
-      <Card title="数据备份">
-        <p style={{ color: '#595959' }}>
-          导出包含全部数据（节点、用户、订阅 token、被控 Agent 密钥）与会话密钥（jwt_secret）的备份。
-          在新服务器上恢复此备份并让原域名指向新机，被控 Agent 会自动重连、用户登录也不会失效，无需重装。
-        </p>
-        <Button icon={backing ? <DownloadOutlined /> : <CloudDownloadOutlined />} loading={backing} onClick={doBackup}>
-          下载备份
-        </Button>
-      </Card>
-
-      <Card title="恢复备份">
-        <p style={{ color: '#595959' }}>
-          上传此前下载的备份文件（.tar.gz），覆盖当前数据并重启面板。常用于迁移到新服务器或回滚。
-          恢复前会自动把现有数据库另存为 <code>.pre-restore</code> 以便回滚。
-        </p>
-        <Space direction="vertical" style={{ display: 'flex' }}>
-          <Upload.Dragger
-            accept=".gz,.tar.gz"
-            maxCount={1}
-            multiple={false}
-            beforeUpload={() => false /* 不自动上传，交给按钮统一提交 */}
-            fileList={restoreFile ? [restoreFile] : []}
-            onChange={({ fileList }) => setRestoreFile(fileList[fileList.length - 1] ?? null)}
-            onRemove={() => setRestoreFile(null)}
-            disabled={restoring}
-          >
-            <p className="ant-upload-drag-icon">
-              <InboxOutlined />
-            </p>
-            <p className="ant-upload-text">点击或拖拽备份文件到此处</p>
-            <p className="ant-upload-hint" style={{ color: '#8c8c8c' }}>
-              仅支持本面板导出的 singbox-panel-backup-*.tar.gz
-            </p>
-          </Upload.Dragger>
+      <Col xs={24} lg={12}>
+        <Card title="数据备份" style={{ height: '100%' }}>
+          <p style={{ color: '#595959', minHeight: 66 }}>
+            导出包含全部数据（节点、用户、订阅 token、被控 Agent 密钥）与会话密钥（jwt_secret）的备份。
+            在新服务器上恢复此备份并让原域名指向新机，被控 Agent 会自动重连、用户登录也不会失效，无需重装。
+          </p>
           <Button
-            danger
             type="primary"
-            icon={<UploadOutlined />}
-            loading={restoring}
-            disabled={!restoreFile}
-            onClick={doRestore}
+            icon={backing ? <DownloadOutlined /> : <CloudDownloadOutlined />}
+            loading={backing}
+            onClick={doBackup}
           >
-            恢复并重启
+            下载备份
           </Button>
-        </Space>
-      </Card>
-    </Space>
+        </Card>
+      </Col>
+
+      <Col xs={24} lg={12}>
+        <Card title="恢复备份" style={{ height: '100%' }}>
+          <p style={{ color: '#595959', minHeight: 66 }}>
+            上传此前下载的备份文件（.tar.gz），覆盖当前数据并重启面板。常用于迁移到新服务器或回滚。
+            恢复前会自动把现有数据库另存为 <code>.pre-restore</code> 以便回滚。
+          </p>
+          <Space direction="vertical" style={{ display: 'flex' }} size={12}>
+            <Upload.Dragger
+              accept=".gz,.tar.gz"
+              maxCount={1}
+              multiple={false}
+              beforeUpload={() => false /* 不自动上传，交给按钮统一提交 */}
+              fileList={restoreFile ? [restoreFile] : []}
+              onChange={({ fileList }) => setRestoreFile(fileList[fileList.length - 1] ?? null)}
+              onRemove={() => setRestoreFile(null)}
+              disabled={restoring}
+            >
+              <p className="ant-upload-drag-icon" style={{ marginBottom: 4 }}>
+                <InboxOutlined />
+              </p>
+              <p className="ant-upload-text">点击或拖拽备份文件到此处</p>
+              <p className="ant-upload-hint" style={{ color: '#8c8c8c' }}>
+                仅支持本面板导出的 singbox-panel-backup-*.tar.gz
+              </p>
+            </Upload.Dragger>
+            <Button
+              danger
+              type="primary"
+              icon={<UploadOutlined />}
+              loading={restoring}
+              disabled={!restoreFile}
+              onClick={doRestore}
+            >
+              恢复并重启
+            </Button>
+          </Space>
+        </Card>
+      </Col>
+    </Row>
   )
 }

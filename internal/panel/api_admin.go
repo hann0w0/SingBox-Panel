@@ -126,7 +126,17 @@ type serverReq struct {
 	Remark  string `json:"remark"`
 }
 
-const LatestAgentVersion = "v1.0.0"
+// latestAgentVersion is the agent build the panel currently serves. The panel
+// and its bundled agents are built from the same source at the same version, so
+// the panel's own version IS the newest agent available — a hardcoded constant
+// would drift the moment the panel is upgraded and wrongly flag every node as
+// "upgradable" to an older tag.
+func (a *App) latestAgentVersion() string {
+	if v := strings.TrimSpace(a.version); v != "" {
+		return v
+	}
+	return "v1.0.0" // dev builds with no ldflags version
+}
 
 func (a *App) listServers(c *gin.Context) {
 	var servers []model.Server
@@ -144,7 +154,7 @@ func (a *App) listServers(c *gin.Context) {
 	}
 	c.JSON(http.StatusOK, gin.H{
 		"servers":              servers,
-		"latest_agent_version": LatestAgentVersion,
+		"latest_agent_version": a.latestAgentVersion(),
 	})
 }
 

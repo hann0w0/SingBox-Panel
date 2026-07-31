@@ -757,6 +757,11 @@ func surgeProxy(n node, name string) string {
 		if st.DownMbps > 0 {
 			line += fmt.Sprintf(", download-bandwidth=%d", st.DownMbps)
 		}
+		// Surge takes the Salamander obfs password in its own field; without it
+		// an obfuscated server rejects the client.
+		if st.ObfsPassword != "" {
+			line += ", salamander-password=" + st.ObfsPassword
+		}
 		if st.TLS.ClientInsecure() {
 			line += ", skip-cert-verify=true"
 		}
@@ -773,12 +778,15 @@ func surgeProxy(n node, name string) string {
 		}
 		return line + ", udp-relay=true"
 	case "tuic":
+		// Surge's TUIC keyword is `tuic` (not tuic-v5) and it authenticates with
+		// a single `token=` field — NOT uuid/password. alpn is optional but must
+		// match the server; default to h3 which sing-box's TUIC uses.
 		alpn := firstOf(st.TLS.ALPN)
 		if alpn == "" {
 			alpn = "h3"
 		}
-		line := fmt.Sprintf("%s = tuic-v5, %s, %d, uuid=%s, password=%s, sni=%s, alpn=%s",
-			name, n.server, n.port, u.UUID, u.Password, sni, alpn)
+		line := fmt.Sprintf("%s = tuic, %s, %d, token=%s, sni=%s, alpn=%s",
+			name, n.server, n.port, u.Password, sni, alpn)
 		if st.TLS.ClientInsecure() {
 			line += ", skip-cert-verify=true"
 		}

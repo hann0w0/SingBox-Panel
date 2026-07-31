@@ -3,12 +3,14 @@ package panel
 import (
 	"archive/tar"
 	"compress/gzip"
+	"encoding/json"
 	"io"
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/gin-gonic/gin"
 	"github.com/glebarez/sqlite"
@@ -48,6 +50,35 @@ func TestSameVersion(t *testing.T) {
 		if got := sameVersion(c.a, c.b); got != c.want {
 			t.Errorf("sameVersion(%q,%q) = %v, want %v", c.a, c.b, got, c.want)
 		}
+	}
+}
+
+// maintenanceInfo must always report db_driver and a non-negative uptime, even
+// on the SQLite default where the driver is left blank in config.
+func TestMaintenanceInfoReportsDriverAndUptime(t *testing.T) {
+	a := &App{
+		cfg:       config.PanelConfig{Database: config.DatabaseConfig{Driver: ""}}, // blank => sqlite
+		db:        testDB(t),
+		version:   "v1.0.0",
+		startedAt: time.Now().Add(-90 * time.Second),
+	}
+	r := gin.New()
+	r.GET("/info", a.maintenanceInfo)
+	req := httptest.NewRequest(http.MethodGet, "/info", nil)
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d", w.Code)
+	}
+	var got map[string]any
+	if err := json.Unmarshal(w.Body.Bytes(), &got); err != nil {
+		t.Fatal(err)
+	}
+	if got["db_driver"] != "sqlite" {
+		t.Errorf("db_driver = %v, want sqlite", got["db_driver"])
+	}
+	if up, _ := got["uptime_seconds"].(float64); up < 80 {
+		t.Errorf("uptime_seconds = %v, want >= 80", got["uptime_seconds"])
 	}
 }
 

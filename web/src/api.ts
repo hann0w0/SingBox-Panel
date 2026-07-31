@@ -274,6 +274,8 @@ export interface MaintenanceInfo {
   latest_version?: string
   has_update?: boolean
   latest_error?: string
+  db_driver: string
+  uptime_seconds: number
 }
 export const getMaintenanceInfo = () =>
   http.get<MaintenanceInfo>('/api/admin/maintenance/info').then((r) => r.data)

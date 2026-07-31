@@ -547,3 +547,89 @@ func TestBuildRouteActionsAndRuleSets(t *testing.T) {
 		t.Fatalf("remote rule-set = %v", remote)
 	}
 }
+
+// QUIC outbounds (hysteria2/tuic) must NOT carry a utls block: sing-box's QUIC
+// dialer rejects uTLS at runtime with "unsupported usage for uTLS", so the node
+// passes `check` but never connects. TCP protocols must still get utls.
+func TestQUICOutboundsOmitUTLS(t *testing.T) {
+	tlsOn := TLSSettings{Enabled: true, ServerName: "example.com"}
+	user := ProxyUser{Name: "u", UUID: "bf000d23-0752-40b4-affe-68f7707a9661", Password: "pw"}
+
+	for _, typ := range []string{"hysteria2", "tuic"} {
+		raw, err := BuildClientOutbound(ClientNode{
+			Name: typ, Server: "1.2.3.4", ServerPort: 443, Type: typ, Settings: InboundSettings{TLS: tlsOn}, User: user,
+		})
+		if err != nil {
+			t.Fatalf("%s: %v", typ, err)
+		}
+		var m map[string]any
+		_ = json.Unmarshal(raw, &m)
+		tls, _ := m["tls"].(map[string]any)
+		if tls == nil {
+			t.Fatalf("%s: expected tls block", typ)
+		}
+		if _, hasUTLS := tls["utls"]; hasUTLS {
+			t.Errorf("%s outbound must not carry utls (QUIC rejects it at runtime)", typ)
+		}
+	}
+
+	// TCP protocol keeps utls.
+	raw, _ := BuildClientOutbound(ClientNode{
+		Name: "vless", Server: "1.2.3.4", ServerPort: 443, Type: "vless",
+		Settings: InboundSettings{TLS: tlsOn}, User: user,
+	})
+	var m map[string]any
+	_ = json.Unmarshal(raw, &m)
+	tls, _ := m["tls"].(map[string]any)
+	if _, hasUTLS := tls["utls"]; !hasUTLS {
+		t.Error("vless outbound must keep utls")
+	}
+}
+
+// hysteria2 is QUIC and has no v2ray transport; a ws transport on it (or on any
+// non vless/vmess/trojan type) must be rejected before it reaches the node.
+func TestWSTransportRejectedOnNonV2Ray(t *testing.T) {
+	err := InboundSettings{
+		TLS:       TLSSettings{Enabled: true},
+		Transport: TransportSettings{Type: "ws", Path: "/x"},
+	}.Validate("hysteria2")
+	if err == nil {
+		t.Fatal("expected ws transport on hysteria2 to be rejected")
+	}
+	// ws on vmess is fine.
+	if err := (InboundSettings{Transport: TransportSettings{Type: "ws", Path: "/x"}}).Validate("vmess"); err != nil {
+		t.Fatalf("ws on vmess should be allowed: %v", err)
+	}
+}
+
+// VLESS flow requires TLS/REALITY; plain-TCP + flow fails at runtime, so reject it.
+func TestVLESSFlowRequiresTLS(t *testing.T) {
+	if err := (InboundSettings{Flow: "xtls-rprx-vision"}).Validate("vless"); err == nil {
+		t.Fatal("expected vless flow without TLS to be rejected")
+	}
+	ok := InboundSettings{Flow: "xtls-rprx-vision", TLS: TLSSettings{Reality: RealitySettings{Enabled: true, HandshakeServer: "a.com", PrivateKey: "k"}}}
+	if err := ok.Validate("vless"); err != nil {
+		t.Fatalf("vless flow + REALITY should be allowed: %v", err)
+	}
+}
+
+// A trojan node on REALITY must produce a reality share link, not a plain-TLS
+// one (which would fail the handshake against a REALITY-only server).
+func TestTrojanRealityShareLink(t *testing.T) {
+	link, err := BuildShareLink(ClientNode{
+		Name: "t", Server: "1.2.3.4", ServerPort: 443, Type: "trojan",
+		Settings: InboundSettings{TLS: TLSSettings{Reality: RealitySettings{
+			Enabled: true, HandshakeServer: "www.microsoft.com", PublicKey: "PUBKEY", ShortID: []string{"abcd"},
+		}}},
+		User: ProxyUser{Password: "pw"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(link, "security=reality") || !strings.Contains(link, "pbk=PUBKEY") {
+		t.Errorf("trojan+reality link missing reality params: %s", link)
+	}
+	if strings.Contains(link, "security=tls") {
+		t.Errorf("trojan+reality link must not claim plain tls: %s", link)
+	}
+}

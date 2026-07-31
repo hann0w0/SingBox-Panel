@@ -1,5 +1,5 @@
 import { Button, Card, Descriptions, Space, Tag, Typography } from 'antd'
-import { ReloadOutlined } from '@ant-design/icons'
+import { ArrowUpOutlined, ReloadOutlined } from '@ant-design/icons'
 import type { Server } from '../../types'
 import { formatBytes } from '../../util'
 
@@ -28,7 +28,21 @@ export function ServerOverviewCard({
         <Space wrap style={{ rowGap: 4 }}>
           {server.name}
           {server.online ? <Tag color="green">在线</Tag> : <Tag>离线</Tag>}
-          {server.singbox_installed ? <Tag color="blue">{server.singbox_version}</Tag> : <Tag color="orange">未装 sing-box</Tag>}
+          {server.singbox_installed ? (
+            server.singbox_has_update ? (
+              <Tag
+                color="orange"
+                icon={<ArrowUpOutlined />}
+                title={`发现新版本 (${server.singbox_latest_version})`}
+              >
+                {server.singbox_version} (可升级)
+              </Tag>
+            ) : (
+              <Tag color="blue">{server.singbox_version}</Tag>
+            )
+          ) : (
+            <Tag color="orange">未装 sing-box</Tag>
+          )}
         </Space>
       )}
       extra={<Button icon={<ReloadOutlined />} loading={refreshing} onClick={onRefresh} title="刷新节点状态" aria-label="刷新节点状态" />}

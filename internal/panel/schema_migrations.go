@@ -37,7 +37,7 @@ var applicationMigrations = []schemaMigration{
 		version: 2,
 		name:    "node traffic accounting",
 		up: func(tx *gorm.DB) error {
-			return tx.AutoMigrate(&model.Server{}, &model.TrafficRecord{})
+			return tx.AutoMigrate(&model.Server{})
 		},
 	},
 	{

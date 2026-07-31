@@ -17,11 +17,6 @@ type ServerConfigInput struct {
 	Rules     []RuleInput
 	RuleSets  []RuleSetInput
 	Final     string
-
-	// StatsController enables the release-build Clash API on a loopback
-	// address. The panel Agent uses its cumulative counters; no dashboard or
-	// external listener is exposed.
-	StatsController string
 }
 
 // routeOut is the route block with a fixed key order: rules, then rule_set,
@@ -37,15 +32,10 @@ type routeOut struct {
 // own stats hook, not part of the proxy config). Marshaling a struct preserves
 // field order, unlike a map (which sorts keys alphabetically).
 type configOut struct {
-	Log          map[string]any    `json:"log"`
-	Inbounds     []json.RawMessage `json:"inbounds"`
-	Outbounds    []json.RawMessage `json:"outbounds"`
-	Route        routeOut          `json:"route"`
-	Experimental *experimentalOut  `json:"experimental,omitempty"`
-}
-
-type experimentalOut struct {
-	ClashAPI map[string]any `json:"clash_api"`
+	Log       map[string]any    `json:"log"`
+	Inbounds  []json.RawMessage `json:"inbounds"`
+	Outbounds []json.RawMessage `json:"outbounds"`
+	Route     routeOut          `json:"route"`
 }
 
 // BuildServerConfig renders a complete official sing-box config.json (1.13
@@ -126,11 +116,6 @@ func BuildServerConfig(in ServerConfigInput) ([]byte, error) {
 		Inbounds:  inbounds,
 		Outbounds: outbounds,
 		Route:     route,
-	}
-	if in.StatsController != "" {
-		cfg.Experimental = &experimentalOut{ClashAPI: map[string]any{
-			"external_controller": in.StatsController,
-		}}
 	}
 
 	return json.MarshalIndent(cfg, "", "  ")

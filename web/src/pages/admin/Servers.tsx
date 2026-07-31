@@ -1,14 +1,16 @@
 import { useEffect, useState, type DragEvent } from 'react'
 import { Alert, Button, Card, Form, Input, Modal, Space, Table, Tag, Typography, message } from 'antd'
-import { DeleteOutlined, EditOutlined, PlusOutlined } from '@ant-design/icons'
+import { ArrowUpOutlined, DeleteOutlined, EditOutlined, PlusOutlined, ReloadOutlined } from '@ant-design/icons'
 import { useNavigate } from 'react-router-dom'
-import { createServer, deleteServer, errMsg, listServers, updateServer, updateServerOrder } from '../../api'
+import { createServer, deleteServer, errMsg, getServersMeta, updateAllAgents, updateServer, updateServerOrder } from '../../api'
 import type { Server } from '../../types'
 
 export default function Servers() {
   const nav = useNavigate()
   const [servers, setServers] = useState<Server[]>([])
+  const [latestAgentVer, setLatestAgentVer] = useState<string>('v1.0.0')
   const [loading, setLoading] = useState(false)
+  const [updatingAll, setUpdatingAll] = useState(false)
   const [open, setOpen] = useState(false)
   const [editing, setEditing] = useState<Server | null>(null)
   const [sorting, setSorting] = useState(false)
@@ -16,10 +18,35 @@ export default function Servers() {
   const [dropTarget, setDropTarget] = useState<{ id: number; after: boolean } | null>(null)
   const [form] = Form.useForm()
 
+  const handleUpdateAllAgents = () => {
+    Modal.confirm({
+      title: '批量更新 Agent',
+      content: '确定要向所有在线服务器发派 Agent 升级指令吗？',
+      okText: '确认更新',
+      onOk: async () => {
+        setUpdatingAll(true)
+        try {
+          const res = await updateAllAgents()
+          message.success(res.message || '升级指令已下发')
+          load()
+        } catch (e) {
+          message.error(errMsg(e))
+        } finally {
+          setUpdatingAll(false)
+        }
+      },
+    })
+  }
+
   const load = () => {
     setLoading(true)
-    listServers()
-      .then(setServers)
+    getServersMeta()
+      .then((res) => {
+        setServers(res.servers)
+        if (res.latest_agent_version) {
+          setLatestAgentVer(res.latest_agent_version)
+        }
+      })
       .catch((e) => message.error(errMsg(e)))
       .finally(() => setLoading(false))
   }
@@ -140,13 +167,22 @@ export default function Servers() {
     }
   }
 
+  const outdatedServers = servers.filter(
+    (s) => s.online && s.agent_version && s.agent_version !== latestAgentVer
+  )
+
   return (
     <Card
       title="服务器"
       extra={
-        <Button type="primary" icon={<PlusOutlined />} onClick={openCreate}>
-          新增服务器
-        </Button>
+        <Space>
+          <Button icon={<ReloadOutlined />} onClick={handleUpdateAllAgents} loading={updatingAll}>
+            更新全部 Agent
+          </Button>
+          <Button type="primary" icon={<PlusOutlined />} onClick={openCreate}>
+            新增服务器
+          </Button>
+        </Space>
       }
     >
       <Table
@@ -222,8 +258,37 @@ export default function Servers() {
           {
             title: 'sing-box',
             responsive: ['sm'],
-            render: (_, s: Server) =>
-              s.singbox_installed ? <Tag color="blue">{s.singbox_version || '已安装'}</Tag> : <Tag color="orange">未安装</Tag>,
+            render: (_, s: Server) => {
+              if (!s.singbox_installed) return <Tag color="orange">未安装</Tag>
+              const versionStr = s.singbox_version || '已安装'
+              if (s.singbox_has_update) {
+                return (
+                  <Tag
+                    color="orange"
+                    icon={<ArrowUpOutlined />}
+                    title={`发现新版本 (${s.singbox_latest_version || '可升级'})，点击可进入详情升级`}
+                  >
+                    {versionStr} (可升级)
+                  </Tag>
+                )
+              }
+              return <Tag color="blue">{versionStr}</Tag>
+            },
+          },
+          {
+            title: 'Agent',
+            responsive: ['sm'],
+            render: (_, s: Server) => {
+              if (!s.agent_version) return <Tag>—</Tag>
+              const isOutdated = s.online && s.agent_version !== latestAgentVer
+              return isOutdated ? (
+                <Tag color="orange" title={`可升级至 ${latestAgentVer}`}>
+                  {s.agent_version} (可升级)
+                </Tag>
+              ) : (
+                <Tag color="purple">{s.agent_version}</Tag>
+              )
+            },
           },
           {
             title: '',

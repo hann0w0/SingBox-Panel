@@ -20,7 +20,6 @@ type Reconciler struct {
 	interval       time.Duration
 	active         map[uint]bool
 	onAccessChange func([]uint)
-	lastPrune      time.Time
 }
 
 // NewReconciler builds a Reconciler.
@@ -46,7 +45,7 @@ func (r *Reconciler) Run(ctx context.Context) {
 func (r *Reconciler) tick() {
 	now := time.Now()
 	var users []model.User
-	if err := r.db.Where("role = ?", model.RoleUser).Find(&users).Error; err != nil {
+	if err := r.db.Find(&users).Error; err != nil {
 		return
 	}
 
@@ -65,13 +64,6 @@ func (r *Reconciler) tick() {
 	for id := range r.active {
 		if !seen[id] {
 			delete(r.active, id)
-		}
-	}
-	if r.lastPrune.IsZero() || now.Sub(r.lastPrune) >= 24*time.Hour {
-		if err := pruneTrafficRecords(r.db, now); err != nil {
-			log.Printf("reconciler: prune traffic history: %v", err)
-		} else {
-			r.lastPrune = now
 		}
 	}
 }

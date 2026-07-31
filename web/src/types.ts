@@ -32,6 +32,8 @@ export interface Server {
   singbox_installed: boolean
   singbox_version: string
   singbox_active: boolean
+  singbox_has_update?: boolean
+  singbox_latest_version?: string
   uptime: number
   load1: number
   mem_used: number
@@ -42,22 +44,6 @@ export interface Server {
   inbounds?: Inbound[]
   created_at: string
   updated_at: string
-}
-
-export interface TrafficPoint {
-  time: string
-  upload: number
-  download: number
-}
-
-export type TrafficRange = '1h' | '12h' | '24h' | '7d' | '30d'
-
-export interface TrafficSeries {
-  available: boolean
-  range: TrafficRange
-  step_seconds: number
-  updated_at: string | null
-  points: TrafficPoint[]
 }
 
 export type InboundType =

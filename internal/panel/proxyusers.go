@@ -45,7 +45,7 @@ func proxyUsersForInbound(db *gorm.DB, inbound *model.Inbound, settings singbox.
 		return nil, nil
 	}
 	var users []model.User
-	if err := db.Where("role = ? AND enabled = ?", model.RoleUser, true).Order("id").Find(&users).Error; err != nil {
+	if err := db.Where("enabled = ?", true).Order("id").Find(&users).Error; err != nil {
 		return nil, err
 	}
 	now := time.Now()

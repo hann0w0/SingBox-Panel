@@ -233,36 +233,12 @@ func equivalentJSON(left, right []byte) bool {
 	if json.Unmarshal(left, &leftValue) != nil || json.Unmarshal(right, &rightValue) != nil {
 		return false
 	}
-	removeInternalTrafficAPI(leftValue)
-	removeInternalTrafficAPI(rightValue)
 	leftCanonical, err := json.Marshal(leftValue)
 	if err != nil {
 		return false
 	}
 	rightCanonical, err := json.Marshal(rightValue)
 	return err == nil && string(leftCanonical) == string(rightCanonical)
-}
-
-// removeInternalTrafficAPI ignores only the exact loopback endpoint the panel
-// injects into managed configs. Any other experimental field remains part of
-// the lossless comparison and therefore keeps the source in raw mode.
-func removeInternalTrafficAPI(value any) {
-	root, ok := value.(map[string]any)
-	if !ok {
-		return
-	}
-	experimental, ok := root["experimental"].(map[string]any)
-	if !ok {
-		return
-	}
-	clashAPI, ok := experimental["clash_api"].(map[string]any)
-	if !ok || len(clashAPI) != 1 || clashAPI["external_controller"] != protocol.LocalTrafficAddress {
-		return
-	}
-	delete(experimental, "clash_api")
-	if len(experimental) == 0 {
-		delete(root, "experimental")
-	}
 }
 
 func deleteRowsExcept(tx *gorm.DB, serverID uint, keepIDs []uint, row any) error {

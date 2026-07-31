@@ -10,7 +10,6 @@ const Overview = lazy(() => import('./pages/admin/Overview'))
 const Servers = lazy(() => import('./pages/admin/Servers'))
 const ServerDetail = lazy(() => import('./pages/admin/ServerDetail'))
 const Logs = lazy(() => import('./pages/admin/Logs'))
-const Traffic = lazy(() => import('./pages/admin/Traffic'))
 const Users = lazy(() => import('./pages/admin/Users'))
 const Dashboard = lazy(() => import('./pages/user/Dashboard'))
 
@@ -50,7 +49,6 @@ export default function App() {
           <Route path="/admin/servers/:id" element={<AdminGuard><ServerDetail /></AdminGuard>} />
           <Route path="/admin/users" element={<AdminGuard><Users /></AdminGuard>} />
           <Route path="/admin/logs" element={<AdminGuard><Logs /></AdminGuard>} />
-          <Route path="/admin/traffic" element={<AdminGuard><Traffic /></AdminGuard>} />
         </Route>
         <Route path="*" element={<Navigate to="/" replace />} />
       </Routes>

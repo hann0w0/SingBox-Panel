@@ -14,8 +14,6 @@ import type {
   Server,
   StatusData,
   User,
-  TrafficRange,
-  TrafficSeries,
 } from './types'
 
 const http = axios.create({ baseURL: '' })
@@ -89,7 +87,9 @@ interface ServerBody {
   remark?: string
 }
 export const listServers = () =>
-  http.get<{ servers: Server[] }>('/api/admin/servers').then((r) => r.data.servers)
+  http.get<{ servers: Server[]; latest_agent_version: string }>('/api/admin/servers').then((r) => r.data.servers)
+export const getServersMeta = () =>
+  http.get<{ servers: Server[]; latest_agent_version: string }>('/api/admin/servers').then((r) => r.data)
 export const createServer = (body: ServerBody) =>
   http.post<{ server: Server; install_command: string; public_url: string }>('/api/admin/servers', body).then((r) => r.data)
 export const getServer = (id: number) =>
@@ -107,14 +107,14 @@ export const serviceAction = (id: number, action: string) =>
   http.post<{ ok: boolean; output: string }>(`/api/admin/servers/${id}/service`, { action }).then((r) => r.data)
 export const updateAgent = (id: number) =>
   http.post<{ ok: boolean; output: string }>(`/api/admin/servers/${id}/update-agent`).then((r) => r.data)
+export const updateAllAgents = () =>
+  http.post<{ ok: boolean; message: string; count: number }>('/api/admin/servers/update-all-agents').then((r) => r.data)
 export const setConfigMode = (id: number, mode: 'managed') =>
   http.post<{ ok: boolean; config_mode: string }>(`/api/admin/servers/${id}/config-mode`, { mode }).then((r) => r.data)
 export const serverLogs = (id: number, lines = 200) =>
   http.get<{ text: string }>(`/api/admin/servers/${id}/logs`, { params: { lines } }).then((r) => r.data.text)
 export const serverStatus = (id: number) =>
   http.get<{ status: StatusData }>(`/api/admin/servers/${id}/status`).then((r) => r.data.status)
-export const getServerTraffic = (id: number, range: TrafficRange = '24h') =>
-  http.get<TrafficSeries>(`/api/admin/servers/${id}/traffic`, { params: { range } }).then((r) => r.data)
 export const remoteConfig = (id: number) =>
   http.get<RemoteConfig>(`/api/admin/servers/${id}/remote-config`).then((r) => r.data)
 export const applyRawConfig = (id: number, config: string) =>

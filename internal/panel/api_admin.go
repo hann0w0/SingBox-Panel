@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 	"strconv"
 	"strings"
@@ -125,15 +126,26 @@ type serverReq struct {
 	Remark  string `json:"remark"`
 }
 
+const LatestAgentVersion = "v1.0.0"
+
 func (a *App) listServers(c *gin.Context) {
 	var servers []model.Server
 	// Inbounds are preloaded so the admin UI can offer per-protocol access.
 	a.db.Preload("Inbounds").Order("id").Find(&servers)
 	applyServerOrder(a.db, servers)
+	releases := getLatestSingboxReleases()
 	for i := range servers {
 		servers[i].Online = a.hub.IsOnline(servers[i].ID)
+		if servers[i].SingboxInstalled && servers[i].SingboxVersion != "" {
+			hasUp, latest := checkSingboxUpdate(servers[i].SingboxVersion, releases)
+			servers[i].SingboxHasUpdate = hasUp
+			servers[i].SingboxLatestVersion = latest
+		}
 	}
-	c.JSON(http.StatusOK, gin.H{"servers": servers})
+	c.JSON(http.StatusOK, gin.H{
+		"servers":              servers,
+		"latest_agent_version": LatestAgentVersion,
+	})
 }
 
 func (a *App) createServer(c *gin.Context) {
@@ -180,6 +192,12 @@ func (a *App) getServer(c *gin.Context) {
 		return
 	}
 	srv.Online = a.hub.IsOnline(srv.ID)
+	if srv.SingboxInstalled && srv.SingboxVersion != "" {
+		releases := getLatestSingboxReleases()
+		hasUp, latest := checkSingboxUpdate(srv.SingboxVersion, releases)
+		srv.SingboxHasUpdate = hasUp
+		srv.SingboxLatestVersion = latest
+	}
 	c.JSON(http.StatusOK, gin.H{
 		"server":          srv,
 		"install_command": installCommand(a.baseURL(), srv.AgentToken),
@@ -400,6 +418,35 @@ func (a *App) updateAgent(c *gin.Context) {
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"ok": true, "output": res.Output})
+}
+
+func (a *App) updateAllAgents(c *gin.Context) {
+	var servers []model.Server
+	if err := a.db.Where("online = ?", true).Find(&servers).Error; err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+	if len(servers) == 0 {
+		c.JSON(http.StatusOK, gin.H{"ok": true, "message": "当前没有在线的服务器", "count": 0})
+		return
+	}
+
+	count := 0
+	for i := range servers {
+		srv := &servers[i]
+		go func(serverID uint) {
+			ctx, cancel := context.WithTimeout(context.Background(), 3*time.Minute)
+			defer cancel()
+			_, _ = a.hub.SendCommand(ctx, serverID, protocol.CmdUpdateAgent, nil)
+		}(srv.ID)
+		count++
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"ok":      true,
+		"message": fmt.Sprintf("已成功向 %d 台在线服务器下发 Agent 更新指令", count),
+		"count":   count,
+	})
 }
 
 func (a *App) serverStatus(c *gin.Context) {

@@ -19,15 +19,16 @@ RUN apk add --no-cache git
 COPY go.mod go.sum ./
 RUN go mod download
 COPY . .
-ARG VERSION=docker
+ARG VERSION=v1.0.0
+ARG AGENT_VERSION=v1.0.0
 ARG TARGETOS
 ARG TARGETARCH
 # panel binary (cross-compiled to the image's target platform)
 RUN GOOS=${TARGETOS} GOARCH=${TARGETARCH} go build -ldflags "-s -w -X main.version=${VERSION}" -o /out/singbox-panel ./cmd/panel
 # agent binaries served to VPSes
 RUN mkdir -p /out/agents && \
-    GOOS=linux GOARCH=amd64 go build -ldflags "-s -w -X main.version=${VERSION}" -o /out/agents/singbox-panel-agent-linux-amd64 ./cmd/agent && \
-    GOOS=linux GOARCH=arm64 go build -ldflags "-s -w -X main.version=${VERSION}" -o /out/agents/singbox-panel-agent-linux-arm64 ./cmd/agent
+    GOOS=linux GOARCH=amd64 go build -ldflags "-s -w -X main.version=${AGENT_VERSION}" -o /out/agents/singbox-panel-agent-linux-amd64 ./cmd/agent && \
+    GOOS=linux GOARCH=arm64 go build -ldflags "-s -w -X main.version=${AGENT_VERSION}" -o /out/agents/singbox-panel-agent-linux-arm64 ./cmd/agent
 
 # ---- runtime ----
 FROM alpine:3.20

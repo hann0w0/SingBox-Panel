@@ -121,25 +121,15 @@ type Server struct {
 	Kernel           string     `gorm:"size:64" json:"kernel"`
 	PublicIP         string     `gorm:"size:64" json:"public_ip"`
 	AgentVersion     string     `gorm:"size:64" json:"agent_version"`
-	SingboxInstalled bool       `json:"singbox_installed"`
-	SingboxVersion   string     `gorm:"size:32" json:"singbox_version"`
-	SingboxActive    bool       `json:"singbox_active"`
+	SingboxInstalled     bool   `json:"singbox_installed"`
+	SingboxVersion       string `gorm:"size:32" json:"singbox_version"`
+	SingboxActive        bool   `json:"singbox_active"`
+	SingboxHasUpdate     bool   `gorm:"-" json:"singbox_has_update,omitempty"`
+	SingboxLatestVersion string `gorm:"-" json:"singbox_latest_version,omitempty"`
 	Uptime           int64      `json:"uptime"`
 	Load1            float64    `json:"load1"`
 	MemUsed          uint64     `json:"mem_used"`
 	MemTotal         uint64     `json:"mem_total"`
-
-	// Proxy traffic reported from sing-box's loopback-only Clash API. Totals are
-	// monotonic across sing-box and Agent restarts because the panel converts the
-	// remote process counters into deltas before persisting them.
-	TrafficAvailable      bool       `gorm:"index" json:"traffic_available"`
-	TrafficUpload         uint64     `json:"traffic_upload"`
-	TrafficDownload       uint64     `json:"traffic_download"`
-	TrafficUploadRate     uint64     `json:"traffic_upload_rate"`
-	TrafficDownloadRate   uint64     `json:"traffic_download_rate"`
-	TrafficUpdatedAt      *time.Time `json:"traffic_updated_at"`
-	TrafficRemoteUpload   uint64     `json:"-"`
-	TrafficRemoteDownload uint64     `json:"-"`
 
 	// FinalOutbound is the default route target (default "direct").
 	FinalOutbound string `gorm:"size:64" json:"final_outbound"`
@@ -257,23 +247,6 @@ type Setting struct {
 	Value string `json:"value"`
 }
 
-// TrafficRecord is one raw accounting bucket. Node totals currently use
-// five-minute buckets and are aggregated to the requested chart interval.
-// Server-only rows use InboundID=0 and UserID=0. The extra scope columns
-// reserve a lossless path for protocol/user counters when the installed
-// sing-box build exposes them; node totals work with the official Clash API.
-type TrafficRecord struct {
-	ID        uint      `gorm:"primaryKey" json:"id"`
-	ServerID  uint      `gorm:"not null;uniqueIndex:idx_traffic_bucket,priority:1;index" json:"server_id"`
-	InboundID uint      `gorm:"not null;default:0;uniqueIndex:idx_traffic_bucket,priority:2;index" json:"inbound_id"`
-	UserID    uint      `gorm:"not null;default:0;uniqueIndex:idx_traffic_bucket,priority:3;index" json:"user_id"`
-	Bucket    time.Time `gorm:"not null;uniqueIndex:idx_traffic_bucket,priority:4;index" json:"bucket"`
-	Upload    uint64    `gorm:"not null;default:0" json:"upload"`
-	Download  uint64    `gorm:"not null;default:0" json:"download"`
-	CreatedAt time.Time `json:"created_at"`
-	UpdatedAt time.Time `json:"updated_at"`
-}
-
 // SchemaMigration records one successfully-applied database schema change.
 // It deliberately lives outside AllModels: the migration runner bootstraps
 // this table before it applies any application schema.
@@ -287,7 +260,7 @@ type SchemaMigration struct {
 // AllModels lists every entity for AutoMigrate.
 func AllModels() []any {
 	return []any{
-		&User{}, &Server{}, &Inbound{}, &Outbound{}, &RouteRule{}, &RuleSet{}, &Setting{}, &TrafficRecord{},
+		&User{}, &Server{}, &Inbound{}, &Outbound{}, &RouteRule{}, &RuleSet{}, &Setting{},
 	}
 }
 

@@ -20,7 +20,10 @@ COPY go.mod go.sum ./
 RUN go mod download
 COPY . .
 ARG VERSION=v1.0.0
-ARG AGENT_VERSION=v1.0.0
+# Agent version defaults to the panel VERSION so the served agents always match
+# the panel that ships them; callers only need to pass VERSION. Override
+# AGENT_VERSION explicitly only to pin a different agent build.
+ARG AGENT_VERSION=${VERSION}
 ARG TARGETOS
 ARG TARGETARCH
 # panel binary (cross-compiled to the image's target platform)

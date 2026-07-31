@@ -18,6 +18,7 @@ import (
 	"github.com/glebarez/sqlite"
 	"gorm.io/gorm"
 
+	"github.com/hann0w0/singbox-panel/internal/config"
 	"github.com/hann0w0/singbox-panel/internal/model"
 	"github.com/hann0w0/singbox-panel/internal/protocol"
 	"github.com/hann0w0/singbox-panel/internal/singbox"
@@ -839,8 +840,15 @@ func TestFrontendServesBundledClientLogos(t *testing.T) {
 	}
 	t.Setenv("SINGBOX_PANEL_WEB_DIR", dir)
 
+	// 走一遍真实的 config 加载：二进制安装就是靠这个环境变量把 web/dist
+	// 指到 /opt 下面的，直接构造 App{} 会跳过这条链路。
+	cfg, err := config.Load("")
+	if err != nil {
+		t.Fatal(err)
+	}
+
 	r := gin.New()
-	(&App{}).mountFrontend(r)
+	(&App{cfg: cfg}).mountFrontend(r)
 	req := httptest.NewRequest(http.MethodGet, "/logos/clashmeta.png", nil)
 	w := httptest.NewRecorder()
 	r.ServeHTTP(w, req)

@@ -35,10 +35,15 @@ jobs:
           go-version-file: go.mod
           cache: true
 
+      # 发版前先跑测试：标签一旦推上去就无法收回，构建失败好过发出坏包。
+      - name: Test backend
+        run: go test ./...
+
       - name: Build frontend
         working-directory: web
         run: |
           npm ci
+          npm run typecheck
           npm run build
 
       - name: Build panel binaries (amd64 + arm64)
@@ -72,23 +77,25 @@ jobs:
             -o dist/agents/singbox-panel-agent-linux-arm64 \
             ./cmd/agent
 
-      - name: Package agents tarball
+      # 打包必须全部先于校验和计算，否则漏进 checksums.txt 的产物在安装时
+      # 会静默跳过校验。
+      - name: Package tarballs
         run: |
           tar -czf dist/singbox-panel-agents-${{ github.ref_name }}.tar.gz \
             -C dist/agents .
+          tar -czf dist/singbox-panel-web-${{ github.ref_name }}.tar.gz \
+            -C web/dist .
 
       - name: Compute checksums
         run: |
-          cd dist/panel
-          sha256sum singbox-panel-linux-amd64 singbox-panel-linux-arm64 > ../checksums.txt
-          cd ..
-          sha256sum singbox-panel-agents-${{ github.ref_name }}.tar.gz >> checksums.txt
+          cd dist
+          sha256sum \
+            panel/singbox-panel-linux-amd64 \
+            panel/singbox-panel-linux-arm64 \
+            singbox-panel-agents-${{ github.ref_name }}.tar.gz \
+            singbox-panel-web-${{ github.ref_name }}.tar.gz \
+            | sed 's#panel/##' > checksums.txt
           cat checksums.txt
-
-      - name: Package frontend web dist
-        run: |
-          tar -czf dist/singbox-panel-web-${{ github.ref_name }}.tar.gz \
-            -C web/dist .
 
       - name: Create / update GitHub Release and upload assets
         uses: softprops/action-gh-release@v2

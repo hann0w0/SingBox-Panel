@@ -1,0 +1,11 @@
+.git
+.gitignore
+.DS_Store
+data
+dist
+web/dist
+web/node_modules
+deploy/.env
+deploy/panel.yaml
+*.db
+*.db-journal

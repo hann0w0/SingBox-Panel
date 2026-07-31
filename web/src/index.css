@@ -1,0 +1,90 @@
+html,
+body,
+#root {
+  height: 100%;
+}
+
+body {
+  margin: 0;
+}
+
+/* Prevent accidental horizontal page scrolling on small screens. */
+#root {
+  overflow-x: hidden;
+}
+
+/* Keep modals within the viewport on phones. */
+.ant-modal {
+  max-width: calc(100vw - 16px);
+}
+
+/* Long code / preformatted blocks scroll instead of overflowing the page. */
+pre {
+  overflow-x: auto;
+}
+
+.server-drag-handle {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  color: #b8bec8;
+  cursor: grab;
+  user-select: none;
+  touch-action: none;
+  vertical-align: middle;
+}
+
+.server-drag-column {
+  padding-inline: 8px !important;
+}
+
+.server-drag-bars {
+  display: inline-flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.server-drag-bars i {
+  display: block;
+  width: 14px;
+  height: 1.5px;
+  border-radius: 2px;
+  background: currentColor;
+}
+
+
+.server-drag-handle:hover {
+  color: #597ef7;
+}
+
+.server-drag-handle:active {
+  cursor: grabbing;
+}
+
+.server-row-dragging > td {
+  opacity: 0.45;
+}
+
+.server-row-drop-before > td {
+  box-shadow: inset 0 2px 0 #597ef7;
+}
+
+.server-row-drop-after > td {
+  box-shadow: inset 0 -2px 0 #597ef7;
+}
+
+/* The date+time popup is ~457px wide (288px date panel + 3 time columns), which
+   overflows a phone and pushes the prev-month/prev-year controls and the first
+   date column off-screen. Let it shrink and scroll inside the viewport. */
+@media (max-width: 480px) {
+  .ant-picker-dropdown {
+    max-width: calc(100vw - 16px);
+    left: 8px !important;
+  }
+  .ant-picker-dropdown .ant-picker-panel-container {
+    max-width: calc(100vw - 16px);
+    overflow-x: auto;
+  }
+}

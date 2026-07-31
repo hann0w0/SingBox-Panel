@@ -1,0 +1,37 @@
+# SingPanel 面板配置示例。复制为 panel.yaml 并按需修改。
+# 所有字段也可用环境变量覆盖（SINGPANEL_*）。
+
+# HTTP 监听端口（启动时绑定，修改后需重启面板）。放在 Caddy/Nginx + CF 反代之后时，
+# 这是内部端口，Caddy 反代到 127.0.0.1:32334 即可。也可用环境变量 SINGPANEL_LISTEN=":32334"。
+listen: ":32334"
+
+# 面板对外访问地址（面板 + 订阅 + Agent 都走它）。
+# 用于生成订阅链接与 Agent 一键安装命令；修改后需重启面板。
+base_url: "https://panel.example.com"
+
+# JWT 签名密钥。留空则每次启动随机生成（登录态在重启后失效）。生产务必设置为长随机串。
+# Leave empty to auto-generate an ephemeral key (sessions drop on restart).
+# For production set a strong one:  openssl rand -hex 32
+jwt_secret: ""
+
+# 预编译的 Agent 二进制目录（一键安装脚本从这里下载）。执行 `make agents` 生成。
+agents_dir: "./dist/agents"
+
+database:
+  # sqlite | mysql | postgres
+  driver: sqlite
+  # sqlite: 文件路径；mysql/postgres: 完整 DSN
+  dsn: "./data/singpanel.db"
+  # mysql 示例:   "user:pass@tcp(127.0.0.1:3306)/singpanel?charset=utf8mb4&parseTime=True&loc=Local"
+  # postgres 示例: "host=127.0.0.1 user=singpanel password=pass dbname=singpanel port=5432 sslmode=disable"
+
+# 首个管理员（仅在数据库为空时创建）。password 留空则首次启动时打印随机密码到日志。
+admin:
+  email: "admin@example.com"
+  password: "admin123"
+
+subscription:
+  path_prefix: "/api/sub"
+  # 订阅基础模板。用户订阅时把其节点注入这些模板（保留其中的规则/DNS/分组），
+  # 分组里的 use:server / policy-path=订阅链接 会自动改为 include-all-proxies。
+  # 留空或文件不存在则回退到内置最小配置。

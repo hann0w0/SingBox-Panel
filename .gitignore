@@ -1,0 +1,21 @@
+# build output
+/dist/
+/web/dist/
+/agent
+/panel
+/singpanel
+
+# runtime data
+/data/
+*.db
+*.db-journal
+
+# node
+/web/node_modules/
+
+# local config with secrets
+/deploy/panel.yaml
+/deploy/.env
+
+# os
+.DS_Store

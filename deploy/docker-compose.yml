@@ -1,0 +1,30 @@
+name: singbox-panel
+
+services:
+  singbox-panel:
+    # 可选的手动 Compose 部署；一键安装脚本本身只使用 docker pull/run。
+    image: "${SINGPANEL_IMAGE:-hann0w0/singbox-panel}:${SINGPANEL_TAG:-latest}"
+    container_name: singbox-panel
+    restart: unless-stopped
+    logging:
+      driver: local
+      options:
+        max-size: 10m
+        max-file: "3"
+    ports:
+      # 面板仅供宿主机反向代理访问，不开放公网 IP 直连。
+      - "127.0.0.1:${PANEL_PORT:-32334}:32334"
+    environment:
+      # 管理员账号/密码（用户名登录），仅在空库首次启动时创建。
+      ADMIN: "${ADMIN:-admin}"
+      ADMIN_PASSWORD: "${ADMIN_PASSWORD:-}"
+      # 面板/订阅/Agent 都走这个域名。
+      WEB: "${WEB:?set the HTTPS panel domain in deploy/.env}"
+      # 登录令牌签名密钥。留空时面板会在数据卷内自动生成并持久化（重启不掉线）。
+      # 多副本部署或想自己指定时，可在 .env 设置（openssl rand -hex 32）。
+      JWT_SECRET: "${JWT_SECRET:-}"
+    volumes:
+      - data:/data
+
+volumes:
+  data:

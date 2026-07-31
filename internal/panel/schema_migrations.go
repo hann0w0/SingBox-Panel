@@ -1,0 +1,257 @@
+package panel
+
+import (
+	"fmt"
+	"log"
+	"os"
+	"path/filepath"
+	"sort"
+	"strings"
+	"time"
+
+	"gorm.io/gorm"
+
+	"github.com/hann0w0/singbox-panel/internal/config"
+	"github.com/hann0w0/singbox-panel/internal/model"
+)
+
+// schemaMigration is one ordered, atomic application-schema change. Migration
+// functions may use GORM's cross-database Migrator for DDL, but unlike the old
+// unconditional AutoMigrate call they only run once and their version is
+// persisted.
+type schemaMigration struct {
+	version uint
+	name    string
+	up      func(*gorm.DB) error
+}
+
+var applicationMigrations = []schemaMigration{
+	{
+		version: 1,
+		name:    "baseline schema",
+		up: func(tx *gorm.DB) error {
+			return tx.AutoMigrate(model.AllModels()...)
+		},
+	},
+	{
+		version: 2,
+		name:    "node traffic accounting",
+		up: func(tx *gorm.DB) error {
+			return tx.AutoMigrate(&model.Server{}, &model.TrafficRecord{})
+		},
+	},
+	{
+		version: 3,
+		name:    "multi-user credential seeds",
+		up: func(tx *gorm.DB) error {
+			if err := tx.AutoMigrate(&model.User{}); err != nil {
+				return err
+			}
+			var users []model.User
+			if err := tx.Where("proxy_token = '' OR proxy_token IS NULL").Find(&users).Error; err != nil {
+				return err
+			}
+			for i := range users {
+				if err := tx.Model(&model.User{}).Where("id = ?", users[i].ID).
+					Update("proxy_token", randHex(32)).Error; err != nil {
+					return err
+				}
+			}
+			// Preserve every pre-feature inbound as single-credential. Multi-user
+			// is opt-in after upgrade and never silently changes live credentials.
+			return migrateSingleUserInbounds(tx)
+		},
+	},
+}
+
+// runSchemaMigrations applies every pending migration in order. If any
+// migration fails the transaction is rolled back and InitDB returns the error,
+// so the panel never starts on a partially-upgraded schema.
+func runSchemaMigrations(db *gorm.DB, cfg config.DatabaseConfig) error {
+	migrations, err := validateMigrations(applicationMigrations)
+	if err != nil {
+		return err
+	}
+
+	hasVersionTable := db.Migrator().HasTable(&model.SchemaMigration{})
+	applied := map[uint]bool{}
+	if hasVersionTable {
+		var rows []model.SchemaMigration
+		if err := db.Order("version").Find(&rows).Error; err != nil {
+			return fmt.Errorf("read schema version: %w", err)
+		}
+		for _, row := range rows {
+			if row.Dirty {
+				return fmt.Errorf("database schema migration %d (%s) is marked dirty; restore the pre-migration backup before starting", row.Version, row.Name)
+			}
+			applied[row.Version] = true
+		}
+	}
+	known := make(map[uint]bool, len(migrations))
+	for _, migration := range migrations {
+		known[migration.version] = true
+	}
+	for version := range applied {
+		if !known[version] {
+			return fmt.Errorf("database schema version %d is newer than or unknown to this panel binary", version)
+		}
+	}
+	missingEarlier := false
+	for _, migration := range migrations {
+		if !applied[migration.version] {
+			missingEarlier = true
+			continue
+		}
+		if missingEarlier {
+			return fmt.Errorf("database schema history is not an ordered prefix: version %d is applied after a missing migration", migration.version)
+		}
+	}
+
+	pending := make([]schemaMigration, 0, len(migrations))
+	for _, migration := range migrations {
+		if !applied[migration.version] {
+			pending = append(pending, migration)
+		}
+	}
+	if len(pending) == 0 {
+		return nil
+	}
+
+	// A consistent SQLite snapshot is taken before the first schema write. A
+	// backup failure is fatal: continuing would remove the promised recovery
+	// point from the upgrade path.
+	if strings.EqualFold(cfg.Driver, "sqlite") || cfg.Driver == "" {
+		backup, err := backupSQLiteBeforeMigration(db, cfg.DSN, pending[len(pending)-1].version)
+		if err != nil {
+			return fmt.Errorf("backup sqlite before migration: %w", err)
+		}
+		if backup != "" {
+			log.Printf("database backup created: %s", backup)
+		}
+	}
+
+	if !hasVersionTable {
+		if err := db.Migrator().CreateTable(&model.SchemaMigration{}); err != nil {
+			return fmt.Errorf("create schema_migrations: %w", err)
+		}
+	}
+
+	for _, migration := range pending {
+		dirty := model.SchemaMigration{Version: migration.version, Name: migration.name, Dirty: true}
+		if err := db.Create(&dirty).Error; err != nil {
+			return fmt.Errorf("mark schema migration %d dirty: %w", migration.version, err)
+		}
+		err := db.Transaction(func(tx *gorm.DB) error {
+			if err := migration.up(tx); err != nil {
+				return err
+			}
+			return tx.Model(&model.SchemaMigration{}).Where("version = ?", migration.version).Updates(map[string]any{
+				"dirty":      false,
+				"applied_at": time.Now(),
+			}).Error
+		})
+		if err != nil {
+			return fmt.Errorf("schema migration %d (%s): %w", migration.version, migration.name, err)
+		}
+		log.Printf("database schema migrated to version %d (%s)", migration.version, migration.name)
+	}
+	return nil
+}
+
+func validateMigrations(source []schemaMigration) ([]schemaMigration, error) {
+	migrations := append([]schemaMigration(nil), source...)
+	sort.Slice(migrations, func(i, j int) bool { return migrations[i].version < migrations[j].version })
+	for i, migration := range migrations {
+		if migration.version == 0 || strings.TrimSpace(migration.name) == "" || migration.up == nil {
+			return nil, fmt.Errorf("invalid schema migration at index %d", i)
+		}
+		if i > 0 && migrations[i-1].version == migration.version {
+			return nil, fmt.Errorf("duplicate schema migration version %d", migration.version)
+		}
+	}
+	return migrations, nil
+}
+
+func sqliteFilePath(dsn string) string {
+	dsn = strings.TrimSpace(dsn)
+	if dsn == "" || dsn == ":memory:" || strings.Contains(dsn, "mode=memory") {
+		return ""
+	}
+	if strings.HasPrefix(dsn, "file:") {
+		dsn = strings.TrimPrefix(dsn, "file:")
+	}
+	if idx := strings.IndexByte(dsn, '?'); idx >= 0 {
+		dsn = dsn[:idx]
+	}
+	return dsn
+}
+
+func backupSQLiteBeforeMigration(db *gorm.DB, dsn string, targetVersion uint) (string, error) {
+	databaseFile := sqliteFilePath(dsn)
+	if databaseFile == "" {
+		return "", nil
+	}
+	info, err := os.Stat(databaseFile)
+	if os.IsNotExist(err) || (err == nil && info.Size() == 0) {
+		return "", nil
+	}
+	if err != nil {
+		return "", err
+	}
+
+	backupDir := databaseFile + ".backups"
+	if err := os.MkdirAll(backupDir, 0o700); err != nil {
+		return "", err
+	}
+	name := fmt.Sprintf("schema-v%d-%s.db", targetVersion, time.Now().UTC().Format("20060102T150405.000000000Z"))
+	backupFile := filepath.Join(backupDir, name)
+	// VACUUM INTO uses SQLite's own snapshot mechanism, so the backup is valid
+	// even when the database uses WAL mode. SQLite does not accept a bind
+	// parameter for the filename; quote single quotes according to SQL rules.
+	quoted := strings.ReplaceAll(backupFile, "'", "''")
+	if err := db.Exec("VACUUM INTO '" + quoted + "'").Error; err != nil {
+		_ = os.Remove(backupFile)
+		return "", err
+	}
+	if err := pruneSQLiteBackups(backupDir, 5); err != nil {
+		return "", err
+	}
+	return backupFile, nil
+}
+
+func pruneSQLiteBackups(dir string, keep int) error {
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		return err
+	}
+	type backupEntry struct {
+		name string
+		info os.FileInfo
+	}
+	backups := make([]backupEntry, 0, len(entries))
+	for _, entry := range entries {
+		if entry.IsDir() || !strings.HasSuffix(entry.Name(), ".db") {
+			continue
+		}
+		info, err := entry.Info()
+		if err != nil {
+			return err
+		}
+		backups = append(backups, backupEntry{name: entry.Name(), info: info})
+	}
+	sort.Slice(backups, func(i, j int) bool {
+		return backups[i].info.ModTime().After(backups[j].info.ModTime())
+	})
+	if keep < 0 {
+		keep = 0
+	}
+	if len(backups) <= keep {
+		return nil
+	}
+	for _, backup := range backups[keep:] {
+		if err := os.Remove(filepath.Join(dir, backup.name)); err != nil {
+			return err
+		}
+	}
+	return nil
+}

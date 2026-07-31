@@ -33,6 +33,7 @@ const HAS_BANDWIDTH = new Set<InboundType>(['hysteria2'])
 // Which credential a single-user inbound presents.
 const UUID_TYPES = new Set<InboundType>(['vless', 'vmess', 'tuic'])
 const PW_TYPES = new Set<InboundType>(['trojan', 'hysteria2', 'anytls', 'tuic'])
+const MULTI_USER_TYPES = new Set<InboundType>(['shadowsocks', 'socks', 'vless', 'anytls', 'vmess', 'tuic', 'trojan', 'hysteria2'])
 
 const VMESS_SECURITIES = ['auto', 'aes-128-gcm', 'chacha20-poly1305']
 
@@ -46,6 +47,12 @@ function parseALPN(value: unknown): string[] | undefined {
 
 function randomPort(): number {
   return Math.floor(Math.random() * 50000) + 10000
+}
+
+function supportsMultiUser(type: InboundType, method?: string): boolean {
+  if (!MULTI_USER_TYPES.has(type)) return false
+  if (type === 'shadowsocks') return (method || '').startsWith('2022-')
+  return true
 }
 
 function toForm(ib: Inbound | null): FormVals {
@@ -69,6 +76,7 @@ function toForm(ib: Inbound | null): FormVals {
       snell_version: 5,
       snell_obfs_mode: 'none',
       snell_mode: 'default',
+      multi_user: false,
     }
   }
   const s = ib.settings || {}
@@ -83,6 +91,7 @@ function toForm(ib: Inbound | null): FormVals {
     tag: ib.tag,
     listen_port: ib.listen_port,
     enabled: ib.enabled,
+    multi_user: s.multi_user ?? false,
     username: s.username ?? '',
     uuid: s.uuid ?? '',
     password: s.password ?? '',
@@ -124,9 +133,10 @@ function toForm(ib: Inbound | null): FormVals {
 function assembleSettings(base: InboundSettings, v: FormVals, type: InboundType): InboundSettings {
   const s: InboundSettings = JSON.parse(JSON.stringify(base || {}))
 
-  // Single-credential mode + its fixed credential (blank => backend generates).
-  // Inbounds are always single-credential: one fixed credential per protocol.
-  s.single_user = true
+  // Multi-user is explicit and capability-gated. Snell and legacy
+  // Shadowsocks always retain their stable shared credential.
+  s.multi_user = !!v.multi_user && supportsMultiUser(type, v.method)
+  s.single_user = !s.multi_user
   if (UUID_TYPES.has(type)) s.uuid = v.uuid || s.uuid
   if (PW_TYPES.has(type)) s.password = v.password || s.password
   if (type === 'shadowsocks' && v.ss_psk) s.ss_server_psk = v.ss_psk
@@ -163,8 +173,18 @@ function assembleSettings(base: InboundSettings, v: FormVals, type: InboundType)
     s.snell_mode = v.snell_mode || 'default'
   }
   if (type === 'socks') {
-    s.username = typeof v.username === 'string' ? v.username.trim() : ''
-    s.password = typeof v.password === 'string' ? v.password.trim() : ''
+    if (s.multi_user) {
+      // Do not reuse a previously shared SOCKS login as the internal lockout
+      // credential when switching to multi-user mode. The backend generates a
+      // private fallback that is never included in subscriptions.
+      if (!base.multi_user) {
+        s.username = ''
+        s.password = ''
+      }
+    } else {
+      s.username = typeof v.username === 'string' ? v.username.trim() : ''
+      s.password = typeof v.password === 'string' ? v.password.trim() : ''
+    }
   }
   // transport (ws only for vless/vmess/trojan)
   if (WS_TYPES.has(type) && v.transport_type === 'ws') {
@@ -246,6 +266,8 @@ export default function InboundForm({
   const tlsMode = Form.useWatch('tls_mode', form)
   const transportType = Form.useWatch('transport_type', form)
   const snellVersion = Form.useWatch('snell_version', form)
+  const method = Form.useWatch('method', form)
+  const multiUser = !!Form.useWatch('multi_user', form) && supportsMultiUser(type, method)
 
   useEffect(() => {
     if (!open) return
@@ -324,8 +346,35 @@ export default function InboundForm({
           />
         </Form.Item>
 
+        {supportsMultiUser(type, method) ? (
+          <Form.Item
+            name="multi_user"
+            label="单端口多用户"
+            valuePropName="checked"
+            extra="开启后，每个获授权用户使用独立凭证；停用、到期或取消授权会自动从节点配置移除。"
+          >
+            <Switch />
+          </Form.Item>
+        ) : (
+          <Alert
+            type="info"
+            showIcon
+            style={{ marginBottom: 16 }}
+            message={type === 'snell' ? 'Snell 固定使用单凭证模式' : '当前加密方式只支持单凭证'}
+          />
+        )}
 
-        {UUID_TYPES.has(type) && (
+        {multiUser && (
+          <Alert
+            type="success"
+            showIcon
+            style={{ marginBottom: 16 }}
+            message="用户凭证由面板自动生成"
+            description="节点级固定 UUID/密码在多用户模式下不会使用，请通过具体用户的订阅获取有效节点。"
+          />
+        )}
+
+        {!multiUser && UUID_TYPES.has(type) && (
           <Form.Item label="UUID">
             <Space.Compact style={{ width: '100%' }}>
               <Form.Item name="uuid" noStyle>
@@ -335,7 +384,7 @@ export default function InboundForm({
             </Space.Compact>
           </Form.Item>
         )}
-        {PW_TYPES.has(type) && (
+        {!multiUser && PW_TYPES.has(type) && (
           <Form.Item label={type === 'snell' ? 'userkey' : '密码'}>
             <Space.Compact style={{ width: '100%' }}>
               <Form.Item name="password" noStyle>
@@ -392,10 +441,15 @@ export default function InboundForm({
         )}
         {type === 'shadowsocks' && (
           <Form.Item name="method" label="加密方式" rules={[{ required: true }]}>
-            <Select options={SS_METHODS.map((m) => ({ value: m, label: m }))} />
+            <Select
+              options={SS_METHODS.map((m) => ({ value: m, label: m }))}
+              onChange={(value: string) => {
+                if (!value.startsWith('2022-')) form.setFieldValue('multi_user', false)
+              }}
+            />
           </Form.Item>
         )}
-        {type === 'socks' && (
+        {type === 'socks' && !multiUser && (
           <>
             <Form.Item
               name="username"

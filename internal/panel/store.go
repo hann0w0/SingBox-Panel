@@ -46,13 +46,12 @@ func InitDB(cfg config.PanelConfig) (*gorm.DB, error) {
 	if err != nil {
 		return nil, fmt.Errorf("open db: %w", err)
 	}
-	if err := db.AutoMigrate(model.AllModels()...); err != nil {
+	if err := runSchemaMigrations(db, cfg.Database); err != nil {
 		return nil, fmt.Errorf("migrate: %w", err)
 	}
 	if err := seed(db, cfg); err != nil {
 		return nil, err
 	}
-	migrateSingleUserInbounds(db)
 	return db, nil
 }
 
@@ -85,11 +84,12 @@ func seed(db *gorm.DB, cfg config.PanelConfig) error {
 		return err
 	}
 	return db.Create(&model.User{
-		Email:    email,
-		Password: string(hash),
-		Role:     model.RoleAdmin,
-		Enabled:  true,
-		SubToken: randHex(16),
+		Email:      email,
+		Password:   string(hash),
+		Role:       model.RoleAdmin,
+		Enabled:    true,
+		SubToken:   randHex(16),
+		ProxyToken: randHex(32),
 	}).Error
 }
 

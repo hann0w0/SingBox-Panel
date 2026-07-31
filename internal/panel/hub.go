@@ -308,4 +308,7 @@ func (h *Hub) onHeartbeat(serverID uint, e protocol.HeartbeatEvt) {
 		updates["singbox_installed"] = true
 	}
 	h.db.Model(&model.Server{}).Where("id = ?", serverID).Updates(updates)
+	if err := recordServerTraffic(h.db, serverID, e.Traffic); err != nil {
+		log.Printf("agent[%d] record traffic: %v", serverID, err)
+	}
 }

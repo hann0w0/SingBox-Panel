@@ -36,12 +36,39 @@ export interface Server {
   load1: number
   mem_used: number
   mem_total: number
+  traffic_available: boolean
+  traffic_upload: number
+  traffic_download: number
+  traffic_upload_rate: number
+  traffic_download_rate: number
+  traffic_updated_at: string | null
   final_outbound: string
   config_mode: 'managed' | 'raw' | ''
   agent_url: string
   inbounds?: Inbound[]
   created_at: string
   updated_at: string
+}
+
+export interface TrafficPoint {
+  date: string
+  upload: number
+  download: number
+}
+
+export interface TrafficSummary {
+  available: boolean
+  upload: number
+  download: number
+  upload_rate: number
+  download_rate: number
+  today_upload: number
+  today_download: number
+  month_upload: number
+  month_download: number
+  updated_at: string | null
+  history: TrafficPoint[]
+  retention_days: number
 }
 
 export type InboundType =
@@ -110,6 +137,7 @@ export interface InboundSettings {
   snell_mode?: string
   // single-credential mode
   single_user?: boolean
+  multi_user?: boolean
   username?: string
   uuid?: string
   password?: string

@@ -3,10 +3,8 @@ import {
   Alert,
   Button,
   Card,
-  Descriptions,
   Form,
   Input,
-  List,
   Modal,
   Popconfirm,
   Select,
@@ -14,21 +12,17 @@ import {
   Table,
   Tabs,
   Tag,
-  Tooltip,
   Typography,
   message,
 } from 'antd'
 import {
-  CheckOutlined,
   ControlOutlined,
   CopyOutlined,
   DeleteOutlined,
   EditOutlined,
-  EyeOutlined,
   LockOutlined,
   MenuOutlined,
   PlusOutlined,
-  ReloadOutlined,
 } from '@ant-design/icons'
 import { useParams } from 'react-router-dom'
 import {
@@ -58,10 +52,12 @@ import {
 import type { EgressTest, ImportSummary, NodeFormats, OutboundTest } from '../../api'
 import { applyWithToast, isConfigApplyResult, showConfigApplyResult } from '../../configApply'
 import type { Inbound, Outbound, RouteRule, RuleSet, Server } from '../../types'
-import { formatBytes } from '../../util'
 import InboundForm from './InboundForm'
 import { OutboundForm, RuleForm } from './RoutingForms'
 import { RuleSetsTab } from './RuleSetsTab'
+import { ServerTraffic } from './ServerTraffic'
+import { ConfigEditorModal, ImportPreviewModal, InstallSingboxModal, NodeFormatsExportModal } from './ServerDialogs'
+import { ServerOverviewCard } from './ServerOverviewCard'
 
 export default function ServerDetail() {
   const { id } = useParams()
@@ -310,6 +306,45 @@ export default function ServerDetail() {
     })
   }
 
+  const confirmUninstallAgent = () =>
+    Modal.confirm({
+      title: '卸载被控端 Agent?',
+      okText: '确认卸载 Agent',
+      okType: 'danger',
+      content: (
+        <Alert
+          type="warning"
+          showIcon
+          message="将删除 Agent 二进制及开机自启服务。"
+          description="面板节点配置均会保留，之后仍可使用 Agent 安装命令重新接入。"
+        />
+      ),
+      onOk: async () => {
+        try {
+          await uninstallAgent(sid)
+          message.success('Agent 正在卸载；面板节点和 sing-box 已保留')
+          window.setTimeout(load, 6000)
+        } catch (e) {
+          message.error(errMsg(e))
+          throw e
+        }
+      },
+    })
+
+  const openNodeFormats = async () => {
+    setFmtOpen(true)
+    if (fmtData) return
+    setFmtLoading(true)
+    try {
+      setFmtData(await getNodeFormats(sid))
+    } catch (e) {
+      message.error(errMsg(e))
+      setFmtOpen(false)
+    } finally {
+      setFmtLoading(false)
+    }
+  }
+
   const runEgressTest = async () => {
     setEgressBusy(true)
     try {
@@ -419,10 +454,12 @@ export default function ServerDetail() {
     setCfgSaving(true)
     try {
       const result = await applyRawConfig(sid, cfgText)
-      if (result.summary.skipped?.length) {
+      if (result.config_mode === 'managed') {
+        message.success('已校验、下发并自动进入面板管理')
+      } else if (result.summary.skipped?.length) {
         message.warning(`已下发并同步；${result.summary.skipped.length} 项无法转换为面板表单，已在原始配置中完整保留`)
       } else {
-        message.success('已校验、下发并同步到面板')
+        message.info('已下发并同步；配置无法无损转换，继续保留完整原始配置')
       }
       setCfgOpen(false)
       load()
@@ -439,107 +476,31 @@ export default function ServerDetail() {
   const rawMode = server.config_mode === 'raw'
   return (
     <Space direction="vertical" size="large" style={{ width: '100%' }}>
-      <Card
-        title={
-          <Space wrap style={{ rowGap: 4 }}>
-            {server.name}
-            {server.online ? <Tag color="green">在线</Tag> : <Tag>离线</Tag>}
-            {server.singbox_installed ? <Tag color="blue">{server.singbox_version}</Tag> : <Tag color="orange">未装 sing-box</Tag>}
-          </Space>
-        }
-        extra={<Button icon={<ReloadOutlined />} loading={refreshing} onClick={refresh} title="刷新节点状态" aria-label="刷新节点状态" />}
-      >
-        <Descriptions column={{ xs: 1, sm: 2, lg: 3 }} size="small" bordered>
-          <Descriptions.Item label="节点地址">
-            <Space size={6} wrap>
-              <span>{server.address || '—'}</span>
-              {server.public_ip && server.public_ip !== server.address && (
-                <Typography.Text type="secondary">({server.public_ip})</Typography.Text>
-              )}
-            </Space>
-          </Descriptions.Item>
-          <Descriptions.Item label="通信地址">{server.agent_url || publicURL || '旧版 Agent 未上报'}</Descriptions.Item>
-          <Descriptions.Item label="Agent">{server.agent_version || '旧版未上报'}</Descriptions.Item>
-          <Descriptions.Item label="系统">{server.os || '—'}</Descriptions.Item>
-          <Descriptions.Item label="负载">{server.load1?.toFixed(2) ?? '—'}</Descriptions.Item>
-          <Descriptions.Item label="内存">{formatBytes(server.mem_used)}/{formatBytes(server.mem_total)}</Descriptions.Item>
-        </Descriptions>
+      <ServerOverviewCard
+        server={server}
+        publicURL={publicURL}
+        busy={busy}
+        refreshing={refreshing}
+        exportLoading={fmtLoading}
+        onRefresh={refresh}
+        onInstallSingbox={() => setInstallOpen(true)}
+        onInstallAgent={installOrUpgradeAgent}
+        onUninstallAgent={confirmUninstallAgent}
+        onImport={openImport}
+        onEditConfig={openConfigEditor}
+        onRestart={() => run('restart', () => serviceAction(sid, 'restart'), 'sing-box 已重启')}
+        onExport={openNodeFormats}
+      />
 
-        <Space wrap style={{ marginTop: 16 }}>
-          <Button type="primary" loading={busy === 'install'} onClick={() => setInstallOpen(true)}>
-            安装 / 升级 Sing-box
-          </Button>
-          <Button type="primary" loading={busy === 'agent'} onClick={installOrUpgradeAgent}>安装 / 升级 Agent</Button>
-          <Button
-            type="primary"
-            danger
-            disabled={!server.online}
-            onClick={() =>
-              Modal.confirm({
-                title: '卸载被控端 Agent?',
-                okText: '确认卸载 Agent',
-                okType: 'danger',
-                content: (
-                  <Alert
-                    type="warning"
-                    showIcon
-                    message="将删除 Agent 二进制及开机自启服务。"
-                    description="面板节点配置均会保留，之后仍可使用 Agent 安装命令重新接入。"
-                  />
-                ),
-                onOk: async () => {
-                  try {
-                    await uninstallAgent(sid)
-                    message.success('Agent 正在卸载；面板节点和 sing-box 已保留')
-                    window.setTimeout(load, 6000)
-                  } catch (e) {
-                    message.error(errMsg(e))
-                    throw e
-                  }
-                },
-              })
-            }
-          >
-            卸载 Agent
-          </Button>
-          <Button loading={busy === 'import'} onClick={openImport}>识别配置</Button>
-          <Button onClick={openConfigEditor}>编辑配置</Button>
-          <Button
-            loading={busy === 'restart'}
-            onClick={() => run('restart', () => serviceAction(sid, 'restart'), 'sing-box 已重启')}
-          >
-            重启服务
-          </Button>
-          <Button
-            loading={fmtLoading}
-            onClick={async () => {
-              setFmtOpen(true)
-              if (fmtData) return // 已缓存
-              setFmtLoading(true)
-              try {
-                const d = await getNodeFormats(sid)
-                setFmtData(d)
-              } catch (e) {
-                message.error(errMsg(e))
-                setFmtOpen(false)
-              } finally {
-                setFmtLoading(false)
-              }
-            }}
-          >
-            导出节点
-          </Button>
-        </Space>
-
-      </Card>
+      <ServerTraffic serverId={sid} />
 
       {rawMode && (
         <Alert
           type="warning"
           showIcon
           message="该节点当前使用原始配置模式"
-          description="完整 config.json 是当前生效配置；面板已自动同步其中可识别的入站、出站和路由。为避免丢失无法识别的字段，结构化编辑暂时锁定。"
-          action={<Button danger loading={busy === 'mode'} onClick={switchToManaged}>切换到面板管理</Button>}
+          description="配置中存在面板无法无损转换的内容，完整 config.json 仍是当前生效配置。可识别的节点已同步；强制切换会舍弃扩展字段。"
+          action={<Button danger loading={busy === 'mode'} onClick={switchToManaged}>舍弃扩展字段并切换</Button>}
         />
       )}
 
@@ -571,6 +532,12 @@ export default function ServerDetail() {
             { title: '标签', dataIndex: 'tag' },
             { title: '协议', dataIndex: 'type', render: (v) => <Tag>{v}</Tag> },
             { title: '端口', dataIndex: 'listen_port' },
+            {
+              title: '用户模式',
+              render: (_, ib: Inbound) => ib.settings?.multi_user
+                ? <Tag color="blue">独立凭证</Tag>
+                : <Tag>单凭证</Tag>,
+            },
             {
               title: '启用',
               dataIndex: 'enabled',
@@ -849,329 +816,33 @@ export default function ServerDetail() {
         onSaved={load}
       />
 
-      <Modal
-        title="识别服务器配置"
+      <ImportPreviewModal
         open={importOpen}
+        loading={importing}
+        summary={importSum}
         onCancel={() => setImportOpen(false)}
-        onOk={doImport}
-        okText="确认导入面板"
-        confirmLoading={importing}
-        width={720}
-        destroyOnClose
-      >
-        <div style={{ fontSize: 13, color: 'rgba(0, 0, 0, 0.45)', marginBottom: 12 }}>
-          已识别当前运行配置。导入后完整原始配置将同步保存至面板。
-        </div>
-        {importSum && (
-          <Space direction="vertical" size="middle" style={{ width: '100%' }}>
-            <div>
-              <b>入站协议 {importSum.inbounds?.length || 0} 个</b>
-              <Table
-                size="small"
-                rowKey="tag"
-                pagination={false}
-                dataSource={importSum.inbounds || []}
-                columns={[
-                  { title: '标签', dataIndex: 'tag' },
-                  { title: '协议', dataIndex: 'type', render: (v) => <Tag>{v}</Tag> },
-                  { title: '端口', dataIndex: 'listen_port' },
-                  {
-                    title: '模式',
-                    render: (_, r: { single_user: boolean; users: number }) =>
-                      r.single_user ? <Tag color="green">单用户</Tag> : <Tag color="orange">多用户 {r.users}</Tag>,
-                  },
-                ]}
-              />
-            </div>
-            <div>
-              <b>出站 {importSum.outbounds?.length || 0} 个</b>
-              <Table
-                size="small"
-                rowKey="tag"
-                pagination={false}
-                dataSource={importSum.outbounds || []}
-                columns={[
-                  { title: '标签', dataIndex: 'tag' },
-                  { title: '类型', dataIndex: 'type', render: (v) => <Tag>{v}</Tag> },
-                  { title: '目标地址', dataIndex: 'info' },
-                ]}
-              />
-            </div>
-            <div>
-              <b>分流规则 {importSum.rules?.length || 0} 条</b>
-              <Table
-                size="small"
-                rowKey={(_, i) => String(i)}
-                pagination={false}
-                dataSource={importSum.rules || []}
-                columns={[
-                  { title: '匹配入站', render: (_, r: { inbound: string[] | null }) => (r.inbound?.length ? r.inbound.join(', ') : '不限') },
-                  { title: '其它匹配', dataIndex: 'info', render: (v) => v || '—' },
-                  { title: '→ 出站', dataIndex: 'outbound', render: (v) => <Tag color="blue">{v}</Tag> },
-                ]}
-              />
-            </div>
-            <div style={{ color: '#555' }}>
-              默认出站 final：<Tag>{importSum.final}</Tag>
-            </div>
-            {!!importSum.skipped?.length && (
-              <div style={{ color: '#d46b08' }}>
-                以下内容不会转换成结构化表单，但会保存在完整原始配置中：
-                <ul style={{ margin: '4px 0 0 18px' }}>
-                  {importSum.skipped.map((s) => <li key={s}>{s}</li>)}
-                </ul>
-              </div>
-            )}
-          </Space>
-        )}
-      </Modal>
+        onConfirm={doImport}
+      />
 
-      <Modal
-        title="编辑服务器配置"
+      <ConfigEditorModal
         open={cfgOpen}
+        loading={cfgLoading}
+        saving={cfgSaving}
+        text={cfgText}
+        onText={setCfgText}
         onCancel={() => setCfgOpen(false)}
-        onOk={saveConfig}
-        okText="校验并下发"
-        confirmLoading={cfgSaving}
-        width={780}
-        destroyOnClose
-      >
-        <div style={{ fontSize: 13, color: 'rgba(0, 0, 0, 0.45)', marginBottom: 12 }}>
-          直接编辑该服务器运行的核心配置。下发成功后完整 JSON 会保存，并自动同步面板中可识别的入站、出站和路由。
-        </div>
-        {cfgLoading ? (
-          <div style={{ padding: 24, textAlign: 'center', color: '#94a3b8' }}>读取中…</div>
-        ) : (
-          <Input.TextArea
-            value={cfgText}
-            onChange={(e) => setCfgText(e.target.value)}
-            autoSize={{ minRows: 18, maxRows: 30 }}
-            style={{ fontFamily: 'monospace', fontSize: 12 }}
-            placeholder="该服务器暂无配置，可在此粘贴或编写完整 config.json"
-          />
-        )}
-      </Modal>
+        onSave={saveConfig}
+      />
 
-      <Modal title="安装 / 升级 Sing-box" open={installOpen} onOk={doInstall} onCancel={() => setInstallOpen(false)} destroyOnClose>
-        <div style={{ fontSize: 13, color: 'rgba(0, 0, 0, 0.45)', marginBottom: 12 }}>
-          安装官方最新稳定版 sing-box；已安装时再次执行即升级到目标版本。
-        </div>
-        <Form form={installForm} layout="vertical" initialValues={{ channel: 'stable', method: 'script' }}>
-          <Form.Item name="channel" label="渠道">
-            <Select options={[{ value: 'stable', label: 'stable' }, { value: 'beta', label: 'beta' }]} />
-          </Form.Item>
-          <Form.Item name="method" label="安装方式">
-            <Select
-              options={[
-                { value: 'script', label: '官方安装脚本' },
-                { value: 'apt', label: '官方 APT 源' },
-                { value: 'dnf', label: '官方 DNF 源' },
-              ]}
-            />
-          </Form.Item>
-          <Form.Item name="version" label="指定版本">
-            <Input placeholder="1.13.14" />
-          </Form.Item>
-        </Form>
-      </Modal>
+      <InstallSingboxModal
+        open={installOpen}
+        form={installForm}
+        onCancel={() => setInstallOpen(false)}
+        onConfirm={doInstall}
+      />
 
-      {/* 节点格式弹窗 */}
-      <Modal
-        title="导出节点配置"
-        open={fmtOpen}
-        onCancel={() => setFmtOpen(false)}
-        footer={null}
-        width={860}
-        destroyOnClose
-      >
-        {fmtLoading ? (
-          <div style={{ padding: 48, textAlign: 'center', color: '#bbb' }}>加载中…</div>
-        ) : fmtData ? (
-          <NodeFormatsModalContent data={fmtData} />
-        ) : null}
-      </Modal>
+      <NodeFormatsExportModal open={fmtOpen} loading={fmtLoading} data={fmtData} onCancel={() => setFmtOpen(false)} />
 
     </Space>
-  )
-}
-
-// 协议颜色映射
-const PROTO_COLORS: Record<string, string> = {
-  vless: 'blue', vmess: 'geekblue', trojan: 'purple',
-  ss: 'cyan', shadowsocks: 'cyan', hysteria2: 'orange',
-  hysteria: 'volcano', tuic: 'gold', anytls: 'magenta',
-  snell: 'green', naive: 'lime',
-}
-
-function NodeFormatsModalContent({ data }: { data: NodeFormats }) {
-  const [copiedKey, setCopiedKey] = useState<string | null>(null)
-  const [detailItem, setDetailItem] = useState<NodeFormats['items'][number] | null>(null)
-
-  const handleCopy = (text: string, key: string, label: string) => {
-    if (!text) return
-    navigator.clipboard.writeText(text).then(() => {
-      setCopiedKey(key)
-      message.success(`已复制 ${label}`)
-      setTimeout(() => setCopiedKey(null), 1800)
-    })
-  }
-
-  const items = data.items || []
-
-  return (
-    <div style={{ paddingTop: 4 }}>
-      <div style={{ fontSize: 13, color: 'rgba(0, 0, 0, 0.45)', marginBottom: 12 }}>
-        提示：点击“详情”查看节点地址、端口和协议参数；其他按钮可复制客户端配置。
-      </div>
-      {!items.length ? (
-        <div style={{ padding: '36px 0', textAlign: 'center', color: '#94a3b8' }}>
-          暂无可导出的入站，请先添加协议
-        </div>
-      ) : (
-        <List
-          size="small"
-          bordered
-          dataSource={items}
-          renderItem={(item, idx) => {
-            const uriKey = `uri-${idx}`
-            const clashKey = `clash-${idx}`
-            const surgeKey = `surge-${idx}`
-
-            const displayTag = item.tag || item.name || ''
-
-            return (
-              <List.Item
-                style={{
-                  padding: '12px 16px',
-                  display: 'flex',
-                  alignItems: 'center',
-                  justifyContent: 'space-between',
-                  flexWrap: 'wrap',
-                  gap: '8px 12px',
-                }}
-              >
-                {/* 左侧：仅保留干净入站协议标签 */}
-                <div style={{ display: 'flex', alignItems: 'center', minWidth: 0 }}>
-                  <span style={{ fontSize: 14, fontWeight: 500, color: '#1e293b', wordBreak: 'break-all' }}>
-                    {displayTag}
-                  </span>
-                </div>
-
-                {/* 右侧：详情与客户端配置复制按钮 */}
-                <Space size={8} align="center" wrap>
-                  <Button
-                    size="small"
-                    icon={<EyeOutlined />}
-                    style={{
-                      borderRadius: 6,
-                      fontSize: 12,
-                      padding: '0 12px',
-                      height: 28,
-                    }}
-                    onClick={() => setDetailItem(item)}
-                  >
-                    详情
-                  </Button>
-
-                  <Button
-                    size="small"
-                    type={copiedKey === uriKey ? 'primary' : 'default'}
-                    icon={copiedKey === uriKey ? <CheckOutlined /> : <CopyOutlined />}
-                    style={{
-                      borderRadius: 6,
-                      fontSize: 12,
-                      padding: '0 12px',
-                      height: 28,
-                    }}
-                    onClick={() => handleCopy(item.uri, uriKey, `${displayTag} URI`)}
-                  >
-                    URI
-                  </Button>
-
-                  <Button
-                    size="small"
-                    type={copiedKey === clashKey ? 'primary' : 'default'}
-                    icon={copiedKey === clashKey ? <CheckOutlined /> : <CopyOutlined />}
-                    disabled={!item.clash}
-                    style={{
-                      borderRadius: 6,
-                      fontSize: 12,
-                      padding: '0 12px',
-                      height: 28,
-                    }}
-                    onClick={() => handleCopy(item.clash, clashKey, `${displayTag} Clash`)}
-                  >
-                    Clash
-                  </Button>
-
-                  {!item.surge ? (
-                    <Tooltip title="Surge 不支持该协议">
-                      <Button
-                        size="small"
-                        disabled
-                        icon={<CopyOutlined />}
-                        style={{
-                          borderRadius: 6,
-                          fontSize: 12,
-                          padding: '0 12px',
-                          height: 28,
-                        }}
-                      >
-                        Surge
-                      </Button>
-                    </Tooltip>
-                  ) : (
-                    <Button
-                      size="small"
-                      type={copiedKey === surgeKey ? 'primary' : 'default'}
-                      icon={copiedKey === surgeKey ? <CheckOutlined /> : <CopyOutlined />}
-                      style={{
-                        borderRadius: 6,
-                        fontSize: 12,
-                        padding: '0 12px',
-                        height: 28,
-                      }}
-                      onClick={() => handleCopy(item.surge, surgeKey, `${displayTag} Surge`)}
-                    >
-                      Surge
-                    </Button>
-                  )}
-                </Space>
-              </List.Item>
-            )
-          }}
-        />
-      )}
-
-      <Modal
-        title={`${detailItem?.tag || detailItem?.name || ''} 节点详情`}
-        open={!!detailItem}
-        onCancel={() => setDetailItem(null)}
-        footer={<Button onClick={() => setDetailItem(null)}>关闭</Button>}
-        width={620}
-        destroyOnClose
-      >
-        {detailItem && (
-          <Descriptions bordered size="small" column={1}>
-            <Descriptions.Item label="节点地址 / IP">
-              <Typography.Text copyable>{detailItem.server || '—'}</Typography.Text>
-            </Descriptions.Item>
-            <Descriptions.Item label="端口">
-              <Typography.Text copyable>{String(detailItem.port)}</Typography.Text>
-            </Descriptions.Item>
-            <Descriptions.Item label="协议">
-              <Tag color={PROTO_COLORS[detailItem.type] || 'default'}>{detailItem.type}</Tag>
-            </Descriptions.Item>
-            {Object.entries(detailItem.params || {})
-              .filter(([key]) => !['服务器', '端口', '协议'].includes(key))
-              .map(([key, value]) => (
-                <Descriptions.Item key={key} label={key}>
-                  <Typography.Text copyable={{ text: value }}>{value || '—'}</Typography.Text>
-                </Descriptions.Item>
-              ))}
-          </Descriptions>
-        )}
-      </Modal>
-    </div>
   )
 }

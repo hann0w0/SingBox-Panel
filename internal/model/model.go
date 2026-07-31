@@ -61,8 +61,9 @@ const (
 	RoleUser  Role = "user"
 )
 
-// User is a panel account. Proxy credentials belong to each inbound; users only
-// control panel access and which nodes/protocols appear in their subscription.
+// User is a panel account. On a multi-user-capable inbound its ProxyToken also
+// seeds a stable, per-inbound proxy identity; single-credential inbounds still
+// use the credential stored in their own settings.
 type User struct {
 	ID       uint   `gorm:"primaryKey" json:"id"`
 	Email    string `gorm:"uniqueIndex;size:191" json:"email"`
@@ -81,6 +82,10 @@ type User struct {
 
 	Enabled  bool   `gorm:"index" json:"enabled"`
 	SubToken string `gorm:"uniqueIndex;size:64" json:"sub_token"`
+	// ProxyToken is an independent, stable seed for deterministic per-inbound
+	// credentials. Resetting a subscription URL or changing a login password
+	// therefore never breaks already-issued proxy credentials.
+	ProxyToken string `gorm:"size:64" json:"-"`
 	// TokenVersion revokes every previously-issued JWT when it changes. Password
 	// changes, account disabling and other security-sensitive updates increment it.
 	TokenVersion uint `json:"-"`
@@ -123,6 +128,18 @@ type Server struct {
 	Load1            float64    `json:"load1"`
 	MemUsed          uint64     `json:"mem_used"`
 	MemTotal         uint64     `json:"mem_total"`
+
+	// Proxy traffic reported from sing-box's loopback-only Clash API. Totals are
+	// monotonic across sing-box and Agent restarts because the panel converts the
+	// remote process counters into deltas before persisting them.
+	TrafficAvailable      bool       `gorm:"index" json:"traffic_available"`
+	TrafficUpload         uint64     `json:"traffic_upload"`
+	TrafficDownload       uint64     `json:"traffic_download"`
+	TrafficUploadRate     uint64     `json:"traffic_upload_rate"`
+	TrafficDownloadRate   uint64     `json:"traffic_download_rate"`
+	TrafficUpdatedAt      *time.Time `json:"traffic_updated_at"`
+	TrafficRemoteUpload   uint64     `json:"-"`
+	TrafficRemoteDownload uint64     `json:"-"`
 
 	// FinalOutbound is the default route target (default "direct").
 	FinalOutbound string `gorm:"size:64" json:"final_outbound"`
@@ -240,10 +257,36 @@ type Setting struct {
 	Value string `json:"value"`
 }
 
+// TrafficRecord is one hourly accounting bucket. Server-only rows use
+// InboundID=0 and UserID=0. The extra scope columns intentionally reserve a
+// lossless path for protocol/user counters when the installed sing-box build
+// exposes them; node totals work with the official Clash API today.
+type TrafficRecord struct {
+	ID        uint      `gorm:"primaryKey" json:"id"`
+	ServerID  uint      `gorm:"not null;uniqueIndex:idx_traffic_bucket,priority:1;index" json:"server_id"`
+	InboundID uint      `gorm:"not null;default:0;uniqueIndex:idx_traffic_bucket,priority:2;index" json:"inbound_id"`
+	UserID    uint      `gorm:"not null;default:0;uniqueIndex:idx_traffic_bucket,priority:3;index" json:"user_id"`
+	Bucket    time.Time `gorm:"not null;uniqueIndex:idx_traffic_bucket,priority:4;index" json:"bucket"`
+	Upload    uint64    `gorm:"not null;default:0" json:"upload"`
+	Download  uint64    `gorm:"not null;default:0" json:"download"`
+	CreatedAt time.Time `json:"created_at"`
+	UpdatedAt time.Time `json:"updated_at"`
+}
+
+// SchemaMigration records one successfully-applied database schema change.
+// It deliberately lives outside AllModels: the migration runner bootstraps
+// this table before it applies any application schema.
+type SchemaMigration struct {
+	Version   uint      `gorm:"primaryKey" json:"version"`
+	Name      string    `gorm:"size:191;not null" json:"name"`
+	Dirty     bool      `gorm:"not null;default:false" json:"dirty"`
+	AppliedAt time.Time `gorm:"not null" json:"applied_at"`
+}
+
 // AllModels lists every entity for AutoMigrate.
 func AllModels() []any {
 	return []any{
-		&User{}, &Server{}, &Inbound{}, &Outbound{}, &RouteRule{}, &RuleSet{}, &Setting{},
+		&User{}, &Server{}, &Inbound{}, &Outbound{}, &RouteRule{}, &RuleSet{}, &Setting{}, &TrafficRecord{},
 	}
 }
 
@@ -277,11 +320,11 @@ func (u *User) HasInbound(serverID, inboundID uint) bool {
 
 // Expired reports whether the user's validity period has passed.
 //
-// Scope: expiry gates the panel (login, subscription, node list) only. Because
-// inbounds are single-credential, the proxies themselves cannot tell users
-// apart, so an expired user who kept an earlier credential can still connect.
-// For the same reason there is no traffic quota — bytes cannot be attributed
-// to an individual user.
+// Scope: expiry gates panel access and subscriptions. Managed multi-user
+// inbounds also remove expired users during reconciliation. A protocol kept in
+// single-credential mode cannot revoke one user without rotating its shared
+// credential. Exact per-user traffic quotas remain unavailable until the
+// installed sing-box build exposes authenticated-user counters.
 func (u *User) Expired(now time.Time) bool {
 	return u.ExpireAt != nil && now.After(*u.ExpireAt)
 }

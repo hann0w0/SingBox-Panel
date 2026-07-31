@@ -23,6 +23,7 @@ type node struct {
 	port     int
 	typ      string
 	settings singbox.InboundSettings
+	user     singbox.ProxyUser
 }
 
 // userActive reports whether an account may still pull config from the panel.
@@ -86,9 +87,9 @@ func subFormat(c *gin.Context) string {
 }
 
 func setSubscriptionUserinfo(c *gin.Context, u *model.User) {
-	// Only expiry is reported: single-credential inbounds make per-user byte
-	// accounting impossible, and emitting upload/download/total=0 would show
-	// clients a bogus "0 B of 0 B used".
+	// Only expiry is reported until sing-box exposes exact authenticated-user
+	// byte counters. Emitting upload/download/total=0 would make clients display
+	// a bogus quota, so unknown traffic fields are deliberately omitted.
 	if u.ExpireAt != nil {
 		c.Header("Subscription-Userinfo", fmt.Sprintf("expire=%d", u.ExpireAt.Unix()))
 	}
@@ -128,8 +129,15 @@ func (a *App) gatherNodes(user *model.User) []node {
 			if len(ib.Settings) > 0 {
 				_ = json.Unmarshal(ib.Settings, &st)
 			}
-			// Match the generated server config, which is always single-credential.
-			st.SingleUser = true
+			var identity singbox.ProxyUser
+			if st.UseMultiUser(string(ib.Type)) {
+				st.SingleUser = false
+				identity = proxyIdentity(user, ib.ID)
+			} else {
+				st.MultiUser = false
+				st.SingleUser = true
+				identity = st.SingleUserIdentity()
+			}
 			out = append(out, node{
 				tag:      ib.Tag,
 				name:     fmt.Sprintf("%s-%s", srv.Name, ib.Tag),
@@ -137,6 +145,7 @@ func (a *App) gatherNodes(user *model.User) []node {
 				port:     ib.ListenPort,
 				typ:      string(ib.Type),
 				settings: st,
+				user:     identity,
 			})
 		}
 	}
@@ -144,13 +153,17 @@ func (a *App) gatherNodes(user *model.User) []node {
 }
 
 func (n node) clientNode() singbox.ClientNode {
+	identity := n.user
+	if identity.Name == "" && identity.Username == "" && identity.UUID == "" && identity.Password == "" {
+		identity = n.settings.SingleUserIdentity()
+	}
 	return singbox.ClientNode{
 		Name:       n.name,
 		Server:     n.server,
 		ServerPort: n.port,
 		Type:       n.typ,
 		Settings:   n.settings,
-		User:       n.settings.SingleUserIdentity(),
+		User:       identity,
 	}
 }
 

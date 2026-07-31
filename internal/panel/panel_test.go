@@ -129,6 +129,62 @@ func TestImportSyncPreservesInboundGrantsByTag(t *testing.T) {
 	}
 }
 
+func TestImportAutomaticallySelectsSafeConfigMode(t *testing.T) {
+	base, err := singbox.BuildServerConfig(singbox.ServerConfigInput{
+		Inbounds: []singbox.InboundInput{{
+			Tag: "Snell", Type: "snell", ListenPort: 38376,
+			Settings: singbox.InboundSettings{SingleUser: true, SnellVersion: 5, SnellPSK: "secret"},
+		}},
+		Final: "direct",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	withDNS := func() []byte {
+		var root map[string]any
+		if err := json.Unmarshal(base, &root); err != nil {
+			t.Fatal(err)
+		}
+		root["dns"] = map[string]any{"servers": []any{map[string]any{"type": "local", "tag": "local"}}}
+		raw, err := json.Marshal(root)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return raw
+	}
+
+	for _, tc := range []struct {
+		name string
+		raw  []byte
+		want string
+	}{
+		{name: "lossless managed config", raw: base, want: model.ConfigModeManaged},
+		{name: "unmodelled DNS stays raw", raw: withDNS(), want: model.ConfigModeRaw},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			db := testDB(t)
+			srv := model.Server{Name: tc.name, AgentToken: tc.name}
+			if err := db.Create(&srv).Error; err != nil {
+				t.Fatal(err)
+			}
+			parsed, err := singbox.ParseServerConfig(tc.raw)
+			if err != nil {
+				t.Fatal(err)
+			}
+			app := &App{db: db, orch: NewOrchestrator(db, NewHub(db))}
+			if err := app.applyImport(&srv, parsed, tc.raw); err != nil {
+				t.Fatal(err)
+			}
+			if err := db.First(&srv, srv.ID).Error; err != nil {
+				t.Fatal(err)
+			}
+			if srv.EffectiveConfigMode() != tc.want {
+				t.Fatalf("config mode = %q; want %q", srv.EffectiveConfigMode(), tc.want)
+			}
+		})
+	}
+}
+
 func TestBuildServerConfigReturnsDatabaseReadError(t *testing.T) {
 	db := testDB(t)
 	srv := model.Server{Name: "managed", AgentToken: "db-error", ConfigMode: model.ConfigModeManaged}

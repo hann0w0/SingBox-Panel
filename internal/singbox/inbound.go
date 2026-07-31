@@ -308,16 +308,25 @@ func BuildInbound(in InboundInput) (json.RawMessage, error) {
 		}
 
 	case "socks":
-		if in.Settings.Username != "" || in.Settings.Password != "" {
+		if in.Settings.UseMultiUser(in.Type) {
+			users := make([]map[string]any, 0, len(eff))
+			for _, u := range eff {
+				users = append(users, map[string]any{"username": u.Username, "password": u.Password})
+			}
+			if len(users) == 0 {
+				if in.Settings.Username == "" || in.Settings.Password == "" {
+					return nil, fmt.Errorf("socks: multi-user mode requires a fallback credential when no users are active")
+				}
+				users = append(users, map[string]any{
+					"username": in.Settings.Username,
+					"password": in.Settings.Password,
+				})
+			}
+			m["users"] = users
+		} else if in.Settings.Username != "" || in.Settings.Password != "" {
 			m["users"] = []map[string]any{
 				{"username": in.Settings.Username, "password": in.Settings.Password},
 			}
-		} else if !in.Settings.SingleUser && len(eff) > 0 {
-			users := make([]map[string]any, 0, len(eff))
-			for _, u := range eff {
-				users = append(users, map[string]any{"username": u.Name, "password": u.Password})
-			}
-			m["users"] = users
 		}
 
 	default:

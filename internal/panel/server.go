@@ -91,6 +91,7 @@ func (a *App) routes() *gin.Engine {
 		admin.POST("/servers/:id/service", a.serviceAction)
 		admin.POST("/servers/:id/update-agent", a.updateAgent)
 		admin.GET("/servers/:id/status", a.serverStatus)
+		admin.GET("/servers/:id/traffic", a.serverTraffic)
 		admin.GET("/servers/:id/logs", a.serverLogs)
 		admin.GET("/servers/:id/remote-config", a.remoteConfig)
 		admin.POST("/servers/:id/apply-raw", a.applyRawConfig)
@@ -170,7 +171,7 @@ func (a *App) Run(ctx context.Context) error {
 
 	go a.host.run(ctx)
 
-	rec := NewReconciler(a.db)
+	rec := NewReconciler(a.db, func(serverIDs []uint) { a.refreshUserProxyAccess(serverIDs) })
 	go rec.Run(ctx)
 
 	srv := &http.Server{Addr: a.cfg.Listen, Handler: a.engine}

@@ -63,19 +63,18 @@ Setting     KV 配置。
 - `Server 1..* Inbound / Outbound / RouteRule / RuleSet`
 - `User.ServerIDs` 决定可用节点；`User.InboundIDs` 进一步限定到具体协议（为空 = 该节点全部协议）
 
-### 用户授权与「单凭证」
+### 用户授权与凭证模式
 
-**入站一律单凭证**：一个协议一套固定凭证，写死在配置里，不随面板用户变化。
-因此「授权」只影响**订阅内容**——用户订阅里只会出现被授权的协议（例如家宽节点可只留给自己）。
+每个入站显式选择凭证模式，升级不会自动改变旧节点。单凭证模式沿用入站自身的固定凭证；多用户模式根据稳定的 `User.ProxyToken + Inbound.ID` 为每个获授权用户生成独立身份，修改登录密码、用户名或订阅链接不会改变已发出的代理凭证。
 
-单凭证的线格式**因协议而异**，由 `internal/singbox/inbound.go` 决定：
-- `users` 数组恰好一条：vless / vmess / trojan / hysteria2 / tuic / anytls
-- 顶层凭证、无 `users`：shadowsocks（`method`+`password`）、snell（`psk`）
+授权同时决定订阅内容和多用户配置中的 `users[]`。用户停用、到期或取消节点/入站授权后，managed 配置会移除该用户；恢复授权或延长有效期后会自动重新加入。Snell 和旧版 Shadowsocks 始终保留共享凭证，无法只撤销其中一个用户。
 
-### 没有流量记账
+### 迁移、流量与多用户边界
 
-单凭证下代理层无法把字节归属到具体用户，因此面板**不做流量统计**，也不生成 `experimental.clash_api`。
-用户的启停只由 `ExpireAt` 决定（`reconciler` 定时停用过期用户）。
+- 数据库结构由 `schema_migrations` 版本表管理，而不是每次启动都无条件 `AutoMigrate`。SQLite 在升级前使用 `VACUUM INTO` 写入 `<dsn>.backups/`，自动保留最近 5 个快照；迁移失败会标记 dirty 并停止 Panel，恢复步骤见 [DATABASE-RECOVERY.md](DATABASE-RECOVERY.md)。
+- Agent 通过仅监听 `127.0.0.1` 的 Clash API 读取 sing-box 的累计连接流量；Panel 计算重启归零后的增量并写入小时桶，默认保留 400 天。原始配置模式不会被强制注入统计配置。
+- VLESS、VMess、Trojan、Hysteria2、TUIC、AnyTLS、SOCKS5 和 Shadowsocks 2022 可显式启用独立用户凭证；Snell、旧版 Shadowsocks 和未知协议保持单凭证。到期、停用或撤销节点授权后，managed 配置会移除该用户的凭证。
+- 官方 sing-box 发布包含 Clash API，但不含 `with_v2ray_api`，所以当前只能准确统计节点总流量，不能把字节准确归属到每个用户，也不会用估算值执行到量停用。若需要用户级精确配额，必须维护带用户统计能力的 sing-box 构建或按协议缩小支持范围。
 
 ## 4. 订阅
 
@@ -91,7 +90,7 @@ Setting     KV 配置。
 ## 5. 配置生成与导入
 
 - **面板管理模式**：`internal/singbox` 依据 Inbound/Outbound/RouteRule 记录生成整份官方 `config.json`，键序固定为
-  `log → inbounds → outbounds → route`（用有序结构体，而非 map）。不生成 dns 与 experimental 块。
+  `log → inbounds → outbounds → route → experimental`（用有序结构体，而非 map）。不生成 DNS 块；`experimental` 仅包含供 Agent 统计节点总流量的 loopback Clash API。
   生成后由 Agent `sing-box check` 校验再落盘。
 - **原始配置模式**：管理员直接编辑或导入的完整 JSON 存入 `Server.RawConfig`，重连时原样下发，不丢弃 DNS、experimental、selector 等结构化表单不认识的字段。
 - **导入**：`internal/singbox/parse.go` 同时生成结构化预览，并把完整原文保存为事实源。导入不立即改动服务器文件；管理员显式切回面板管理模式后，才会用结构化记录覆盖原始配置。
@@ -101,6 +100,8 @@ Setting     KV 配置。
 
 - Panel：Docker 容器（多阶段构建：前端 → Go → alpine），默认 SQLite。外层反代 + TLS。
 - Agent：交叉编译的单二进制，安装脚本注册为 `singbox-panel-agent.service`（与官方 `sing-box.service` 分离，互不影响）。
+
+当前 Panel 按单实例设计：AgentHub 的在线连接映射和待处理指令保存在进程内存，多个 Panel 副本不会共享这些状态。部署多个副本前必须先增加共享 AgentHub、任务队列和会话存储；仅把容器数量改成 2 不能保证命令和连接稳定。
 
 ## 7. 安全
 

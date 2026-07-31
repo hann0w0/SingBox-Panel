@@ -47,11 +47,16 @@ func genSSPSK(method string) string {
 //   - REALITY: generate the X25519 keypair + a short_id when absent
 //   - Shadowsocks: generate the server PSK when absent
 func fillInboundSecrets(typ string, s *singbox.InboundSettings) error {
-	// Panel-managed inbounds are always single-credential: one fixed credential
-	// per protocol, never a per-panel-user list. Which wire shape that takes is
-	// protocol-specific (users[] with a single entry vs a top-level key) and is
-	// handled by BuildInbound.
-	s.SingleUser = true
+	// Multi-user mode is explicit and capability-gated. Unsupported protocols
+	// (notably Snell and legacy Shadowsocks) are forced back to their stable
+	// top-level credential shape instead of emitting a users[] array clients may
+	// not authenticate against.
+	if s.UseMultiUser(typ) {
+		s.SingleUser = false
+	} else {
+		s.MultiUser = false
+		s.SingleUser = true
+	}
 	if s.TLS.Reality.Enabled && s.TLS.Reality.PrivateKey == "" {
 		priv, pub, err := genRealityKeypair()
 		if err != nil {
@@ -94,6 +99,13 @@ func fillInboundSecrets(typ string, s *singbox.InboundSettings) error {
 		if s.SnellPSK == "" {
 			s.SnellPSK = randHex(16)
 		}
+	}
+	if typ == "socks" && s.UseMultiUser(typ) && (s.Username == "" || s.Password == "") {
+		// SOCKS with no users is an unauthenticated proxy. Keep a private fallback
+		// login in the stored settings so an inbound with zero active panel users
+		// remains locked instead of silently becoming open to the Internet.
+		s.Username = "__singbox_panel_disabled__"
+		s.Password = randHex(32)
 	}
 	if typ == "shadowtls" {
 		if s.ShadowTLSVersion == 0 {

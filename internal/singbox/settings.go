@@ -126,13 +126,40 @@ type InboundSettings struct {
 	// fixed credential to clients instead of the panel's per-user list — the
 	// transit/relay model (and the sing-box template style). UUID/Password are
 	// that credential; shadowsocks reuses SSServerPSK, snell reuses SnellPSK.
-	SingleUser bool   `json:"single_user,omitempty"`
-	Username   string `json:"username,omitempty"` // socks5 username
-	UUID       string `json:"uuid,omitempty"`     // vless / vmess / tuic single-user id
-	Password   string `json:"password,omitempty"` // trojan / hy2 / hysteria / naive / anytls / tuic / shadowtls / snell
+	SingleUser bool `json:"single_user,omitempty"`
+	// MultiUser is an explicit panel-management opt-in. It is separate from
+	// SingleUser so old rows and API clients remain single-credential by default;
+	// imported raw configs still describe their observed wire shape with
+	// SingleUser without being silently adopted as panel-managed multi-user.
+	MultiUser bool   `json:"multi_user,omitempty"`
+	Username  string `json:"username,omitempty"` // socks5 username
+	UUID      string `json:"uuid,omitempty"`     // vless / vmess / tuic single-user id
+	Password  string `json:"password,omitempty"` // trojan / hy2 / hysteria / naive / anytls / tuic / shadowtls / snell
 
 	Transport TransportSettings `json:"transport,omitempty"`
 	TLS       TLSSettings       `json:"tls,omitempty"`
+}
+
+// SupportsMultiUser reports whether the official inbound wire format used by
+// this panel can safely assign one credential per panel user. Snell is kept in
+// fixed-PSK mode despite its newer schema exposing users[]: real-world clients
+// commonly authenticate only with the top-level PSK, and enabling userkey
+// previously broke existing nodes. Legacy Shadowsocks ciphers also have only a
+// shared password; Shadowsocks 2022 is the multi-user variant.
+func SupportsMultiUser(typ string, s InboundSettings) bool {
+	switch typ {
+	case "vless", "vmess", "trojan", "hysteria2", "tuic", "anytls", "socks":
+		return true
+	case "shadowsocks":
+		return IsSS2022(s.Method)
+	default:
+		return false
+	}
+}
+
+// UseMultiUser is true only for an explicit opt-in on a capable protocol.
+func (s InboundSettings) UseMultiUser(typ string) bool {
+	return s.MultiUser && SupportsMultiUser(typ, s)
 }
 
 // VMessSecurityValue returns the documented VMess client cipher default.

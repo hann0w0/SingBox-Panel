@@ -150,7 +150,9 @@ func buildImportSummary(p *singbox.ParsedConfig) importSummary {
 
 // applyImport writes the parsed view of a raw config into the DB. Existing
 // rows with the same tag keep their IDs so per-inbound user grants do not break
-// whenever an administrator imports or edits config.json.
+// whenever an administrator imports or edits config.json. A lossless round
+// trip is promoted to managed mode automatically; otherwise raw JSON remains
+// the source of truth so fields the panel cannot model are never discarded.
 func (a *App) applyImport(srv *model.Server, p *singbox.ParsedConfig, raw []byte) error {
 	// Import changes both the structured rows and the raw source-of-truth mode.
 	// Serialize it with reconnect pushes, raw edits and explicit mode switches so
@@ -164,6 +166,7 @@ func (a *App) applyImport(srv *model.Server, p *singbox.ParsedConfig, raw []byte
 // applyImportUnlocked performs the database transaction while the caller owns
 // the server configuration lock.
 func (a *App) applyImportUnlocked(srv *model.Server, p *singbox.ParsedConfig, raw []byte) error {
+	mode := importedConfigMode(p, raw)
 	return a.db.Transaction(func(tx *gorm.DB) error {
 		if err := syncImportedInbounds(tx, srv.ID, p.Inbounds); err != nil {
 			return err
@@ -179,11 +182,87 @@ func (a *App) applyImportUnlocked(srv *model.Server, p *singbox.ParsedConfig, ra
 		}
 		return tx.Model(&model.Server{}).Where("id = ?", srv.ID).Updates(map[string]any{
 			"final_outbound":     p.Final,
-			"config_mode":        model.ConfigModeRaw,
+			"config_mode":        mode,
 			"raw_config":         model.JSONText(append([]byte(nil), raw...)),
 			"config_initialized": true,
 		}).Error
 	})
+}
+
+func importedConfigMode(p *singbox.ParsedConfig, raw []byte) string {
+	generated, err := buildManagedConfigFromImport(p)
+	if err != nil || !equivalentJSON(raw, generated) {
+		return model.ConfigModeRaw
+	}
+	return model.ConfigModeManaged
+}
+
+func buildManagedConfigFromImport(p *singbox.ParsedConfig) ([]byte, error) {
+	inbounds := make([]singbox.InboundInput, 0, len(p.Inbounds))
+	for _, inbound := range p.Inbounds {
+		settings := inbound.Settings
+		// Managed mode intentionally emits one credential per inbound. A manual
+		// multi-user config therefore cannot pass the lossless comparison.
+		settings.SingleUser = true
+		inbounds = append(inbounds, singbox.InboundInput{
+			Tag: inbound.Tag, Type: inbound.Type, ListenPort: inbound.ListenPort, Settings: settings,
+		})
+	}
+	outbounds := make([]singbox.OutboundInput, 0, len(p.Outbounds))
+	for _, outbound := range p.Outbounds {
+		outbounds = append(outbounds, singbox.OutboundInput{
+			Tag: outbound.Tag, Type: outbound.Type, Server: outbound.Server, ServerPort: outbound.ServerPort,
+			Username: outbound.Username, UUID: outbound.UUID, Password: outbound.Password, Settings: outbound.Settings,
+		})
+	}
+	rules := make([]singbox.RuleInput, 0, len(p.Rules))
+	for _, parsedRule := range p.Rules {
+		rule := parsedRule.Match
+		rule.Outbound = parsedRule.Outbound
+		rules = append(rules, rule)
+	}
+	return singbox.BuildServerConfig(singbox.ServerConfigInput{
+		Inbounds: inbounds, Outbounds: outbounds, Rules: rules,
+		RuleSets: p.RuleSets, Final: p.Final,
+	})
+}
+
+func equivalentJSON(left, right []byte) bool {
+	var leftValue any
+	var rightValue any
+	if json.Unmarshal(left, &leftValue) != nil || json.Unmarshal(right, &rightValue) != nil {
+		return false
+	}
+	removeInternalTrafficAPI(leftValue)
+	removeInternalTrafficAPI(rightValue)
+	leftCanonical, err := json.Marshal(leftValue)
+	if err != nil {
+		return false
+	}
+	rightCanonical, err := json.Marshal(rightValue)
+	return err == nil && string(leftCanonical) == string(rightCanonical)
+}
+
+// removeInternalTrafficAPI ignores only the exact loopback endpoint the panel
+// injects into managed configs. Any other experimental field remains part of
+// the lossless comparison and therefore keeps the source in raw mode.
+func removeInternalTrafficAPI(value any) {
+	root, ok := value.(map[string]any)
+	if !ok {
+		return
+	}
+	experimental, ok := root["experimental"].(map[string]any)
+	if !ok {
+		return
+	}
+	clashAPI, ok := experimental["clash_api"].(map[string]any)
+	if !ok || len(clashAPI) != 1 || clashAPI["external_controller"] != protocol.LocalTrafficAddress {
+		return
+	}
+	delete(experimental, "clash_api")
+	if len(experimental) == 0 {
+		delete(root, "experimental")
+	}
 }
 
 func deleteRowsExcept(tx *gorm.DB, serverID uint, keepIDs []uint, row any) error {

@@ -75,15 +75,24 @@ func (o *Orchestrator) BuildServerConfig(srv *model.Server) ([]byte, error) {
 				return nil, fmt.Errorf("inbound %q settings: %w", ib.Tag, err)
 			}
 		}
-		// Every generated inbound is single-credential, including rows stored
-		// before that became the rule — the panel must never emit a per-user
-		// list. The wire shape stays protocol-specific (see BuildInbound).
-		st.SingleUser = true
+		var users []singbox.ProxyUser
+		if st.UseMultiUser(string(ib.Type)) {
+			st.SingleUser = false
+			loadedUsers, loadErr := proxyUsersForInbound(o.db, &ib, st)
+			if loadErr != nil {
+				return nil, fmt.Errorf("load users for inbound %q: %w", ib.Tag, loadErr)
+			}
+			users = loadedUsers
+		} else {
+			st.MultiUser = false
+			st.SingleUser = true
+		}
 		ins = append(ins, singbox.InboundInput{
 			Tag:        ib.Tag,
 			Type:       string(ib.Type),
 			ListenPort: ib.ListenPort,
 			Settings:   st,
+			Users:      users,
 		})
 	}
 
@@ -138,11 +147,12 @@ func (o *Orchestrator) BuildServerConfig(srv *model.Server) ([]byte, error) {
 	}
 
 	return singbox.BuildServerConfig(singbox.ServerConfigInput{
-		Inbounds:  ins,
-		Outbounds: obs,
-		Rules:     rules,
-		RuleSets:  rsets,
-		Final:     srv.FinalOutbound,
+		Inbounds:        ins,
+		Outbounds:       obs,
+		Rules:           rules,
+		RuleSets:        rsets,
+		Final:           srv.FinalOutbound,
+		StatsController: protocol.LocalTrafficAddress,
 	})
 }
 

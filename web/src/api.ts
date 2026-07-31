@@ -13,6 +13,7 @@ import type {
   RuleSet,
   Server,
   StatusData,
+  TrafficSummary,
   User,
 } from './types'
 
@@ -111,10 +112,12 @@ export const serverLogs = (id: number, lines = 200) =>
   http.get<{ text: string }>(`/api/admin/servers/${id}/logs`, { params: { lines } }).then((r) => r.data.text)
 export const serverStatus = (id: number) =>
   http.get<{ status: StatusData }>(`/api/admin/servers/${id}/status`).then((r) => r.data.status)
+export const getServerTraffic = (id: number, days = 30) =>
+  http.get<TrafficSummary>(`/api/admin/servers/${id}/traffic`, { params: { days } }).then((r) => r.data)
 export const remoteConfig = (id: number) =>
   http.get<RemoteConfig>(`/api/admin/servers/${id}/remote-config`).then((r) => r.data)
 export const applyRawConfig = (id: number, config: string) =>
-  http.post<{ ok: boolean; output: string; summary: ImportSummary }>(`/api/admin/servers/${id}/apply-raw`, { config }).then((r) => r.data)
+  http.post<{ ok: boolean; output: string; summary: ImportSummary; config_mode: 'managed' | 'raw' }>(`/api/admin/servers/${id}/apply-raw`, { config }).then((r) => r.data)
 
 // ---- admin: inbounds ----
 interface InboundBody {

@@ -5,6 +5,11 @@ package protocol
 
 import "encoding/json"
 
+// LocalTrafficAddress is the loopback-only Clash API endpoint injected into
+// panel-managed sing-box configurations. It is never exposed by the Agent or
+// Docker; the Agent reads cumulative proxy counters from it locally.
+const LocalTrafficAddress = "127.0.0.1:29091"
+
 // MessageType enumerates the fixed command/event set.
 type MessageType string
 
@@ -161,13 +166,24 @@ type RegisterEvt struct {
 
 // HeartbeatEvt is sent periodically.
 type HeartbeatEvt struct {
-	TS             int64   `json:"ts"`
-	Load1          float64 `json:"load1"`
-	MemUsed        uint64  `json:"mem_used"`
-	MemTotal       uint64  `json:"mem_total"`
-	Uptime         int64   `json:"uptime"`
-	SingboxActive  bool    `json:"singbox_active"`
-	SingboxVersion string  `json:"singbox_version,omitempty"`
+	TS             int64            `json:"ts"`
+	Load1          float64          `json:"load1"`
+	MemUsed        uint64           `json:"mem_used"`
+	MemTotal       uint64           `json:"mem_total"`
+	Uptime         int64            `json:"uptime"`
+	SingboxActive  bool             `json:"singbox_active"`
+	SingboxVersion string           `json:"singbox_version,omitempty"`
+	Traffic        *TrafficSnapshot `json:"traffic,omitempty"`
+}
+
+// TrafficSnapshot is sing-box's monotonic process-level proxy counter plus an
+// average rate since the Agent's previous successful sample.
+type TrafficSnapshot struct {
+	UploadTotal   uint64 `json:"upload_total"`
+	DownloadTotal uint64 `json:"download_total"`
+	UploadRate    uint64 `json:"upload_rate"`
+	DownloadRate  uint64 `json:"download_rate"`
+	SampledAt     int64  `json:"sampled_at"`
 }
 
 // CommandResultEvt is the reply to a Panel command, correlated by ID.

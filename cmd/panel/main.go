@@ -1,4 +1,4 @@
-// Command panel is the SingPanel control-plane server.
+// Command panel is the SingBox Panel control-plane server.
 package main
 
 import (
@@ -9,8 +9,8 @@ import (
 	"os/signal"
 	"syscall"
 
-	"github.com/singpanel/singpanel/internal/config"
-	"github.com/singpanel/singpanel/internal/panel"
+	"github.com/hann0w0/singbox-panel/internal/config"
+	"github.com/hann0w0/singbox-panel/internal/panel"
 )
 
 // version is set via -ldflags "-X main.version=x.y.z".
@@ -22,7 +22,7 @@ func main() {
 	flag.Parse()
 
 	if *showVer {
-		fmt.Println("singpanel", version)
+		fmt.Println("singbox-panel", version)
 		return
 	}
 
@@ -47,9 +47,9 @@ func main() {
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
 
-	log.Printf("singpanel %s starting", version)
+	log.Printf("singbox-panel %s starting", version)
 	if err := app.Run(ctx); err != nil {
 		log.Fatalf("server: %v", err)
 	}
-	log.Println("singpanel stopped")
+	log.Println("singbox-panel stopped")
 }

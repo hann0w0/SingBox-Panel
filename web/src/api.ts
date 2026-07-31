@@ -19,7 +19,7 @@ import type {
 const http = axios.create({ baseURL: '' })
 
 http.interceptors.request.use((config) => {
-  const token = localStorage.getItem('singpanel_token')
+  const token = localStorage.getItem('singbox-panel_token')
   if (token) {
     config.headers.Authorization = `Bearer ${token}`
   }
@@ -30,8 +30,8 @@ http.interceptors.response.use(
   (r) => r,
   (err) => {
     if (err?.response?.status === 401 && !location.pathname.startsWith('/login')) {
-      localStorage.removeItem('singpanel_token')
-      localStorage.removeItem('singpanel_user')
+      localStorage.removeItem('singbox-panel_token')
+      localStorage.removeItem('singbox-panel_user')
       location.href = '/login'
     }
     return Promise.reject(err)

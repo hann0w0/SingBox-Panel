@@ -1,6 +1,6 @@
 # 官方 sing-box 规范（Agent 严格遵循）
 
-> 本文档为**已核实**的官方事实基线（核实日期 2026-07-26，来源：sing-box.sagernet.org 配置页、GitHub `v1.13.14` tag 下 `release/config` 与 `cmd/sing-box` 源码、`sing-box.app/install.sh` 脚本原文、GitHub Releases API）。SingPanel 的 Agent 与配置生成器**必须**符合本文。凡改动此处，需重新核对官方来源。
+> 本文档为**已核实**的官方事实基线（核实日期 2026-07-26，来源：sing-box.sagernet.org 配置页、GitHub `v1.13.14` tag 下 `release/config` 与 `cmd/sing-box` 源码、`sing-box.app/install.sh` 脚本原文、GitHub Releases API）。SingBox Panel 的 Agent 与配置生成器**必须**符合本文。凡改动此处，需重新核对官方来源。
 
 ## 0. 版本
 
@@ -84,7 +84,7 @@ WantedBy=multi-user.target
 ```
 `sing-box@.service` 与之仅 3 行不同：`StateDirectory=sing-box-%i`、`ExecStart=/usr/bin/sing-box -D /var/lib/sing-box-%i -c /etc/sing-box/%i.json run`。
 
-> **SingPanel 只使用官方随包安装的 `sing-box.service`，不改写其核心字段。** 服务操作全部经 `systemctl`：`start/stop/restart/reload/enable/disable sing-box`。`reload` = 官方 `ExecReload` 的 `SIGHUP`，sing-box 支持热重载配置。
+> **SingBox Panel 只使用官方随包安装的 `sing-box.service`，不改写其核心字段。** 服务操作全部经 `systemctl`：`start/stop/restart/reload/enable/disable sing-box`。`reload` = 官方 `ExecReload` 的 `SIGHUP`，sing-box 支持热重载配置。
 
 ## 4. 配置校验 / 管理 CLI（源码逐字核实）
 
@@ -124,7 +124,7 @@ WantedBy=multi-user.target
 - **官方发布构建默认不含 `v2ray_api`**（需 build tag `with_v2ray_api` 自编译）。→ **不得依赖 v2ray StatsService 做每用户统计。**
 - **`clash_api` 默认包含在官方构建中**，可用于流量归集。
 
-> ⚠️ **SingPanel 不使用它**：入站为单凭证，无法按用户归属字节，面板已移除全部流量统计，生成的配置不含 `experimental` 块。以下仅作官方能力参考：
+> ⚠️ **SingBox Panel 不使用它**：入站为单凭证，无法按用户归属字节，面板已移除全部流量统计，生成的配置不含 `experimental` 块。以下仅作官方能力参考：
   ```jsonc
   "experimental": {
     "clash_api": {

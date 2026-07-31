@@ -7,7 +7,7 @@ import (
 
 	"gorm.io/gorm"
 
-	"github.com/singpanel/singpanel/internal/model"
+	"github.com/hann0w0/singbox-panel/internal/model"
 )
 
 // Reconciler periodically disables expired users.

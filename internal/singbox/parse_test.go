@@ -2,6 +2,7 @@ package singbox
 
 import (
 	"encoding/json"
+	"strings"
 	"testing"
 )
 
@@ -226,5 +227,51 @@ func TestParseSocksActionsAndLocalRuleSet(t *testing.T) {
 	}
 	if got.Final != "landing" {
 		t.Fatalf("final = %q", got.Final)
+	}
+}
+
+// A TLS inbound (e.g. anytls) whose certificate is embedded inline in the
+// config must survive an import → regenerate roundtrip. If parseTLS drops the
+// inline certificate/key, switching that node to managed mode regenerates TLS
+// with no certificate and `sing-box check` fails with exit status 1.
+func TestParseRecoversInlineTLSCertificate(t *testing.T) {
+	const wantCert = "-----BEGIN CERTIFICATE-----\nMIIBfakeCertBody\n-----END CERTIFICATE-----"
+	const wantKey = "-----BEGIN PRIVATE KEY-----\nMIIBfakeKeyBody\n-----END PRIVATE KEY-----"
+	raw := []byte(`{
+      "inbounds":[{
+        "type":"anytls","tag":"anytls-in","listen_port":8443,
+        "users":[{"password":"secret"}],
+        "tls":{"enabled":true,"server_name":"example.com",
+          "certificate":["-----BEGIN CERTIFICATE-----","MIIBfakeCertBody","-----END CERTIFICATE-----"],
+          "key":["-----BEGIN PRIVATE KEY-----","MIIBfakeKeyBody","-----END PRIVATE KEY-----"]}
+      }]
+    }`)
+	got, err := ParseServerConfig(raw)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got.Inbounds) != 1 {
+		t.Fatalf("inbounds = %d, want 1: skipped=%v", len(got.Inbounds), got.Skipped)
+	}
+	tls := got.Inbounds[0].Settings.TLS
+	if tls.Certificate != wantCert {
+		t.Fatalf("inline certificate not recovered:\n got %q\nwant %q", tls.Certificate, wantCert)
+	}
+	if tls.Key != wantKey {
+		t.Fatalf("inline key not recovered:\n got %q\nwant %q", tls.Key, wantKey)
+	}
+	// Regenerating the inbound (as switch-to-managed does) must re-emit the cert.
+	in := got.Inbounds[0]
+	rebuilt, err := BuildInbound(InboundInput{
+		Tag:        in.Tag,
+		Type:       in.Type,
+		ListenPort: in.ListenPort,
+		Settings:   in.Settings,
+	})
+	if err != nil {
+		t.Fatalf("regenerate inbound: %v", err)
+	}
+	if !strings.Contains(string(rebuilt), "MIIBfakeCertBody") || !strings.Contains(string(rebuilt), "MIIBfakeKeyBody") {
+		t.Fatalf("regenerated inbound dropped inline TLS material: %s", rebuilt)
 	}
 }

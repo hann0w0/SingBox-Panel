@@ -11,8 +11,8 @@ import (
 	"github.com/gin-gonic/gin"
 	"gopkg.in/yaml.v3"
 
-	"github.com/singpanel/singpanel/internal/model"
-	"github.com/singpanel/singpanel/internal/singbox"
+	"github.com/hann0w0/singbox-panel/internal/model"
+	"github.com/hann0w0/singbox-panel/internal/singbox"
 )
 
 // node bundles a server+inbound for a subscriber.
@@ -679,6 +679,10 @@ func surgeProxy(n node, name string) string {
 		return line + ", udp-relay=true"
 	case "trojan":
 		return fmt.Sprintf("%s = trojan, %s, %d, password=%s, sni=%s, skip-cert-verify=%t",
+			name, n.server, n.port, u.Password, sni, st.TLS.ClientInsecure())
+	case "anytls":
+		// Surge added AnyTLS support in iOS 5.17.0 / macOS 6.4.3.
+		return fmt.Sprintf("%s = anytls, %s, %d, password=%s, sni=%s, skip-cert-verify=%t",
 			name, n.server, n.port, u.Password, sni, st.TLS.ClientInsecure())
 	case "vmess":
 		if st.TLS.Reality.Enabled {

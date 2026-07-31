@@ -7,7 +7,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 
-	"github.com/singpanel/singpanel/internal/model"
+	"github.com/hann0w0/singbox-panel/internal/model"
 )
 
 func bindJSON(c *gin.Context, v any) bool {

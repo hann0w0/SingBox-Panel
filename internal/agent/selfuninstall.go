@@ -8,35 +8,35 @@ import (
 )
 
 const (
-	agentUninstallUnit     = "/etc/systemd/system/singpanel-agent-uninstall.service"
-	agentUninstallScript   = "/run/singpanel-agent-uninstall.sh"
-	agentUninstallUnitName = "singpanel-agent-uninstall.service"
+	agentUninstallUnit     = "/etc/systemd/system/singbox-panel-agent-uninstall.service"
+	agentUninstallScript   = "/run/singbox-panel-agent-uninstall.sh"
+	agentUninstallUnitName = "singbox-panel-agent-uninstall.service"
 )
 
 const selfUninstallScript = `#!/bin/sh
 sleep 5
-systemctl disable --now singpanel-agent.service >/dev/null 2>&1 || true
-rm -f /usr/local/bin/singpanel-agent
-rm -rf /etc/singpanel-agent
-rm -f /etc/systemd/system/singpanel-agent.service
-rm -f /etc/systemd/system/singpanel-agent-uninstall.service
+systemctl disable --now singbox-panel-agent.service >/dev/null 2>&1 || true
+rm -f /usr/local/bin/singbox-panel-agent
+rm -rf /etc/singbox-panel-agent
+rm -f /etc/systemd/system/singbox-panel-agent.service
+rm -f /etc/systemd/system/singbox-panel-agent-uninstall.service
 systemctl daemon-reload >/dev/null 2>&1 || true
-rm -f /run/singpanel-agent-uninstall.sh
+rm -f /run/singbox-panel-agent-uninstall.sh
 `
 
 const selfUninstallUnit = `[Unit]
-Description=Remove SingPanel Agent
+Description=Remove SingBox Panel Agent
 
 [Service]
 Type=oneshot
-ExecStart=/bin/sh /run/singpanel-agent-uninstall.sh
+ExecStart=/bin/sh /run/singbox-panel-agent-uninstall.sh
 `
 
 // writeAtomicFile prevents a partial cleanup script or unit from being
 // observed if the disk fills or the Agent is interrupted during preparation.
 func writeAtomicFile(path string, data []byte, mode os.FileMode) error {
 	dir := filepath.Dir(path)
-	tmp, err := os.CreateTemp(dir, ".singpanel-uninstall-*")
+	tmp, err := os.CreateTemp(dir, ".singbox-panel-uninstall-*")
 	if err != nil {
 		return err
 	}

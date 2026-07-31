@@ -19,38 +19,38 @@ import (
 
 const (
 	// agentBinary is where the install script puts the agent.
-	agentBinary         = "/usr/local/bin/singpanel-agent"
-	agentPreviousBinary = "/usr/local/bin/singpanel-agent.prev"
-	agentServiceName    = "singpanel-agent"
+	agentBinary         = "/usr/local/bin/singbox-panel-agent"
+	agentPreviousBinary = "/usr/local/bin/singbox-panel-agent.prev"
+	agentServiceName    = "singbox-panel-agent"
 
-	agentReadyFile       = "/run/singpanel-agent.ready"
-	agentUpgradeUnit     = "/etc/systemd/system/singpanel-agent-upgrade.service"
-	agentUpgradeScript   = "/run/singpanel-agent-upgrade.sh"
-	agentUpgradeUnitName = "singpanel-agent-upgrade.service"
-	agentUpdateStatus    = "/var/lib/singpanel-agent/update-status"
+	agentReadyFile       = "/run/singbox-panel-agent.ready"
+	agentUpgradeUnit     = "/etc/systemd/system/singbox-panel-agent-upgrade.service"
+	agentUpgradeScript   = "/run/singbox-panel-agent-upgrade.sh"
+	agentUpgradeUnitName = "singbox-panel-agent-upgrade.service"
+	agentUpdateStatus    = "/var/lib/singbox-panel-agent/update-status"
 
-	agentChecksumHeader = "X-SingPanel-SHA256"
+	agentChecksumHeader = "X-SingBox-Panel-SHA256"
 	maxAgentBinarySize  = int64(128 << 20)
 )
 
 const agentUpgradeScriptBody = `#!/bin/sh
 sleep 3
-READY=/run/singpanel-agent.ready
-BIN=/usr/local/bin/singpanel-agent
-PREV=/usr/local/bin/singpanel-agent.prev
-STATUS=/var/lib/singpanel-agent/update-status
-mkdir -p /var/lib/singpanel-agent
+READY=/run/singbox-panel-agent.ready
+BIN=/usr/local/bin/singbox-panel-agent
+PREV=/usr/local/bin/singbox-panel-agent.prev
+STATUS=/var/lib/singbox-panel-agent/update-status
+mkdir -p /var/lib/singbox-panel-agent
 rm -f "$READY"
 systemctl daemon-reload >/dev/null 2>&1 || true
-systemctl restart singpanel-agent.service >/dev/null 2>&1 || true
+systemctl restart singbox-panel-agent.service >/dev/null 2>&1 || true
 
 i=0
 while [ "$i" -lt 30 ]; do
-  if systemctl is-active --quiet singpanel-agent.service && [ -s "$READY" ]; then
+  if systemctl is-active --quiet singbox-panel-agent.service && [ -s "$READY" ]; then
     printf 'ok\n' > "$STATUS"
     rm -f "$PREV"
-    rm -f /etc/systemd/system/singpanel-agent-upgrade.service
-    rm -f /run/singpanel-agent-upgrade.sh
+    rm -f /etc/systemd/system/singbox-panel-agent-upgrade.service
+    rm -f /run/singbox-panel-agent-upgrade.sh
     systemctl daemon-reload >/dev/null 2>&1 || true
     exit 0
   fi
@@ -59,26 +59,26 @@ while [ "$i" -lt 30 ]; do
 done
 
 printf 'rollback\n' > "$STATUS"
-systemctl stop singpanel-agent.service >/dev/null 2>&1 || true
+systemctl stop singbox-panel-agent.service >/dev/null 2>&1 || true
 if [ -x "$PREV" ]; then
   rm -f "$BIN"
   mv -f "$PREV" "$BIN"
   chmod 755 "$BIN"
-  systemctl restart singpanel-agent.service >/dev/null 2>&1 || true
+  systemctl restart singbox-panel-agent.service >/dev/null 2>&1 || true
 else
   printf 'rollback-failed-no-previous-binary\n' > "$STATUS"
 fi
-rm -f /etc/systemd/system/singpanel-agent-upgrade.service
-rm -f /run/singpanel-agent-upgrade.sh
+rm -f /etc/systemd/system/singbox-panel-agent-upgrade.service
+rm -f /run/singbox-panel-agent-upgrade.sh
 systemctl daemon-reload >/dev/null 2>&1 || true
 `
 
 const agentUpgradeUnitBody = `[Unit]
-Description=Upgrade SingPanel Agent with automatic rollback
+Description=Upgrade SingBox Panel Agent with automatic rollback
 
 [Service]
 Type=oneshot
-ExecStart=/bin/sh /run/singpanel-agent-upgrade.sh
+ExecStart=/bin/sh /run/singbox-panel-agent-upgrade.sh
 `
 
 // httpBase converts the panel's websocket URL into an http(s) base URL.
@@ -130,7 +130,7 @@ func SelfUpdate(ctx context.Context, panelURL string, insecure bool) (string, er
 	}
 
 	dir := filepath.Dir(agentBinary)
-	tmp, err := os.CreateTemp(dir, ".singpanel-agent-*")
+	tmp, err := os.CreateTemp(dir, ".singbox-panel-agent-*")
 	if err != nil {
 		return "", fmt.Errorf("创建临时文件失败: %w", err)
 	}
@@ -216,10 +216,10 @@ func validateAgentBinary(ctx context.Context, path string) (string, error) {
 	if err != nil {
 		return "", fmt.Errorf("新 Agent 无法执行版本检查: %w: %s", err, out)
 	}
-	if !strings.HasPrefix(strings.TrimSpace(out), "singpanel-agent ") {
+	if !strings.HasPrefix(strings.TrimSpace(out), "singbox-panel-agent ") {
 		return "", fmt.Errorf("新 Agent 版本输出异常: %q", firstLine(out))
 	}
-	return strings.TrimSpace(strings.TrimPrefix(firstLine(out), "singpanel-agent ")), nil
+	return strings.TrimSpace(strings.TrimPrefix(firstLine(out), "singbox-panel-agent ")), nil
 }
 
 func scheduleAgentUpgrade(ctx context.Context) error {

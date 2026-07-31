@@ -6,7 +6,7 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/singpanel/singpanel/internal/config"
+	"github.com/hann0w0/singbox-panel/internal/config"
 )
 
 // jwtSecretFile holds the auto-generated JWT secret, stored next to the SQLite

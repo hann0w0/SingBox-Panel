@@ -3,7 +3,7 @@
 /web/dist/
 /agent
 /panel
-/singpanel
+/singbox-panel
 
 # runtime data
 /data/

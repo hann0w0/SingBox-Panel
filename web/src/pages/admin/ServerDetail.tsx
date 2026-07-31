@@ -105,6 +105,8 @@ export default function ServerDetail() {
   const load = async () => {
     const d = await getServer(sid)
     setServer(d.server)
+    // 入站标签/端口等改动后，导出弹窗的缓存必须失效，下次打开时重新拉取。
+    setFmtData(null)
     setInstall(d.install_command)
     setPublicURL(d.public_url)
     const [outboundRows, ruleRows, ruleSetRows] = await Promise.allSettled([
@@ -431,7 +433,6 @@ export default function ServerDetail() {
             {server.name}
             {server.online ? <Tag color="green">在线</Tag> : <Tag>离线</Tag>}
             {server.singbox_installed ? <Tag color="blue">{server.singbox_version}</Tag> : <Tag color="orange">未装 sing-box</Tag>}
-            {server.singbox_active ? <Tag color="green">服务运行</Tag> : <Tag color="red">服务未运行</Tag>}
           </Space>
         }
         extra={<Button icon={<ReloadOutlined />} loading={refreshing} onClick={refresh} title="刷新节点状态" aria-label="刷新节点状态" />}

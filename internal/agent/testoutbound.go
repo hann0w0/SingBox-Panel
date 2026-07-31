@@ -9,7 +9,7 @@ import (
 	"strconv"
 	"time"
 
-	"github.com/singpanel/singpanel/internal/protocol"
+	"github.com/hann0w0/singbox-panel/internal/protocol"
 )
 
 // TestOutbound checks whether a landing server is reachable from this node by

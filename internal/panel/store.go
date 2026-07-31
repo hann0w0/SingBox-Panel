@@ -16,8 +16,8 @@ import (
 	"gorm.io/gorm"
 	gormlogger "gorm.io/gorm/logger"
 
-	"github.com/singpanel/singpanel/internal/config"
-	"github.com/singpanel/singpanel/internal/model"
+	"github.com/hann0w0/singbox-panel/internal/config"
+	"github.com/hann0w0/singbox-panel/internal/model"
 )
 
 // InitDB opens the configured database, migrates the schema, and seeds a
@@ -103,7 +103,7 @@ func hashPassword(plain string) (string, error) {
 // an account does not exist keeps the response time indistinguishable from a
 // wrong-password attempt, so login cannot be used to enumerate usernames.
 var dummyHash = func() string {
-	h, err := bcrypt.GenerateFromPassword([]byte("singpanel-timing-equalizer"), bcrypt.DefaultCost)
+	h, err := bcrypt.GenerateFromPassword([]byte("singbox-panel-timing-equalizer"), bcrypt.DefaultCost)
 	if err != nil {
 		return ""
 	}

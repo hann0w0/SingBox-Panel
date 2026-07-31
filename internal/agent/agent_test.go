@@ -5,7 +5,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/singpanel/singpanel/internal/protocol"
+	"github.com/hann0w0/singbox-panel/internal/protocol"
 )
 
 func TestOnCommandRejectsInvalidPayload(t *testing.T) {

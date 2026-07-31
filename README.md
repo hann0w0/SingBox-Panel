@@ -29,7 +29,7 @@ curl -fsSL https://raw.githubusercontent.com/hann0w0/SingBox-Panel/refs/heads/ma
 - 反向代理支持 WebSocket
 - 公网只开放 `80/443`，不要开放面板本机端口
 
-安装配置默认保存在 `/opt/singpanel/deploy/.env`，面板数据保存在 Docker 数据卷 `singbox-panel_data` 中。容器日志会自动轮转，单文件最大 10 MB，保留 3 份。
+安装配置默认保存在 `/opt/singbox-panel/deploy/.env`，面板数据保存在 Docker 数据卷 `singbox-panel_data` 中。容器日志会自动轮转，单文件最大 10 MB，保留 3 份。
 
 ### 更新
 

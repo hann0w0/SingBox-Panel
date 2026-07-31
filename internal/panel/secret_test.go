@@ -5,14 +5,14 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/singpanel/singpanel/internal/config"
+	"github.com/hann0w0/singbox-panel/internal/config"
 )
 
 func TestResolveJWTSecretPersistsAndReuses(t *testing.T) {
 	dir := t.TempDir()
 	cfg := config.PanelConfig{}
 	cfg.Database.Driver = "sqlite"
-	cfg.Database.DSN = filepath.Join(dir, "singpanel.db")
+	cfg.Database.DSN = filepath.Join(dir, "singbox-panel.db")
 
 	first, err := ResolveJWTSecret(cfg)
 	if err != nil {
@@ -46,7 +46,7 @@ func TestResolveJWTSecretExplicitWins(t *testing.T) {
 	dir := t.TempDir()
 	cfg := config.PanelConfig{JWTSecret: "an-explicitly-configured-secret-value"}
 	cfg.Database.Driver = "sqlite"
-	cfg.Database.DSN = filepath.Join(dir, "singpanel.db")
+	cfg.Database.DSN = filepath.Join(dir, "singbox-panel.db")
 
 	got, err := ResolveJWTSecret(cfg)
 	if err != nil {

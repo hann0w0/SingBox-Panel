@@ -1,4 +1,4 @@
-// Package panel implements the SingPanel control-plane server: the agent
+// Package panel implements the SingBox Panel control-plane server: the agent
 // WebSocket gateway, admin/user REST APIs, and subscription output.
 package panel
 

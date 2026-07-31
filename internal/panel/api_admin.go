@@ -13,9 +13,9 @@ import (
 	"github.com/gin-gonic/gin"
 	"gorm.io/gorm"
 
-	"github.com/singpanel/singpanel/internal/model"
-	"github.com/singpanel/singpanel/internal/protocol"
-	"github.com/singpanel/singpanel/internal/singbox"
+	"github.com/hann0w0/singbox-panel/internal/model"
+	"github.com/hann0w0/singbox-panel/internal/protocol"
+	"github.com/hann0w0/singbox-panel/internal/singbox"
 )
 
 // ---------- overview ----------
@@ -773,8 +773,8 @@ func (a *App) createUser(c *gin.Context) {
 		return
 	}
 	email := strings.TrimSpace(req.Email)
-	if email == "" || len(req.Password) < 6 {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "email required and password >= 6 chars"})
+	if email == "" || req.Password == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "email and password are required"})
 		return
 	}
 	var cnt int64
@@ -843,10 +843,6 @@ func (a *App) updateUser(c *gin.Context) {
 		u.Email = email
 	}
 	if req.Password != "" {
-		if len(req.Password) < 6 {
-			c.JSON(http.StatusBadRequest, gin.H{"error": "password must be >= 6 chars"})
-			return
-		}
 		h, err := hashPassword(req.Password)
 		if err != nil {
 			c.JSON(http.StatusInternalServerError, gin.H{"error": "hash error"})

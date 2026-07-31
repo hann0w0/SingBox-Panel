@@ -14,7 +14,7 @@ import (
 )
 
 // agentInstallScript is served at /api/agent/install.sh. It installs the
-// SingPanel agent (NOT sing-box) as its own systemd unit; the agent then
+// SingBox Panel agent (NOT sing-box) as its own systemd unit; the agent then
 // installs/manages the official sing-box on the host.
 const agentInstallScript = `#!/bin/sh
 set -e
@@ -38,13 +38,13 @@ case "$ARCH" in
   *) echo "unsupported arch: $ARCH"; exit 1 ;;
 esac
 
-BIN=/usr/local/bin/singpanel-agent
-PREV=/usr/local/bin/singpanel-agent.prev
-echo "downloading singpanel-agent ($GOARCH) ..."
+BIN=/usr/local/bin/singbox-panel-agent
+PREV=/usr/local/bin/singbox-panel-agent.prev
+echo "downloading singbox-panel-agent ($GOARCH) ..."
 # Download beside the target and rename into place: writing directly over a
 # running executable fails with "Text file busy", and a rename is atomic, so
 # re-running this script on a live node is a safe in-place upgrade.
-TMP="$(mktemp /usr/local/bin/.singpanel-agent.XXXXXX)"
+TMP="$(mktemp /usr/local/bin/.singbox-panel-agent.XXXXXX)"
 trap 'rm -f "$TMP"' EXIT
 curl -fsSL "$URL/api/agent/download?arch=$GOARCH" -o "$TMP"
 EXPECTED="$(curl -fsSL "$URL/api/agent/checksum?arch=$GOARCH" | tr -d '[:space:]')"
@@ -64,7 +64,7 @@ fi
   echo "Agent SHA256 mismatch"; exit 1;
 }
 chmod +x "$TMP"
-"$TMP" --version | grep -q '^singpanel-agent ' || { echo "invalid Agent binary"; exit 1; }
+"$TMP" --version | grep -q '^singbox-panel-agent ' || { echo "invalid Agent binary"; exit 1; }
 HAD_OLD=0
 if [ -x "$BIN" ]; then
   cp -p "$BIN" "$PREV"
@@ -72,23 +72,23 @@ if [ -x "$BIN" ]; then
 fi
 mv -f "$TMP" "$BIN"
 
-mkdir -p /etc/singpanel-agent
-cat > /etc/singpanel-agent/agent.conf <<EOF
+mkdir -p /etc/singbox-panel-agent
+cat > /etc/singbox-panel-agent/agent.conf <<EOF
 URL=$URL
 TOKEN=$TOKEN
 INSECURE=$INSECURE
 EOF
-chmod 600 /etc/singpanel-agent/agent.conf
+chmod 600 /etc/singbox-panel-agent/agent.conf
 
-cat > /etc/systemd/system/singpanel-agent.service <<EOF
+cat > /etc/systemd/system/singbox-panel-agent.service <<EOF
 [Unit]
-Description=SingPanel Agent
+Description=SingBox Panel Agent
 After=network-online.target
 Wants=network-online.target
 StartLimitIntervalSec=0
 
 [Service]
-ExecStart=/usr/local/bin/singpanel-agent --config /etc/singpanel-agent/agent.conf
+ExecStart=/usr/local/bin/singbox-panel-agent --config /etc/singbox-panel-agent/agent.conf
 Restart=always
 RestartSec=5s
 LimitNOFILE=infinity
@@ -98,27 +98,27 @@ WantedBy=multi-user.target
 EOF
 
 systemctl daemon-reload
-systemctl enable singpanel-agent
+systemctl enable singbox-panel-agent
 # restart, not "enable --now": an already-running agent must be replaced by the
 # freshly downloaded binary, which --now would leave untouched.
-rm -f /run/singpanel-agent.ready
-systemctl restart singpanel-agent || true
+rm -f /run/singbox-panel-agent.ready
+systemctl restart singbox-panel-agent || true
 i=0
 while [ "$i" -lt 30 ]; do
-  if systemctl is-active --quiet singpanel-agent && [ -s /run/singpanel-agent.ready ]; then
+  if systemctl is-active --quiet singbox-panel-agent && [ -s /run/singbox-panel-agent.ready ]; then
     rm -f "$PREV"
-    echo "singpanel-agent installed and connected."
+    echo "singbox-panel-agent installed and connected."
     exit 0
   fi
   i=$((i + 1))
   sleep 2
 done
 echo "new Agent failed to connect; restoring previous binary" >&2
-systemctl stop singpanel-agent >/dev/null 2>&1 || true
+systemctl stop singbox-panel-agent >/dev/null 2>&1 || true
 if [ "$HAD_OLD" = "1" ] && [ -x "$PREV" ]; then
   rm -f "$BIN"
   mv -f "$PREV" "$BIN"
-  systemctl restart singpanel-agent >/dev/null 2>&1 || true
+  systemctl restart singbox-panel-agent >/dev/null 2>&1 || true
 else
   rm -f "$BIN"
 fi
@@ -137,7 +137,7 @@ func (a *App) handleAgentDownload(c *gin.Context) {
 		c.String(http.StatusBadRequest, "unsupported arch %q", arch)
 		return
 	}
-	path := filepath.Join(a.cfg.AgentsDir, "singpanel-agent-linux-"+arch)
+	path := filepath.Join(a.cfg.AgentsDir, "singbox-panel-agent-linux-"+arch)
 	if _, err := os.Stat(path); err != nil {
 		c.String(http.StatusNotFound,
 			"agent binary not found: %s\nBuild agents first: make agents (or GOOS=linux GOARCH=%s go build -o %s ./cmd/agent)",
@@ -149,9 +149,9 @@ func (a *App) handleAgentDownload(c *gin.Context) {
 		c.String(http.StatusInternalServerError, "checksum agent binary: %v", err)
 		return
 	}
-	c.Header("X-SingPanel-SHA256", checksum)
+	c.Header("X-SingBox-Panel-SHA256", checksum)
 	c.Header("Cache-Control", "no-store")
-	c.FileAttachment(path, "singpanel-agent")
+	c.FileAttachment(path, "singbox-panel-agent")
 }
 
 func (a *App) handleAgentChecksum(c *gin.Context) {
@@ -160,7 +160,7 @@ func (a *App) handleAgentChecksum(c *gin.Context) {
 		c.String(http.StatusBadRequest, "unsupported arch %q", arch)
 		return
 	}
-	path := filepath.Join(a.cfg.AgentsDir, "singpanel-agent-linux-"+arch)
+	path := filepath.Join(a.cfg.AgentsDir, "singbox-panel-agent-linux-"+arch)
 	checksum, err := fileChecksum(path)
 	if err != nil {
 		if os.IsNotExist(err) {

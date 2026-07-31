@@ -6,7 +6,7 @@ import (
 	"github.com/gin-gonic/gin"
 	"gorm.io/gorm"
 
-	"github.com/singpanel/singpanel/internal/model"
+	"github.com/hann0w0/singbox-panel/internal/model"
 )
 
 func (a *App) subURL(token string) string {
@@ -63,8 +63,8 @@ func (a *App) handleChangePassword(c *gin.Context) {
 	if !bindJSON(c, &req) {
 		return
 	}
-	if len(req.NewPassword) < 6 {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "new password must be >= 6 chars"})
+	if req.NewPassword == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "new password cannot be empty"})
 		return
 	}
 	var u model.User

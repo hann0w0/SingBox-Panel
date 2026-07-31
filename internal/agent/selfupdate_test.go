@@ -27,7 +27,7 @@ func TestParseAgentChecksum(t *testing.T) {
 
 func TestValidateAgentBinary(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "agent")
-	if err := os.WriteFile(path, []byte("#!/bin/sh\nprintf 'singpanel-agent test-build\\n'\n"), 0o755); err != nil {
+	if err := os.WriteFile(path, []byte("#!/bin/sh\nprintf 'singbox-panel-agent test-build\\n'\n"), 0o755); err != nil {
 		t.Fatal(err)
 	}
 	version, err := validateAgentBinary(context.Background(), path)
@@ -37,7 +37,7 @@ func TestValidateAgentBinary(t *testing.T) {
 }
 
 func TestUpgradeWatchdogKeepsSingboxUntouched(t *testing.T) {
-	for _, required := range []string{agentPreviousBinary, agentReadyFile, "systemctl restart singpanel-agent.service"} {
+	for _, required := range []string{agentPreviousBinary, agentReadyFile, "systemctl restart singbox-panel-agent.service"} {
 		if !strings.Contains(agentUpgradeScriptBody, required) {
 			t.Fatalf("upgrade watchdog missing %q", required)
 		}

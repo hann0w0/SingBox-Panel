@@ -12,8 +12,8 @@ import (
 	"github.com/gorilla/websocket"
 	"gorm.io/gorm"
 
-	"github.com/singpanel/singpanel/internal/model"
-	"github.com/singpanel/singpanel/internal/protocol"
+	"github.com/hann0w0/singbox-panel/internal/model"
+	"github.com/hann0w0/singbox-panel/internal/protocol"
 )
 
 // ErrAgentOffline is returned when a command targets a disconnected agent.

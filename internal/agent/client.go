@@ -17,7 +17,7 @@ import (
 
 	"github.com/gorilla/websocket"
 
-	"github.com/singpanel/singpanel/internal/protocol"
+	"github.com/hann0w0/singbox-panel/internal/protocol"
 )
 
 const (

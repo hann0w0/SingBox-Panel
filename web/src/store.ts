@@ -9,8 +9,8 @@ interface AuthState {
   logout: () => void
 }
 
-const TOKEN_KEY = 'singpanel_token'
-const USER_KEY = 'singpanel_user'
+const TOKEN_KEY = 'singbox-panel_token'
+const USER_KEY = 'singbox-panel_user'
 
 function loadUser(): User | null {
   try {

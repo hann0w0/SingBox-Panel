@@ -6,8 +6,8 @@ import (
 
 	"gorm.io/gorm"
 
-	"github.com/singpanel/singpanel/internal/model"
-	"github.com/singpanel/singpanel/internal/singbox"
+	"github.com/hann0w0/singbox-panel/internal/model"
+	"github.com/hann0w0/singbox-panel/internal/singbox"
 )
 
 // migrateSingleUserInbounds converts inbounds stored back when the panel could

@@ -18,9 +18,9 @@ import (
 	"github.com/glebarez/sqlite"
 	"gorm.io/gorm"
 
-	"github.com/singpanel/singpanel/internal/model"
-	"github.com/singpanel/singpanel/internal/protocol"
-	"github.com/singpanel/singpanel/internal/singbox"
+	"github.com/hann0w0/singbox-panel/internal/model"
+	"github.com/hann0w0/singbox-panel/internal/protocol"
+	"github.com/hann0w0/singbox-panel/internal/singbox"
 )
 
 func testDB(t *testing.T) *gorm.DB {
@@ -333,8 +333,8 @@ func TestAgentInstallerVerifiesAndCanRollbackBinary(t *testing.T) {
 		"/api/agent/checksum?arch=$GOARCH",
 		"Agent SHA256 mismatch",
 		`"$TMP" --version`,
-		"singpanel-agent.prev",
-		"/run/singpanel-agent.ready",
+		"singbox-panel-agent.prev",
+		"/run/singbox-panel-agent.ready",
 	} {
 		if !strings.Contains(agentInstallScript, required) {
 			t.Fatalf("Agent installer missing %q", required)
@@ -658,7 +658,7 @@ func TestSelfSignedTLSForcesSkipVerificationInClashAndSurge(t *testing.T) {
 		})
 	}
 
-	for _, typ := range []string{"vmess", "trojan", "hysteria2", "tuic"} {
+	for _, typ := range []string{"vmess", "trojan", "hysteria2", "tuic", "anytls"} {
 		t.Run("surge-"+typ, func(t *testing.T) {
 			line := surgeProxy(node{name: typ, server: "1.2.3.4", port: 443, typ: typ, settings: settings}, typ)
 			if !strings.Contains(line, "skip-cert-verify=true") {
@@ -704,7 +704,7 @@ func TestFrontendServesBundledClientLogos(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(dir, "index.html"), []byte("spa-index"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	t.Setenv("SINGPANEL_WEB_DIR", dir)
+	t.Setenv("SINGBOX_PANEL_WEB_DIR", dir)
 
 	r := gin.New()
 	(&App{}).mountFrontend(r)

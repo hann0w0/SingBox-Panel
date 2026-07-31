@@ -4,10 +4,11 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"os/exec"
 	"regexp"
 	"strings"
 
-	"github.com/singpanel/singpanel/internal/protocol"
+	"github.com/hann0w0/singbox-panel/internal/protocol"
 )
 
 // Official sing-box paths and unit name (see docs/SINGBOX-OFFICIAL.md).
@@ -17,6 +18,30 @@ const (
 	ConfigFile    = "/etc/sing-box/config.json"
 	ServiceName   = "sing-box"
 )
+
+// singboxBinary returns the path to the sing-box executable. The official
+// install lives at SingboxBinary, but a server may already carry a
+// manually-installed binary elsewhere (commonly /usr/local/bin) — resolve those
+// too so a pre-existing sing-box is still detected and usable. Falls back to the
+// official path (the install target) when nothing is found.
+func singboxBinary() string {
+	candidates := []string{
+		SingboxBinary,
+		"/usr/local/bin/sing-box",
+		"/usr/sbin/sing-box",
+		"/usr/local/sbin/sing-box",
+		"/opt/sing-box/sing-box",
+	}
+	for _, p := range candidates {
+		if fi, err := os.Stat(p); err == nil && !fi.IsDir() {
+			return p
+		}
+	}
+	if p, err := exec.LookPath("sing-box"); err == nil {
+		return p
+	}
+	return SingboxBinary
+}
 
 var versionRe = regexp.MustCompile(`^[0-9][0-9A-Za-z.\-]*$`)
 
@@ -79,16 +104,17 @@ dnf install -y ` + pkgName(channel)
 	return runShell(ctx, script)
 }
 
-// DetectVersion reports whether the official binary is present and its version.
+// DetectVersion reports whether the sing-box binary is present and its version.
 func DetectVersion(ctx context.Context) (installed bool, version string) {
-	if _, err := os.Stat(SingboxBinary); err != nil {
+	bin := singboxBinary()
+	if _, err := os.Stat(bin); err != nil {
 		return false, ""
 	}
-	if out, err := run(ctx, SingboxBinary, "version", "-n"); err == nil && out != "" {
+	if out, err := run(ctx, bin, "version", "-n"); err == nil && out != "" {
 		return true, firstLine(out)
 	}
 	// Fallback for builds without `-n`: parse `sing-box version <X> ...`.
-	if out, err := run(ctx, SingboxBinary, "version"); err == nil {
+	if out, err := run(ctx, bin, "version"); err == nil {
 		fields := strings.Fields(firstLine(out))
 		if len(fields) >= 3 && fields[0] == "sing-box" && fields[1] == "version" {
 			return true, fields[2]

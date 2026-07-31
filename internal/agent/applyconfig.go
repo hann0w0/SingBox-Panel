@@ -51,7 +51,8 @@ func ApplyConfig(ctx context.Context, configBytes []byte, reload bool) (string, 
 	if len(configBytes) > maxConfigSize {
 		return "", fmt.Errorf("config exceeds %d-byte limit", maxConfigSize)
 	}
-	if _, err := DetectVersionInstalled(); err != nil {
+	bin, err := DetectVersionInstalled()
+	if err != nil {
 		return "", fmt.Errorf("sing-box not installed at %s", SingboxBinary)
 	}
 	if err := os.MkdirAll(ConfigDir, 0o755); err != nil {
@@ -76,9 +77,15 @@ func ApplyConfig(ctx context.Context, configBytes []byte, reload bool) (string, 
 		return "", fmt.Errorf("write temp config: %w", err)
 	}
 
-	// 2) validate with the official binary.
-	if out, err := run(ctx, SingboxBinary, "check", "-c", tmpConfigFile); err != nil {
+	// 2) validate with the sing-box binary.
+	if out, err := run(ctx, bin, "check", "-c", tmpConfigFile); err != nil {
 		_ = os.Remove(tmpConfigFile)
+		// Surface the actual reason from sing-box (e.g. a missing certificate or
+		// an unsupported field) instead of a bare "exit status 1", so the panel
+		// toast tells the operator what to fix.
+		if detail := checkFailureDetail(out); detail != "" {
+			return out, fmt.Errorf("sing-box check failed: %s", detail)
+		}
 		return out, fmt.Errorf("sing-box check failed: %w", err)
 	}
 	previousState := serviceState{active: ServiceActive(ctx), enabled: ServiceEnabled(ctx)}
@@ -303,7 +310,7 @@ func copyFile(src, dst string) error {
 		return err
 	}
 	defer srcFile.Close()
-	tmp, err := os.CreateTemp(filepath.Dir(dst), ".singpanel-copy-*")
+	tmp, err := os.CreateTemp(filepath.Dir(dst), ".singbox-panel-copy-*")
 	if err != nil {
 		return err
 	}
@@ -348,10 +355,40 @@ func copyFileOnce(src, dst string) error {
 	return nil
 }
 
-// DetectVersionInstalled returns an error if the official binary is absent.
+// DetectVersionInstalled returns an error if the sing-box binary is absent.
 func DetectVersionInstalled() (string, error) {
-	if _, err := os.Stat(SingboxBinary); err != nil {
+	bin := singboxBinary()
+	if _, err := os.Stat(bin); err != nil {
 		return "", err
 	}
-	return SingboxBinary, nil
+	return bin, nil
+}
+
+// checkFailureDetail extracts a concise, human-readable reason from the output
+// of `sing-box check`. The binary prints the failure (often behind a
+// FATAL[NNNN] log prefix); return the most informative line, capped so it fits
+// in a UI toast. Returns "" when there is nothing useful to show.
+func checkFailureDetail(out string) string {
+	out = strings.TrimSpace(out)
+	if out == "" {
+		return ""
+	}
+	// The actual error is the last non-empty line sing-box prints.
+	lines := strings.Split(out, "\n")
+	msg := ""
+	for i := len(lines) - 1; i >= 0; i-- {
+		if s := strings.TrimSpace(lines[i]); s != "" {
+			msg = s
+			break
+		}
+	}
+	// Drop a leading log-level/timestamp prefix like "FATAL[0000] ".
+	if i := strings.Index(msg, "] "); i > 0 && i < 16 {
+		msg = strings.TrimSpace(msg[i+2:])
+	}
+	const max = 300
+	if len([]rune(msg)) > max {
+		msg = string([]rune(msg)[:max]) + "…"
+	}
+	return msg
 }

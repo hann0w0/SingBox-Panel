@@ -5,6 +5,7 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
+	"strings"
 )
 
 // ParsedInbound is one inbound recovered from an existing config.json.
@@ -143,6 +144,16 @@ func parseTLS(t map[string]any) TLSSettings {
 		CertificatePath: mStr(t, "certificate_path"),
 		KeyPath:         mStr(t, "key_path"),
 		Insecure:        mBool(t, "insecure"),
+	}
+	// Inline PEM material is emitted as an array of lines (see buildTLS/pemLines)
+	// but may also appear as a single string. Recover either form, otherwise a
+	// switch to managed config would regenerate TLS with no certificate and fail
+	// `sing-box check`.
+	if cert := mStrSlice(t, "certificate"); len(cert) > 0 {
+		out.Certificate = strings.Join(cert, "\n")
+	}
+	if key := mStrSlice(t, "key"); len(key) > 0 {
+		out.Key = strings.Join(key, "\n")
 	}
 	if acme := mMap(t, "acme"); acme != nil {
 		if d := mStrSlice(acme, "domain"); len(d) > 0 {

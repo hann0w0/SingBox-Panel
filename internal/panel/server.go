@@ -12,7 +12,7 @@ import (
 	"github.com/gin-gonic/gin"
 	"gorm.io/gorm"
 
-	"github.com/singpanel/singpanel/internal/config"
+	"github.com/hann0w0/singbox-panel/internal/config"
 )
 
 // App is the panel HTTP server and its dependencies.
@@ -135,7 +135,7 @@ func (a *App) routes() *gin.Engine {
 
 // webDir resolves the built frontend directory.
 func webDir() string {
-	if v := os.Getenv("SINGPANEL_WEB_DIR"); v != "" {
+	if v := os.Getenv("SINGBOX_PANEL_WEB_DIR"); v != "" {
 		return v
 	}
 	return "./web/dist"
@@ -160,7 +160,7 @@ func (a *App) mountFrontend(r *gin.Engine) {
 			return
 		}
 		c.String(http.StatusOK,
-			"SingPanel backend is running.\nBuild the frontend: cd web && npm install && npm run build")
+			"SingBox Panel backend is running.\nBuild the frontend: cd web && npm install && npm run build")
 	})
 }
 

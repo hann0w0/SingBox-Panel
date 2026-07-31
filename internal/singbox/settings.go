@@ -225,7 +225,7 @@ func DeriveSSUserKey(userPassword, method string) string {
 	if n == 0 {
 		return userPassword
 	}
-	sum := sha256.Sum256([]byte("singpanel-ss2022:" + userPassword))
+	sum := sha256.Sum256([]byte("singbox-panel-ss2022:" + userPassword))
 	return base64.StdEncoding.EncodeToString(sum[:n])
 }
 

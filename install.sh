@@ -2,7 +2,7 @@
 
 set -Eeuo pipefail
 
-DEFAULT_INSTALL_DIR="/opt/singpanel"
+DEFAULT_INSTALL_DIR="/opt/singbox-panel"
 DEFAULT_PORT="32334"
 DEFAULT_ADMIN="admin"
 DEFAULT_IMAGE="hann0w0/singbox-panel"
@@ -14,20 +14,20 @@ PASSWORD_PROVIDED=0
 BASE_URL_PROVIDED=0
 IMAGE_PROVIDED=0
 TAG_PROVIDED=0
-[[ -n "${SINGPANEL_PORT+x}" ]] && PORT_PROVIDED=1
-[[ -n "${SINGPANEL_ADMIN+x}" ]] && ADMIN_PROVIDED=1
-[[ -n "${SINGPANEL_ADMIN_PASSWORD+x}" ]] && PASSWORD_PROVIDED=1
-[[ -n "${SINGPANEL_BASE_URL+x}" ]] && BASE_URL_PROVIDED=1
-[[ -n "${SINGPANEL_IMAGE+x}" ]] && IMAGE_PROVIDED=1
-[[ -n "${SINGPANEL_TAG+x}" ]] && TAG_PROVIDED=1
+[[ -n "${SINGBOX_PANEL_PORT+x}" ]] && PORT_PROVIDED=1
+[[ -n "${SINGBOX_PANEL_ADMIN+x}" ]] && ADMIN_PROVIDED=1
+[[ -n "${SINGBOX_PANEL_ADMIN_PASSWORD+x}" ]] && PASSWORD_PROVIDED=1
+[[ -n "${SINGBOX_PANEL_BASE_URL+x}" ]] && BASE_URL_PROVIDED=1
+[[ -n "${SINGBOX_PANEL_IMAGE+x}" ]] && IMAGE_PROVIDED=1
+[[ -n "${SINGBOX_PANEL_TAG+x}" ]] && TAG_PROVIDED=1
 
-INSTALL_DIR="${SINGPANEL_INSTALL_DIR:-$DEFAULT_INSTALL_DIR}"
-PANEL_PORT="${SINGPANEL_PORT:-$DEFAULT_PORT}"
-ADMIN_USERNAME="${SINGPANEL_ADMIN:-$DEFAULT_ADMIN}"
-ADMIN_PASSWORD="${SINGPANEL_ADMIN_PASSWORD:-}"
-BASE_URL="${SINGPANEL_BASE_URL:-}"
-IMAGE_REPOSITORY="${SINGPANEL_IMAGE:-$DEFAULT_IMAGE}"
-IMAGE_TAG="${SINGPANEL_TAG:-$DEFAULT_TAG}"
+INSTALL_DIR="${SINGBOX_PANEL_INSTALL_DIR:-$DEFAULT_INSTALL_DIR}"
+PANEL_PORT="${SINGBOX_PANEL_PORT:-$DEFAULT_PORT}"
+ADMIN_USERNAME="${SINGBOX_PANEL_ADMIN:-$DEFAULT_ADMIN}"
+ADMIN_PASSWORD="${SINGBOX_PANEL_ADMIN_PASSWORD:-}"
+BASE_URL="${SINGBOX_PANEL_BASE_URL:-}"
+IMAGE_REPOSITORY="${SINGBOX_PANEL_IMAGE:-$DEFAULT_IMAGE}"
+IMAGE_TAG="${SINGBOX_PANEL_TAG:-$DEFAULT_TAG}"
 NON_INTERACTIVE=0
 SKIP_DOCKER_INSTALL=0
 CONFIGURE=0
@@ -41,20 +41,20 @@ PRESERVED_ENV_FILE=""
 
 usage() {
   cat <<'EOF'
-SingPanel installer
+SingBox Panel installer
 
 Usage:
   sudo ./install.sh [options]
   sudo ./install.sh --uninstall [--purge] [--yes]
 
 Options:
-  --uninstall             Uninstall SingPanel; keep database and .env by default
+  --uninstall             Uninstall SingBox Panel; keep database and .env by default
   --purge, --remove-data  With --uninstall, also delete the database volume and .env
   --yes                   Skip the uninstall confirmation prompt
   --port PORT             Local reverse-proxy port (default: 32334)
   --admin USERNAME        Initial administrator username (default: admin)
   --password PASSWORD     Initial administrator password
-  --install-dir PATH      Installation directory (default: /opt/singpanel)
+  --install-dir PATH      Installation directory (default: /opt/singbox-panel)
   --base-url DOMAIN       Required panel/Agent domain (HTTPS)
   --image IMAGE           Container image repository (default: hann0w0/singbox-panel)
   --tag TAG               Container image tag (default: latest)
@@ -64,9 +64,9 @@ Options:
   -h, --help              Show this help
 
 Environment variable equivalents:
-  SINGPANEL_PORT, SINGPANEL_ADMIN,
-  SINGPANEL_ADMIN_PASSWORD, SINGPANEL_INSTALL_DIR,
-  SINGPANEL_BASE_URL, SINGPANEL_IMAGE, SINGPANEL_TAG
+  SINGBOX_PANEL_PORT, SINGBOX_PANEL_ADMIN,
+  SINGBOX_PANEL_ADMIN_PASSWORD, SINGBOX_PANEL_INSTALL_DIR,
+  SINGBOX_PANEL_BASE_URL, SINGBOX_PANEL_IMAGE, SINGBOX_PANEL_TAG
 
 The administrator username and password are only used when the database is
 empty. Re-running this installer never deletes the existing Docker data volume.
@@ -83,7 +83,7 @@ die() {
 }
 
 info() {
-  printf '[SingPanel] %s\n' "$*"
+  printf '[SingBox Panel] %s\n' "$*"
 }
 
 cleanup() {
@@ -223,7 +223,7 @@ confirm_uninstall() {
     local detail="keep the database volume and deploy/.env"
     [[ "$PURGE_DATA" -eq 1 ]] && detail="permanently delete the database volume and deploy/.env"
     local answer=""
-    printf 'Uninstall SingPanel and %s? [y/N]: ' "$detail" >&"$PROMPT_FD"
+    printf 'Uninstall SingBox Panel and %s? [y/N]: ' "$detail" >&"$PROMPT_FD"
     read -r -u "$PROMPT_FD" answer
     [[ "$answer" == "y" || "$answer" == "Y" ]] || {
       info "Uninstall cancelled"
@@ -234,7 +234,7 @@ confirm_uninstall() {
   fi
 }
 
-uninstall_singpanel() {
+uninstall_singbox_panel() {
   local docker_ready=0
   local installed_image=""
   validate_install_dir
@@ -258,7 +258,7 @@ uninstall_singpanel() {
         if [[ -z "$installed_image" ]]; then
           installed_image="$(docker container inspect "$container_name" --format '{{.Config.Image}}')"
         fi
-        info "Removing SingPanel container $container_name"
+        info "Removing SingBox Panel container $container_name"
         docker rm -f "$container_name" >/dev/null
       fi
     done
@@ -266,7 +266,7 @@ uninstall_singpanel() {
     for network_name in singbox-panel_default deploy_default; do
       if docker network inspect "$network_name" >/dev/null 2>&1; then
         if [[ "$(docker network inspect "$network_name" --format '{{len .Containers}}')" == "0" ]]; then
-          info "Removing SingPanel network $network_name"
+          info "Removing SingBox Panel network $network_name"
           docker network rm "$network_name" >/dev/null
         else
           info "Keeping network $network_name because another container still uses it"
@@ -275,7 +275,7 @@ uninstall_singpanel() {
     done
 
     if [[ "$PURGE_DATA" -eq 1 ]] && docker volume inspect singbox-panel_data >/dev/null 2>&1; then
-      info "Removing SingPanel database volume"
+      info "Removing SingBox Panel database volume"
       docker volume rm singbox-panel_data >/dev/null
     fi
 
@@ -283,7 +283,7 @@ uninstall_singpanel() {
       [[ -n "$image_name" ]] || continue
       if docker image inspect "$image_name" >/dev/null 2>&1; then
         if [[ -z "$(docker ps -aq --filter ancestor="$image_name")" ]]; then
-          info "Removing SingPanel image $image_name"
+          info "Removing SingBox Panel image $image_name"
           docker image rm "$image_name" >/dev/null
         else
           info "Keeping $image_name because another container still uses it"
@@ -302,20 +302,20 @@ uninstall_singpanel() {
       install -d -m 700 "$INSTALL_DIR/deploy"
       install -m 600 "$PRESERVED_ENV_FILE" "$INSTALL_DIR/deploy/.env"
     fi
-    printf '\nSingPanel uninstalled.\n'
+    printf '\nSingBox Panel uninstalled.\n'
     printf '  Database volume: kept (singbox-panel_data)\n'
     if [[ -f "$INSTALL_DIR/deploy/.env" ]]; then
       printf '  Configuration:   kept at %s/deploy/.env\n' "$INSTALL_DIR"
     fi
     printf 'Run the install command again to restore the panel.\n'
   else
-    printf '\nSingPanel completely uninstalled. Configuration and database volume were removed.\n'
+    printf '\nSingBox Panel completely uninstalled. Configuration and database volume were removed.\n'
   fi
 }
 
 [[ "$PURGE_DATA" -eq 0 || "$ACTION" == "uninstall" ]] || die "--purge requires --uninstall"
 if [[ "$ACTION" == "uninstall" ]]; then
-  uninstall_singpanel
+  uninstall_singbox_panel
 else
 
 prompt_value() {
@@ -366,10 +366,10 @@ if [[ -f "$EXISTING_ENV" ]]; then
     BASE_URL="$(read_dotenv_value WEB "$EXISTING_ENV" || printf '%s' "$BASE_URL")"
   fi
   if [[ "$IMAGE_PROVIDED" -eq 0 ]]; then
-    IMAGE_REPOSITORY="$(read_dotenv_value SINGPANEL_IMAGE "$EXISTING_ENV" || printf '%s' "$IMAGE_REPOSITORY")"
+    IMAGE_REPOSITORY="$(read_dotenv_value SINGBOX_PANEL_IMAGE "$EXISTING_ENV" || printf '%s' "$IMAGE_REPOSITORY")"
   fi
   if [[ "$TAG_PROVIDED" -eq 0 ]]; then
-    IMAGE_TAG="$(read_dotenv_value SINGPANEL_TAG "$EXISTING_ENV" || printf '%s' "$IMAGE_TAG")"
+    IMAGE_TAG="$(read_dotenv_value SINGBOX_PANEL_TAG "$EXISTING_ENV" || printf '%s' "$IMAGE_TAG")"
   fi
 fi
 
@@ -416,7 +416,7 @@ if [[ "$INTERACTIVE" -eq 1 && ( "$EXISTING_INSTALL" -eq 0 || "$CONFIGURE" -eq 1 
   fi
 
   printf '\n提示：安装完成后，请将该域名反向代理到 http://127.0.0.1:%s。\n' "$PANEL_PORT" >&"$PROMPT_FD"
-  printf '为避免面板端口暴露公网，SingPanel 固定监听本机回环地址，必须通过 HTTPS 域名访问。\n' >&"$PROMPT_FD"
+  printf '为避免面板端口暴露公网，SingBox Panel 固定监听本机回环地址，必须通过 HTTPS 域名访问。\n' >&"$PROMPT_FD"
   domain_default="${BASE_URL#https://}"
   domain_default="${domain_default%/}"
   if [[ -n "$domain_default" ]]; then
@@ -459,7 +459,6 @@ if [[ -z "$ADMIN_PASSWORD" ]]; then
 fi
 
 password_length="$(LC_ALL=C printf '%s' "$ADMIN_PASSWORD" | wc -c | tr -d ' ')"
-(( password_length >= 8 )) || die "administrator password must be at least 8 bytes"
 (( password_length <= 72 )) || die "administrator password must not exceed 72 bytes (bcrypt limit)"
 
 install_packages() {
@@ -534,8 +533,8 @@ write_env_file() {
     dotenv_write ADMIN_PASSWORD "$ADMIN_PASSWORD"
     dotenv_write WEB "$BASE_URL"
     dotenv_write JWT_SECRET "$JWT_SECRET"
-    dotenv_write SINGPANEL_IMAGE "$IMAGE_REPOSITORY"
-    dotenv_write SINGPANEL_TAG "$IMAGE_TAG"
+    dotenv_write SINGBOX_PANEL_IMAGE "$IMAGE_REPOSITORY"
+    dotenv_write SINGBOX_PANEL_TAG "$IMAGE_TAG"
   } > "$env_temp"; then
     rm -f -- "$env_temp"
     return 1
@@ -573,7 +572,7 @@ start_panel_container() {
     docker run -d \
       --name singbox-panel \
       --restart unless-stopped \
-      --label io.singpanel.managed=true \
+      --label io.singbox-panel.managed=true \
       --log-driver local \
       --log-opt max-size=10m \
       --log-opt max-file=3 \
@@ -602,7 +601,7 @@ if docker container inspect singbox-panel-rollback >/dev/null 2>&1; then
   if docker container inspect singbox-panel >/dev/null 2>&1; then
     docker rm -f singbox-panel-rollback >/dev/null
   else
-    info "Recovering the previous SingPanel container"
+    info "Recovering the previous SingBox Panel container"
     docker rename singbox-panel-rollback singbox-panel
     docker start singbox-panel >/dev/null
   fi
@@ -615,7 +614,7 @@ if ! docker pull "$IMAGE_REF"; then
     IMAGE_REPOSITORY="ghcr.io/hann0w0/singbox-panel"
     IMAGE_REF="${IMAGE_REPOSITORY}:${IMAGE_TAG}"
     info "Docker Hub pull failed; trying $IMAGE_REF"
-    docker pull "$IMAGE_REF" || die "unable to pull the SingPanel image from Docker Hub or GHCR"
+    docker pull "$IMAGE_REF" || die "unable to pull the SingBox Panel image from Docker Hub or GHCR"
   else
     die "unable to pull $IMAGE_REF"
   fi
@@ -630,15 +629,15 @@ if docker container inspect singbox-panel >/dev/null 2>&1; then
   HAD_PREVIOUS=1
   PREVIOUS_IMAGE_ID="$(docker container inspect singbox-panel --format '{{.Image}}')"
   [[ "$(docker container inspect singbox-panel --format '{{.State.Running}}')" == "true" ]] && PREVIOUS_RUNNING=1
-  info "Stopping the previous SingPanel container"
+  info "Stopping the previous SingBox Panel container"
   docker stop singbox-panel >/dev/null
   docker rename singbox-panel singbox-panel-rollback
 fi
 
-info "Starting SingPanel from $IMAGE_REF"
+info "Starting SingBox Panel from $IMAGE_REF"
 if ! start_panel_container; then
   restore_previous_container
-  die "failed to create the new SingPanel container; the previous container was restored"
+  die "failed to create the new SingBox Panel container; the previous container was restored"
 fi
 
 if ! wait_for_health; then
@@ -648,7 +647,7 @@ if ! wait_for_health; then
   die "update failed; the previous container was restored"
 fi
 
-info "SingPanel is healthy"
+info "SingBox Panel is healthy"
 write_env_file
 
 if [[ "$HAD_PREVIOUS" -eq 1 ]]; then

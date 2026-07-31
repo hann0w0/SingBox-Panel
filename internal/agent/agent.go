@@ -7,7 +7,7 @@ import (
 	"log"
 	"time"
 
-	"github.com/singpanel/singpanel/internal/protocol"
+	"github.com/hann0w0/singbox-panel/internal/protocol"
 )
 
 // Config configures an Agent.

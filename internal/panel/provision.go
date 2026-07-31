@@ -13,7 +13,7 @@ import (
 	"net"
 	"time"
 
-	"github.com/singpanel/singpanel/internal/singbox"
+	"github.com/hann0w0/singbox-panel/internal/singbox"
 )
 
 // genRealityKeypair generates an X25519 keypair in the exact format the

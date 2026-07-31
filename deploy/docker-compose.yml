@@ -3,7 +3,7 @@ name: singbox-panel
 services:
   singbox-panel:
     # 可选的手动 Compose 部署；一键安装脚本本身只使用 docker pull/run。
-    image: "${SINGPANEL_IMAGE:-hann0w0/singbox-panel}:${SINGPANEL_TAG:-latest}"
+    image: "${SINGBOX_PANEL_IMAGE:-hann0w0/singbox-panel}:${SINGBOX_PANEL_TAG:-latest}"
     container_name: singbox-panel
     restart: unless-stopped
     logging:

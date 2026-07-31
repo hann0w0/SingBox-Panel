@@ -19,7 +19,7 @@ type PanelConfig struct {
 	JWTSecret string `yaml:"jwt_secret"`
 
 	// AgentsDir holds prebuilt agent binaries served to VPSes by the one-line
-	// installer, named singpanel-agent-linux-<arch>.
+	// installer, named singbox-panel-agent-linux-<arch>.
 	AgentsDir string `yaml:"agents_dir"`
 
 	Database     DatabaseConfig `yaml:"database"`
@@ -31,7 +31,7 @@ type PanelConfig struct {
 type DatabaseConfig struct {
 	// Driver: sqlite | mysql | postgres.
 	Driver string `yaml:"driver"`
-	// DSN: for sqlite, a file path (e.g. ./data/singpanel.db); otherwise a full DSN.
+	// DSN: for sqlite, a file path (e.g. ./data/singbox-panel.db); otherwise a full DSN.
 	DSN string `yaml:"dsn"`
 }
 
@@ -55,7 +55,7 @@ func Default() PanelConfig {
 		AgentsDir: "./dist/agents",
 		Database: DatabaseConfig{
 			Driver: "sqlite",
-			DSN:    "./data/singpanel.db",
+			DSN:    "./data/singbox-panel.db",
 		},
 		Subscription: SubConfig{
 			PathPrefix: "/api/sub",
@@ -64,7 +64,7 @@ func Default() PanelConfig {
 }
 
 // Load reads a YAML config file, applies defaults for missing fields, then
-// overlays environment variables (SINGPANEL_*).
+// overlays environment variables (SINGBOX_PANEL_*).
 func Load(path string) (PanelConfig, error) {
 	cfg := Default()
 	if path != "" {
@@ -83,7 +83,7 @@ func Load(path string) (PanelConfig, error) {
 
 // firstEnv returns the first non-empty value among the given env var names.
 // Short, unprefixed names (ADMIN, ADMIN_PASSWORD, JWT_SECRET, BASE_URL) are
-// accepted alongside the SINGPANEL_-prefixed ones for a simpler .env.
+// accepted alongside the SINGBOX_PANEL_-prefixed ones for a simpler .env.
 func firstEnv(names ...string) string {
 	for _, n := range names {
 		if v := os.Getenv(n); v != "" {
@@ -94,28 +94,28 @@ func firstEnv(names ...string) string {
 }
 
 func applyEnv(cfg *PanelConfig) {
-	if v := firstEnv("LISTEN", "SINGPANEL_LISTEN"); v != "" {
+	if v := firstEnv("LISTEN", "SINGBOX_PANEL_LISTEN"); v != "" {
 		cfg.Listen = v
 	}
-	if v := firstEnv("WEB", "BASE_URL", "SINGPANEL_BASE_URL"); v != "" {
+	if v := firstEnv("WEB", "BASE_URL", "SINGBOX_PANEL_BASE_URL"); v != "" {
 		cfg.BaseURL = v
 	}
-	if v := firstEnv("JWT_SECRET", "SINGPANEL_JWT_SECRET"); v != "" {
+	if v := firstEnv("JWT_SECRET", "SINGBOX_PANEL_JWT_SECRET"); v != "" {
 		cfg.JWTSecret = v
 	}
-	if v := firstEnv("SINGPANEL_AGENTS_DIR"); v != "" {
+	if v := firstEnv("SINGBOX_PANEL_AGENTS_DIR"); v != "" {
 		cfg.AgentsDir = v
 	}
-	if v := firstEnv("SINGPANEL_DB_DRIVER"); v != "" {
+	if v := firstEnv("SINGBOX_PANEL_DB_DRIVER"); v != "" {
 		cfg.Database.Driver = v
 	}
-	if v := firstEnv("SINGPANEL_DB_DSN"); v != "" {
+	if v := firstEnv("SINGBOX_PANEL_DB_DSN"); v != "" {
 		cfg.Database.DSN = v
 	}
-	if v := firstEnv("ADMIN", "SINGPANEL_ADMIN_EMAIL"); v != "" {
+	if v := firstEnv("ADMIN", "SINGBOX_PANEL_ADMIN_EMAIL"); v != "" {
 		cfg.Admin.Email = v
 	}
-	if v := firstEnv("ADMIN_PASSWORD", "SINGPANEL_ADMIN_PASSWORD"); v != "" {
+	if v := firstEnv("ADMIN_PASSWORD", "SINGBOX_PANEL_ADMIN_PASSWORD"); v != "" {
 		cfg.Admin.Password = v
 	}
 }
@@ -128,7 +128,7 @@ func applyDefaults(cfg *PanelConfig) {
 		cfg.Database.Driver = "sqlite"
 	}
 	if cfg.Database.Driver == "sqlite" && cfg.Database.DSN == "" {
-		cfg.Database.DSN = "./data/singpanel.db"
+		cfg.Database.DSN = "./data/singbox-panel.db"
 	}
 	if cfg.Subscription.PathPrefix == "" {
 		cfg.Subscription.PathPrefix = "/api/sub"

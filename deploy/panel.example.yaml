@@ -1,8 +1,8 @@
-# SingPanel 面板配置示例。复制为 panel.yaml 并按需修改。
-# 所有字段也可用环境变量覆盖（SINGPANEL_*）。
+# SingBox Panel 面板配置示例。复制为 panel.yaml 并按需修改。
+# 所有字段也可用环境变量覆盖（SINGBOX_PANEL_*）。
 
 # HTTP 监听端口（启动时绑定，修改后需重启面板）。放在 Caddy/Nginx + CF 反代之后时，
-# 这是内部端口，Caddy 反代到 127.0.0.1:32334 即可。也可用环境变量 SINGPANEL_LISTEN=":32334"。
+# 这是内部端口，Caddy 反代到 127.0.0.1:32334 即可。也可用环境变量 SINGBOX_PANEL_LISTEN=":32334"。
 listen: ":32334"
 
 # 面板对外访问地址（面板 + 订阅 + Agent 都走它）。
@@ -21,9 +21,9 @@ database:
   # sqlite | mysql | postgres
   driver: sqlite
   # sqlite: 文件路径；mysql/postgres: 完整 DSN
-  dsn: "./data/singpanel.db"
-  # mysql 示例:   "user:pass@tcp(127.0.0.1:3306)/singpanel?charset=utf8mb4&parseTime=True&loc=Local"
-  # postgres 示例: "host=127.0.0.1 user=singpanel password=pass dbname=singpanel port=5432 sslmode=disable"
+  dsn: "./data/singbox-panel.db"
+  # mysql 示例:   "user:pass@tcp(127.0.0.1:3306)/singbox-panel?charset=utf8mb4&parseTime=True&loc=Local"
+  # postgres 示例: "host=127.0.0.1 user=singbox-panel password=pass dbname=singbox-panel port=5432 sslmode=disable"
 
 # 首个管理员（仅在数据库为空时创建）。password 留空则首次启动时打印随机密码到日志。
 admin:

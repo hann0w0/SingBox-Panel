@@ -11,9 +11,9 @@ import (
 
 	"gorm.io/gorm"
 
-	"github.com/singpanel/singpanel/internal/model"
-	"github.com/singpanel/singpanel/internal/protocol"
-	"github.com/singpanel/singpanel/internal/singbox"
+	"github.com/hann0w0/singbox-panel/internal/model"
+	"github.com/hann0w0/singbox-panel/internal/protocol"
+	"github.com/hann0w0/singbox-panel/internal/singbox"
 )
 
 // Orchestrator builds server configs from the database and pushes them to agents.

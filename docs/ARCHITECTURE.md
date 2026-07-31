@@ -1,4 +1,4 @@
-# SingPanel 架构设计
+# SingBox Panel 架构设计
 
 ## 1. 组件
 
@@ -100,7 +100,7 @@ Setting     KV 配置。
 ## 6. 部署
 
 - Panel：Docker 容器（多阶段构建：前端 → Go → alpine），默认 SQLite。外层反代 + TLS。
-- Agent：交叉编译的单二进制，安装脚本注册为 `singpanel-agent.service`（与官方 `sing-box.service` 分离，互不影响）。
+- Agent：交叉编译的单二进制，安装脚本注册为 `singbox-panel-agent.service`（与官方 `sing-box.service` 分离，互不影响）。
 
 ## 7. 安全
 

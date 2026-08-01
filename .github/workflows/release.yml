@@ -83,8 +83,7 @@ jobs:
       # 会静默跳过校验。
       - name: Package tarballs
         run: |
-          AGENT_VER="$(cat cmd/agent/VERSION 2>/dev/null || echo "v1.0.0")"
-          tar -czf dist/singbox-panel-agents-${AGENT_VER}.tar.gz \
+          tar -czf dist/singbox-panel-agents-${{ github.ref_name }}.tar.gz \
             -C dist/agents .
           tar -czf dist/singbox-panel-web-${{ github.ref_name }}.tar.gz \
             -C web/dist .
@@ -95,7 +94,7 @@ jobs:
           sha256sum \
             panel/singbox-panel-linux-amd64 \
             panel/singbox-panel-linux-arm64 \
-            singbox-panel-agents-*.tar.gz \
+            singbox-panel-agents-${{ github.ref_name }}.tar.gz \
             singbox-panel-web-${{ github.ref_name }}.tar.gz \
             | sed 's#panel/##' > checksums.txt
           cat checksums.txt
@@ -136,7 +135,7 @@ jobs:
           files: |
             dist/panel/singbox-panel-linux-amd64
             dist/panel/singbox-panel-linux-arm64
-            dist/singbox-panel-agents-*.tar.gz
+            dist/singbox-panel-agents-${{ github.ref_name }}.tar.gz
             dist/singbox-panel-web-${{ github.ref_name }}.tar.gz
             dist/checksums.txt
             install.sh

@@ -18,6 +18,7 @@ panel:
 ## cross-compile the agent for the common Linux VPS architectures
 agents:
 	mkdir -p $(DIST)/agents
+	cp cmd/agent/VERSION $(DIST)/agents/VERSION 2>/dev/null || true
 	GOOS=linux GOARCH=amd64 go build -ldflags "$(AGENT_LDFLAGS)" -o $(DIST)/agents/singbox-panel-agent-linux-amd64 ./cmd/agent
 	GOOS=linux GOARCH=arm64 go build -ldflags "$(AGENT_LDFLAGS)" -o $(DIST)/agents/singbox-panel-agent-linux-arm64 ./cmd/agent
 

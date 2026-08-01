@@ -28,6 +28,7 @@ RUN GOOS=${TARGETOS} GOARCH=${TARGETARCH} go build -ldflags "-s -w -X main.versi
 # agent binaries served to VPSes (reads cmd/agent/VERSION if AGENT_VERSION is unsupplied)
 RUN mkdir -p /out/agents && \
     FINAL_AGENT_VER="${AGENT_VERSION:-$(cat ./cmd/agent/VERSION 2>/dev/null || echo "v1.0.0")}" && \
+    echo "${FINAL_AGENT_VER}" > /out/agents/VERSION && \
     GOOS=linux GOARCH=amd64 go build -ldflags "-s -w -X main.version=${FINAL_AGENT_VER}" -o /out/agents/singbox-panel-agent-linux-amd64 ./cmd/agent && \
     GOOS=linux GOARCH=arm64 go build -ldflags "-s -w -X main.version=${FINAL_AGENT_VER}" -o /out/agents/singbox-panel-agent-linux-arm64 ./cmd/agent
 

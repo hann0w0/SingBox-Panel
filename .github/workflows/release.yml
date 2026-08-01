@@ -66,6 +66,7 @@ jobs:
             ./cmd/panel
 
           AGENT_VER="$(cat cmd/agent/VERSION 2>/dev/null || echo "v1.0.0")"
+          echo "${AGENT_VER}" > dist/agents/VERSION
           echo "==> agent linux/amd64 (${AGENT_VER})"
           GOOS=linux GOARCH=amd64 go build \
             -ldflags "-s -w -X main.version=${AGENT_VER}" \

@@ -6,6 +6,8 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"time"
@@ -126,16 +128,19 @@ type serverReq struct {
 	Remark  string `json:"remark"`
 }
 
-// latestAgentVersion is the agent build the panel currently serves. The panel
-// and its bundled agents are built from the same source at the same version, so
-// the panel's own version IS the newest agent available — a hardcoded constant
-// would drift the moment the panel is upgraded and wrongly flag every node as
-// "upgradable" to an older tag.
+// latestAgentVersion is the agent build the panel currently serves. It reads
+// the VERSION file placed beside the served agent binaries, so upgrading the
+// panel alone no longer wrongly flags every node as having an agent update.
 func (a *App) latestAgentVersion() string {
-	if v := strings.TrimSpace(a.version); v != "" {
-		return v
+	if a.cfg.AgentsDir != "" {
+		verPath := filepath.Join(a.cfg.AgentsDir, "VERSION")
+		if data, err := os.ReadFile(verPath); err == nil {
+			if v := strings.TrimSpace(string(data)); v != "" {
+				return v
+			}
+		}
 	}
-	return "v1.0.0" // dev builds with no ldflags version
+	return "v1.0.0"
 }
 
 func (a *App) listServers(c *gin.Context) {

@@ -19,19 +19,17 @@ RUN apk add --no-cache git
 COPY go.mod go.sum ./
 RUN go mod download
 COPY . .
-ARG VERSION=v1.0.0
-# Agent version defaults to the panel VERSION so the served agents always match
-# the panel that ships them; callers only need to pass VERSION. Override
-# AGENT_VERSION explicitly only to pin a different agent build.
-ARG AGENT_VERSION=${VERSION}
+ARG VERSION=v1.0.1
+ARG AGENT_VERSION
 ARG TARGETOS
 ARG TARGETARCH
 # panel binary (cross-compiled to the image's target platform)
 RUN GOOS=${TARGETOS} GOARCH=${TARGETARCH} go build -ldflags "-s -w -X main.version=${VERSION}" -o /out/singbox-panel ./cmd/panel
-# agent binaries served to VPSes
+# agent binaries served to VPSes (reads cmd/agent/VERSION if AGENT_VERSION is unsupplied)
 RUN mkdir -p /out/agents && \
-    GOOS=linux GOARCH=amd64 go build -ldflags "-s -w -X main.version=${AGENT_VERSION}" -o /out/agents/singbox-panel-agent-linux-amd64 ./cmd/agent && \
-    GOOS=linux GOARCH=arm64 go build -ldflags "-s -w -X main.version=${AGENT_VERSION}" -o /out/agents/singbox-panel-agent-linux-arm64 ./cmd/agent
+    FINAL_AGENT_VER="${AGENT_VERSION:-$(cat ./cmd/agent/VERSION 2>/dev/null || echo "v1.0.0")}" && \
+    GOOS=linux GOARCH=amd64 go build -ldflags "-s -w -X main.version=${FINAL_AGENT_VER}" -o /out/agents/singbox-panel-agent-linux-amd64 ./cmd/agent && \
+    GOOS=linux GOARCH=arm64 go build -ldflags "-s -w -X main.version=${FINAL_AGENT_VER}" -o /out/agents/singbox-panel-agent-linux-arm64 ./cmd/agent
 
 # ---- runtime ----
 FROM alpine:3.20

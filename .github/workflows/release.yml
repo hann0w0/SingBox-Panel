@@ -53,27 +53,28 @@ jobs:
         run: |
           mkdir -p dist/panel dist/agents
 
-          echo "==> panel linux/amd64"
+          echo "==> panel linux/amd64 (${VERSION})"
           GOOS=linux GOARCH=amd64 go build \
             -ldflags "-s -w -X main.version=${VERSION}" \
             -o dist/panel/singbox-panel-linux-amd64 \
             ./cmd/panel
 
-          echo "==> panel linux/arm64"
+          echo "==> panel linux/arm64 (${VERSION})"
           GOOS=linux GOARCH=arm64 go build \
             -ldflags "-s -w -X main.version=${VERSION}" \
             -o dist/panel/singbox-panel-linux-arm64 \
             ./cmd/panel
 
-          echo "==> agent linux/amd64"
+          AGENT_VER="$(cat cmd/agent/VERSION 2>/dev/null || echo "v1.0.0")"
+          echo "==> agent linux/amd64 (${AGENT_VER})"
           GOOS=linux GOARCH=amd64 go build \
-            -ldflags "-s -w -X main.version=${VERSION}" \
+            -ldflags "-s -w -X main.version=${AGENT_VER}" \
             -o dist/agents/singbox-panel-agent-linux-amd64 \
             ./cmd/agent
 
-          echo "==> agent linux/arm64"
+          echo "==> agent linux/arm64 (${AGENT_VER})"
           GOOS=linux GOARCH=arm64 go build \
-            -ldflags "-s -w -X main.version=${VERSION}" \
+            -ldflags "-s -w -X main.version=${AGENT_VER}" \
             -o dist/agents/singbox-panel-agent-linux-arm64 \
             ./cmd/agent
 
@@ -81,7 +82,8 @@ jobs:
       # 会静默跳过校验。
       - name: Package tarballs
         run: |
-          tar -czf dist/singbox-panel-agents-${{ github.ref_name }}.tar.gz \
+          AGENT_VER="$(cat cmd/agent/VERSION 2>/dev/null || echo "v1.0.0")"
+          tar -czf dist/singbox-panel-agents-${AGENT_VER}.tar.gz \
             -C dist/agents .
           tar -czf dist/singbox-panel-web-${{ github.ref_name }}.tar.gz \
             -C web/dist .
@@ -92,7 +94,7 @@ jobs:
           sha256sum \
             panel/singbox-panel-linux-amd64 \
             panel/singbox-panel-linux-arm64 \
-            singbox-panel-agents-${{ github.ref_name }}.tar.gz \
+            singbox-panel-agents-*.tar.gz \
             singbox-panel-web-${{ github.ref_name }}.tar.gz \
             | sed 's#panel/##' > checksums.txt
           cat checksums.txt
@@ -133,7 +135,7 @@ jobs:
           files: |
             dist/panel/singbox-panel-linux-amd64
             dist/panel/singbox-panel-linux-arm64
-            dist/singbox-panel-agents-${{ github.ref_name }}.tar.gz
+            dist/singbox-panel-agents-*.tar.gz
             dist/singbox-panel-web-${{ github.ref_name }}.tar.gz
             dist/checksums.txt
             install.sh

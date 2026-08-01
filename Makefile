@@ -1,5 +1,7 @@
-VERSION ?= v1.0.0
-LDFLAGS := -s -w -X main.version=$(VERSION)
+VERSION ?= v1.0.1
+AGENT_VERSION ?= $(shell cat cmd/agent/VERSION 2>/dev/null || echo "v1.0.0")
+PANEL_LDFLAGS := -s -w -X main.version=$(VERSION)
+AGENT_LDFLAGS := -s -w -X main.version=$(AGENT_VERSION)
 DIST := dist
 
 .PHONY: all build panel agents web run clean tidy test
@@ -11,13 +13,13 @@ build: web panel agents
 
 ## build the panel binary (host platform)
 panel:
-	go build -ldflags "$(LDFLAGS)" -o $(DIST)/singbox-panel ./cmd/panel
+	go build -ldflags "$(PANEL_LDFLAGS)" -o $(DIST)/singbox-panel ./cmd/panel
 
 ## cross-compile the agent for the common Linux VPS architectures
 agents:
 	mkdir -p $(DIST)/agents
-	GOOS=linux GOARCH=amd64 go build -ldflags "$(LDFLAGS)" -o $(DIST)/agents/singbox-panel-agent-linux-amd64 ./cmd/agent
-	GOOS=linux GOARCH=arm64 go build -ldflags "$(LDFLAGS)" -o $(DIST)/agents/singbox-panel-agent-linux-arm64 ./cmd/agent
+	GOOS=linux GOARCH=amd64 go build -ldflags "$(AGENT_LDFLAGS)" -o $(DIST)/agents/singbox-panel-agent-linux-amd64 ./cmd/agent
+	GOOS=linux GOARCH=arm64 go build -ldflags "$(AGENT_LDFLAGS)" -o $(DIST)/agents/singbox-panel-agent-linux-arm64 ./cmd/agent
 
 ## build the frontend into web/dist (served by the panel in production)
 web:

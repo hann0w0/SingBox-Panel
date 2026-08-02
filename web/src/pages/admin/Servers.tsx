@@ -206,17 +206,30 @@ export default function Servers() {
 
   return (
     <Card
+      className="servers-card"
       title="服务器"
       extra={
-        <Space>
-          <Button icon={<CloudDownloadOutlined />} onClick={handleUpdateSingbox} loading={updatingSingbox}>
-            更新 sing-box
+        <Space wrap>
+          <Button
+            icon={<CloudDownloadOutlined />}
+            onClick={handleUpdateSingbox}
+            loading={updatingSingbox}
+            title="更新 sing-box"
+            aria-label="更新 sing-box"
+          >
+            <span className="server-action-label">更新 sing-box</span>
           </Button>
-          <Button icon={<ReloadOutlined />} onClick={handleUpdateAllAgents} loading={updatingAll}>
-            更新 Agent
+          <Button
+            icon={<ReloadOutlined />}
+            onClick={handleUpdateAllAgents}
+            loading={updatingAll}
+            title="更新 Agent"
+            aria-label="更新 Agent"
+          >
+            <span className="server-action-label">更新 Agent</span>
           </Button>
-          <Button type="primary" icon={<PlusOutlined />} onClick={openCreate}>
-            新增服务器
+          <Button type="primary" icon={<PlusOutlined />} onClick={openCreate} title="新增服务器" aria-label="新增服务器">
+            <span className="server-action-label">新增服务器</span>
           </Button>
         </Space>
       }

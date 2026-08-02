@@ -13,6 +13,65 @@ body {
   overflow-x: hidden;
 }
 
+/* Page action buttons: desktop row, phone 2-col grid with primary full-width. */
+.page-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-bottom: 16px;
+}
+
+@media (max-width: 576px) {
+  .page-toolbar {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+  }
+
+  .page-toolbar > .ant-btn-primary {
+    grid-column: 1 / -1;
+  }
+
+  .servers-card .ant-card-head-wrapper {
+    align-items: center;
+    gap: 8px;
+  }
+
+  .servers-card .ant-card-head-title {
+    flex: 1 1 auto;
+    padding: 0;
+    overflow: visible;
+    white-space: normal;
+    text-overflow: clip;
+  }
+
+  .servers-card .ant-card-extra {
+    width: auto;
+    flex: 0 0 auto;
+    padding: 0;
+    margin-inline-start: 0 !important;
+  }
+
+  .servers-card .ant-card-extra .ant-space {
+    display: flex;
+    gap: 8px;
+  }
+
+  .servers-card .ant-card-extra .ant-space-item {
+    flex: 0 0 auto;
+  }
+
+  .servers-card .ant-card-extra .ant-btn {
+    width: 34px;
+    height: 34px;
+    padding: 0;
+    font-size: 16px;
+  }
+
+  .servers-card .server-action-label {
+    display: none;
+  }
+}
+
 /* Keep modals within the viewport on phones. */
 .ant-modal {
   max-width: calc(100vw - 16px);

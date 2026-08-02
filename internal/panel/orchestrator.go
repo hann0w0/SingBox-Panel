@@ -147,11 +147,12 @@ func (o *Orchestrator) BuildServerConfig(srv *model.Server) ([]byte, error) {
 	}
 
 	return singbox.BuildServerConfig(singbox.ServerConfigInput{
-		Inbounds:  ins,
-		Outbounds: obs,
-		Rules:     rules,
-		RuleSets:  rsets,
-		Final:     srv.FinalOutbound,
+		Inbounds:        ins,
+		Outbounds:       obs,
+		Rules:           rules,
+		RuleSets:        rsets,
+		Final:           srv.FinalOutbound,
+		StatsController: protocol.LocalTrafficAddress,
 	})
 }
 

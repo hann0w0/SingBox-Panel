@@ -679,24 +679,49 @@ export default function ServerDetail() {
                         入站: {ib}
                       </Tag>
                     ))}
+                    {m.domain?.map((domain) => (
+                      <Tag key={`domain-${domain}`} style={{ background: '#fff7e6', color: '#d46b08', borderColor: '#ffd591' }}>
+                        域名: {domain}
+                      </Tag>
+                    ))}
                     {m.domain_suffix?.map((ds) => (
-                      <Tag key={ds} style={{ background: '#fff7e6', color: '#d46b08', borderColor: '#ffd591' }}>
+                      <Tag key={`suffix-${ds}`} style={{ background: '#fff7e6', color: '#d46b08', borderColor: '#ffd591' }}>
                         域名: {ds}
                       </Tag>
                     ))}
+                    {m.domain_keyword?.map((keyword) => (
+                      <Tag key={`keyword-${keyword}`} style={{ background: '#fff7e6', color: '#d46b08', borderColor: '#ffd591' }}>
+                        关键词: {keyword}
+                      </Tag>
+                    ))}
                     {m.ip_cidr?.map((ip) => (
-                      <Tag key={ip} style={{ background: '#fff0f6', color: '#c41d7f', borderColor: '#ffadd2' }}>
-                        IP: {ip}
+                      <Tag key={`ip-${ip}`} style={{ background: '#fff0f6', color: '#c41d7f', borderColor: '#ffadd2' }}>
+                        目标 IP: {ip}
+                      </Tag>
+                    ))}
+                    {m.source_ip_cidr?.map((ip) => (
+                      <Tag key={`source-ip-${ip}`} style={{ background: '#fff0f6', color: '#c41d7f', borderColor: '#ffadd2' }}>
+                        来源 IP: {ip}
+                      </Tag>
+                    ))}
+                    {m.port?.map((port) => (
+                      <Tag key={`port-${port}`} style={{ background: '#e6fffb', color: '#08979c', borderColor: '#87e8de' }}>
+                        端口: {port}
                       </Tag>
                     ))}
                     {m.protocol?.map((p) => (
-                      <Tag key={p} style={{ background: '#f9f0ff', color: '#722ed1', borderColor: '#d3ade6' }}>
+                      <Tag key={`protocol-${p}`} style={{ background: '#f9f0ff', color: '#722ed1', borderColor: '#d3ade6' }}>
                         协议: {p}
                       </Tag>
                     ))}
-                    {!m.rule_set?.length && !m.inbound?.length && !m.domain_suffix?.length && !m.ip_cidr?.length && !m.protocol?.length && (
+                    {m.network ? (
+                      <Tag style={{ background: '#f0f5ff', color: '#2f54eb', borderColor: '#adc6ff' }}>
+                        网络: {m.network.toUpperCase()}
+                      </Tag>
+                    ) : null}
+                    {!m.rule_set?.length && !m.inbound?.length && !m.domain?.length && !m.domain_suffix?.length && !m.domain_keyword?.length && !m.ip_cidr?.length && !m.source_ip_cidr?.length && !m.port?.length && !m.protocol?.length && !m.network && (
                       <Tag style={{ background: '#f5f5f5', color: '#595959', borderColor: '#d9d9d9' }}>
-                        不限入站
+                        匹配全部流量
                       </Tag>
                     )}
                   </Space>

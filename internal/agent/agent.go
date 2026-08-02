@@ -25,13 +25,14 @@ var opsGate = make(chan struct{}, 1)
 
 // Agent wires the command handlers and stats collector to the WS client.
 type Agent struct {
-	cfg    Config
-	client *Client
+	cfg     Config
+	client  *Client
+	traffic *trafficSampler
 }
 
 // New builds an Agent and wires the client callbacks.
 func New(cfg Config) *Agent {
-	a := &Agent{cfg: cfg}
+	a := &Agent{cfg: cfg, traffic: newTrafficSampler()}
 	a.client = NewClient(cfg.PanelURL, cfg.Token, cfg.Insecure)
 	a.client.Register = a.register
 	a.client.Heartbeat = a.heartbeat
@@ -45,7 +46,10 @@ func New(cfg Config) *Agent {
 }
 
 // Run blocks until ctx is cancelled.
-func (a *Agent) Run(ctx context.Context) { a.client.Run(ctx) }
+func (a *Agent) Run(ctx context.Context) {
+	go a.traffic.run(ctx)
+	a.client.Run(ctx)
+}
 
 func (a *Agent) register() protocol.RegisterEvt {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
@@ -114,6 +118,7 @@ func (a *Agent) heartbeat() protocol.HeartbeatEvt {
 		Uptime:         si.Uptime,
 		SingboxActive:  ServiceActive(ctx),
 		SingboxVersion: ver,
+		Traffic:        a.traffic.snapshot(),
 	}
 	return event
 }

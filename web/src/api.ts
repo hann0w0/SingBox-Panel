@@ -13,6 +13,8 @@ import type {
   RuleSet,
   Server,
   StatusData,
+  TrafficRange,
+  TrafficSeries,
   User,
 } from './types'
 
@@ -115,6 +117,8 @@ export const serverLogs = (id: number, lines = 200) =>
   http.get<{ text: string }>(`/api/admin/servers/${id}/logs`, { params: { lines } }).then((r) => r.data.text)
 export const serverStatus = (id: number) =>
   http.get<{ status: StatusData }>(`/api/admin/servers/${id}/status`).then((r) => r.data.status)
+export const getServerTraffic = (id: number, range: TrafficRange = '24h') =>
+  http.get<TrafficSeries>(`/api/admin/servers/${id}/traffic`, { params: { range } }).then((r) => r.data)
 export const remoteConfig = (id: number) =>
   http.get<RemoteConfig>(`/api/admin/servers/${id}/remote-config`).then((r) => r.data)
 export const applyRawConfig = (id: number, config: string) =>

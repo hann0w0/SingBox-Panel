@@ -62,6 +62,27 @@ var applicationMigrations = []schemaMigration{
 			return migrateSingleUserInbounds(tx)
 		},
 	},
+	{
+		version: 4,
+		name:    "traffic records",
+		up: func(tx *gorm.DB) error {
+			return tx.AutoMigrate(&model.Server{}, &model.TrafficRecord{})
+		},
+	},
+	{
+		version: 5,
+		name:    "traffic connection counters",
+		up: func(tx *gorm.DB) error {
+			return tx.AutoMigrate(&model.Server{}, &model.TrafficRecord{})
+		},
+	},
+	{
+		version: 6,
+		name:    "traffic rate samples",
+		up: func(tx *gorm.DB) error {
+			return tx.AutoMigrate(&model.TrafficRecord{})
+		},
+	},
 }
 
 // runSchemaMigrations applies every pending migration in order. If any

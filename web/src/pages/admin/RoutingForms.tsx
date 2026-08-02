@@ -1,5 +1,5 @@
 import { useEffect } from 'react'
-import { Alert, Button, Divider, Form, Input, InputNumber, Modal, Segmented, Select, Space, Switch } from 'antd'
+import { Button, Checkbox, Divider, Form, Input, InputNumber, Modal, Segmented, Select, Space, Switch } from 'antd'
 import {
   createOutbound,
   createRule,
@@ -48,6 +48,7 @@ export function OutboundForm({
 }) {
   const [form] = Form.useForm()
   const type: OutboundType = Form.useWatch('type', form) ?? 'shadowsocks'
+  const tlsMode = Form.useWatch('tls_mode', form) ?? 'none'
 
   useEffect(() => {
     if (!open) return
@@ -69,16 +70,26 @@ export function OutboundForm({
         ss_psk: inner.ss_server_psk,
         tls: !!inner.tls?.enabled,
         sni: inner.tls?.server_name,
-        insecure: inner.tls?.insecure,
-        flow: inner.flow,
-      })
+         insecure: inner.tls?.insecure,
+         flow: inner.flow,
+         tls_mode: inner.tls?.reality?.enabled ? 'reality' : (inner.tls?.enabled ? 'tls' : 'none'),
+         tls_alpn: inner.tls?.alpn?.join(', '),
+         reality_server_name: inner.tls?.server_name || '',
+         reality_public_key: inner.tls?.reality?.public_key || '',
+         reality_short_id: inner.tls?.reality?.short_id?.join(', '),
+       })
     } else {
       form.setFieldsValue({
         type: 'shadowsocks',
         method: '2022-blake3-aes-128-gcm',
-        server_port: 443,
-        tls: false,
-      })
+         server_port: 443,
+         tls: false,
+         tls_mode: 'none',
+         tls_alpn: '',
+         reality_server_name: '',
+         reality_public_key: '',
+         reality_short_id: '',
+       })
     }
   }, [open, outbound])
 
@@ -92,6 +103,29 @@ export function OutboundForm({
     if (type === 'vless' && v.flow) inner.flow = v.flow
     if (UUID_OUT.has(type) || type === 'trojan' || type === 'hysteria2') {
       if (v.tls) inner.tls = { enabled: true, server_name: v.sni || '', insecure: !!v.insecure }
+    }
+    if (type === 'vless') {
+      if (v.tls_mode === 'reality') {
+        inner.tls = {
+          enabled: true,
+          server_name: String(v.reality_server_name || '').trim(),
+          alpn: splitLines(v.tls_alpn),
+          reality: {
+            enabled: true,
+            public_key: String(v.reality_public_key || '').trim(),
+            short_id: splitLines(v.reality_short_id),
+          },
+        }
+      } else if (v.tls_mode === 'tls') {
+        inner.tls = {
+          enabled: true,
+          server_name: String(v.sni || '').trim(),
+          alpn: splitLines(v.tls_alpn),
+          insecure: !!v.insecure,
+        }
+      } else {
+        delete inner.tls
+      }
     }
     const body = {
       tag: v.tag,
@@ -218,7 +252,63 @@ export function OutboundForm({
           </Form.Item>
         )}
 
-        {type !== 'shadowsocks' && type !== 'socks' && (
+        {type === 'vless' && (
+          <>
+            <Divider orientation="left">安全连接</Divider>
+            <Form.Item name="tls_mode" label="TLS 模式">
+              <Select
+                options={[
+                  { value: 'none', label: '不使用 TLS' },
+                  { value: 'tls', label: 'TLS' },
+                  { value: 'reality', label: 'REALITY' },
+                ]}
+              />
+            </Form.Item>
+
+            {tlsMode === 'reality' && (
+              <>
+                <Form.Item
+                  name="reality_server_name"
+                  label="伪装域名 / SNI"
+                  rules={[{ required: true, message: 'REALITY 需要伪装域名' }]}
+                  extra="例如 www.microsoft.com；客户端会连接节点地址，但使用此域名完成握手。"
+                >
+                  <Input placeholder="www.microsoft.com" />
+                </Form.Item>
+                <Form.Item
+                  name="reality_public_key"
+                  label="REALITY 公钥"
+                  rules={[{ required: true, message: '请输入 REALITY 公钥' }]}
+                  extra="从服务端 REALITY 密钥对生成结果中复制 public key。"
+                >
+                  <Input placeholder="Base64URL 公钥" />
+                </Form.Item>
+                <Form.Item name="reality_short_id" label="Short ID（可选）" extra="多个值用逗号分隔；留空表示不指定。">
+                  <Input placeholder="例如 0123456789abcdef" />
+                </Form.Item>
+                <Form.Item name="tls_alpn" label="ALPN（可选）">
+                  <Input placeholder="例如 h2, http/1.1" />
+                </Form.Item>
+              </>
+            )}
+
+            {tlsMode === 'tls' && (
+              <>
+                <Form.Item name="sni" label="SNI / server_name">
+                  <Input placeholder="example.com" />
+                </Form.Item>
+                <Form.Item name="tls_alpn" label="ALPN（可选）">
+                  <Input placeholder="例如 h2, http/1.1" />
+                </Form.Item>
+                <Form.Item name="insecure" label="跳过证书校验" valuePropName="checked">
+                  <Switch />
+                </Form.Item>
+              </>
+            )}
+          </>
+        )}
+
+        {type !== 'shadowsocks' && type !== 'socks' && type !== 'vless' && (
           <>
             <Divider orientation="left">TLS</Divider>
             <Form.Item name="tls" label="启用 TLS" valuePropName="checked">
@@ -266,13 +356,26 @@ const ACTION_DESC: Record<string, string> = {
   'hijack-dns': '只截获 DNS 流量并交给 sing-box DNS 模块处理',
 }
 
-type MatchField = 'inbound' | 'rule_set' | 'domain_suffix' | 'ip_cidr' | 'port' | 'protocol' | 'network'
+type MatchField =
+  | 'inbound'
+  | 'rule_set'
+  | 'domain'
+  | 'domain_suffix'
+  | 'domain_keyword'
+  | 'ip_cidr'
+  | 'source_ip_cidr'
+  | 'port'
+  | 'protocol'
+  | 'network'
 
 const MATCH_FIELD_OPTIONS: { value: MatchField; label: string }[] = [
-  { value: 'inbound', label: '限定入站' },
+  { value: 'inbound', label: '入站来源' },
   { value: 'rule_set', label: '规则集' },
+  { value: 'domain', label: '完整域名' },
   { value: 'domain_suffix', label: '域名后缀' },
+  { value: 'domain_keyword', label: '域名关键词' },
   { value: 'ip_cidr', label: '目标 IP / CIDR' },
+  { value: 'source_ip_cidr', label: '来源 IP / CIDR' },
   { value: 'port', label: '目标端口' },
   { value: 'protocol', label: '应用协议' },
   { value: 'network', label: '网络类型' },
@@ -282,8 +385,11 @@ function activeMatchFields(match: RuleMatch): MatchField[] {
   const fields: MatchField[] = []
   if (match.inbound?.length) fields.push('inbound')
   if (match.rule_set?.length) fields.push('rule_set')
+  if (match.domain?.length) fields.push('domain')
   if (match.domain_suffix?.length) fields.push('domain_suffix')
+  if (match.domain_keyword?.length) fields.push('domain_keyword')
   if (match.ip_cidr?.length) fields.push('ip_cidr')
+  if (match.source_ip_cidr?.length) fields.push('source_ip_cidr')
   if (match.port?.length) fields.push('port')
   if (match.protocol?.length) fields.push('protocol')
   if (match.network) fields.push('network')
@@ -337,13 +443,17 @@ export function RuleForm({
         outbound: rule.outbound || undefined,
         sniffer: m.sniffer || (act === 'sniff' ? m.protocol : null) || [],
         protocol: act === 'hijack-dns' ? (m.protocol?.length ? m.protocol : ['dns']) : (act !== 'sniff' ? (m.protocol || []) : []),
-        method: (m.method as string) || 'default',
-        match_fields: activeMatchFields(m),
-        rule_set: m.rule_set || [],
-        inbound: m.inbound || [],
-        domain_suffix: joinLines(m.domain_suffix),
-        ip_cidr: joinLines(m.ip_cidr),
-        port: joinLines(m.port?.map(String)),
+         method: (m.method as string) || 'default',
+         remark: rule.remark || '',
+         match_fields: activeMatchFields(m),
+         rule_set: m.rule_set || [],
+         inbound: m.inbound || [],
+         domain: joinLines(m.domain),
+         domain_suffix: joinLines(m.domain_suffix),
+         domain_keyword: joinLines(m.domain_keyword),
+         ip_cidr: joinLines(m.ip_cidr),
+         source_ip_cidr: joinLines(m.source_ip_cidr),
+         port: joinLines(m.port?.map(String)),
         network: m.network || '',
         enabled: rule.enabled ?? true,
       })
@@ -352,14 +462,18 @@ export function RuleForm({
         action: 'route',
         outbound: undefined,
         sniffer: [],
-        protocol: [],
-        method: 'default',
-        match_fields: [],
-        rule_set: [],
-        inbound: [],
-        domain_suffix: '',
-        ip_cidr: '',
-        port: '',
+         protocol: [],
+         method: 'default',
+         remark: '',
+         match_fields: [],
+         rule_set: [],
+         inbound: [],
+         domain: '',
+         domain_suffix: '',
+         domain_keyword: '',
+         ip_cidr: '',
+         source_ip_cidr: '',
+         port: '',
         network: '',
         enabled: true,
       })
@@ -376,13 +490,25 @@ export function RuleForm({
     if (v.action === 'route' || v.action === 'reject') {
       if (selectedFields.has('rule_set') && v.rule_set?.length) match.rule_set = v.rule_set
       if (selectedFields.has('protocol') && v.protocol?.length) match.protocol = v.protocol
+      if (selectedFields.has('domain')) {
+        const domains = splitLines(v.domain)
+        if (domains.length) match.domain = domains
+      }
       if (selectedFields.has('domain_suffix')) {
         const domains = splitLines(v.domain_suffix)
         if (domains.length) match.domain_suffix = domains
       }
+      if (selectedFields.has('domain_keyword')) {
+        const keywords = splitLines(v.domain_keyword)
+        if (keywords.length) match.domain_keyword = keywords
+      }
       if (selectedFields.has('ip_cidr')) {
         const cidrs = splitLines(v.ip_cidr)
         if (cidrs.length) match.ip_cidr = cidrs
+      }
+      if (selectedFields.has('source_ip_cidr')) {
+        const cidrs = splitLines(v.source_ip_cidr)
+        if (cidrs.length) match.source_ip_cidr = cidrs
       }
       if (selectedFields.has('port')) {
         const ports = splitLines(v.port).map((x) => Number(x))
@@ -406,7 +532,7 @@ export function RuleForm({
       match.protocol = ['dns']
     }
 
-    const body = { match, outbound: targetOutbound, enabled: v.enabled, sort: rule?.sort }
+    const body = { match, outbound: targetOutbound, enabled: v.enabled, remark: v.remark || '', sort: rule?.sort }
     const editing = rule
     // 关闭弹窗后在后台下发，避免确认按钮卡顿
     onClose()
@@ -418,228 +544,242 @@ export function RuleForm({
 
   return (
     <Modal
+      className="route-rule-modal"
       title={rule ? '编辑路由规则' : '新增路由规则'}
       open={open}
       onOk={submit}
       onCancel={onClose}
-      width={560}
+      okText={rule ? '保存规则' : '创建规则'}
+      cancelText="取消"
+      width={680}
       centered
       destroyOnClose
     >
-      <Form form={form} layout="vertical" style={{ marginTop: 8 }}>
-        {/* ── ❶ 规则动作 ── */}
-        <Form.Item
-          name="action"
-          label="规则动作"
-          rules={[{ required: true, message: '请选择规则动作' }]}
-          style={{ marginBottom: 4 }}
-        >
-          <Segmented
-            block
-            options={ACTION_OPTIONS}
-            style={{ fontWeight: 500 }}
-          />
-        </Form.Item>
-        <div style={{ fontSize: 12, color: '#8c8c8c', marginBottom: 16, paddingLeft: 2 }}>
-          {ACTION_DESC[action] || ''}
-        </div>
-
-        {/* 路由动作：选择目标出站 */}
-        {action === 'route' && (
-          <Form.Item name="outbound" label="目标出站" rules={[{ required: true, message: '请选择目标出站' }]}>
-            <Select
-              allowClear
-              placeholder="请选择目标出站"
-              options={[
-                { value: 'direct', label: 'direct（内置直连）' },
-                ...outboundTags.map((t) => ({ value: t, label: t })),
-              ]}
-            />
+      <Form form={form} layout="vertical" className="route-rule-form">
+        <section className="route-rule-section">
+          <div className="route-rule-section-heading">
+            <span className="route-rule-step">1</span>
+            <div>
+              <strong>规则动作</strong>
+              <div className="route-rule-section-subtitle">先决定匹配后要执行的动作，下面只显示相关设置。</div>
+            </div>
+          </div>
+          <Form.Item name="action" rules={[{ required: true, message: '请选择规则动作' }]} style={{ marginBottom: 8 }}>
+            <Segmented block options={ACTION_OPTIONS} className="route-rule-actions" />
           </Form.Item>
-        )}
+          <div className="route-rule-action-description">{ACTION_DESC[action] || ''}</div>
+        </section>
 
-        {/* 嗅探动作：精简设置（仅嗅探协议与限定入站） */}
-        {action === 'sniff' && (
-          <>
-            <Form.Item name="sniffer" label="嗅探协议" extra="留空 = 嗅探 TLS/HTTP 等全部应用协议">
+        {action === 'route' && (
+          <section className="route-rule-compact-section">
+            <div className="route-rule-compact-heading">3. 执行分流</div>
+            <Form.Item name="outbound" label="目标出站" rules={[{ required: true, message: '请选择目标出站' }]} style={{ marginBottom: 4 }}>
               <Select
-                mode="multiple"
                 allowClear
-                placeholder="留空 = 嗅探全部协议"
+                placeholder="选择要承载流量的出站"
                 options={[
-                  { value: 'tls', label: 'TLS (HTTPS)' },
-                  { value: 'http', label: 'HTTP' },
-                  { value: 'quic', label: 'QUIC (HTTP/3)' },
-                  { value: 'dns', label: 'DNS' },
+                  { value: 'direct', label: 'direct · 内置直连' },
+                  ...outboundTags.filter((t) => t !== 'direct').map((t) => ({ value: t, label: t })),
                 ]}
               />
             </Form.Item>
-            <Form.Item name="inbound" label="限定入站" extra="留空 = 对全部入站流量开启嗅探">
-              <Select
-                mode="multiple"
-                allowClear
-                placeholder="留空 = 全部入站"
-                options={inboundTags.map((t) => ({ value: t, label: t }))}
-              />
-            </Form.Item>
-          </>
+            <div className="route-rule-card-hint">匹配成功后，流量将交给这个出站处理。</div>
+          </section>
         )}
 
-        {/* DNS 劫持固定匹配 DNS，只允许按入站缩小范围。 */}
-        {action === 'hijack-dns' && (
-          <Form.Item name="inbound" label="限定入站（可选）" extra="留空时处理全部入站的 DNS 请求">
-            <Select
-              mode="multiple"
-              allowClear
-              placeholder="全部入站"
-              options={inboundTags.map((t) => ({ value: t, label: t }))}
-            />
-          </Form.Item>
-        )}
-
-        {/* 拒绝动作：选择拦截方式 */}
         {action === 'reject' && (
-          <Form.Item name="method" label="拦截方式">
-            <Select
-              options={[
-                { value: 'default', label: '快速拒绝（TCP RST / ICMP 不可达）' },
-                { value: 'drop', label: '静默丢弃（不返回响应）' },
-              ]}
-            />
-          </Form.Item>
-        )}
-
-        {/* 分流与拒绝规则按需添加匹配条件，避免一次展示全部高级字段。 */}
-        {(action === 'route' || action === 'reject') && (
-          <>
-            <Divider style={{ margin: '12px 0', fontSize: 13, color: '#64748b' }}>
-              匹配范围
-            </Divider>
-            <Alert
-              type={matchFields.length ? 'info' : 'warning'}
-              showIcon
-              style={{ marginBottom: 14 }}
-              message={
-                matchFields.length
-                  ? '同一项中的多个值满足任意一个；不同条件通常需要同时满足。'
-                  : action === 'reject'
-                    ? '未添加条件：这会拒绝全部流量。'
-                    : '未添加条件：这是一条匹配全部流量的兜底规则。'
-              }
-            />
-
-            <Form.Item
-              name="match_fields"
-              label="添加匹配条件"
-              extra="只选择需要的条件；域名与 IP 同属目标地址，二者满足其一即可。"
-            >
+          <section className="route-rule-compact-section">
+            <div className="route-rule-compact-heading">3. 拒绝方式</div>
+            <Form.Item name="method" label="拦截方式" style={{ marginBottom: 4 }}>
               <Select
-                mode="multiple"
-                allowClear
-                placeholder="不选择 = 全部流量"
-                options={MATCH_FIELD_OPTIONS}
+                options={[
+                  { value: 'default', label: '快速拒绝 · TCP RST / ICMP 不可达' },
+                  { value: 'drop', label: '静默丢弃 · 不返回响应' },
+                ]}
               />
             </Form.Item>
+          </section>
+        )}
 
-            {showMatchField('inbound') && (
-              <Form.Item name="inbound" label="限定入站" rules={[{ required: true, message: '请选择至少一个入站' }]}>
+        {action === 'sniff' && (
+          <section className="route-rule-compact-section">
+            <div className="route-rule-compact-heading">2. 嗅探范围</div>
+            <div className="route-rule-fields">
+              <Form.Item name="sniffer" label="嗅探协议" extra="留空 = 嗅探全部支持的协议">
                 <Select
                   mode="multiple"
                   allowClear
-                  placeholder="选择流量来自哪些入站"
+                  placeholder="留空 = 全部协议"
+                  options={[
+                    { value: 'tls', label: 'TLS (HTTPS)' },
+                    { value: 'http', label: 'HTTP' },
+                    { value: 'quic', label: 'QUIC (HTTP/3)' },
+                    { value: 'dns', label: 'DNS' },
+                  ]}
+                />
+              </Form.Item>
+              <Form.Item name="inbound" label="限定入站" extra="留空 = 全部入站">
+                <Select
+                  mode="multiple"
+                  allowClear
+                  placeholder="全部入站"
                   options={inboundTags.map((t) => ({ value: t, label: t }))}
                 />
               </Form.Item>
-            )}
-
-            {showMatchField('rule_set') && (
-              <Form.Item name="rule_set" label="规则集" rules={[{ required: true, message: '请选择至少一个规则集' }]}>
-                <Select
-                  mode="multiple"
-                  allowClear
-                  placeholder="选择规则集"
-                  options={(ruleSets || []).map((rs) => ({ label: rs.tag, value: rs.tag }))}
-                />
-              </Form.Item>
-            )}
-
-            {showMatchField('domain_suffix') && (
-              <Form.Item name="domain_suffix" label="域名后缀" rules={[{ required: true, message: '请输入至少一个域名后缀' }]}>
-                <Input.TextArea
-                  autoSize={{ minRows: 1, maxRows: 3 }}
-                  placeholder="example.com, google.com"
-                />
-              </Form.Item>
-            )}
-
-            {showMatchField('ip_cidr') && (
-              <Form.Item name="ip_cidr" label="目标 IP / CIDR" rules={[{ required: true, message: '请输入至少一个 IP 或 CIDR' }]}>
-                <Input.TextArea
-                  autoSize={{ minRows: 1, maxRows: 3 }}
-                  placeholder="8.8.8.8, 10.0.0.0/8"
-                />
-              </Form.Item>
-            )}
-
-            {showMatchField('port') && (
-              <Form.Item
-                name="port"
-                label="目标端口"
-                rules={[
-                  { required: true, message: '请输入至少一个端口' },
-                  {
-                    validator: (_, value) => {
-                      const ports = splitLines(value)
-                      const invalid = ports.some((port) => !/^\d+$/.test(port) || Number(port) < 1 || Number(port) > 65535)
-                      return invalid ? Promise.reject(new Error('端口必须是 1-65535 的整数')) : Promise.resolve()
-                    },
-                  },
-                ]}
-              >
-                <Input placeholder="80, 443" />
-              </Form.Item>
-            )}
-
-            {showMatchField('protocol') && (
-              <Form.Item name="protocol" label="应用协议" rules={[{ required: true, message: '请选择至少一个应用协议' }]}>
-                <Select
-                  mode="tags"
-                  allowClear
-                  placeholder="如 dns、http、tls、quic"
-                  options={[
-                    { value: 'dns', label: 'DNS' },
-                    { value: 'http', label: 'HTTP' },
-                    { value: 'tls', label: 'TLS' },
-                    { value: 'quic', label: 'QUIC' },
-                    { value: 'bittorrent', label: 'BitTorrent' },
-                    { value: 'stun', label: 'STUN' },
-                  ]}
-                />
-              </Form.Item>
-            )}
-
-            {showMatchField('network') && (
-              <Form.Item name="network" label="网络类型" rules={[{ required: true, message: '请选择网络类型' }]}>
-                <Select
-                  allowClear
-                  placeholder="选择 TCP、UDP 或 ICMP"
-                  options={[
-                    { value: 'tcp', label: 'TCP' },
-                    { value: 'udp', label: 'UDP' },
-                    { value: 'icmp', label: 'ICMP（仅 TUN / WireGuard / Tailscale）' },
-                  ]}
-                />
-              </Form.Item>
-            )}
-          </>
+            </div>
+          </section>
         )}
 
-        {/* ── ❸ 启用开关 ── */}
-        <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginTop: 16 }}>
-          <Form.Item name="enabled" valuePropName="checked" style={{ marginBottom: 0 }}>
-            <Switch />
+        {action === 'hijack-dns' && (
+          <section className="route-rule-compact-section">
+            <div className="route-rule-compact-heading">2. DNS 劫持范围</div>
+            <Form.Item name="inbound" label="限定入站（可选）" extra="留空时处理全部入站的 DNS 请求" style={{ marginBottom: 4 }}>
+              <Select
+                mode="multiple"
+                allowClear
+                placeholder="全部入站"
+                options={inboundTags.map((t) => ({ value: t, label: t }))}
+              />
+            </Form.Item>
+          </section>
+        )}
+
+        {(action === 'route' || action === 'reject') && (
+          <section className="route-rule-compact-section route-rule-match-section">
+            <div className="route-rule-compact-heading">
+              <span>2. 匹配条件</span>
+              <span className="route-rule-condition-count">{matchFields.length ? `已选 ${matchFields.length} 项` : '匹配全部'}</span>
+            </div>
+            <Form.Item
+              name="match_fields"
+              label="选择匹配条件"
+              extra="可同时选择多个条件；未选择条件 = 匹配全部流量。"
+              style={{ marginBottom: 16 }}
+            >
+              <Checkbox.Group className="route-rule-condition-picker">
+                {MATCH_FIELD_OPTIONS.map((option) => (
+                  <Checkbox value={option.value} key={option.value} className="route-rule-condition-option">
+                    {option.label}
+                  </Checkbox>
+                ))}
+              </Checkbox.Group>
+            </Form.Item>
+
+            <div className="route-rule-fields">
+              {showMatchField('inbound') && (
+                <Form.Item name="inbound" label="入站来源" rules={[{ required: true, message: '请选择至少一个入站' }]}>
+                  <Select mode="multiple" allowClear placeholder="选择入站" options={inboundTags.map((t) => ({ value: t, label: t }))} />
+                </Form.Item>
+              )}
+
+              {showMatchField('rule_set') && (
+                <Form.Item name="rule_set" label="规则集" rules={[{ required: true, message: '请选择至少一个规则集' }]}>
+                  <Select
+                    mode="multiple"
+                    allowClear
+                    placeholder={ruleSets?.length ? '选择规则集' : '暂无可用规则集'}
+                    options={(ruleSets || []).map((rs) => ({ label: rs.tag, value: rs.tag }))}
+                  />
+                </Form.Item>
+              )}
+
+              {showMatchField('domain') && (
+                <Form.Item name="domain" label="完整域名" rules={[{ required: true, message: '请输入至少一个完整域名' }]}>
+                  <Input.TextArea autoSize={{ minRows: 1, maxRows: 3 }} placeholder="例如 www.example.com" />
+                </Form.Item>
+              )}
+
+              {showMatchField('domain_suffix') && (
+                <Form.Item name="domain_suffix" label="域名后缀" rules={[{ required: true, message: '请输入至少一个域名后缀' }]}>
+                  <Input.TextArea autoSize={{ minRows: 1, maxRows: 3 }} placeholder="例如 example.com, google.com" />
+                </Form.Item>
+              )}
+
+              {showMatchField('domain_keyword') && (
+                <Form.Item name="domain_keyword" label="域名关键词" rules={[{ required: true, message: '请输入至少一个域名关键词' }]}>
+                  <Input.TextArea autoSize={{ minRows: 1, maxRows: 3 }} placeholder="例如 google, youtube" />
+                </Form.Item>
+              )}
+
+              {showMatchField('ip_cidr') && (
+                <Form.Item name="ip_cidr" label="目标 IP / CIDR" rules={[{ required: true, message: '请输入至少一个 IP 或 CIDR' }]}>
+                  <Input.TextArea autoSize={{ minRows: 1, maxRows: 3 }} placeholder="例如 8.8.8.8, 10.0.0.0/8" />
+                </Form.Item>
+              )}
+
+              {showMatchField('source_ip_cidr') && (
+                <Form.Item name="source_ip_cidr" label="来源 IP / CIDR" rules={[{ required: true, message: '请输入至少一个来源 IP 或 CIDR' }]}>
+                  <Input.TextArea autoSize={{ minRows: 1, maxRows: 3 }} placeholder="例如 192.168.1.0/24" />
+                </Form.Item>
+              )}
+
+              {showMatchField('port') && (
+                <Form.Item
+                  name="port"
+                  label="目标端口"
+                  rules={[
+                    { required: true, message: '请输入至少一个端口' },
+                    {
+                      validator: (_, value) => {
+                        const ports = splitLines(value)
+                        const invalid = ports.some((port) => !/^\d+$/.test(port) || Number(port) < 1 || Number(port) > 65535)
+                        return invalid ? Promise.reject(new Error('端口必须是 1-65535 的整数')) : Promise.resolve()
+                      },
+                    },
+                  ]}
+                >
+                  <Input placeholder="例如 80, 443" />
+                </Form.Item>
+              )}
+
+              {showMatchField('protocol') && (
+                <Form.Item name="protocol" label="应用协议" rules={[{ required: true, message: '请选择至少一个应用协议' }]}>
+                  <Select
+                    mode="tags"
+                    allowClear
+                    placeholder="如 dns、http、tls、quic"
+                    options={[
+                      { value: 'dns', label: 'DNS' },
+                      { value: 'http', label: 'HTTP' },
+                      { value: 'tls', label: 'TLS' },
+                      { value: 'quic', label: 'QUIC' },
+                      { value: 'bittorrent', label: 'BitTorrent' },
+                      { value: 'stun', label: 'STUN' },
+                    ]}
+                  />
+                </Form.Item>
+              )}
+
+              {showMatchField('network') && (
+                <Form.Item name="network" label="网络类型" rules={[{ required: true, message: '请选择网络类型' }]}>
+                  <Select
+                    allowClear
+                    placeholder="选择 TCP、UDP 或 ICMP"
+                    options={[
+                      { value: 'tcp', label: 'TCP' },
+                      { value: 'udp', label: 'UDP' },
+                      { value: 'icmp', label: 'ICMP（仅 TUN / WireGuard / Tailscale）' },
+                    ]}
+                  />
+                </Form.Item>
+              )}
+            </div>
+          </section>
+        )}
+
+        <div className="route-rule-options">
+          <Form.Item name="remark" label="备注（可选）" extra="用于在规则列表中快速识别用途" className="route-rule-remark">
+            <Input placeholder="例如：国内网站直连" maxLength={120} />
           </Form.Item>
-          <span style={{ fontSize: 13, color: '#595959' }}>启用此规则</span>
+          <div className="route-rule-enabled">
+            <Form.Item name="enabled" valuePropName="checked" style={{ marginBottom: 0 }}>
+              <Switch />
+            </Form.Item>
+            <div>
+              <strong>启用此规则</strong>
+              <div className="route-rule-card-hint">关闭后保留规则，但不会写入下发配置。</div>
+            </div>
+          </div>
         </div>
       </Form>
     </Modal>

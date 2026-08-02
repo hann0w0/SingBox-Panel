@@ -5,6 +5,10 @@ package protocol
 
 import "encoding/json"
 
+// LocalTrafficAddress is the loopback-only Clash API endpoint used by managed
+// sing-box configs. It is never exposed outside the node.
+const LocalTrafficAddress = "127.0.0.1:29091"
+
 // MessageType enumerates the fixed command/event set.
 type MessageType string
 
@@ -168,6 +172,30 @@ type HeartbeatEvt struct {
 	Uptime         int64            `json:"uptime"`
 	SingboxActive  bool             `json:"singbox_active"`
 	SingboxVersion string           `json:"singbox_version,omitempty"`
+	Traffic        *TrafficSnapshot `json:"traffic,omitempty"`
+}
+
+// TrafficSnapshot contains sing-box's cumulative node counters and the
+// per-inbound deltas observed since the previous Agent sample.
+type TrafficSnapshot struct {
+	UploadTotal    uint64                `json:"upload_total"`
+	DownloadTotal  uint64                `json:"download_total"`
+	UploadRate     uint64                `json:"upload_rate"`
+	DownloadRate   uint64                `json:"download_rate"`
+	TCPConnections int                   `json:"tcp_connections"`
+	UDPConnections int                   `json:"udp_connections"`
+	SampledAt      int64                 `json:"sampled_at"`
+	Ports          []PortTrafficSnapshot `json:"ports,omitempty"`
+}
+
+// PortTrafficSnapshot is a delta for one sing-box inbound tag, not a
+// cumulative counter. The panel aggregates it into time buckets.
+type PortTrafficSnapshot struct {
+	Inbound      string `json:"inbound"`
+	Upload       uint64 `json:"upload"`
+	Download     uint64 `json:"download"`
+	UploadRate   uint64 `json:"upload_rate"`
+	DownloadRate uint64 `json:"download_rate"`
 }
 
 // CommandResultEvt is the reply to a Panel command, correlated by ID.

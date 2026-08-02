@@ -55,7 +55,7 @@ func NewClient(panelURL, token string, insecure bool) *Client {
 		wsURL:             deriveWSURL(panelURL),
 		token:             token,
 		insecure:          insecure,
-		heartbeatInterval: 30 * time.Second,
+		heartbeatInterval: 10 * time.Second,
 	}
 }
 

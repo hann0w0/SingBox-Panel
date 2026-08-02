@@ -46,6 +46,43 @@ export interface Server {
   updated_at: string
 }
 
+export type TrafficRange = '15m' | '30m' | '1h' | '12h' | '24h' | '7d' | '30d'
+
+export interface TrafficPoint {
+  time: string
+  upload: number
+  download: number
+  upload_rate: number
+  download_rate: number
+  tcp_connections: number
+  udp_connections: number
+}
+
+export interface TrafficPortSeries {
+  inbound_id: number
+  tag: string
+  port: number
+  type: string
+  upload: number
+  download: number
+  points: TrafficPoint[]
+}
+
+export interface TrafficSeries {
+  available: boolean
+  range: TrafficRange
+  step_seconds: number
+  updated_at: string | null
+  upload: number
+  download: number
+  upload_rate: number
+  download_rate: number
+  tcp_connections: number
+  udp_connections: number
+  points: TrafficPoint[]
+  ports: TrafficPortSeries[]
+}
+
 export type InboundType =
   | 'shadowsocks'
   | 'snell'

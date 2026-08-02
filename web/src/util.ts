@@ -1,7 +1,7 @@
 export function formatBytes(n: number): string {
-  if (!n || n <= 0) return '0 B'
+  if (!Number.isFinite(n) || !n || n <= 0) return '0 B'
   const units = ['B', 'KB', 'MB', 'GB', 'TB', 'PB']
-  const i = Math.floor(Math.log(n) / Math.log(1024))
+  const i = Math.min(units.length - 1, Math.max(0, Math.floor(Math.log(n) / Math.log(1024))))
   const v = n / Math.pow(1024, i)
   return `${v.toFixed(i === 0 ? 0 : 2)} ${units[i]}`
 }

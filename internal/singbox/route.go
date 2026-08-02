@@ -100,6 +100,22 @@ func ruleNeedsSniff(r RuleInput) bool {
 	return len(r.Domain) > 0 || len(r.DomainSuffix) > 0 || len(r.DomainKeyword) > 0 || len(r.Protocol) > 0
 }
 
+func routeRuleAction(r RuleInput) string {
+	if r.Action != "" {
+		return r.Action
+	}
+	switch r.Outbound {
+	case "block", "reject":
+		return "reject"
+	case "sniff":
+		return "sniff"
+	case "hijack-dns":
+		return "hijack-dns"
+	default:
+		return "route"
+	}
+}
+
 // buildRouteRule renders one route rule object.
 func buildRouteRule(r RuleInput) map[string]any {
 	m := map[string]any{}
@@ -134,18 +150,7 @@ func buildRouteRule(r RuleInput) map[string]any {
 		m["rule_set"] = r.RuleSet
 	}
 
-	act := r.Action
-	if act == "" {
-		if r.Outbound == "block" || r.Outbound == "reject" {
-			act = "reject"
-		} else if r.Outbound == "sniff" {
-			act = "sniff"
-		} else if r.Outbound == "hijack-dns" {
-			act = "hijack-dns"
-		} else {
-			act = "route"
-		}
-	}
+	act := routeRuleAction(r)
 	// The panel intentionally exposes only the meaningful match fields for these
 	// action rules. Dropping stale hidden fields also keeps an edited route rule
 	// from carrying domain/IP/port conditions after it is changed to sniff/DNS.

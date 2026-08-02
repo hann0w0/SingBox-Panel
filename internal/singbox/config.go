@@ -91,14 +91,17 @@ func BuildServerConfig(in ServerConfigInput) ([]byte, error) {
 	// on a domain (which requires sniffing); a plain inbound/ip/port relay needs
 	// none of it.
 	needSniff := false
+	hasGlobalSniff := false
 	for _, r := range in.Rules {
 		if ruleNeedsSniff(r) {
 			needSniff = true
-			break
+		}
+		if routeRuleAction(r) == "sniff" && len(r.Inbound) == 0 {
+			hasGlobalSniff = true
 		}
 	}
 	rules := []map[string]any{}
-	if needSniff {
+	if needSniff && !hasGlobalSniff {
 		rules = append(rules, map[string]any{"action": "sniff"})
 	}
 	for _, r := range in.Rules {

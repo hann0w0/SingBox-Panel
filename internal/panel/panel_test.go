@@ -153,6 +153,24 @@ func TestImportAutomaticallySelectsSafeConfigMode(t *testing.T) {
 		}
 		return raw
 	}
+	withSupportedSniff := func() []byte {
+		var root map[string]any
+		if err := json.Unmarshal(base, &root); err != nil {
+			t.Fatal(err)
+		}
+		root["route"] = map[string]any{
+			"rules": []any{
+				map[string]any{"action": "sniff"},
+				map[string]any{"action": "route", "domain_suffix": []any{"example.com"}, "outbound": "direct"},
+			},
+			"final": "direct",
+		}
+		raw, err := json.Marshal(root)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return raw
+	}
 
 	for _, tc := range []struct {
 		name string
@@ -160,6 +178,7 @@ func TestImportAutomaticallySelectsSafeConfigMode(t *testing.T) {
 		want string
 	}{
 		{name: "lossless managed config", raw: base, want: model.ConfigModeManaged},
+		{name: "supported sniff stays managed", raw: withSupportedSniff(), want: model.ConfigModeManaged},
 		{name: "unmodelled DNS stays raw", raw: withDNS(), want: model.ConfigModeRaw},
 	} {
 		t.Run(tc.name, func(t *testing.T) {

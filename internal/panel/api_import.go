@@ -190,14 +190,14 @@ func (a *App) applyImportUnlocked(srv *model.Server, p *singbox.ParsedConfig, ra
 }
 
 func importedConfigMode(p *singbox.ParsedConfig, raw []byte) string {
-	generated, err := buildManagedConfigFromImport(p)
+	generated, err := buildManagedConfigFromImport(p, raw)
 	if err != nil || !equivalentJSON(raw, generated) {
 		return model.ConfigModeRaw
 	}
 	return model.ConfigModeManaged
 }
 
-func buildManagedConfigFromImport(p *singbox.ParsedConfig) ([]byte, error) {
+func buildManagedConfigFromImport(p *singbox.ParsedConfig, raw []byte) ([]byte, error) {
 	inbounds := make([]singbox.InboundInput, 0, len(p.Inbounds))
 	for _, inbound := range p.Inbounds {
 		settings := inbound.Settings
@@ -221,9 +221,20 @@ func buildManagedConfigFromImport(p *singbox.ParsedConfig) ([]byte, error) {
 		rule.Outbound = parsedRule.Outbound
 		rules = append(rules, rule)
 	}
+	statsController := ""
+	var root struct {
+		Experimental struct {
+			ClashAPI struct {
+				ExternalController string `json:"external_controller"`
+			} `json:"clash_api"`
+		} `json:"experimental"`
+	}
+	if json.Unmarshal(raw, &root) == nil && root.Experimental.ClashAPI.ExternalController == protocol.LocalTrafficAddress {
+		statsController = protocol.LocalTrafficAddress
+	}
 	return singbox.BuildServerConfig(singbox.ServerConfigInput{
 		Inbounds: inbounds, Outbounds: outbounds, Rules: rules,
-		RuleSets: p.RuleSets, Final: p.Final,
+		RuleSets: p.RuleSets, Final: p.Final, StatsController: statsController,
 	})
 }
 

@@ -548,6 +548,29 @@ func TestBuildRouteActionsAndRuleSets(t *testing.T) {
 	}
 }
 
+func TestBuildServerConfigDoesNotDuplicateGlobalSniff(t *testing.T) {
+	raw, err := BuildServerConfig(ServerConfigInput{
+		Rules: []RuleInput{
+			{Action: "sniff", Outbound: "sniff"},
+			{DomainSuffix: []string{"example.com"}, Outbound: "direct"},
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var config struct {
+		Route struct {
+			Rules []map[string]any `json:"rules"`
+		} `json:"route"`
+	}
+	if err := json.Unmarshal(raw, &config); err != nil {
+		t.Fatal(err)
+	}
+	if len(config.Route.Rules) != 2 || config.Route.Rules[0]["action"] != "sniff" {
+		t.Fatalf("global sniff was duplicated or reordered: %s", raw)
+	}
+}
+
 // QUIC outbounds (hysteria2/tuic) must NOT carry a utls block: sing-box's QUIC
 // dialer rejects uTLS at runtime with "unsupported usage for uTLS", so the node
 // passes `check` but never connects. TCP protocols must still get utls.

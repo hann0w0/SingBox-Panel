@@ -30,6 +30,7 @@ type Hub struct {
 	db    *gorm.DB
 	conns map[uint]*agentConn
 	mu    sync.RWMutex
+	live  *liveHub
 
 	// AfterRegister, if set, runs when an agent (re)registers — used to push the
 	// latest config so a reconnecting server converges automatically.
@@ -38,7 +39,7 @@ type Hub struct {
 
 // NewHub builds a Hub bound to a database.
 func NewHub(db *gorm.DB) *Hub {
-	return &Hub{db: db, conns: map[uint]*agentConn{}}
+	return &Hub{db: db, conns: map[uint]*agentConn{}, live: newLiveHub()}
 }
 
 // agentConn is one live agent WebSocket connection.
@@ -261,9 +262,23 @@ func (h *Hub) handleEvent(serverID uint, env protocol.Envelope) {
 		if env.Decode(&e) == nil {
 			h.onHeartbeat(serverID, e)
 		}
+	case protocol.EvtTraffic:
+		var e protocol.TrafficEvt
+		if env.Decode(&e) == nil && e.Traffic != nil {
+			if err := recordServerTraffic(h.db, serverID, e.Traffic); err != nil {
+				log.Printf("traffic: record server %d: %v", serverID, err)
+			}
+			h.live.publishTraffic(serverID, e.Traffic)
+		}
+	case protocol.EvtProgress:
+		var e protocol.ProgressEvt
+		if env.Decode(&e) == nil {
+			h.live.publishProgress(serverID, e)
+		}
 	case protocol.EvtLog:
 		var e protocol.LogEvt
 		if env.Decode(&e) == nil {
+			h.live.publishLog(serverID, e)
 			log.Printf("agent[%d] %s: %s", serverID, e.Level, e.Msg)
 		}
 	}

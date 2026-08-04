@@ -232,6 +232,10 @@ export const testEgress = (serverId: number) =>
 export const setFinalOutbound = (serverId: number, outbound: string) =>
   http.put<ConfigApplyResult>(`/api/admin/servers/${serverId}/final-outbound`, { outbound }).then((r) => r.data)
 
+// ---- admin: log streaming (实时日志推流) ----
+export const streamLogs = (serverId: number, body: { enable: boolean; lines?: number }) =>
+  http.post<{ ok: boolean; output: string }>(`/api/admin/servers/${serverId}/stream-logs`, body).then((r) => r.data)
+
 // ---- admin: node formats（节点格式：URI / Clash / Surge）----
 export interface NodeFormatItem {
   tag: string

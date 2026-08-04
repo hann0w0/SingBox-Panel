@@ -239,6 +239,7 @@ export default function Servers() {
         loading={loading}
         dataSource={servers}
         pagination={false}
+        scroll={{ x: 'max-content' }}
         // Tapping the row opens the node — far easier than side-scrolling to a
         // link on a phone.
         onRow={(s) => ({
@@ -306,7 +307,6 @@ export default function Servers() {
           },
           {
             title: 'sing-box',
-            responsive: ['sm'],
             render: (_, s: Server) => {
               if (!s.singbox_installed) return <Tag color="orange">未安装</Tag>
               const versionStr = s.singbox_version || '已安装'
@@ -326,7 +326,6 @@ export default function Servers() {
           },
           {
             title: 'Agent',
-            responsive: ['sm'],
             render: (_, s: Server) => {
               if (!s.agent_version) return <Tag>—</Tag>
               const isOutdated = s.online && s.agent_version !== latestAgentVer

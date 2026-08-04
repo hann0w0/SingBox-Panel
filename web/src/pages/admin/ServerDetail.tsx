@@ -482,14 +482,14 @@ export default function ServerDetail() {
         refreshing={refreshing}
         exportLoading={fmtLoading}
         onRefresh={refresh}
-        onInstallSingbox={() => setInstallOpen(true)}
-        onInstallAgent={installOrUpgradeAgent}
-        onUninstallAgent={confirmUninstallAgent}
-        onImport={openImport}
-        onEditConfig={openConfigEditor}
-        onRestart={() => run('restart', () => serviceAction(sid, 'restart'), 'sing-box 已重启')}
-        onExport={openNodeFormats}
-      />
+                  onInstallSingbox={() => setInstallOpen(true)}
+                  onInstallAgent={installOrUpgradeAgent}
+                  onUninstallAgent={confirmUninstallAgent}
+                  onImport={openImport}
+                  onEditConfig={openConfigEditor}
+                  onRestart={() => run('restart', () => serviceAction(sid, 'restart'), 'sing-box 已重启')}
+                  onExport={openNodeFormats}
+                />
 
       {rawMode && (
         <Alert

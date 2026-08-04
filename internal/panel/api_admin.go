@@ -140,7 +140,7 @@ func (a *App) latestAgentVersion() string {
 			}
 		}
 	}
-	return "v1.0.0"
+	return "v1.0.3"
 }
 
 func (a *App) listServers(c *gin.Context) {
@@ -350,6 +350,9 @@ func (a *App) installSingbox(c *gin.Context) {
 		c.JSON(http.StatusBadGateway, gin.H{"error": err.Error(), "output": res.Output})
 		return
 	}
+	// Invalidate the release cache so the UI immediately reflects the new
+	// version instead of comparing against a stale "latest" for up to 24h.
+	invalidateSingboxReleaseCache()
 	// Once installed, push the panel's config ONLY if this server has protocols
 	// configured in the panel — never overwrite an existing config with an empty one.
 	a.orch.PushConfigIfManaged(id)

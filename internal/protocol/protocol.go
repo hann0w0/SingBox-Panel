@@ -23,6 +23,7 @@ const (
 	CmdTestOutbound   MessageType = "test_outbound"
 	CmdTestEgress     MessageType = "test_egress"
 	CmdGetLogs        MessageType = "get_logs"
+	CmdStreamLogs     MessageType = "stream_logs"
 	CmdUninstallAgent MessageType = "uninstall_agent"
 
 	// Agent -> Panel events.
@@ -30,6 +31,8 @@ const (
 	EvtHeartbeat     MessageType = "heartbeat"
 	EvtCommandResult MessageType = "command_result"
 	EvtLog           MessageType = "log"
+	EvtTraffic       MessageType = "traffic"
+	EvtProgress      MessageType = "progress"
 )
 
 // Envelope is the wire format for every message.
@@ -248,4 +251,26 @@ type ConfigData struct {
 type LogEvt struct {
 	Level string `json:"level"`
 	Msg   string `json:"msg"`
+}
+
+// ---- New payloads: traffic / progress / log streaming ----
+
+// TrafficEvt is a high-frequency traffic snapshot sent independently of the
+// heartbeat, allowing 2-3s reporting without bloating the heartbeat payload.
+type TrafficEvt struct {
+	Traffic *TrafficSnapshot `json:"traffic,omitempty"`
+}
+
+// ProgressEvt is sent during long operations (install, self-update) so the
+// panel can show real-time output before the final CommandResult arrives.
+type ProgressEvt struct {
+	ID     string `json:"id"`               // command correlation id
+	Line   string `json:"line"`             // one line of output
+	Stream string `json:"stream,omitempty"` // "stdout" | "stderr" | ""
+}
+
+// StreamLogsCmd starts or stops continuous log streaming from the sing-box service.
+type StreamLogsCmd struct {
+	Enable bool `json:"enable"`           // true = start streaming, false = stop
+	Lines  int  `json:"lines,omitempty"`  // initial tail lines when enabling
 }

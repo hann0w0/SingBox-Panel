@@ -44,6 +44,9 @@ func (r *Reconciler) Run(ctx context.Context) {
 
 func (r *Reconciler) tick() {
 	now := time.Now()
+	if err := pruneTrafficRecords(r.db, now); err != nil {
+		log.Printf("reconciler: prune traffic records: %v", err)
+	}
 	var users []model.User
 	if err := r.db.Find(&users).Error; err != nil {
 		return

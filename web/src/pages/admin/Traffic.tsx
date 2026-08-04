@@ -1,19 +1,11 @@
-import { useCallback, useEffect, useRef, useState } from 'react'
-import { Button, Card, Empty, Grid, Select, Segmented, Space, Table, Tag, Typography, message } from 'antd'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { Button, Card, Empty, Grid, Segmented, Select, Table, Tag, Typography, message } from 'antd'
 import { ReloadOutlined } from '@ant-design/icons'
 import { errMsg, getServerTraffic, listServers } from '../../api'
 import type { Server, TrafficPoint, TrafficRange, TrafficSeries } from '../../types'
 import { formatBytes } from '../../util'
-
-const RANGE_OPTIONS: { label: string; value: TrafficRange }[] = [
-  { label: '实时', value: '15m' },
-  { label: '30 分钟', value: '30m' },
-  { label: '1 小时', value: '1h' },
-  { label: '12 小时', value: '12h' },
-  { label: '24 小时', value: '24h' },
-  { label: '7 天', value: '7d' },
-  { label: '30 天', value: '30d' },
-]
+import { useSSE } from '../../useSSE'
+import type { SSEMessage } from '../../useSSE'
 
 function rate(n: number): string {
   return `${formatBytes(n)}/s`
@@ -22,7 +14,10 @@ function rate(n: number): string {
 function pointLabel(time: string, range: TrafficRange): string {
   const date = new Date(time)
   if (Number.isNaN(date.getTime())) return ''
-  if (range === '15m' || range === '30m' || range === '1h' || range === '12h') {
+  if (range === '15m') {
+    return date.toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit', second: '2-digit' })
+  }
+  if (range === '24h') {
     return date.toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' })
   }
   return date.toLocaleDateString('zh-CN', { month: '2-digit', day: '2-digit' })
@@ -34,47 +29,51 @@ function axisBytes(n: number): string {
   return formatBytes(n)
 }
 
-type TrendMode = 'network' | 'connections'
+function TrafficTrend({ points, range, stepSeconds }: { points: TrafficPoint[]; range: TrafficRange; stepSeconds: number }) {
+    const containerRef = useRef<HTMLDivElement>(null)
+    const [width, setWidth] = useState(760)
 
-function TrafficTrend({ points, range, mode, stepSeconds }: { points: TrafficPoint[]; range: TrafficRange; mode: TrendMode; stepSeconds: number }) {
-  const width = 760
-  const height = 250
+    useEffect(() => {
+      const el = containerRef.current
+      if (!el) return
+      const measure = () => setWidth(Math.max(300, el.clientWidth))
+      measure()
+      const observer = new ResizeObserver(measure)
+      observer.observe(el)
+      return () => observer.disconnect()
+    }, [])
+
+    const height = 250
   const left = 52
   const right = 16
   const top = 18
   const bottom = 34
   const chartWidth = width - left - right
   const chartHeight = height - top - bottom
-  const valueFor = (point: TrafficPoint, key: 'upload' | 'download' | 'tcp_connections' | 'udp_connections') => {
-    if (mode === 'network' && (key === 'upload' || key === 'download')) {
-      const sampledRate = key === 'upload' ? point.upload_rate : point.download_rate
-      return sampledRate > 0 ? sampledRate : point[key] / Math.max(1, stepSeconds)
-    }
-    return point[key]
+  const valueFor = (point: TrafficPoint, key: 'upload' | 'download') => {
+    const sampledRate = key === 'upload' ? point.upload_rate : point.download_rate
+    return sampledRate > 0 ? sampledRate : point[key] / Math.max(1, stepSeconds)
   }
-  const max = mode === 'network'
-    ? Math.max(1, ...points.flatMap((p) => [valueFor(p, 'upload'), valueFor(p, 'download')]))
-    : Math.max(1, ...points.flatMap((p) => [p.tcp_connections, p.udp_connections]))
+  const max = Math.max(1, ...points.flatMap((p) => [valueFor(p, 'upload'), valueFor(p, 'download')]))
   const x = (index: number) => left + (points.length <= 1 ? chartWidth / 2 : (index / (points.length - 1)) * chartWidth)
   const y = (value: number) => top + chartHeight - (value / max) * chartHeight
-  const line = (key: 'upload' | 'download' | 'tcp_connections' | 'udp_connections') =>
+  const line = (key: 'upload' | 'download') =>
     points.map((point, index) => `${x(index)},${y(valueFor(point, key))}`).join(' ')
-  const formatAxis = (value: number) => mode === 'network' ? axisBytes(value) : `${Math.round(value)}`
+  const formatAxis = (value: number) => axisBytes(value)
+  const labelCount = range === '7d' ? 7 : range === '30d' ? 10 : range === '24h' ? 6 : 5
+  const labelIndices = points.length > 1
+    ? Array.from({ length: labelCount }, (_, i) => Math.round((i / (labelCount - 1)) * (points.length - 1)))
+    : [0]
   const labels = points.length
-    ? [0, Math.floor((points.length - 1) / 2), points.length - 1]
-        .filter((index, position, all) => all.indexOf(index) === position)
+    ? [...new Set(labelIndices)]
+        .filter(i => i < points.length)
         .map((index) => ({ index, text: pointLabel(points[index].time, range) }))
     : []
 
-  const series = mode === 'network'
-    ? [
-        { key: 'download' as const, className: 'traffic-line-download', legendClass: 'traffic-legend-download', label: '下载' },
-        { key: 'upload' as const, className: 'traffic-line-upload', legendClass: 'traffic-legend-upload', label: '上传' },
-      ]
-    : [
-        { key: 'tcp_connections' as const, className: 'traffic-line-tcp', legendClass: 'traffic-legend-tcp', label: 'TCP' },
-        { key: 'udp_connections' as const, className: 'traffic-line-udp', legendClass: 'traffic-legend-udp', label: 'UDP' },
-      ]
+  const series = [
+      { key: 'download' as const, className: 'traffic-line-download', legendClass: 'traffic-legend-download', label: '下载' },
+      { key: 'upload' as const, className: 'traffic-line-upload', legendClass: 'traffic-legend-upload', label: '上传' },
+    ]
 
   const svgRef = useRef<SVGSVGElement>(null)
   const [hoveredIndex, setHoveredIndex] = useState<number | null>(null)
@@ -87,21 +86,18 @@ function TrafficTrend({ points, range, mode, stepSeconds }: { points: TrafficPoi
     const raw = ((plotX - left) / chartWidth) * (points.length - 1)
     setHoveredIndex(Math.max(0, Math.min(points.length - 1, Math.round(raw))))
   }
-  const tooltipWidth = mode === 'network' ? 174 : 150
-  const tooltipHeight = mode === 'network' ? 80 : 66
+  const tooltipWidth = 174
+  const tooltipHeight = 80
   const tooltipX = activeIndex === null ? 0 : Math.max(left, Math.min(width - right - tooltipWidth, x(activeIndex) - tooltipWidth / 2))
   const tooltipY = top + 8
-  const valueLabel = (point: TrafficPoint, key: 'upload' | 'download' | 'tcp_connections' | 'udp_connections') => {
-    const value = valueFor(point, key)
-    return mode === 'network' ? `${formatBytes(value)}/s` : `${Math.round(value)}`
-  }
+  const valueLabel = (point: TrafficPoint, key: 'upload' | 'download') => `${formatBytes(valueFor(point, key))}/s`
   return (
-    <div className="traffic-chart">
+    <div className="traffic-chart" ref={containerRef}>
       <svg
         ref={svgRef}
         viewBox={`0 0 ${width} ${height}`}
         role="img"
-        aria-label={mode === 'network' ? '上传下载流量趋势图' : 'TCP UDP 连接数趋势图'}
+        aria-label={'上传下载流量趋势图'}
         onMouseMove={(event) => choosePoint(event.clientX)}
         onMouseLeave={() => setHoveredIndex(null)}
         onTouchMove={(event) => {
@@ -149,10 +145,31 @@ export default function Traffic() {
   const compact = !screens.sm
   const [servers, setServers] = useState<Server[]>([])
   const [serverId, setServerId] = useState<number | null>(null)
-  const [range, setRange] = useState<TrafficRange>('15m')
-  const [selectedInbound, setSelectedInbound] = useState<number>(0)
   const [data, setData] = useState<TrafficSeries | null>(null)
   const [loading, setLoading] = useState(false)
+
+  // SSE live traffic samples — always active when a server is selected.
+  const [livePoints, setLivePoints] = useState<TrafficPoint[]>([])
+  const liveUrl = useMemo(() => `/api/admin/servers/${serverId}/traffic/live`, [serverId])
+  const onSSEMessage = useCallback((msg: SSEMessage) => {
+    if (msg.kind !== 'traffic' || !msg.data) return
+    const snap = msg.data as any
+    const point: TrafficPoint = {
+      time: new Date(msg.ts).toISOString(),
+      upload: 0, download: 0,
+      upload_rate: snap.upload_rate || 0,
+      download_rate: snap.download_rate || 0,
+      tcp_connections: snap.tcp_connections || 0,
+      udp_connections: snap.udp_connections || 0,
+    }
+    setLivePoints((prev) => {
+      const next = [...prev, point]
+      if (next.length > 100) next.shift()
+      return next
+    })
+  }, [])
+  const { connected: sseConnected } = useSSE(liveUrl, !!serverId, onSSEMessage)
+  const [range, setRange] = useState<TrafficRange>('24h')
 
   useEffect(() => {
     listServers()
@@ -178,17 +195,14 @@ export default function Traffic() {
 
   useEffect(() => {
     setData(null)
-    setSelectedInbound(0)
     void load()
-    if (!serverId) return undefined
-    const timer = window.setInterval(() => void load(true), 10_000)
-    return () => window.clearInterval(timer)
   }, [load, serverId])
 
   const selectedServer = servers.find((server) => server.id === serverId)
-  const selectedPort = data?.ports.find((port) => port.inbound_id === selectedInbound)
-  const chartPoints = selectedPort?.points ?? data?.points ?? []
-  const hasData = chartPoints.some((point) => point.upload > 0 || point.download > 0)
+  const liveChartPoints = livePoints
+  const historicalChartPoints = data?.points ?? []
+  const hasData = liveChartPoints.length > 0 || historicalChartPoints.some((p) => p.upload > 0 || p.download > 0)
+  const liveRate = livePoints.length > 0 ? livePoints[livePoints.length - 1] : null
 
   return (
     <Card
@@ -208,78 +222,72 @@ export default function Traffic() {
           }))}
           style={{ width: compact ? '100%' : 280 }}
         />
-        <Segmented<TrafficRange> options={RANGE_OPTIONS} value={range} onChange={setRange} block={compact} />
-        {selectedServer ? <Tag color={selectedServer.online ? 'success' : 'warning'}>{selectedServer.online ? '在线' : '离线'}</Tag> : null}
+        <Segmented<TrafficRange> options={[
+          { label: '24 小时', value: '24h' },
+          { label: '7 天', value: '7d' },
+          { label: '30 天', value: '30d' },
+        ]} value={range} onChange={setRange} />
       </div>
 
       {!serverId ? (
         <Empty description={servers.length ? '请选择服务器' : '暂无服务器'} />
-      ) : !data ? (
-        <div className="traffic-empty">{loading ? '正在读取流量数据...' : '暂无流量数据'}</div>
       ) : (
         <>
-          {!data.available && !hasData ? (
+          <div className="traffic-dual-grid">
+            <section className="traffic-panel-card">
+              <div className="traffic-panel-heading">
+                <Typography.Title level={5}>实时</Typography.Title>
+                <span>
+                  ↑ {rate(liveRate?.upload_rate ?? 0)}　
+                  ↓ {rate(liveRate?.download_rate ?? 0)}
+                  {sseConnected ? '' : ' · 连接中…'}
+                </span>
+              </div>
+              <div className="traffic-panel-label">速度</div>
+              <TrafficTrend points={liveChartPoints} range="15m" stepSeconds={3} />
+            </section>
+            <section className="traffic-panel-card">
+              <div className="traffic-panel-heading">
+                <Typography.Title level={5}>历史</Typography.Title>
+              </div>
+              <div className="traffic-panel-label">速度</div>
+              {data ? (
+                <TrafficTrend points={historicalChartPoints} range={range} stepSeconds={data.step_seconds} />
+              ) : (
+                <div className="traffic-empty">{loading ? '读取中...' : '暂无历史数据'}</div>
+              )}
+            </section>
+          </div>
+
+          {data && data.available ? (
+            <>
+              <Table
+                className="traffic-port-table"
+                rowKey="inbound_id"
+                size="small"
+                pagination={false}
+                tableLayout="fixed"
+                scroll={{ x: 760 }}
+                dataSource={data.ports}
+                locale={{ emptyText: '暂无入站端口' }}
+                rowClassName={() => ''}
+                onRow={() => ({ style: { cursor: 'pointer' } })}
+                columns={[
+                  { title: '端口', dataIndex: 'port', width: 80 },
+                  { title: '标签', dataIndex: 'tag', width: 180, ellipsis: true },
+                  { title: '协议', dataIndex: 'type', width: 90, render: (value: string) => <Tag>{value}</Tag> },
+                  { title: '出站 ↓', dataIndex: 'download', width: 130, render: (_: number, record) => <span style={{ color: '#4096ff' }}>{formatBytes(record.download)}</span> },
+                  { title: '入站 ↑', dataIndex: 'upload', width: 130, render: (_: number, record) => <span style={{ color: '#36cfc9' }}>{formatBytes(record.upload)}</span> },
+                  { title: '全部', width: 120, render: (_: unknown, record) => <span style={{ fontWeight: 600 }}>{formatBytes(record.upload + record.download)}</span> },
+                ]}
+              />
+            </>
+          ) : data && !data.available ? (
             <div className="traffic-unavailable">
               <strong>暂未采集到流量</strong>
               <span>请让节点重新连接 Agent，或重新下发一次面板配置以启用统计接口。</span>
             </div>
           ) : null}
-
-          <div className="traffic-dual-grid">
-            <section className="traffic-panel-card">
-              <div className="traffic-panel-heading">
-                <Typography.Title level={5}>网络</Typography.Title>
-                <span>↑ {rate(data.upload_rate)}　↓ {rate(data.download_rate)}</span>
-              </div>
-              <div className="traffic-panel-label">速度</div>
-              <TrafficTrend points={chartPoints} range={range} mode="network" stepSeconds={data.step_seconds} />
-            </section>
-            <section className="traffic-panel-card">
-              <div className="traffic-panel-heading">
-                <Typography.Title level={5}>连接</Typography.Title>
-                <span>TCP: {data.tcp_connections} · UDP: {data.udp_connections}</span>
-              </div>
-              <div className="traffic-panel-label">连接数</div>
-              <TrafficTrend points={data.points} range={range} mode="connections" stepSeconds={data.step_seconds} />
-            </section>
-          </div>
-
-          <div className="traffic-section-heading traffic-port-heading">
-            <div>
-              <Typography.Title level={5}>端口流量</Typography.Title>
-              <Typography.Text type="secondary" className="traffic-port-hint">点击端口行查看对应趋势</Typography.Text>
-            </div>
-            <Space size={10} wrap className="traffic-port-actions">
-              {data.updated_at ? <Typography.Text type="secondary">更新于 {new Date(data.updated_at).toLocaleTimeString('zh-CN', { hour12: false })}</Typography.Text> : null}
-              <Select
-                size="small"
-                value={selectedInbound}
-                onChange={setSelectedInbound}
-                options={[{ value: 0, label: '全部端口' }, ...data.ports.map((port) => ({ value: port.inbound_id, label: `${port.port} · ${port.tag}` }))]}
-                style={{ minWidth: 150 }}
-              />
-            </Space>
-          </div>
-          <Table
-            className="traffic-port-table"
-            rowKey="inbound_id"
-            size="small"
-            pagination={false}
-            tableLayout="fixed"
-            scroll={{ x: 760 }}
-            dataSource={data.ports}
-            locale={{ emptyText: '暂无入站端口' }}
-            rowClassName={(record) => record.inbound_id === selectedInbound ? 'traffic-port-selected' : ''}
-            onRow={(record) => ({ onClick: () => setSelectedInbound(record.inbound_id), style: { cursor: 'pointer' } })}
-            columns={[
-              { title: '端口', dataIndex: 'port', width: 80 },
-              { title: '标签', dataIndex: 'tag', width: 260, ellipsis: true },
-              { title: '协议', dataIndex: 'type', width: 130, render: (value: string) => <Tag>{value}</Tag> },
-              { title: '下载', dataIndex: 'download', width: 130, render: (_: number, record) => formatBytes(record.download) },
-              { title: '上传', dataIndex: 'upload', width: 130, render: (_: number, record) => formatBytes(record.upload) },
-              { title: '合计', width: 130, render: (_: unknown, record) => formatBytes(record.upload + record.download) },
-            ]}
-          />
         </>
       )}
     </Card>

@@ -1,8 +1,10 @@
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useRef, useState, useCallback } from 'react'
 import { Button, Card, Empty, Input, Select, Space, Switch, Tag, message } from 'antd'
 import { ReloadOutlined } from '@ant-design/icons'
-import { errMsg, listServers, serverLogs } from '../../api'
+import { errMsg, listServers, serverLogs, streamLogs } from '../../api'
 import type { Server } from '../../types'
+import { useSSE } from '../../useSSE'
+import type { SSEMessage } from '../../useSSE'
 
 const LINE_OPTIONS = [100, 200, 500, 1000]
 
@@ -16,17 +18,18 @@ const NOISE_PATTERNS = [
   'connection reset by peer',
 ]
 
+const MAX_LIVE_LINES = 2000
+
 export default function Logs() {
   const [servers, setServers] = useState<Server[]>([])
   const [sid, setSid] = useState<number | null>(null)
   const [lines, setLines] = useState(200)
   const [text, setText] = useState('')
   const [loading, setLoading] = useState(false)
-  const [auto, setAuto] = useState(false)
+  const [live, setLive] = useState(false)
   const [hideNoise, setHideNoise] = useState(true)
   const [keyword, setKeyword] = useState('')
   const boxRef = useRef<HTMLPreElement>(null)
-  const timer = useRef<number | undefined>(undefined)
 
   useEffect(() => {
     listServers()
@@ -54,16 +57,47 @@ export default function Logs() {
     }
   }
 
+  // SSE live log streaming: connect to the same SSE endpoint and filter for
+  // kind === "log" messages. The agent-side journalctl -f is started/stopped
+  // via the streamLogs API call below.
+  const liveUrl = sid ? `/api/admin/servers/${sid}/traffic/live` : ''
+  const onSSEMessage = useCallback((msg: SSEMessage) => {
+    if (msg.kind !== 'log' || !msg.data) return
+    const logEvt = msg.data as { level: string; msg: string }
+    setText((prev) => {
+      const next = prev + (prev ? '\n' : '') + logEvt.msg
+      const lineArr = next.split('\n')
+      if (lineArr.length > MAX_LIVE_LINES) {
+        return lineArr.slice(lineArr.length - MAX_LIVE_LINES).join('\n')
+      }
+      return next
+    })
+    requestAnimationFrame(() => {
+      if (boxRef.current) boxRef.current.scrollTop = boxRef.current.scrollHeight
+    })
+  }, [])
+  const { connected: sseConnected } = useSSE(liveUrl, live && !!sid, onSSEMessage)
+
+  // Start/stop agent-side journalctl -f when live toggle changes.
   useEffect(() => {
+    if (!sid) return
+    if (live) {
+      streamLogs(sid, { enable: true, lines }).catch((e) => {
+        message.error(errMsg(e))
+        setLive(false)
+      })
+    } else {
+      streamLogs(sid, { enable: false }).catch(() => {})
+    }
+  }, [live, sid])
+
+  // When switching servers or line count, stop live and reload.
+  useEffect(() => {
+    setLive(false)
     setText('')
     load()
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [sid, lines])
-
-  useEffect(() => {
-    window.clearInterval(timer.current)
-    if (auto && sid) timer.current = window.setInterval(() => load(true), 5000)
-    return () => window.clearInterval(timer.current)
-  }, [auto, sid, lines])
 
   const filteredText = (() => {
     if (!text) return ''
@@ -117,8 +151,10 @@ export default function Logs() {
           <span style={{ fontSize: 13, color: 'rgba(0,0,0,0.65)' }}>过滤扫描噪音</span>
         </Space>
         <Space size={6}>
-          <Switch checked={auto} onChange={setAuto} />
-          <span style={{ fontSize: 13, color: 'rgba(0,0,0,0.65)' }}>自动刷新</span>
+          <Switch checked={live} onChange={setLive} disabled={!current?.online} />
+          <span style={{ fontSize: 13, color: 'rgba(0,0,0,0.65)' }}>
+            实时推送{live ? (sseConnected ? ' · 已连接' : ' · 连接中…') : ''}
+          </span>
         </Space>
         {current && !current.online ? <Tag color="orange">该节点离线，无法读取</Tag> : null}
       </Space>

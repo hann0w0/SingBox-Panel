@@ -15,7 +15,7 @@ import (
 
 const (
 	trafficRetentionDays = 31
-	trafficStorageBucket = 5 * time.Minute
+	trafficStorageBucket = time.Minute // 1-minute buckets; display step aggregates as needed
 )
 
 type trafficRangeConfig struct {
@@ -26,7 +26,7 @@ type trafficRangeConfig struct {
 var trafficRanges = map[string]trafficRangeConfig{
 	"15m": {duration: 15 * time.Minute, step: time.Minute},
 	"30m": {duration: 30 * time.Minute, step: 2 * time.Minute},
-	"1h":  {duration: time.Hour, step: 5 * time.Minute},
+	"1h":  {duration: time.Hour, step: 2 * time.Minute},
 	"12h": {duration: 12 * time.Hour, step: 30 * time.Minute},
 	"24h": {duration: 24 * time.Hour, step: time.Hour},
 	"7d":  {duration: 7 * 24 * time.Hour, step: 6 * time.Hour},

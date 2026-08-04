@@ -46,6 +46,13 @@ type Client struct {
 	// OnConnected runs after registration has been written successfully. The
 	// self-updater uses it as a local readiness signal for automatic rollback.
 	OnConnected func()
+
+	// send is the outbound message channel, created once and reused across
+			// reconnections. It is drained by the active session's writeLoop. Other
+			// goroutines (traffic, progress) push spontaneous events via
+			// SendEvent, which is non-blocking: a full buffer drops the oldest stale
+			// sample — acceptable for time-bound telemetry.
+	send chan protocol.Envelope
 }
 
 // NewClient builds a client. panelURL may be a base origin (https://panel) or a
@@ -56,6 +63,33 @@ func NewClient(panelURL, token string, insecure bool) *Client {
 		token:             token,
 		insecure:          insecure,
 		heartbeatInterval: 10 * time.Second,
+		send:              make(chan protocol.Envelope, 256),
+	}
+}
+
+// SendEvent pushes a spontaneous event (no correlation id) to the panel.
+// Non-blocking: if the buffer is full the event is dropped.
+func (c *Client) SendEvent(t protocol.MessageType, payload any) {
+	env, err := protocol.NewEnvelope(t, "", payload)
+	if err != nil {
+		return
+	}
+	select {
+	case c.send <- env:
+	default:
+	}
+}
+
+// SendEventFor pushes a spontaneous event with a correlation id, used by
+// long-running commands to stream intermediate progress to the panel.
+func (c *Client) SendEventFor(t protocol.MessageType, id string, payload any) {
+	env, err := protocol.NewEnvelope(t, id, payload)
+	if err != nil {
+		return
+	}
+	select {
+	case c.send <- env:
+	default:
 	}
 }
 
@@ -236,8 +270,7 @@ func (c *Client) connectOnce(ctx context.Context) (time.Duration, error) {
 		c.OnConnected()
 	}
 
-	send := make(chan protocol.Envelope, 64)
-	go c.writeLoop(connCtx, conn, send)
+	go c.writeLoop(connCtx, conn)
 
 	// Heartbeat loop.
 	go c.periodic(connCtx, c.heartbeatInterval, func() {
@@ -245,14 +278,14 @@ func (c *Client) connectOnce(ctx context.Context) (time.Duration, error) {
 			return
 		}
 		if env, err := protocol.NewEnvelope(protocol.EvtHeartbeat, "", c.Heartbeat()); err == nil {
-			c.trySend(connCtx, send, env)
+			c.trySend(connCtx, env)
 		}
 	})
-	err = c.readLoop(connCtx, conn, send)
+	err = c.readLoop(connCtx, conn)
 	return time.Since(connectedAt), err
 }
 
-func (c *Client) readLoop(ctx context.Context, conn *websocket.Conn, send chan protocol.Envelope) error {
+func (c *Client) readLoop(ctx context.Context, conn *websocket.Conn) error {
 	conn.SetReadLimit(maxAgentMessageSize)
 	_ = conn.SetReadDeadline(time.Now().Add(pongWait))
 	conn.SetPongHandler(func(string) error {
@@ -278,20 +311,20 @@ func (c *Client) readLoop(ctx context.Context, conn *websocket.Conn, send chan p
 		go func(env protocol.Envelope) {
 			res := c.OnCommand(ctx, env)
 			if out, err := protocol.NewEnvelope(protocol.EvtCommandResult, env.ID, res); err == nil {
-				c.trySend(ctx, send, out)
+				c.trySend(ctx, out)
 			}
 		}(env)
 	}
 }
 
-func (c *Client) writeLoop(ctx context.Context, conn *websocket.Conn, send chan protocol.Envelope) {
+func (c *Client) writeLoop(ctx context.Context, conn *websocket.Conn) {
 	ping := time.NewTicker(pingPeriod)
 	defer ping.Stop()
 	for {
 		select {
 		case <-ctx.Done():
 			return
-		case env := <-send:
+		case env := <-c.send:
 			_ = conn.SetWriteDeadline(time.Now().Add(writeWait))
 			if err := conn.WriteJSON(env); err != nil {
 				_ = conn.Close() // unblock readLoop
@@ -323,9 +356,9 @@ func (c *Client) periodic(ctx context.Context, d time.Duration, fn func()) {
 	}
 }
 
-func (c *Client) trySend(ctx context.Context, send chan protocol.Envelope, env protocol.Envelope) {
+func (c *Client) trySend(ctx context.Context, env protocol.Envelope) {
 	select {
-	case send <- env:
+	case c.send <- env:
 	case <-ctx.Done():
 	}
 }

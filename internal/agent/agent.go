@@ -25,14 +25,19 @@ var opsGate = make(chan struct{}, 1)
 
 // Agent wires the command handlers and stats collector to the WS client.
 type Agent struct {
-	cfg     Config
-	client  *Client
-	traffic *trafficSampler
+	cfg       Config
+	client    *Client
+	traffic   *trafficSampler
+	logStream *logStreamer
 }
 
 // New builds an Agent and wires the client callbacks.
 func New(cfg Config) *Agent {
-	a := &Agent{cfg: cfg, traffic: newTrafficSampler()}
+	a := &Agent{
+		cfg:       cfg,
+		traffic:   newTrafficSampler(),
+		logStream: newLogStreamer(),
+	}
 	a.client = NewClient(cfg.PanelURL, cfg.Token, cfg.Insecure)
 	a.client.Register = a.register
 	a.client.Heartbeat = a.heartbeat
@@ -48,7 +53,35 @@ func New(cfg Config) *Agent {
 // Run blocks until ctx is cancelled.
 func (a *Agent) Run(ctx context.Context) {
 	go a.traffic.run(ctx)
+	// Push high-frequency traffic snapshots every 3s, independent of the 10s
+	// heartbeat. This lets the panel capture short-lived rate spikes without
+	// bloating the heartbeat payload.
+	go a.trafficReportLoop(ctx)
+	// Ensure log stream stops when the agent exits.
+	go func() {
+		<-ctx.Done()
+		a.logStream.stop()
+	}()
 	a.client.Run(ctx)
+}
+
+// trafficReportLoop sends a TrafficEvt every 3 seconds. The heartbeat still
+// carries a snapshot too, so the panel always gets at least one per 10s even
+// if this loop is starved.
+func (a *Agent) trafficReportLoop(ctx context.Context) {
+	ticker := time.NewTicker(3 * time.Second)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			snap := a.traffic.snapshot()
+			if snap != nil {
+				a.client.SendEvent(protocol.EvtTraffic, protocol.TrafficEvt{Traffic: snap})
+			}
+		}
+	}
 }
 
 func (a *Agent) register() protocol.RegisterEvt {
@@ -100,6 +133,8 @@ func commandTimeout(t protocol.MessageType) time.Duration {
 		return 15 * time.Second
 	case protocol.CmdGetStatus, protocol.CmdGetConfig:
 		return 12 * time.Second
+	case protocol.CmdStreamLogs:
+		return 10 * time.Second
 	default:
 		return 15 * time.Second
 	}
@@ -140,7 +175,11 @@ func (a *Agent) onCommand(ctx context.Context, env protocol.Envelope) protocol.C
 		if err := env.Decode(&c); err != nil {
 			return decodeResult(env.ID, err)
 		}
+		a.client.SendEventFor(protocol.EvtProgress, env.ID, protocol.ProgressEvt{ID: env.ID, Line: "开始安装 sing-box...", Stream: "stdout"})
 		out, err := InstallSingbox(ctx, c.Channel, c.Version, c.Method)
+		if err != nil {
+			a.client.SendEventFor(protocol.EvtProgress, env.ID, protocol.ProgressEvt{ID: env.ID, Line: err.Error(), Stream: "stderr"})
+		}
 		return cmdResult(env.ID, out, err)
 
 	case protocol.CmdApplyConfig:
@@ -187,8 +226,29 @@ func (a *Agent) onCommand(ctx context.Context, env protocol.Envelope) protocol.C
 		data, _ := json.Marshal(protocol.LogsData{Text: text})
 		return protocol.CommandResultEvt{ID: env.ID, OK: true, Data: data}
 
+	case protocol.CmdStreamLogs:
+		var c protocol.StreamLogsCmd
+		if err := env.Decode(&c); err != nil {
+			return decodeResult(env.ID, err)
+		}
+		if c.Enable {
+			err := a.logStream.start(c.Lines, func(line string) {
+				a.client.SendEventFor(protocol.EvtLog, env.ID, protocol.LogEvt{Level: "info", Msg: line})
+			})
+			if err != nil {
+				return cmdResult(env.ID, "", err)
+			}
+			return protocol.CommandResultEvt{ID: env.ID, OK: true, Output: "log streaming started"}
+		}
+		a.logStream.stop()
+		return protocol.CommandResultEvt{ID: env.ID, OK: true, Output: "log streaming stopped"}
+
 	case protocol.CmdUpdateAgent:
-		out, err := SelfUpdate(ctx, a.cfg.PanelURL, a.cfg.Insecure)
+				a.client.SendEventFor(protocol.EvtProgress, env.ID, protocol.ProgressEvt{ID: env.ID, Line: "开始更新 Agent...", Stream: "stdout"})
+				out, err := SelfUpdate(ctx, a.cfg.PanelURL, a.cfg.Insecure)
+		if err != nil {
+			a.client.SendEventFor(protocol.EvtProgress, env.ID, protocol.ProgressEvt{ID: env.ID, Line: err.Error(), Stream: "stderr"})
+		}
 		return cmdResult(env.ID, out, err)
 
 	case protocol.CmdUninstallAgent:

@@ -136,7 +136,7 @@ func bearerToken(c *gin.Context) string {
 		return strings.TrimSpace(after)
 	}
 	// Fallback: allow ?token= for convenience (e.g. EventSource).
-	return c.Query("token")
+	return ""
 }
 
 func currentUID(c *gin.Context) uint {

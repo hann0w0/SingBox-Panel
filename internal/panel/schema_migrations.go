@@ -254,9 +254,7 @@ func sqliteFilePath(dsn string) string {
 	if dsn == "" || dsn == ":memory:" || strings.Contains(dsn, "mode=memory") {
 		return ""
 	}
-	if strings.HasPrefix(dsn, "file:") {
-		dsn = strings.TrimPrefix(dsn, "file:")
-	}
+	dsn = strings.TrimPrefix(dsn, "file:")
 	if idx := strings.IndexByte(dsn, '?'); idx >= 0 {
 		dsn = dsn[:idx]
 	}

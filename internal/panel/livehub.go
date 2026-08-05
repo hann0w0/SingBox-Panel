@@ -24,8 +24,14 @@ type trafficSub struct {
 // liveHub maintains in-memory rolling windows of recent traffic samples per
 // server and broadcasts new events to SSE subscribers. It is decoupled from the
 // WebSocket Hub so SSE delivery never blocks agent command processing.
+//
+// Delivery invariants: unsubscribe removes the subscriber from lh.subs and only
+// then closes its channel, while every publish sends while holding lh.mu. Sends
+// are therefore serialized against removal+close, so a publisher can never send
+// on a closed channel (which would panic) — a subscriber that is too slow to
+// drain its buffer simply drops the sample.
 type liveHub struct {
-	mu  sync.Mutex
+	mu   sync.Mutex
 	subs map[uint][]*trafficSub // serverID -> subscribers
 
 	// recentTraffic keeps the last 120 samples (≈6 min at 3s interval) per server
@@ -87,16 +93,13 @@ func (lh *liveHub) publishTraffic(serverID uint, snapshot *protocol.TrafficSnaps
 		rt = rt[len(rt)-120:]
 	}
 	lh.recentTraffic[serverID] = rt
-	subs := make([]*trafficSub, len(lh.subs[serverID]))
-	copy(subs, lh.subs[serverID])
-	lh.mu.Unlock()
-
-	for _, sub := range subs {
+	for _, sub := range lh.subs[serverID] {
 		select {
 		case sub.ch <- evt:
 		default: // drop if subscriber is slow
 		}
 	}
+	lh.mu.Unlock()
 }
 
 // publishProgress forwards a progress event to subscribers (and logs it).
@@ -108,15 +111,13 @@ func (lh *liveHub) publishProgress(serverID uint, evt protocol.ProgressEvt) {
 	}
 	log.Printf("agent[%d] progress[%s]: %s", serverID, evt.ID, evt.Line)
 	lh.mu.Lock()
-	subs := make([]*trafficSub, len(lh.subs[serverID]))
-	copy(subs, lh.subs[serverID])
-	lh.mu.Unlock()
-	for _, sub := range subs {
+	for _, sub := range lh.subs[serverID] {
 		select {
 		case sub.ch <- le:
 		default:
 		}
 	}
+	lh.mu.Unlock()
 }
 
 // publishLog forwards a log line to subscribers.
@@ -127,15 +128,13 @@ func (lh *liveHub) publishLog(serverID uint, evt protocol.LogEvt) {
 		Data: evt,
 	}
 	lh.mu.Lock()
-	subs := make([]*trafficSub, len(lh.subs[serverID]))
-	copy(subs, lh.subs[serverID])
-	lh.mu.Unlock()
-	for _, sub := range subs {
+	for _, sub := range lh.subs[serverID] {
 		select {
 		case sub.ch <- le:
 		default:
 		}
 	}
+	lh.mu.Unlock()
 }
 
 // SSE formats a liveEvent as an SSE data frame.

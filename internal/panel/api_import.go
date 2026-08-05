@@ -210,10 +210,7 @@ func buildManagedConfigFromImport(p *singbox.ParsedConfig, raw []byte) ([]byte, 
 	}
 	outbounds := make([]singbox.OutboundInput, 0, len(p.Outbounds))
 	for _, outbound := range p.Outbounds {
-		outbounds = append(outbounds, singbox.OutboundInput{
-			Tag: outbound.Tag, Type: outbound.Type, Server: outbound.Server, ServerPort: outbound.ServerPort,
-			Username: outbound.Username, UUID: outbound.UUID, Password: outbound.Password, Settings: outbound.Settings,
-		})
+		outbounds = append(outbounds, singbox.OutboundInput(outbound))
 	}
 	rules := make([]singbox.RuleInput, 0, len(p.Rules))
 	for _, parsedRule := range p.Rules {

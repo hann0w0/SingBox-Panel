@@ -135,7 +135,6 @@ func bearerToken(c *gin.Context) string {
 	if after, ok := strings.CutPrefix(h, "Bearer "); ok {
 		return strings.TrimSpace(after)
 	}
-	// Fallback: allow ?token= for convenience (e.g. EventSource).
 	return ""
 }
 

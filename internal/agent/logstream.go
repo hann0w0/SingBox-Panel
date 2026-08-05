@@ -91,8 +91,3 @@ func (ls *logStreamer) stop() {
 	ls.running = false
 }
 
-func (ls *logStreamer) isActive() bool {
-	ls.mu.Lock()
-	defer ls.mu.Unlock()
-	return ls.running
-}

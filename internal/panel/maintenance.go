@@ -89,7 +89,7 @@ func latestPanelRelease() (string, error) {
 		return "", fmt.Errorf("解析 Release 失败：%w", err)
 	}
 	if rel.TagName == "" {
-		return "", fmt.Errorf("Release 无 tag_name")
+		return "", fmt.Errorf("release 无 tag_name")
 	}
 	panelReleaseTag = rel.TagName
 	panelReleaseAt = time.Now()

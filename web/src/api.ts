@@ -74,7 +74,7 @@ export const getUserNodes = () =>
   http.get<{ nodes: UserNode[] }>('/api/user/nodes').then((r) => r.data.nodes)
 
 export const resetSub = () =>
-  http.post<{ sub_token: string; subscription_url: string }>('/api/user/reset-sub').then((r) => r.data)
+  http.post<{ subscription_url: string }>('/api/user/reset-sub').then((r) => r.data)
 
 export const changePassword = (old_password: string, new_password: string) =>
   http.post<{ ok: boolean; token: string }>('/api/user/change-password', { old_password, new_password }).then((r) => r.data)

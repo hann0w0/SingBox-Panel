@@ -81,7 +81,12 @@ type User struct {
 	ExpireAt *time.Time `json:"expire_at"` // nil = never
 
 	Enabled  bool   `gorm:"index" json:"enabled"`
-	SubToken string `gorm:"uniqueIndex;size:64" json:"sub_token"`
+	// SubToken is the bearer token in the user's subscription URL. It is never
+	// serialized to API responses: the frontend only needs the assembled
+	// subscription_url, and a leaked token would keep working even after the
+	// account is disabled or the URL is reset from another device. The reset
+	// endpoint returns the new token explicitly instead.
+	SubToken string `gorm:"uniqueIndex;size:64" json:"-"`
 	// ProxyToken is an independent, stable seed for deterministic per-inbound
 	// credentials. Resetting a subscription URL or changing a login password
 	// therefore never breaks already-issued proxy credentials.

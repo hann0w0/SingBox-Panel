@@ -10,7 +10,8 @@ export interface User {
   inbound_ids: number[]
   expire_at: string | null
   enabled: boolean
-  sub_token: string
+  // sub_token intentionally absent: the API never returns it (see model.User).
+  // The frontend uses subscription_url from /api/user/me and /api/user/reset-sub.
   created_at: string
   updated_at: string
 }

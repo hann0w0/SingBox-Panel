@@ -286,10 +286,38 @@ type SchemaMigration struct {
 	AppliedAt time.Time `gorm:"not null" json:"applied_at"`
 }
 
+// CustomNode is a hand-added external node that is merged into a user's
+// subscription. It is defined either by a standard share link (vless://,
+// vmess://, ss://, trojan://, hysteria2://, tuic://, anytls://, socks5://) or
+// by structured fields for protocols without a widely-supported share-link
+// scheme (snell, mixed). Every subscription format (links/sing-box/clash/
+// surge) is derived from one of those two representations. The node is never
+// part of the managed sing-box configuration — the panel cannot provision
+// credentials on a server it does not control, so the link/params carry the
+// complete client credentials. AllUsers keeps the default-for-future-users
+// behaviour explicit; ExcludedUserIDs records per-user exceptions without
+// collapsing that default into a snapshot of the current account list.
+type CustomNode struct {
+	ID              uint      `gorm:"primaryKey" json:"id"`
+	AllUsers        bool      `gorm:"not null;default:false" json:"all_users"`
+	UserIDs         []uint    `gorm:"serializer:json" json:"user_ids"`
+	ExcludedUserIDs []uint    `gorm:"serializer:json" json:"excluded_user_ids"`
+	Name            string    `gorm:"size:128" json:"name"`
+	Link            string    `gorm:"size:1024" json:"link"`   // share link (optional)
+	Protocol        string    `gorm:"size:32" json:"protocol"` // structured node protocol, e.g. snell
+	Address         string    `gorm:"size:255" json:"address"` // structured node host
+	Port            int       `json:"port"`
+	Params          JSONText  `gorm:"type:text" json:"params"` // protocol-specific JSON (psk, version, obfs...)
+	Enabled         bool      `gorm:"index" json:"enabled"`
+	SortOrder       int       `json:"sort_order"`
+	CreatedAt       time.Time `json:"created_at"`
+	UpdatedAt       time.Time `json:"updated_at"`
+}
+
 // AllModels lists every entity for AutoMigrate.
 func AllModels() []any {
 	return []any{
-		&User{}, &Server{}, &Inbound{}, &Outbound{}, &RouteRule{}, &RuleSet{}, &Setting{}, &TrafficRecord{},
+		&User{}, &Server{}, &Inbound{}, &Outbound{}, &RouteRule{}, &RuleSet{}, &Setting{}, &TrafficRecord{}, &CustomNode{},
 	}
 }
 
@@ -319,6 +347,22 @@ func (u *User) HasInbound(serverID, inboundID uint) bool {
 		}
 	}
 	return false
+}
+
+// HasUser reports whether a custom node is assigned to one account.
+func (n *CustomNode) HasUser(userID uint) bool {
+	ids := n.UserIDs
+	granted := false
+	if n.AllUsers {
+		ids = n.ExcludedUserIDs
+		granted = true
+	}
+	for _, id := range ids {
+		if id == userID {
+			return !n.AllUsers
+		}
+	}
+	return granted
 }
 
 // Expired reports whether the user's validity period has passed.

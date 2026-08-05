@@ -27,12 +27,18 @@ type ProxyUser struct {
 	Password string // trojan / ss / hysteria2 / tuic
 }
 
-// TransportSettings configures an optional stream transport. Only tcp (empty)
-// and ws are supported, because official sing-box builds omit with_grpc.
+// TransportSettings configures an optional stream transport. tcp (empty), ws
+// and httpupgrade are supported (official sing-box builds omit with_grpc).
 type TransportSettings struct {
-	Type    string            `json:"type,omitempty"` // "" (tcp) | "ws"
+	Type    string            `json:"type,omitempty"` // "" (tcp) | "ws" | "httpupgrade"
 	Path    string            `json:"path,omitempty"`
 	Headers map[string]string `json:"headers,omitempty"`
+
+	// WS early data (0-RTT). When MaxEarlyData > 0 the server and generated
+	// clients agree on a max_early_data byte budget and the header name that
+	// carries the base64-encoded early payload.
+	MaxEarlyData    int    `json:"max_early_data,omitempty"`
+	EarlyDataHeader string `json:"early_data_header,omitempty"`
 }
 
 // FallbackSettings is the official sing-box server target shape used by the
@@ -72,6 +78,10 @@ type TLSSettings struct {
 	// Insecure asks generated clients to skip certificate verification. SelfSigned
 	// implies the same behavior even for older rows where Insecure was not saved.
 	Insecure bool `json:"insecure,omitempty"`
+	// Fingerprint is the uTLS fingerprint clients present (chrome default).
+	// Server configs ignore it; it is mirrored into generated client configs and
+	// share links so every subscriber's TLS handshake looks identical.
+	Fingerprint string `json:"fingerprint,omitempty"`
 }
 
 // ClientInsecure reports whether generated client configurations must skip
@@ -87,6 +97,9 @@ type InboundSettings struct {
 	// shadowsocks
 	Method      string `json:"method,omitempty"`        // e.g. 2022-blake3-aes-128-gcm
 	SSServerPSK string `json:"ss_server_psk,omitempty"` // top-level server PSK (base64), generated on create
+	// SSPlugin mirrors a SIP002 ss://?plugin=… value (obfs-local / v2ray-plugin)
+	// into share links and Clash output. sing-box has no equivalent.
+	SSPlugin string `json:"ss_plugin,omitempty"`
 
 	// vless
 	Flow string `json:"flow,omitempty"` // "" | xtls-rprx-vision
@@ -95,6 +108,11 @@ type InboundSettings struct {
 	// inbound user and generated clients so every subscription stays aligned.
 	VMessSecurity string `json:"vmess_security,omitempty"` // auto | aes-128-gcm | chacha20-poly1305
 	VMessAlterID  int    `json:"vmess_alter_id,omitempty"` // 0 recommended; 1 enables legacy authentication
+
+	// PacketEncoding is the VLESS UDP wire encoding carried into share links for
+	// third-party clients. Generated sing-box clients force xudp regardless; the
+	// share-link mirror keeps Shadowrocket & friends on the same encoding.
+	PacketEncoding string `json:"packet_encoding,omitempty"` // "" | "xudp"
 
 	// hysteria2
 	UpMbps       int    `json:"up_mbps,omitempty"`
@@ -106,6 +124,9 @@ type InboundSettings struct {
 	AuthTimeout       string `json:"auth_timeout,omitempty"`       // default 3s (server only)
 	ZeroRTTHandshake  bool   `json:"zero_rtt_handshake,omitempty"` // disabled by default due to replay risk
 	Heartbeat         string `json:"heartbeat,omitempty"`          // default 10s
+	// TUICUDPRelayMode mirrors the tuic://?udp_relay_mode=… client option
+	// (nat | stable | quirky). Default is native (nat).
+	TUICUDPRelayMode string `json:"tuic_udp_relay_mode,omitempty"`
 
 	// trojan
 	TrojanFallback *FallbackSettings `json:"trojan_fallback,omitempty"`
@@ -135,6 +156,9 @@ type InboundSettings struct {
 	Username  string `json:"username,omitempty"` // socks5 username
 	UUID      string `json:"uuid,omitempty"`     // vless / vmess / tuic single-user id
 	Password  string `json:"password,omitempty"` // trojan / hy2 / hysteria / naive / anytls / tuic / shadowtls / snell
+
+	// anytls
+	AnyTLSUDPOverStream bool `json:"anytls_udp_over_stream,omitempty"` // udp_over_stream=1 client option
 
 	Transport TransportSettings `json:"transport,omitempty"`
 	TLS       TLSSettings       `json:"tls,omitempty"`
@@ -323,18 +347,17 @@ func (s InboundSettings) Validate(typ string) error {
 			return fmt.Errorf("trojan: fallback server_port must be between 1 and 65535")
 		}
 	}
-	if tr := s.Transport.Type; tr != "" && !strings.EqualFold(tr, "tcp") && !strings.EqualFold(tr, "ws") {
-		return fmt.Errorf("unsupported transport %q (official builds support tcp/ws only)", tr)
+	if tr := s.Transport.Type; tr != "" && !strings.EqualFold(tr, "tcp") && !strings.EqualFold(tr, "ws") && !strings.EqualFold(tr, "httpupgrade") {
+		return fmt.Errorf("unsupported transport %q (official builds support tcp/ws/httpupgrade only)", tr)
 	}
-	// A v2ray (ws) transport only exists on vless/vmess/trojan. Attaching it to
-	// any other type (hysteria2/tuic/naive/anytls/shadowtls/snell/socks/
-	// shadowsocks) makes `sing-box check` reject the config with an
-	// unknown-field error, so guard it here rather than only in the UI.
-	if strings.EqualFold(s.Transport.Type, "ws") {
+	// A v2ray (ws/httpupgrade) transport only exists on vless/vmess/trojan.
+	// Attaching it to any other type makes `sing-box check` reject the config
+	// with an unknown-field error, so guard it here rather than only in the UI.
+	if strings.EqualFold(s.Transport.Type, "ws") || strings.EqualFold(s.Transport.Type, "httpupgrade") {
 		switch typ {
 		case "vless", "vmess", "trojan":
 		default:
-			return fmt.Errorf("%s: ws transport is only supported on vless/vmess/trojan", typ)
+			return fmt.Errorf("%s: %s transport is only supported on vless/vmess/trojan", typ, s.Transport.Type)
 		}
 	}
 	// VLESS flow=xtls-rprx-vision requires a real TLS/REALITY connection; with

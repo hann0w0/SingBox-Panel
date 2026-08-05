@@ -32,9 +32,37 @@ function Home() {
   return <Navigate to={user?.role === 'admin' ? '/admin/overview' : '/dashboard'} replace />
 }
 
+// Spinner renders an Apple-style 12-spoke throbber (pure CSS, no icon font).
+function Spinner({ size }: { size?: 'lg' }) {
+  return (
+    <div className={`app-spinner${size === 'lg' ? ' lg' : ''}`} role="status" aria-label="加载中">
+      {Array.from({ length: 12 }).map((_, i) => (
+        <span
+          key={i}
+          style={{
+            transform: `rotate(${i * 30}deg)`,
+            animationDelay: `${(i - 12) / 12}s`,
+          }}
+        />
+      ))}
+    </div>
+  )
+}
+
+function PageFallback() {
+  return (
+    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', minHeight: '50vh', color: '#8c8c8c' }}>
+      <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 12 }}>
+        <Spinner size="lg" />
+        <div style={{ fontSize: 13 }}>加载中…</div>
+      </div>
+    </div>
+  )
+}
+
 export default function App() {
   return (
-    <Suspense fallback={<div style={{ padding: 32, textAlign: 'center', color: '#8c8c8c' }}>加载中...</div>}>
+    <Suspense fallback={<PageFallback />}>
       <Routes>
         <Route path="/login" element={<Login />} />
         <Route

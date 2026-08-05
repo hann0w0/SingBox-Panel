@@ -27,6 +27,16 @@ func firstShortID(ids []string) string {
 	return ""
 }
 
+// fingerprintOf resolves the uTLS fingerprint clients present. chrome is the
+// documented default; an explicit setting (e.g. safari, firefox, random) is
+// mirrored verbatim into share links so all clients fingerprint identically.
+func fingerprintOf(t TLSSettings) string {
+	if t.Fingerprint != "" {
+		return t.Fingerprint
+	}
+	return "chrome"
+}
+
 // clientSNI resolves the server_name used by the client.
 func clientSNI(t TLSSettings, server string) string {
 	if t.ServerName != "" {
@@ -50,7 +60,7 @@ func networkOf(s TransportSettings) string {
 	if s.normalized() == nil {
 		return "tcp"
 	}
-	return "ws"
+	return s.Type
 }
 
 // buildClientTLS renders a client-side tls object, or nil for no TLS. nodeType
@@ -71,7 +81,11 @@ func buildClientTLS(t TLSSettings, server, nodeType string) map[string]any {
 	case "hysteria2", "tuic", "hysteria":
 		// QUIC: no uTLS (see doc comment).
 	default:
-		tls["utls"] = map[string]any{"enabled": true, "fingerprint": "chrome"}
+		tp := t.Fingerprint
+		if tp == "" {
+			tp = "chrome"
+		}
+		tls["utls"] = map[string]any{"enabled": true, "fingerprint": tp}
 	}
 	if len(t.ALPN) > 0 {
 		tls["alpn"] = t.ALPN
@@ -106,7 +120,11 @@ func BuildClientOutbound(n ClientNode) (json.RawMessage, error) {
 		if n.Settings.Flow != "" {
 			base["flow"] = n.Settings.Flow
 		}
-		base["packet_encoding"] = "xudp"
+		pe := n.Settings.PacketEncoding
+		if pe == "" {
+			pe = "xudp"
+		}
+		base["packet_encoding"] = pe
 		if tls != nil {
 			base["tls"] = tls
 		}
@@ -159,6 +177,9 @@ func BuildClientOutbound(n ClientNode) (json.RawMessage, error) {
 			cc = "cubic"
 		}
 		base["congestion_control"] = cc
+		if n.Settings.TUICUDPRelayMode != "" {
+			base["udp_relay_mode"] = n.Settings.TUICUDPRelayMode
+		}
 		base["zero_rtt_handshake"] = n.Settings.ZeroRTTHandshake
 		base["heartbeat"] = n.Settings.TUICHeartbeatValue()
 	case "hysteria":
@@ -174,6 +195,9 @@ func BuildClientOutbound(n ClientNode) (json.RawMessage, error) {
 		}
 	case "anytls":
 		base["password"] = n.User.Password
+		if n.Settings.AnyTLSUDPOverStream {
+			base["udp_over_stream"] = true
+		}
 		if tls != nil {
 			base["tls"] = tls
 		}
@@ -183,6 +207,22 @@ func BuildClientOutbound(n ClientNode) (json.RawMessage, error) {
 			base["version"] = n.Settings.SnellVersion
 		}
 	case "socks":
+		user := n.User.Username
+		if user == "" {
+			user = n.Settings.Username
+		}
+		pw := n.User.Password
+		if pw == "" {
+			pw = n.Settings.Password
+		}
+		if user != "" {
+			base["username"] = user
+		}
+		if pw != "" {
+			base["password"] = pw
+		}
+	case "mixed": // client dials it as SOCKS5 (HTTP is a server-side convenience)
+		base["type"] = "socks"
 		user := n.User.Username
 		if user == "" {
 			user = n.Settings.Username
@@ -228,11 +268,11 @@ func BuildShareLink(n ClientNode) (string, error) {
 			if sid := firstShortID(t.Reality.ShortID); sid != "" {
 				q.Set("sid", sid)
 			}
-			q.Set("fp", "chrome")
+			q.Set("fp", fingerprintOf(t))
 			q.Set("sni", clientSNI(t, host))
 		case t.tlsEnabled():
 			q.Set("security", "tls")
-			q.Set("fp", "chrome")
+			q.Set("fp", fingerprintOf(t))
 			q.Set("sni", clientSNI(t, host))
 		default:
 			q.Set("security", "none")
@@ -240,17 +280,28 @@ func BuildShareLink(n ClientNode) (string, error) {
 		if n.Settings.Flow != "" {
 			q.Set("flow", n.Settings.Flow)
 		}
-		if networkOf(n.Settings.Transport) == "ws" {
+		if networkOf(n.Settings.Transport) == "ws" || networkOf(n.Settings.Transport) == "httpupgrade" {
 			if n.Settings.Transport.Path != "" {
 				q.Set("path", n.Settings.Transport.Path)
 			}
 			if h := n.Settings.Transport.Headers["Host"]; h != "" {
 				q.Set("host", h)
 			}
+			if n.Settings.Transport.MaxEarlyData > 0 {
+				q.Set("maxEarlyData", strconv.Itoa(n.Settings.Transport.MaxEarlyData))
+				if n.Settings.Transport.EarlyDataHeader != "" {
+					q.Set("earlyDataHeaderName", n.Settings.Transport.EarlyDataHeader)
+				}
+			}
 		}
 		if t.tlsEnabled() && t.ClientInsecure() && !t.Reality.Enabled {
 			q.Set("allowInsecure", "1")
 		}
+		pe := n.Settings.PacketEncoding
+		if pe == "" {
+			pe = "xudp"
+		}
+		q.Set("packetEncoding", pe)
 		return fmt.Sprintf("vless://%s@%s?%s#%s", n.User.UUID, hostPort, q.Encode(), name), nil
 
 	case "vmess":
@@ -261,19 +312,20 @@ func BuildShareLink(n ClientNode) (string, error) {
 			"net": net, "type": "none", "host": "", "path": "",
 			"tls": "", "sni": "",
 		}
-		if net == "ws" {
+		if net == "ws" || net == "httpupgrade" {
 			obj["path"] = n.Settings.Transport.Path
 			obj["host"] = n.Settings.Transport.Headers["Host"]
 		}
 		if t.Reality.Enabled {
 			obj["tls"] = "reality"
 			obj["sni"] = clientSNI(t, host)
-			obj["fp"] = "chrome"
+			obj["fp"] = fingerprintOf(t)
 			obj["pbk"] = t.Reality.PublicKey
 			obj["sid"] = firstShortID(t.Reality.ShortID)
 		} else if t.tlsEnabled() {
 			obj["tls"] = "tls"
 			obj["sni"] = clientSNI(t, host)
+			obj["fp"] = fingerprintOf(t)
 		}
 		if len(t.ALPN) > 0 {
 			obj["alpn"] = strings.Join(t.ALPN, ",")
@@ -296,9 +348,10 @@ func BuildShareLink(n ClientNode) (string, error) {
 			if sid := firstShortID(t.Reality.ShortID); sid != "" {
 				q.Set("sid", sid)
 			}
-			q.Set("fp", "chrome")
+			q.Set("fp", fingerprintOf(t))
 		} else {
 			q.Set("security", "tls")
+			q.Set("fp", fingerprintOf(t))
 			if t.ClientInsecure() {
 				q.Set("allowInsecure", "1")
 			}
@@ -307,12 +360,18 @@ func BuildShareLink(n ClientNode) (string, error) {
 		if len(t.ALPN) > 0 {
 			q.Set("alpn", strings.Join(t.ALPN, ","))
 		}
-		if networkOf(n.Settings.Transport) == "ws" {
+		if networkOf(n.Settings.Transport) == "ws" || networkOf(n.Settings.Transport) == "httpupgrade" {
 			if n.Settings.Transport.Path != "" {
 				q.Set("path", n.Settings.Transport.Path)
 			}
 			if h := n.Settings.Transport.Headers["Host"]; h != "" {
-				q.Set("host", h)
+			q.Set("host", h)
+			}
+			if n.Settings.Transport.MaxEarlyData > 0 {
+				q.Set("maxEarlyData", strconv.Itoa(n.Settings.Transport.MaxEarlyData))
+				if n.Settings.Transport.EarlyDataHeader != "" {
+				q.Set("earlyDataHeaderName", n.Settings.Transport.EarlyDataHeader)
+			}
 			}
 		}
 		return fmt.Sprintf("trojan://%s@%s?%s#%s", url.QueryEscape(n.User.Password), hostPort, q.Encode(), name), nil
@@ -320,9 +379,31 @@ func BuildShareLink(n ClientNode) (string, error) {
 	case "shadowsocks":
 		password := SSClientPassword(n.Settings, n.User.Password)
 		userinfo := base64.RawURLEncoding.EncodeToString([]byte(n.Settings.Method + ":" + password))
+		q := url.Values{}
+		if n.Settings.SSPlugin != "" {
+			q.Set("plugin", n.Settings.SSPlugin)
+		}
+		if len(q) > 0 {
+			return fmt.Sprintf("ss://%s@%s/?%s#%s", userinfo, hostPort, q.Encode(), name), nil
+		}
 		return fmt.Sprintf("ss://%s@%s#%s", userinfo, hostPort, name), nil
 
 	case "socks":
+		username := n.User.Username
+		if username == "" {
+			username = n.Settings.Username
+		}
+		password := n.User.Password
+		if password == "" {
+			password = n.Settings.Password
+		}
+		authority := hostPort
+		if username != "" || password != "" {
+			authority = url.UserPassword(username, password).String() + "@" + hostPort
+		}
+		return fmt.Sprintf("socks5://%s#%s", authority, name), nil
+
+	case "mixed": // one port speaks HTTP + SOCKS5; clients dial it as SOCKS5
 		username := n.User.Username
 		if username == "" {
 			username = n.Settings.Username
@@ -344,6 +425,15 @@ func BuildShareLink(n ClientNode) (string, error) {
 			q.Set("obfs", "salamander")
 			q.Set("obfs-password", n.Settings.ObfsPassword)
 		}
+		if n.Settings.UpMbps > 0 {
+			q.Set("up", strconv.Itoa(n.Settings.UpMbps))
+		}
+		if n.Settings.DownMbps > 0 {
+			q.Set("down", strconv.Itoa(n.Settings.DownMbps))
+		}
+		if len(t.ALPN) > 0 {
+			q.Set("alpn", strings.Join(t.ALPN, ","))
+		}
 		if t.ClientInsecure() {
 			q.Set("insecure", "1")
 		}
@@ -356,6 +446,9 @@ func BuildShareLink(n ClientNode) (string, error) {
 			cc = "cubic"
 		}
 		q.Set("congestion_control", cc)
+		if n.Settings.TUICUDPRelayMode != "" {
+			q.Set("udp_relay_mode", n.Settings.TUICUDPRelayMode)
+		}
 		q.Set("sni", clientSNI(t, host))
 		if len(t.ALPN) > 0 {
 			q.Set("alpn", strings.Join(t.ALPN, ","))
@@ -369,6 +462,15 @@ func BuildShareLink(n ClientNode) (string, error) {
 	case "anytls":
 		q := url.Values{}
 		q.Set("sni", clientSNI(t, host))
+		if len(t.ALPN) > 0 {
+			q.Set("alpn", strings.Join(t.ALPN, ","))
+		}
+		if t.Fingerprint != "" {
+			q.Set("fp", t.Fingerprint)
+		}
+		if n.Settings.AnyTLSUDPOverStream {
+			q.Set("udp_over_stream", "1")
+		}
 		if t.ClientInsecure() {
 			q.Set("insecure", "1")
 		}

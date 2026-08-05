@@ -145,7 +145,15 @@ func (a *App) routes() *gin.Engine {
 		admin.GET("/users", a.listUsers)
 		admin.POST("/users", a.createUser)
 		admin.PUT("/users/:id", a.updateUser)
+		admin.GET("/users/:id/access", a.getUserAccess)
+		admin.PUT("/users/:id/access", a.updateUserAccess)
 		admin.DELETE("/users/:id", a.deleteUser)
+
+		// Hand-added external nodes merged into subscriptions (not managed here).
+		admin.GET("/custom-nodes", a.listCustomNodes)
+		admin.POST("/custom-nodes", a.createCustomNode)
+		admin.PUT("/custom-nodes/:id", a.updateCustomNode)
+		admin.DELETE("/custom-nodes/:id", a.deleteCustomNode)
 
 		// Panel maintenance: report/update the panel's own version and export
 		// a full data backup (SQLite DB + jwt_secret) for migration.

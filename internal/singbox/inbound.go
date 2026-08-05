@@ -329,6 +329,28 @@ func BuildInbound(in InboundInput) (json.RawMessage, error) {
 			}
 		}
 
+	case "mixed": // HTTP + SOCKS5 on one port
+		if in.Settings.UseMultiUser(in.Type) {
+			users := make([]map[string]any, 0, len(eff))
+			for _, u := range eff {
+				users = append(users, map[string]any{"username": u.Username, "password": u.Password})
+			}
+			if len(users) == 0 {
+				if in.Settings.Username == "" || in.Settings.Password == "" {
+					return nil, fmt.Errorf("mixed: multi-user mode requires a fallback credential when no users are active")
+				}
+				users = append(users, map[string]any{
+					"username": in.Settings.Username,
+					"password": in.Settings.Password,
+				})
+			}
+			m["users"] = users
+		} else if in.Settings.Username != "" || in.Settings.Password != "" {
+			m["users"] = []map[string]any{
+				{"username": in.Settings.Username, "password": in.Settings.Password},
+			}
+		}
+
 	default:
 		return nil, fmt.Errorf("unsupported inbound type %q", in.Type)
 	}

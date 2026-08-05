@@ -22,6 +22,7 @@ type node struct {
 	server   string
 	port     int
 	typ      string
+	region   string // ISO-ish region code (US/HK/JP…) for the dashboard map; may be empty
 	settings singbox.InboundSettings
 	user     singbox.ProxyUser
 }
@@ -96,60 +97,246 @@ func setSubscriptionUserinfo(c *gin.Context, u *model.User) {
 	c.Header("Profile-Update-Interval", "12")
 }
 
-// gatherNodes returns the subscribable nodes for a user (its group's servers
-// with enabled inbounds).
+// gatherNodes returns the subscribable nodes for a user: the panel-managed
+// inbounds the user is granted, plus any enabled custom (external) nodes
+// scoped to them or to everyone.
 func (a *App) gatherNodes(user *model.User) []node {
-	if len(user.ServerIDs) == 0 {
-		return nil
-	}
-	var servers []model.Server
-	a.db.Where("id IN ?", user.ServerIDs).Order("id").Find(&servers)
-	applyServerOrder(a.db, servers)
-
 	var out []node
-	for i := range servers {
-		srv := &servers[i]
-		host := srv.Address
-		if host == "" {
-			host = srv.PublicIP
-		}
-		host, err := normalizeNodeAddress(host)
-		if err != nil || host == "" {
-			continue
-		}
-		var inbounds []model.Inbound
-		a.db.Where("server_id = ? AND enabled = ?", srv.ID, true).Find(&inbounds)
-		for _, ib := range inbounds {
-			// Respect per-inbound access: a protocol the user isn't granted must
-			// not appear in their subscription.
-			if !user.HasInbound(srv.ID, ib.ID) {
+	if len(user.ServerIDs) > 0 {
+		var servers []model.Server
+		a.db.Where("id IN ?", user.ServerIDs).Order("id").Find(&servers)
+		applyServerOrder(a.db, servers)
+
+		for i := range servers {
+			srv := &servers[i]
+			host := srv.Address
+			if host == "" {
+				host = srv.PublicIP
+			}
+			host, err := normalizeNodeAddress(host)
+			if err != nil || host == "" {
 				continue
 			}
-			var st singbox.InboundSettings
-			if len(ib.Settings) > 0 {
-				_ = json.Unmarshal(ib.Settings, &st)
+			var inbounds []model.Inbound
+			a.db.Where("server_id = ? AND enabled = ?", srv.ID, true).Find(&inbounds)
+			for _, ib := range inbounds {
+				// Respect per-inbound access: a protocol the user isn't granted must
+				// not appear in their subscription.
+				if !user.HasInbound(srv.ID, ib.ID) {
+					continue
+				}
+				var st singbox.InboundSettings
+				if len(ib.Settings) > 0 {
+					_ = json.Unmarshal(ib.Settings, &st)
+				}
+				var identity singbox.ProxyUser
+				if st.UseMultiUser(string(ib.Type)) {
+					st.SingleUser = false
+					identity = proxyIdentity(user, ib.ID)
+				} else {
+					st.MultiUser = false
+					st.SingleUser = true
+					identity = st.SingleUserIdentity()
+				}
+				out = append(out, node{
+					tag:      ib.Tag,
+					name:     formatNodeDisplayName(srv.Name, ib.Tag, string(ib.Type)),
+					server:   host,
+					port:     ib.ListenPort,
+					typ:      string(ib.Type),
+					region:   srv.Region,
+					settings: st,
+					user:     identity,
+				})
 			}
-			var identity singbox.ProxyUser
-			if st.UseMultiUser(string(ib.Type)) {
-				st.SingleUser = false
-				identity = proxyIdentity(user, ib.ID)
-			} else {
-				st.MultiUser = false
-				st.SingleUser = true
-				identity = st.SingleUserIdentity()
-			}
-			out = append(out, node{
-				tag:      ib.Tag,
-				name:     formatNodeDisplayName(srv.Name, ib.Tag, string(ib.Type)),
-				server:   host,
-				port:     ib.ListenPort,
-				typ:      string(ib.Type),
-				settings: st,
-				user:     identity,
-			})
+		}
+	}
+
+	// Custom external nodes carry their own credentials (share link or the
+	// structured protocol fields), so no per-user derivation happens here.
+	var customs []model.CustomNode
+	a.db.Where("enabled = ?", true).Order("sort_order, id").Find(&customs)
+	for i := range customs {
+		c := &customs[i]
+		if !c.HasUser(user.ID) {
+			continue
+		}
+		if n, ok := a.customNodeToNode(c); ok {
+			out = append(out, n)
 		}
 	}
 	return out
+}
+
+// customNodeToNode converts a hand-added external node into a subscription
+// node. Link-based nodes are parsed; structured nodes (snell & friends without
+// a widely-supported share-link scheme) render from their fields directly.
+func (a *App) customNodeToNode(c *model.CustomNode) (node, bool) {
+	if strings.TrimSpace(c.Link) != "" {
+		cn, err := singbox.ParseShareLink(c.Link)
+		if err != nil {
+			return node{}, false
+		}
+		if c.Name != "" {
+			cn.Name = c.Name
+		}
+		return node{
+			name:     cn.Name,
+			server:   cn.Server,
+			port:     cn.ServerPort,
+			typ:      cn.Type,
+			region:   regionFromName(cn.Name),
+			settings: cn.Settings,
+			user:     cn.User,
+		}, true
+	}
+
+	var p struct {
+		UUID              string `json:"uuid"`
+		Password          string `json:"password"`
+		Method            string `json:"method"`
+		SSPlugin          string `json:"ss_plugin"`
+		Flow              string `json:"flow"`
+		TLS               string `json:"tls"` // none | tls | reality
+		SNI               string `json:"sni"`
+		PBK               string `json:"pbk"`
+		SID               string `json:"sid"`
+		Fingerprint       string `json:"fingerprint"`
+		Insecure          bool   `json:"insecure"`
+		Transport         string `json:"transport"` // tcp | ws | httpupgrade
+		Path              string `json:"path"`
+		Host              string `json:"host"`
+		ALPN              string `json:"alpn"`
+		Congestion        string `json:"congestion_control"`
+		UDPRelayMode      string `json:"udp_relay_mode"`
+		UDPOverStream     bool   `json:"udp_over_stream"`
+		Obfs              string `json:"obfs"`
+		ObfsPassword      string `json:"obfs_password"`
+		UpMbps            int    `json:"up_mbps"`
+		DownMbps          int    `json:"down_mbps"`
+		PSK               string `json:"psk"`
+		Version           int    `json:"version"`
+		ObfsMode          string `json:"obfs_mode"`
+		Mode              string `json:"mode"`
+		Username          string `json:"username"`
+	}
+	if len(c.Params) > 0 {
+		_ = json.Unmarshal(c.Params, &p)
+	}
+	name := c.Name
+	if name == "" {
+		name = c.Protocol + " " + c.Address
+	}
+	st := singbox.InboundSettings{SingleUser: true}
+	u := singbox.ProxyUser{Name: "user"}
+
+	buildTLS := func() {
+		switch p.TLS {
+		case "reality":
+			st.TLS.Enabled = true
+			st.TLS.ServerName = p.SNI
+			st.TLS.Fingerprint = p.Fingerprint
+			st.TLS.Reality = singbox.RealitySettings{Enabled: true, PublicKey: p.PBK}
+			if p.SID != "" {
+				st.TLS.Reality.ShortID = []string{p.SID}
+			}
+		case "tls":
+			st.TLS.Enabled = true
+			st.TLS.ServerName = p.SNI
+			st.TLS.Fingerprint = p.Fingerprint
+			st.TLS.Insecure = p.Insecure
+			if p.ALPN != "" {
+				st.TLS.ALPN = strings.Split(p.ALPN, ",")
+			}
+		}
+	}
+	buildTransport := func() {
+		if p.Transport == "ws" || p.Transport == "httpupgrade" {
+			st.Transport.Type = p.Transport
+			st.Transport.Path = p.Path
+			if p.Host != "" {
+				st.Transport.Headers = map[string]string{"Host": p.Host}
+			}
+		}
+	}
+
+	switch c.Protocol {
+	case "vless":
+		u.UUID = p.UUID
+		st.Flow = p.Flow
+		buildTLS()
+		buildTransport()
+	case "vmess":
+		u.UUID = p.UUID
+		buildTLS()
+		buildTransport()
+	case "trojan":
+		u.Password = p.Password
+		buildTLS()
+		buildTransport()
+	case "anytls":
+		u.Password = p.Password
+		st.AnyTLSUDPOverStream = p.UDPOverStream
+		buildTLS()
+	case "shadowsocks":
+		st.Method = p.Method
+		if st.Method == "" {
+			st.Method = "2022-blake3-aes-128-gcm"
+		}
+		st.SSServerPSK = p.Password
+		st.SSPlugin = p.SSPlugin
+	case "tuic":
+		u.UUID = p.UUID
+		u.Password = p.Password
+		st.CongestionControl = p.Congestion
+		st.TUICUDPRelayMode = p.UDPRelayMode
+		buildTLS()
+	case "hysteria2", "hysteria":
+		u.Password = p.Password
+		st.ObfsPassword = p.ObfsPassword
+		st.UpMbps = p.UpMbps
+		st.DownMbps = p.DownMbps
+		buildTLS()
+	case "snell":
+		if p.Version == 0 {
+			p.Version = 5
+		}
+		st.SnellVersion = p.Version
+		st.SnellPSK = p.PSK
+		st.SnellObfsMode = p.ObfsMode
+		st.SnellMode = p.Mode
+	case "socks", "mixed":
+		st.Username = p.Username
+		st.Password = p.Password
+	default:
+		return node{}, false
+	}
+	return node{
+		name:     name,
+		server:   c.Address,
+		port:     c.Port,
+		typ:      c.Protocol,
+		region:   regionFromName(name),
+		settings: st,
+		user:     u,
+	}, true
+}
+
+// regionFromName extracts a two-letter region code from the first flag emoji in
+// a node name (e.g. "HK AWS HKG" with a flag → "HK"). Flag emoji are two
+// Regional Indicator Symbols (U+1F1E6..U+1F1FF), each mapping to a letter A-Z.
+// Custom nodes have no server record, so their name's flag is the only region
+// hint available.
+func regionFromName(name string) string {
+	const base = 0x1F1E6
+	runes := []rune(name)
+	for i := 0; i+1 < len(runes); i++ {
+		a, b := runes[i], runes[i+1]
+		if a >= base && a <= base+25 && b >= base && b <= base+25 {
+			return string(rune('A'+(a-base))) + string(rune('A'+(b-base)))
+		}
+	}
+	return ""
 }
 
 func formatNodeDisplayName(serverName, tag, typ string) string {
@@ -174,6 +361,10 @@ func formatProtocolDisplayName(typ string) string {
 		return "Trojan"
 	case "hysteria2":
 		return "Hysteria2"
+	case "hysteria":
+		return "Hysteria"
+	case "mixed":
+		return "Mixed"
 	case "tuic":
 		return "TUIC"
 	case "anytls":
@@ -289,22 +480,16 @@ func clashProxy(n node, seen map[string]int) map[string]any {
 	name := uniqueName(seen, n.name)
 	st := n.settings
 	u := n.getUserIdentity()
-	tlsOn := st.TLS.Enabled || st.TLS.SelfSigned || st.TLS.ACMEDomain != "" || st.TLS.Reality.Enabled
-	sni := st.TLS.ServerName
-	if sni == "" {
-		if st.TLS.Reality.Enabled {
-			sni = st.TLS.Reality.HandshakeServer
-		} else if st.TLS.ACMEDomain != "" {
-			sni = st.TLS.ACMEDomain
-		} else {
-			sni = n.server
-		}
-	}
+	tlsOn := nodeTLSOn(st)
+	sni := sniOf(st, n.server)
 	net := "tcp"
-	if st.Transport.Type == "ws" {
+	switch st.Transport.Type {
+	case "ws":
 		net = "ws"
+	case "httpupgrade":
+		net = "http-upgrade"
 	}
-	wsOpts := func() map[string]any {
+	trOpts := func() map[string]any {
 		o := map[string]any{}
 		if st.Transport.Path != "" {
 			o["path"] = st.Transport.Path
@@ -312,7 +497,17 @@ func clashProxy(n node, seen map[string]int) map[string]any {
 		if h := st.Transport.Headers["Host"]; h != "" {
 			o["headers"] = map[string]any{"Host": h}
 		}
+		if st.Transport.MaxEarlyData > 0 {
+			o["max-early-data"] = st.Transport.MaxEarlyData
+			if st.Transport.EarlyDataHeader != "" {
+				o["early-data-header-name"] = st.Transport.EarlyDataHeader
+			}
+		}
 		return o
+	}
+	fp := st.TLS.Fingerprint
+	if fp == "" {
+		fp = "chrome"
 	}
 
 	base := map[string]any{"name": name, "server": n.server, "port": n.port}
@@ -328,7 +523,7 @@ func clashProxy(n node, seen map[string]int) map[string]any {
 		if tlsOn {
 			base["tls"] = true
 			base["servername"] = sni
-			base["client-fingerprint"] = "chrome"
+			base["client-fingerprint"] = fp
 			if len(st.TLS.ALPN) > 0 {
 				base["alpn"] = st.TLS.ALPN
 			}
@@ -340,7 +535,9 @@ func clashProxy(n node, seen map[string]int) map[string]any {
 			}
 		}
 		if net == "ws" {
-			base["ws-opts"] = wsOpts()
+			base["ws-opts"] = trOpts()
+		} else if net == "http-upgrade" {
+			base["http-upgrade-opts"] = trOpts()
 		}
 	case "vmess":
 		base["type"] = "vmess"
@@ -352,7 +549,7 @@ func clashProxy(n node, seen map[string]int) map[string]any {
 		if tlsOn {
 			base["tls"] = true
 			base["servername"] = sni
-			base["client-fingerprint"] = "chrome"
+			base["client-fingerprint"] = fp
 			if len(st.TLS.ALPN) > 0 {
 				base["alpn"] = st.TLS.ALPN
 			}
@@ -364,7 +561,9 @@ func clashProxy(n node, seen map[string]int) map[string]any {
 			}
 		}
 		if net == "ws" {
-			base["ws-opts"] = wsOpts()
+			base["ws-opts"] = trOpts()
+		} else if net == "http-upgrade" {
+			base["http-upgrade-opts"] = trOpts()
 		}
 	case "trojan":
 		base["type"] = "trojan"
@@ -379,12 +578,18 @@ func clashProxy(n node, seen map[string]int) map[string]any {
 		}
 		if net == "ws" {
 			base["network"] = "ws"
-			base["ws-opts"] = wsOpts()
+			base["ws-opts"] = trOpts()
+		} else if net == "http-upgrade" {
+			base["network"] = "http-upgrade"
+			base["http-upgrade-opts"] = trOpts()
 		}
 	case "shadowsocks":
 		base["type"] = "ss"
 		base["cipher"] = st.Method
 		base["password"] = singbox.SSClientPassword(st, u.Password)
+		if st.SSPlugin != "" {
+			base["plugin"] = st.SSPlugin
+		}
 		base["udp"] = true
 	case "socks":
 		base["type"] = "socks5"
@@ -393,6 +598,15 @@ func clashProxy(n node, seen map[string]int) map[string]any {
 		}
 		if st.Password != "" {
 			base["password"] = st.Password
+		}
+		base["udp"] = true
+	case "mixed": // Clash has no mixed type; clients dial it as SOCKS5
+		base["type"] = "socks5"
+		if u.Username != "" {
+			base["username"] = u.Username
+		}
+		if u.Password != "" {
+			base["password"] = u.Password
 		}
 		base["udp"] = true
 	case "hysteria2":
@@ -428,6 +642,12 @@ func clashProxy(n node, seen map[string]int) map[string]any {
 		base["password"] = u.Password
 		base["sni"] = sni
 		base["udp"] = true
+		if st.AnyTLSUDPOverStream {
+			base["udp-over-stream"] = true
+		}
+		if len(st.TLS.ALPN) > 0 {
+			base["alpn"] = strings.Join(st.TLS.ALPN, ",")
+		}
 		if st.TLS.ClientInsecure() {
 			base["skip-cert-verify"] = true
 		}
@@ -456,8 +676,12 @@ func clashProxy(n node, seen map[string]int) map[string]any {
 			cc = "cubic"
 		}
 		base["congestion-controller"] = cc
+		if st.TUICUDPRelayMode != "" {
+			base["udp-relay-mode"] = st.TUICUDPRelayMode
+		} else {
+			base["udp-relay-mode"] = "native"
+		}
 		base["sni"] = sni
-		base["udp-relay-mode"] = "native"
 		base["reduce-rtt"] = st.ZeroRTTHandshake
 		if d, err := time.ParseDuration(st.TUICHeartbeatValue()); err == nil {
 			base["heartbeat-interval"] = d.Milliseconds()
@@ -513,6 +737,7 @@ type NodeDetail struct {
 	Type   string            `json:"type"`
 	Server string            `json:"server"`
 	Port   int               `json:"port"`
+	Region string            `json:"region"` // ISO-ish code (US/HK/JP…) for the dashboard map
 	Link   string            `json:"link"`
 	Params map[string]string `json:"params"`
 }
@@ -527,6 +752,7 @@ func (a *App) userNodeDetails(user *model.User) []NodeDetail {
 			Type:   n.typ,
 			Server: n.server,
 			Port:   n.port,
+			Region: n.region,
 			Link:   link,
 			Params: nodeParams(n),
 		})

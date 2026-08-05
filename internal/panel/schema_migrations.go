@@ -83,6 +83,62 @@ var applicationMigrations = []schemaMigration{
 			return tx.AutoMigrate(&model.TrafficRecord{})
 		},
 	},
+	{
+		version: 7,
+		name:    "custom subscription nodes",
+		up: func(tx *gorm.DB) error {
+			return tx.AutoMigrate(&model.CustomNode{})
+		},
+	},
+	{
+		version: 8,
+		name:    "custom node multi-user + structured nodes",
+		up: func(tx *gorm.DB) error {
+			if err := tx.AutoMigrate(&model.CustomNode{}); err != nil {
+				return err
+			}
+			// v7 stored a single user_id; carry it over to the new user_ids array.
+			var nodes []model.CustomNode
+			if err := tx.Find(&nodes).Error; err != nil {
+				return err
+			}
+			for i := range nodes {
+				old := struct{ UserID *uint }{}
+				if err := tx.Model(&model.CustomNode{}).Where("id = ?", nodes[i].ID).Select("user_id").Scan(&old).Error; err != nil {
+					return err
+				}
+				if old.UserID != nil {
+					ids := []uint{*old.UserID}
+					if err := tx.Model(&model.CustomNode{}).Where("id = ?", nodes[i].ID).Update("user_ids", ids).Error; err != nil {
+						return err
+					}
+				}
+			}
+			return nil
+		},
+	},
+	{
+		version: 9,
+		name:    "explicit custom node audience",
+		up: func(tx *gorm.DB) error {
+			if err := tx.AutoMigrate(&model.CustomNode{}); err != nil {
+				return err
+			}
+			var nodes []model.CustomNode
+			if err := tx.Find(&nodes).Error; err != nil {
+				return err
+			}
+			for i := range nodes {
+				if err := tx.Model(&model.CustomNode{}).Where("id = ?", nodes[i].ID).Updates(map[string]any{
+					"all_users":         len(nodes[i].UserIDs) == 0,
+					"excluded_user_ids": []uint{},
+				}).Error; err != nil {
+					return err
+				}
+			}
+			return nil
+		},
+	},
 }
 
 // runSchemaMigrations applies every pending migration in order. If any

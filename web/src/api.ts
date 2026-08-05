@@ -66,6 +66,7 @@ export interface UserNode {
   type: string
   server: string
   port: number
+  region?: string // ISO-ish code (US/HK/JP…) for dashboard map
   link: string
   params: Record<string, string>
 }
@@ -273,6 +274,52 @@ export const createUser = (body: UserBody) =>
 export const updateUser = (id: number, body: UserBody) =>
   http.put<{ user: User }>(`/api/admin/users/${id}`, body).then((r) => r.data.user)
 export const deleteUser = (id: number) => http.delete(`/api/admin/users/${id}`).then((r) => r.data)
+
+export interface UserAccess {
+  user_id: number
+  inbound_ids: number[]
+  custom_node_ids: number[]
+}
+export const getUserAccess = (id: number) =>
+  http.get<{ access: UserAccess }>(`/api/admin/users/${id}/access`).then((r) => r.data.access)
+export const updateUserAccess = (id: number, body: Pick<UserAccess, 'inbound_ids' | 'custom_node_ids'>) =>
+  http.put<{ access: UserAccess }>(`/api/admin/users/${id}/access`, body).then((r) => r.data.access)
+
+// ---- admin: custom (external) subscription nodes ----
+export interface CustomNode {
+  id: number
+  all_users: boolean
+  user_ids: number[]
+  excluded_user_ids: number[]
+  user_emails?: string[]
+  name: string
+  link: string
+  protocol: string
+  address: string
+  port: number
+  params: Record<string, unknown> | null
+  enabled: boolean
+  sort_order: number
+}
+export interface CustomNodeBody {
+  name?: string
+  link?: string
+  protocol?: string
+  address?: string
+  port?: number
+  params?: Record<string, unknown> | null
+  all_users?: boolean
+  user_ids?: number[]
+  excluded_user_ids?: number[]
+  enabled?: boolean
+  sort_order?: number
+}
+export const listCustomNodes = () => http.get<{ nodes: CustomNode[] }>('/api/admin/custom-nodes').then((r) => r.data.nodes)
+export const createCustomNode = (body: CustomNodeBody) =>
+  http.post<{ node: CustomNode }>('/api/admin/custom-nodes', body).then((r) => r.data.node)
+export const updateCustomNode = (id: number, body: CustomNodeBody) =>
+  http.put<{ node: CustomNode }>(`/api/admin/custom-nodes/${id}`, body).then((r) => r.data.node)
+export const deleteCustomNode = (id: number) => http.delete(`/api/admin/custom-nodes/${id}`).then((r) => r.data)
 
 // ---- admin: panel maintenance（面板设置：版本更新 + 数据备份）----
 export interface MaintenanceInfo {

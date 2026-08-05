@@ -64,12 +64,12 @@ function UserMenu({ compact }: { compact?: boolean }) {
 
 const ADMIN_ITEMS = [
   { key: '/admin/overview', icon: <DashboardOutlined />, label: '概览' },
-  { key: '/admin/servers', icon: <CloudServerOutlined />, label: '节点' },
+  { key: '/admin/servers', icon: <CloudServerOutlined />, label: '主机' },
   { key: '/admin/traffic', icon: <AreaChartOutlined />, label: '流量' },
   { key: '/admin/users', icon: <TeamOutlined />, label: '用户' },
   { key: '/admin/logs', icon: <FileTextOutlined />, label: '日志' },
-  { key: '/dashboard', icon: <LinkOutlined />, label: '订阅' },
   { key: '/admin/settings', icon: <SettingOutlined />, label: '设置' },
+  { key: '/dashboard', icon: <LinkOutlined />, label: '订阅' },
 ]
 
 export default function AppLayout() {

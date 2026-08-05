@@ -149,3 +149,34 @@ func TestNonPrefixSchemaHistoryStopsStartup(t *testing.T) {
 		t.Fatal("a non-prefix schema history must stop panel startup")
 	}
 }
+
+func TestExplicitCustomNodeAudienceMigrationPreservesLegacyMeaning(t *testing.T) {
+	db := testDB(t)
+	all := model.CustomNode{Name: "legacy-all", Link: "socks5://127.0.0.1:1080", UserIDs: []uint{}}
+	scoped := model.CustomNode{Name: "legacy-scoped", Link: "socks5://127.0.0.1:1081", UserIDs: []uint{3, 7}}
+	if err := db.Create(&all).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Create(&scoped).Error; err != nil {
+		t.Fatal(err)
+	}
+	migration := applicationMigrations[len(applicationMigrations)-1]
+	if migration.version != 9 {
+		t.Fatalf("last migration = %d; want 9", migration.version)
+	}
+	if err := migration.up(db); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.First(&all, all.ID).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := db.First(&scoped, scoped.ID).Error; err != nil {
+		t.Fatal(err)
+	}
+	if !all.AllUsers || len(all.ExcludedUserIDs) != 0 {
+		t.Fatalf("legacy global node migrated incorrectly: %+v", all)
+	}
+	if scoped.AllUsers || len(scoped.UserIDs) != 2 || len(scoped.ExcludedUserIDs) != 0 {
+		t.Fatalf("legacy scoped node migrated incorrectly: %+v", scoped)
+	}
+}

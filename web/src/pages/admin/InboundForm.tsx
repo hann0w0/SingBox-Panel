@@ -7,7 +7,7 @@ import { randomBase64, randomHex, randomUUID, ss2022KeyLen } from '../../util'
 
 const TYPES: { value: InboundType; label: string }[] = [
   { value: 'shadowsocks', label: 'Shadowsocks' },
-  { value: 'socks', label: 'SOCKS5' },
+  { value: 'mixed', label: 'Mixed (HTTP+SOCKS5)' },
   { value: 'snell', label: 'Snell' },
   { value: 'vless', label: 'VLESS' },
   { value: 'anytls', label: 'AnyTLS' },
@@ -28,12 +28,12 @@ const SS_METHODS = [
 const WS_TYPES = new Set<InboundType>(['vless', 'vmess', 'trojan'])
 const REALITY_TYPES = new Set<InboundType>(['vless', 'vmess'])
 const TLS_REQUIRED = new Set<InboundType>(['trojan', 'hysteria2', 'tuic', 'anytls'])
-const NO_TLS = new Set<InboundType>(['shadowsocks', 'snell', 'socks'])
+const NO_TLS = new Set<InboundType>(['shadowsocks', 'snell', 'mixed'])
 const HAS_BANDWIDTH = new Set<InboundType>(['hysteria2'])
 // Which credential a single-user inbound presents.
 const UUID_TYPES = new Set<InboundType>(['vless', 'vmess', 'tuic'])
 const PW_TYPES = new Set<InboundType>(['trojan', 'hysteria2', 'anytls', 'tuic'])
-const MULTI_USER_TYPES = new Set<InboundType>(['shadowsocks', 'socks', 'vless', 'anytls', 'vmess', 'tuic', 'trojan', 'hysteria2'])
+const MULTI_USER_TYPES = new Set<InboundType>(['shadowsocks', 'mixed', 'vless', 'anytls', 'vmess', 'tuic', 'trojan', 'hysteria2'])
 
 const VMESS_SECURITIES = ['auto', 'aes-128-gcm', 'chacha20-poly1305']
 
@@ -123,10 +123,14 @@ function toForm(ib: Inbound | null): FormVals {
     tls_insecure: tls.insecure,
     acme_domain: tls.acme_domain,
     acme_email: tls.acme_email,
-    transport_type: s.transport?.type === 'ws' ? 'ws' : 'tcp',
+    transport_type: s.transport?.type === 'ws' || s.transport?.type === 'httpupgrade' ? s.transport.type : 'tcp',
     ws_path: s.transport?.path,
     ws_host: s.transport?.headers?.Host,
-  }
+    max_early_data: s.transport?.max_early_data,
+    early_data_header: s.transport?.early_data_header,
+    tls_fingerprint: tls.fingerprint,
+    packet_encoding: s.packet_encoding ?? 'xudp',
+    }
 }
 
 // Build settings, preserving generated secrets from `base` (edit case).
@@ -141,7 +145,10 @@ function assembleSettings(base: InboundSettings, v: FormVals, type: InboundType)
   if (PW_TYPES.has(type)) s.password = v.password || s.password
   if (type === 'shadowsocks' && v.ss_psk) s.ss_server_psk = v.ss_psk
 
-  if (type === 'vless') s.flow = v.flow || ''
+  if (type === 'vless') {
+    s.flow = v.flow || ''
+    s.packet_encoding = v.packet_encoding === 'none' ? '' : 'xudp'
+  }
   if (type === 'vmess') {
     s.vmess_security = v.vmess_security || 'auto'
     s.vmess_alter_id = v.vmess_alter_id ?? 0
@@ -172,9 +179,9 @@ function assembleSettings(base: InboundSettings, v: FormVals, type: InboundType)
     s.snell_obfs_mode = v.snell_obfs_mode || 'none'
     s.snell_mode = v.snell_mode || 'default'
   }
-  if (type === 'socks') {
+  if ((type as string) === 'socks' || type === 'mixed') {
     if (s.multi_user) {
-      // Do not reuse a previously shared SOCKS login as the internal lockout
+      // Do not reuse a previously shared login as the internal lockout
       // credential when switching to multi-user mode. The backend generates a
       // private fallback that is never included in subscriptions.
       if (!base.multi_user) {
@@ -186,9 +193,15 @@ function assembleSettings(base: InboundSettings, v: FormVals, type: InboundType)
       s.password = typeof v.password === 'string' ? v.password.trim() : ''
     }
   }
-  // transport (ws only for vless/vmess/trojan)
-  if (WS_TYPES.has(type) && v.transport_type === 'ws') {
-    s.transport = { type: 'ws', path: v.ws_path || '', headers: v.ws_host ? { Host: v.ws_host } : undefined }
+  // transport (ws/httpupgrade only for vless/vmess/trojan)
+  if (WS_TYPES.has(type) && (v.transport_type === 'ws' || v.transport_type === 'httpupgrade')) {
+    s.transport = {
+      type: v.transport_type,
+      path: v.ws_path || '',
+      headers: v.ws_host ? { Host: v.ws_host } : undefined,
+      max_early_data: v.max_early_data || 0,
+      early_data_header: v.early_data_header || '',
+    }
   } else {
     delete s.transport
   }
@@ -207,6 +220,7 @@ function assembleSettings(base: InboundSettings, v: FormVals, type: InboundType)
         enabled: true,
         server_name: v.reality_handshake_server,
         alpn,
+        fingerprint: v.tls_fingerprint,
         reality: {
           ...prevReality,
           enabled: true,
@@ -231,6 +245,7 @@ function assembleSettings(base: InboundSettings, v: FormVals, type: InboundType)
         enabled: true,
         server_name: v.tls_server_name,
         alpn,
+        fingerprint: v.tls_fingerprint,
         certificate_path: v.tls_cert_path,
         key_path: v.tls_key_path,
         insecure: !!v.tls_insecure,
@@ -421,6 +436,18 @@ export default function InboundForm({
             />
           </Form.Item>
         )}
+        {type === 'vless' && (
+          <Form.Item
+            name="packet_encoding"
+            label="UDP 编码"
+            valuePropName="checked"
+            extra="xudp 是更可靠的 UDP 传输编码，防止游戏/通话丢包（默认开启）"
+            getValueFromEvent={(checked: boolean) => (checked ? 'xudp' : 'none')}
+            getValueProps={(value: string) => ({ checked: value !== 'none' })}
+          >
+            <Switch checkedChildren="xudp" unCheckedChildren="tcp" />
+          </Form.Item>
+        )}
         {type === 'vmess' && (
           <>
             <Form.Item
@@ -449,7 +476,7 @@ export default function InboundForm({
             />
           </Form.Item>
         )}
-        {type === 'socks' && !multiUser && (
+        {((type as string) === 'socks' || type === 'mixed') && !multiUser && (
           <>
             <Form.Item
               name="username"
@@ -465,7 +492,7 @@ export default function InboundForm({
                 }),
               ]}
             >
-              <Input placeholder="SOCKS5 用户名（留空则免登录）" />
+              <Input placeholder={type === 'mixed' ? 'Mixed 用户名（留空则免登录）' : 'SOCKS5 用户名（留空则免登录）'} />
             </Form.Item>
             <Form.Item
               name="password"
@@ -481,7 +508,7 @@ export default function InboundForm({
                 }),
               ]}
             >
-              <Input.Password placeholder="SOCKS5 密码（留空则免登录）" />
+              <Input.Password placeholder={type === 'mixed' ? 'Mixed 密码（留空则免登录）' : 'SOCKS5 密码（留空则免登录）'} />
             </Form.Item>
           </>
         )}
@@ -556,16 +583,34 @@ export default function InboundForm({
           <>
             <Divider orientation="left">传输</Divider>
             <Form.Item name="transport_type" label="传输层">
-              <Select options={[{ value: 'tcp', label: 'TCP' }, { value: 'ws', label: 'WebSocket' }]} />
+              <Select options={[
+                { value: 'tcp', label: 'TCP' },
+                { value: 'ws', label: 'WebSocket' },
+                { value: 'httpupgrade', label: 'HTTPUpgrade' },
+              ]} />
             </Form.Item>
-            {transportType === 'ws' && (
+            {(transportType === 'ws' || transportType === 'httpupgrade') && (
               <>
-                <Form.Item name="ws_path" label="WS 路径">
+                <Form.Item name="ws_path" label={transportType === 'ws' ? 'WS 路径' : 'HTTPUpgrade 路径'}>
                   <Input placeholder="/ws" />
                 </Form.Item>
-                <Form.Item name="ws_host" label="WS Host 头">
+                <Form.Item name="ws_host" label="Host 头">
                   <Input placeholder="example.com" />
                 </Form.Item>
+                {transportType === 'ws' && (
+                  <>
+                    <Form.Item
+                      name="max_early_data"
+                      label="WS 0-RTT (max_early_data)"
+                      extra="留空或 0 表示关闭 early data；开启后与 CDN 首包加速配合可降低延迟"
+                    >
+                      <InputNumber min={0} precision={0} style={{ width: '100%' }} placeholder="例如 1024" />
+                    </Form.Item>
+                    <Form.Item name="early_data_header" label="Early Data 头名">
+                      <Input placeholder="Sec-WebSocket-Protocol" />
+                    </Form.Item>
+                  </>
+                )}
               </>
             )}
           </>
@@ -629,6 +674,13 @@ export default function InboundForm({
             >
               <Input placeholder={type === 'tuic' ? 'h3' : 'h2, http/1.1'} />
             </Form.Item>
+            {type !== 'hysteria2' && type !== 'tuic' && (
+              <Form.Item name="tls_fingerprint" label="uTLS 指纹">
+                <Select
+                  options={['chrome', 'firefox', 'safari', 'ios', 'random', 'randomized'].map((v) => ({ value: v, label: v }))}
+                />
+              </Form.Item>
+            )}
             {tlsMode === 'reality' && (
               <>
                 <Form.Item name="reality_handshake_server" label="目标握手域名" rules={[{ required: true }]}>

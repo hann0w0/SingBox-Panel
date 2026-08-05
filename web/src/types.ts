@@ -92,7 +92,7 @@ export type InboundType =
   | 'tuic'
   | 'trojan'
   | 'hysteria2'
-  | 'socks'
+  | 'mixed'
 
 export interface RealitySettings {
   enabled?: boolean
@@ -116,12 +116,15 @@ export interface TLSSettings {
   acme_email?: string
   reality?: RealitySettings
   insecure?: boolean
+  fingerprint?: string
 }
 
 export interface TransportSettings {
-  type?: string
+  type?: string // '' (tcp) | ws | httpupgrade
   path?: string
   headers?: Record<string, string>
+  max_early_data?: number
+  early_data_header?: string
 }
 
 export interface FallbackSettings {
@@ -133,6 +136,7 @@ export interface InboundSettings {
   method?: string
   ss_server_psk?: string
   flow?: string
+  packet_encoding?: string
   vmess_security?: string
   vmess_alter_id?: number
   up_mbps?: number

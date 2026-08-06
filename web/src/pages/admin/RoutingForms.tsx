@@ -18,6 +18,8 @@ const OUT_TYPES: { value: OutboundType; label: string }[] = [
   { value: 'trojan', label: 'Trojan' },
   { value: 'hysteria2', label: 'Hysteria2' },
   { value: 'tuic', label: 'TUIC' },
+  { value: 'anytls', label: 'AnyTLS' },
+  { value: 'snell', label: 'Snell' },
 ]
 
 const SS_METHODS = [
@@ -29,7 +31,9 @@ const SS_METHODS = [
 ]
 
 const UUID_OUT = new Set<OutboundType>(['vless', 'vmess', 'tuic'])
-const PW_OUT = new Set<OutboundType>(['trojan', 'hysteria2', 'tuic'])
+const PW_OUT = new Set<OutboundType>(['trojan', 'hysteria2', 'tuic', 'anytls'])
+const TRANSPORT_OUT = new Set<OutboundType>(['vless', 'vmess', 'trojan'])
+const TUIC_CC = ['cubic', 'new_reno', 'bbr']
 
 // ---------------- Outbound 出站 ----------------
 
@@ -49,6 +53,7 @@ export function OutboundForm({
   const [form] = Form.useForm()
   const type: OutboundType = Form.useWatch('type', form) ?? 'shadowsocks'
   const tlsMode = Form.useWatch('tls_mode', form) ?? 'none'
+  const transportType = Form.useWatch('transport_type', form) ?? 'tcp'
 
   useEffect(() => {
     if (!open) return
@@ -70,26 +75,41 @@ export function OutboundForm({
         ss_psk: inner.ss_server_psk,
         tls: !!inner.tls?.enabled,
         sni: inner.tls?.server_name,
-         insecure: inner.tls?.insecure,
-         flow: inner.flow,
-         tls_mode: inner.tls?.reality?.enabled ? 'reality' : (inner.tls?.enabled ? 'tls' : 'none'),
-         tls_alpn: inner.tls?.alpn?.join(', '),
-         reality_server_name: inner.tls?.server_name || '',
-         reality_public_key: inner.tls?.reality?.public_key || '',
-         reality_short_id: inner.tls?.reality?.short_id?.join(', '),
-       })
+        insecure: inner.tls?.insecure,
+        flow: inner.flow,
+        tls_mode: inner.tls?.reality?.enabled ? 'reality' : (inner.tls?.enabled ? 'tls' : 'none'),
+        tls_alpn: inner.tls?.alpn?.join(', '),
+        tls_fingerprint: inner.tls?.fingerprint ?? 'chrome',
+        reality_server_name: inner.tls?.server_name || '',
+        reality_public_key: inner.tls?.reality?.public_key || '',
+        reality_short_id: inner.tls?.reality?.short_id?.join(', '),
+        vmess_security: inner.vmess_security ?? 'auto',
+        vmess_alter_id: inner.vmess_alter_id ?? 0,
+        congestion_control: inner.congestion_control ?? 'cubic',
+        obfs_password: inner.obfs_password,
+        snell_version: inner.snell_version ?? 5,
+        transport_type: inner.transport?.type === 'ws' || inner.transport?.type === 'httpupgrade' ? inner.transport.type : 'tcp',
+        ws_path: inner.transport?.path,
+        ws_host: inner.transport?.headers?.Host,
+      })
     } else {
       form.setFieldsValue({
         type: 'shadowsocks',
         method: '2022-blake3-aes-128-gcm',
-         server_port: 443,
-         tls: false,
-         tls_mode: 'none',
-         tls_alpn: '',
-         reality_server_name: '',
-         reality_public_key: '',
-         reality_short_id: '',
-       })
+        server_port: 443,
+        tls: false,
+        tls_mode: 'none',
+        tls_alpn: '',
+        tls_fingerprint: 'chrome',
+        reality_server_name: '',
+        reality_public_key: '',
+        reality_short_id: '',
+        vmess_security: 'auto',
+        vmess_alter_id: 0,
+        congestion_control: 'cubic',
+        snell_version: 5,
+        transport_type: 'tcp',
+      })
     }
   }, [open, outbound])
 
@@ -101,8 +121,27 @@ export function OutboundForm({
       inner.ss_server_psk = v.ss_psk || ''
     }
     if (type === 'vless' && v.flow) inner.flow = v.flow
-    if (UUID_OUT.has(type) || type === 'trojan' || type === 'hysteria2') {
-      if (v.tls) inner.tls = { enabled: true, server_name: v.sni || '', insecure: !!v.insecure }
+    if (type === 'vmess') {
+      inner.vmess_security = v.vmess_security || 'auto'
+      inner.vmess_alter_id = v.vmess_alter_id ?? 0
+    }
+    if (type === 'tuic') inner.congestion_control = v.congestion_control || 'cubic'
+    if (type === 'hysteria2' && v.obfs_password) inner.obfs_password = v.obfs_password
+    if (type === 'snell') inner.snell_version = v.snell_version || 5
+    if (TRANSPORT_OUT.has(type) && (v.transport_type === 'ws' || v.transport_type === 'httpupgrade')) {
+      inner.transport = {
+        type: v.transport_type,
+        path: v.ws_path || '',
+        headers: v.ws_host ? { Host: v.ws_host } : undefined,
+      }
+    }
+    if (type === 'vmess' || type === 'trojan' || type === 'hysteria2' || type === 'tuic' || type === 'anytls') {
+      if (v.tls) inner.tls = {
+        enabled: true,
+        server_name: v.sni || '',
+        alpn: splitLines(v.tls_alpn),
+        insecure: !!v.insecure,
+      }
     }
     if (type === 'vless') {
       if (v.tls_mode === 'reality') {
@@ -110,6 +149,7 @@ export function OutboundForm({
           enabled: true,
           server_name: String(v.reality_server_name || '').trim(),
           alpn: splitLines(v.tls_alpn),
+          fingerprint: v.tls_fingerprint || 'chrome',
           reality: {
             enabled: true,
             public_key: String(v.reality_public_key || '').trim(),
@@ -121,6 +161,7 @@ export function OutboundForm({
           enabled: true,
           server_name: String(v.sni || '').trim(),
           alpn: splitLines(v.tls_alpn),
+          fingerprint: v.tls_fingerprint || 'chrome',
           insecure: !!v.insecure,
         }
       } else {
@@ -252,6 +293,68 @@ export function OutboundForm({
           </Form.Item>
         )}
 
+        {type === 'vmess' && (
+          <>
+            <Form.Item name="vmess_security" label="客户端加密" rules={[{ required: true }]}>
+              <Select options={['auto', 'aes-128-gcm', 'chacha20-poly1305'].map((m) => ({ value: m, label: m }))} />
+            </Form.Item>
+            <Form.Item name="vmess_alter_id" label="Alter ID" rules={[{ required: true }]}>
+              <InputNumber min={0} precision={0} style={{ width: '100%' }} />
+            </Form.Item>
+          </>
+        )}
+
+        {type === 'tuic' && (
+          <Form.Item name="congestion_control" label="拥塞控制" rules={[{ required: true }]}>
+            <Select options={TUIC_CC.map((v) => ({ value: v, label: v }))} />
+          </Form.Item>
+        )}
+
+        {type === 'hysteria2' && (
+          <Form.Item name="obfs_password" label="混淆密码（salamander，可选）" extra="留空表示不启用混淆">
+            <Input.Password placeholder="与服务器一致的 salamander 混淆密码" />
+          </Form.Item>
+        )}
+
+        {type === 'snell' && (
+          <>
+            <Form.Item name="snell_version" label="Snell 版本" rules={[{ required: true }]}>
+              <Select options={[{ value: 5, label: 'v5' }, { value: 6, label: 'v6' }]} />
+            </Form.Item>
+            <Form.Item label="密码 / PSK">
+              <Space.Compact style={{ width: '100%' }}>
+                <Form.Item name="password" noStyle rules={[{ required: true, message: '必填' }]}>
+                  <Input placeholder="对方提供的 PSK" />
+                </Form.Item>
+                <Button onClick={() => form.setFieldValue('password', randomHex(16))}>随机</Button>
+              </Space.Compact>
+            </Form.Item>
+          </>
+        )}
+
+        {TRANSPORT_OUT.has(type) && (
+          <>
+            <Divider orientation="left">传输</Divider>
+            <Form.Item name="transport_type" label="传输层">
+              <Select options={[
+                { value: 'tcp', label: 'TCP' },
+                { value: 'ws', label: 'WebSocket' },
+                { value: 'httpupgrade', label: 'HTTPUpgrade' },
+              ]} />
+            </Form.Item>
+            {(transportType === 'ws' || transportType === 'httpupgrade') && (
+              <>
+                <Form.Item name="ws_path" label={transportType === 'ws' ? 'WS 路径' : 'HTTPUpgrade 路径'}>
+                  <Input placeholder="/ws" />
+                </Form.Item>
+                <Form.Item name="ws_host" label="Host 头">
+                  <Input placeholder="example.com" />
+                </Form.Item>
+              </>
+            )}
+          </>
+        )}
+
         {type === 'vless' && (
           <>
             <Divider orientation="left">安全连接</Divider>
@@ -289,6 +392,9 @@ export function OutboundForm({
                 <Form.Item name="tls_alpn" label="ALPN（可选）">
                   <Input placeholder="例如 h2, http/1.1" />
                 </Form.Item>
+                <Form.Item name="tls_fingerprint" label="uTLS 指纹">
+                  <Select options={['chrome', 'firefox', 'safari', 'ios', 'random', 'randomized'].map((v) => ({ value: v, label: v }))} />
+                </Form.Item>
               </>
             )}
 
@@ -300,6 +406,9 @@ export function OutboundForm({
                 <Form.Item name="tls_alpn" label="ALPN（可选）">
                   <Input placeholder="例如 h2, http/1.1" />
                 </Form.Item>
+                <Form.Item name="tls_fingerprint" label="uTLS 指纹">
+                  <Select options={['chrome', 'firefox', 'safari', 'ios', 'random', 'randomized'].map((v) => ({ value: v, label: v }))} />
+                </Form.Item>
                 <Form.Item name="insecure" label="跳过证书校验" valuePropName="checked">
                   <Switch />
                 </Form.Item>
@@ -308,7 +417,7 @@ export function OutboundForm({
           </>
         )}
 
-        {type !== 'shadowsocks' && type !== 'socks' && type !== 'vless' && (
+        {type !== 'shadowsocks' && type !== 'socks' && type !== 'vless' && type !== 'snell' && (
           <>
             <Divider orientation="left">TLS</Divider>
             <Form.Item name="tls" label="启用 TLS" valuePropName="checked">
@@ -316,6 +425,9 @@ export function OutboundForm({
             </Form.Item>
             <Form.Item name="sni" label="SNI / server_name">
               <Input placeholder="example.com" />
+            </Form.Item>
+            <Form.Item name="tls_alpn" label="ALPN（可选）" extra="QUIC 协议（TUIC/Hysteria2）建议填 h3；TCP 协议如 h2, http/1.1">
+              <Input placeholder={type === 'tuic' || type === 'hysteria2' ? 'h3' : 'h2, http/1.1'} />
             </Form.Item>
             <Form.Item name="insecure" label="跳过证书校验" valuePropName="checked">
               <Switch />

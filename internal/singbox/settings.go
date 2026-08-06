@@ -117,7 +117,11 @@ type InboundSettings struct {
 	// hysteria2
 	UpMbps       int    `json:"up_mbps,omitempty"`
 	DownMbps     int    `json:"down_mbps,omitempty"`
+	ObfsType     string `json:"obfs_type,omitempty"` // "" | salamander
 	ObfsPassword string `json:"obfs_password,omitempty"` // salamander; empty = no obfs
+	// IgnoreClientBandwidth tells the server to ignore client-reported
+	// bandwidth (server always uses up_mbps/down_mbps).
+	IgnoreClientBandwidth bool `json:"ignore_client_bandwidth,omitempty"`
 
 	// tuic
 	CongestionControl string `json:"congestion_control,omitempty"` // cubic | new_reno | bbr
@@ -318,10 +322,17 @@ func (s InboundSettings) Validate(typ string) error {
 		if s.SnellVersion != 5 && s.SnellVersion != 6 {
 			return fmt.Errorf("snell: version must be 5 or 6")
 		}
+		if s.SnellVersion == 6 && s.SnellMode != "" && s.SnellMode != "default" &&
+			s.SnellMode != "unshaped" && s.SnellMode != "unsafe-raw" {
+			return fmt.Errorf("snell: unsupported v6 mode %q", s.SnellMode)
+		}
 	case "socks":
 		if (s.Username == "") != (s.Password == "") {
 			return fmt.Errorf("socks: username and password must both be set or both be empty")
 		}
+	}
+	if typ == "hysteria2" && s.ObfsType != "" && s.ObfsType != "salamander" {
+		return fmt.Errorf("hysteria2: unsupported obfs type %q", s.ObfsType)
 	}
 	if typ == "tuic" {
 		switch s.CongestionControl {

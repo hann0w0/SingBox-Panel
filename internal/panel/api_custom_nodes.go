@@ -84,6 +84,11 @@ func validateCustomNode(req *customNodeReq) (parsedName string, err error) {
 			if err := json.Unmarshal(versionJSON, &version); err != nil || (version != 5 && version != 6) {
 				return "", errors.New("Snell 版本必须是 5 或 6")
 			}
+			if version == 6 {
+				if psk := stringParam("psk"); len(psk) < 12 || len(psk) > 255 {
+					return "", errors.New("Snell v6 的 PSK 长度必须在 12-255 字节之间")
+				}
+			}
 		}
 	case "socks", "mixed":
 		if (strings.TrimSpace(stringParam("username")) == "") != (strings.TrimSpace(stringParam("password")) == "") {

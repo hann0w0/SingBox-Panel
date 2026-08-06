@@ -384,11 +384,12 @@ export function CustomNodesPanel({ nodes, onNodesChange }: { nodes: CustomNode[]
   const nodeProtocol = Form.useWatch('protocol', nodeForm)
   const nodeTransport = Form.useWatch('transport', nodeForm)
   const nodeTLSMode = Form.useWatch('tls_mode', nodeForm)
+  const nodeSnellVersion = Form.useWatch('snell_version', nodeForm)
 
   const openNodeCreate = () => {
     setEditingNode(null)
     nodeForm.resetFields()
-    nodeForm.setFieldsValue({ enabled: true, node_mode: 'link', sort_order: 0, tls_mode: 'tls', transport: 'tcp', snell_version: 5, snell_obfs_mode: 'none', snell_mode: 'default', method: '2022-blake3-aes-128-gcm' })
+    nodeForm.setFieldsValue({ enabled: true, node_mode: 'link', sort_order: 0, tls_mode: 'tls', transport: 'tcp', snell_version: 5, snell_obfs_mode: 'none', snell_mode: '', method: '2022-blake3-aes-128-gcm' })
     setNodeOpen(true)
   }
 
@@ -428,7 +429,7 @@ export function CustomNodesPanel({ nodes, onNodesChange }: { nodes: CustomNode[]
       psk: p.psk,
       snell_version: p.version ?? 5,
       snell_obfs_mode: p.obfs_mode ?? 'none',
-      snell_mode: p.mode ?? 'default',
+      snell_mode: p.mode === 'default' ? '' : (p.mode ?? ''),
       username: p.username,
       all_users: n.all_users,
       enabled: n.enabled,
@@ -784,16 +785,45 @@ export function CustomNodesPanel({ nodes, onNodesChange }: { nodes: CustomNode[]
 
               {nodeProtocol === 'snell' && (
                 <>
-                  <Form.Item name="psk" label="PSK" rules={[{ required: true, message: '请填写 PSK' }]}>
-                    <Input placeholder="Snell 预共享密钥" />
+                  <Form.Item
+                    name="psk"
+                    label="PSK"
+                    dependencies={['snell_version']}
+                    rules={[
+                      { required: true, message: '请填写 PSK' },
+                      ({ getFieldValue }) => ({
+                        validator(_, value) {
+                          if (getFieldValue('snell_version') === 6 && value && (value.length < 12 || value.length > 255)) {
+                            return Promise.reject(new Error('Snell v6 的 PSK 长度必须在 12-255 字节之间'))
+                          }
+                          return Promise.resolve()
+                        },
+                      }),
+                    ]}
+                  >
+                    <Input placeholder="Snell 预共享密钥（v6 需 12-255 字节）" />
                   </Form.Item>
                   <Space size={16}>
                     <Form.Item name="snell_version" label="版本">
                       <Select style={{ width: 110 }} options={[{ value: 5, label: 'v5' }, { value: 6, label: 'v6' }]} />
                     </Form.Item>
-                    <Form.Item name="snell_obfs_mode" label="混淆（v5）">
-                      <Select style={{ width: 120 }} options={[{ value: 'none', label: '无' }, { value: 'http', label: 'http' }]} />
-                    </Form.Item>
+                    {nodeSnellVersion === 6 ? (
+                      <Form.Item name="snell_mode" label="模式（v6）">
+                        <Select
+                          style={{ width: 140 }}
+                          allowClear
+                          options={[
+                            { value: '', label: '不指定' },
+                            { value: 'unshaped', label: 'unshaped' },
+                            { value: 'unsafe-raw', label: 'unsafe-raw' },
+                          ]}
+                        />
+                      </Form.Item>
+                    ) : (
+                      <Form.Item name="snell_obfs_mode" label="混淆（v5）">
+                        <Select style={{ width: 120 }} options={[{ value: 'none', label: '无' }, { value: 'http', label: 'http' }]} />
+                      </Form.Item>
+                    )}
                   </Space>
                 </>
               )}

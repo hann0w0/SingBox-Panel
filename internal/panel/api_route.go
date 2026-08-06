@@ -18,6 +18,7 @@ import (
 var supportedOutboundTypes = map[string]bool{
 	"direct": true, "vless": true, "vmess": true, "trojan": true,
 	"shadowsocks": true, "hysteria2": true, "tuic": true, "socks": true,
+	"anytls": true, "snell": true,
 }
 
 // ---------- outbounds ----------

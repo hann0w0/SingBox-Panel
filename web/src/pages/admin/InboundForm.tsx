@@ -75,7 +75,7 @@ function toForm(ib: Inbound | null): FormVals {
       transport_type: 'tcp',
       snell_version: 5,
       snell_obfs_mode: 'none',
-      snell_mode: 'default',
+      snell_mode: '',
       multi_user: false,
     }
   }
@@ -112,7 +112,9 @@ function toForm(ib: Inbound | null): FormVals {
     snell_version: s.snell_version ?? 5,
     snell_psk: s.snell_psk ?? '',
     snell_obfs_mode: s.snell_obfs_mode ?? 'none',
-    snell_mode: s.snell_mode ?? 'default',
+    snell_mode: s.snell_mode === 'default' ? '' : (s.snell_mode ?? ''),
+    obfs_type: s.obfs_type ?? '',
+    ignore_client_bandwidth: s.ignore_client_bandwidth ?? false,
     tls_mode,
     tls_alpn: tls.alpn?.join(', '),
     reality_handshake_server: tls.reality?.handshake_server ?? 'www.microsoft.com',
@@ -157,7 +159,9 @@ function assembleSettings(base: InboundSettings, v: FormVals, type: InboundType)
   if (HAS_BANDWIDTH.has(type)) {
     s.up_mbps = v.up_mbps || 0
     s.down_mbps = v.down_mbps || 0
-    s.obfs_password = v.obfs_password || ''
+    s.obfs_type = v.obfs_type === 'salamander' ? 'salamander' : ''
+    s.obfs_password = v.obfs_type === 'salamander' ? (v.obfs_password || '') : ''
+    s.ignore_client_bandwidth = !!v.ignore_client_bandwidth
   }
   if (type === 'tuic') {
     s.congestion_control = v.congestion_control || 'cubic'
@@ -177,7 +181,7 @@ function assembleSettings(base: InboundSettings, v: FormVals, type: InboundType)
     s.snell_version = v.snell_version || 5
     s.snell_psk = v.snell_psk || ''
     s.snell_obfs_mode = v.snell_obfs_mode || 'none'
-    s.snell_mode = v.snell_mode || 'default'
+    s.snell_mode = v.snell_mode || ''
   }
   if ((type as string) === 'socks' || type === 'mixed') {
     if (s.multi_user) {
@@ -281,6 +285,7 @@ export default function InboundForm({
   const tlsMode = Form.useWatch('tls_mode', form)
   const transportType = Form.useWatch('transport_type', form)
   const snellVersion = Form.useWatch('snell_version', form)
+  const obfsType = Form.useWatch('obfs_type', form)
   const method = Form.useWatch('method', form)
   const multiUser = !!Form.useWatch('multi_user', form) && supportsMultiUser(type, method)
 
@@ -520,9 +525,20 @@ export default function InboundForm({
             <Form.Item name="down_mbps" label="下行 Mbps">
               <InputNumber min={0} style={{ width: '100%' }} />
             </Form.Item>
-            <Form.Item name="obfs_password" label="混淆密码">
-              <Input />
+            <Form.Item name="ignore_client_bandwidth" label="忽略客户端带宽" valuePropName="checked" extra="开启后始终使用上方设置的速度，忽略客户端上报值">
+              <Switch />
             </Form.Item>
+            <Form.Item name="obfs_type" label="混淆类型">
+              <Select options={[
+                { value: '', label: '无' },
+                { value: 'salamander', label: 'salamander' },
+              ]} />
+            </Form.Item>
+            {obfsType === 'salamander' && (
+              <Form.Item name="obfs_password" label="混淆密码">
+                <Input.Password placeholder="salamander 混淆密码" />
+              </Form.Item>
+            )}
           </>
         )}
         {type === 'tuic' && (
@@ -561,8 +577,15 @@ export default function InboundForm({
               <Select options={[{ value: 5, label: 'v5' }, { value: 6, label: 'v6' }]} />
             </Form.Item>
             {snellVersion === 6 ? (
-              <Form.Item name="snell_mode" label="模式">
-                <Select options={['default', 'unshaped', 'unsafe-raw'].map((v) => ({ value: v, label: v }))} />
+              <Form.Item name="snell_mode" label="模式" extra="留空表示不指定（sing-box 默认）">
+                <Select
+                  allowClear
+                  options={[
+                    { value: '', label: '不指定' },
+                    { value: 'unshaped', label: 'unshaped' },
+                    { value: 'unsafe-raw', label: 'unsafe-raw' },
+                  ]}
+                />
               </Form.Item>
             ) : (
               <Form.Item name="snell_obfs_mode" label="混淆">

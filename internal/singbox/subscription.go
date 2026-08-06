@@ -143,6 +143,11 @@ func BuildClientOutbound(n ClientNode) (json.RawMessage, error) {
 		}
 	case "trojan":
 		base["password"] = n.User.Password
+		pe := n.Settings.PacketEncoding
+		if pe == "" {
+			pe = "xudp"
+		}
+		base["packet_encoding"] = pe
 		if tls != nil {
 			base["tls"] = tls
 		}
@@ -152,6 +157,11 @@ func BuildClientOutbound(n ClientNode) (json.RawMessage, error) {
 	case "shadowsocks":
 		base["method"] = n.Settings.Method
 		base["password"] = SSClientPassword(n.Settings, n.User.Password)
+		pe := n.Settings.PacketEncoding
+		if pe == "" {
+			pe = "xudp"
+		}
+		base["packet_encoding"] = pe
 	case "hysteria2":
 		base["password"] = n.User.Password
 		if tls != nil {

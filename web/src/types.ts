@@ -142,7 +142,9 @@ export interface InboundSettings {
   vmess_alter_id?: number
   up_mbps?: number
   down_mbps?: number
+  obfs_type?: string
   obfs_password?: string
+  ignore_client_bandwidth?: boolean
   congestion_control?: string
   auth_timeout?: string
   zero_rtt_handshake?: boolean
@@ -172,6 +174,8 @@ export type OutboundType =
   | 'hysteria2'
   | 'tuic'
   | 'socks'
+  | 'anytls'
+  | 'snell'
 
 export interface OutboundSettings {
   server?: string

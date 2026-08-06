@@ -112,6 +112,14 @@ func (a *App) validateOutbound(db *gorm.DB, serverID, excludeID uint, tag, typ s
 		if st.Password == "" {
 			return fmt.Errorf("%s 密码必填", typ)
 		}
+	case "anytls":
+		if st.Password == "" {
+			return fmt.Errorf("anytls 密码必填")
+		}
+	case "snell":
+		if st.Password == "" && st.Settings.SnellPSK == "" {
+			return fmt.Errorf("snell PSK 必填")
+		}
 	case "tuic":
 		if st.UUID == "" || st.Password == "" {
 			return fmt.Errorf("tuic UUID 和密码必填")

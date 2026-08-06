@@ -216,7 +216,13 @@ func BuildInbound(in InboundInput) (json.RawMessage, error) {
 		if in.Settings.DownMbps > 0 {
 			m["down_mbps"] = in.Settings.DownMbps
 		}
-		if in.Settings.ObfsPassword != "" {
+		if in.Settings.IgnoreClientBandwidth {
+			m["ignore_client_bandwidth"] = true
+		}
+		// Salamander obfs: honor the explicit obfs_type; legacy rows that only
+		// carry obfs_password keep working as salamander.
+		if in.Settings.ObfsPassword != "" &&
+			(in.Settings.ObfsType == "" || in.Settings.ObfsType == "salamander") {
 			m["obfs"] = map[string]any{"type": "salamander", "password": in.Settings.ObfsPassword}
 		}
 		// NOTE: hysteria2 is QUIC and has no v2ray transport field. Emitting
@@ -303,7 +309,9 @@ func BuildInbound(in InboundInput) (json.RawMessage, error) {
 		if in.Settings.SnellVersion == 5 && in.Settings.SnellObfsMode != "" && in.Settings.SnellObfsMode != "none" {
 			m["obfs_mode"] = in.Settings.SnellObfsMode
 		}
-		if in.Settings.SnellVersion == 6 && in.Settings.SnellMode != "" {
+		// v6 mode: only emit official values. The legacy "default" placeholder
+		// (never a valid sing-box mode) is dropped instead of breaking check.
+		if in.Settings.SnellVersion == 6 && in.Settings.SnellMode != "" && in.Settings.SnellMode != "default" {
 			m["mode"] = in.Settings.SnellMode
 		}
 

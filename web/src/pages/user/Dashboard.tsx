@@ -1,19 +1,16 @@
-import { useEffect, useRef, useState } from 'react'
-import { Alert, Button, Card, Descriptions, Form, Grid, Input, Modal, Space, Tag, Typography, message } from 'antd'
-import * as echarts from 'echarts/core'
-import { MapChart, ScatterChart } from 'echarts/charts'
-import { GeoComponent, TooltipComponent } from 'echarts/components'
-import { CanvasRenderer } from 'echarts/renderers'
-import type { EChartsOption } from 'echarts'
-import worldGeoUrl from '../../assets/world.json?url'
+import { useEffect, useState } from 'react'
+import { Alert, Button, Card, Descriptions, Empty, Form, Input, List, Modal, Segmented, Space, Tag, Typography, message } from 'antd'
 import { QRCodeSVG } from 'qrcode.react'
 import { changePassword, errMsg, getMe, getUserNodes, resetSub } from '../../api'
 import type { UserNode } from '../../api'
 import type { User } from '../../types'
 import { copyToClipboard } from '../../util'
 import { useAuth } from '../../store'
+import { CONTINENT_ORDER, continentOf, type Continent } from '../../continents'
+import regionData from '../../assets/regions.json'
 
-echarts.use([MapChart, ScatterChart, GeoComponent, TooltipComponent, CanvasRenderer])
+type RegionInfo = { geo: string; coord: [number, number]; label: string }
+const REGIONS = regionData as unknown as Record<string, RegionInfo>
 
 const SUB_STYLES = {
   clash: { background: '#16a34a', borderColor: '#16a34a' },
@@ -34,30 +31,15 @@ function ClientLogo({ src, monochrome = false }: { src: string; monochrome?: boo
   )
 }
 
-// Full ISO-code → { geo country name, [lng,lat] centroid, zh label } table,
-// generated from world.json + i18n-iso-countries (scripts/gen-regions.cjs).
-// Every country a node can be in is covered, so new regions light up
-// automatically without editing any hand-written whitelist.
-import regionData from '../../assets/regions.json'
-type RegionInfo = { geo: string; coord: [number, number]; label: string }
-const REGIONS = regionData as unknown as Record<string, RegionInfo>
+// Chinese label for an ISO region code (HK → 香港), falls back to the code.
+const labelOf = (code: string): string => REGIONS[code]?.label || (code === 'Other' ? '其他' : code)
 
-const geoOf = (code: string) => REGIONS[code]?.geo
-const coordOf = (code: string) => REGIONS[code]?.coord
-const labelOf = (code: string) => REGIONS[code]?.label || (code === 'Other' ? '其他' : code)
-
-// Fetch the world GeoJSON once and cache the promise, so re-running the map
-// effect (e.g. a mobile/desktop breakpoint toggle) reuses it instead of
-// re-downloading ~1 MB every time.
-let worldGeoPromise: Promise<any> | null = null
-function loadWorldGeo(): Promise<any> {
-  if (!worldGeoPromise) {
-    worldGeoPromise = fetch(worldGeoUrl).then(r => r.json()).catch((e) => {
-      worldGeoPromise = null // allow retry on next mount if the fetch failed
-      throw e
-    })
-  }
-  return worldGeoPromise
+// Regional indicator flag emoji from an ISO code (HK → 🇭🇰). Unknown/blank
+// codes fall back to a globe so rows never render an empty box.
+function flagOf(code?: string): string {
+  const c = (code || '').toUpperCase()
+  if (!/^[A-Z]{2}$/.test(c)) return '🌐'
+  return [...c].map((ch) => String.fromCodePoint(0x1F1E6 + ch.charCodeAt(0) - 65)).join('')
 }
 
 export default function Dashboard() {
@@ -66,14 +48,11 @@ export default function Dashboard() {
   const [user, setLocalUser] = useState<User | null>(null)
   const [subUrl, setSubUrl] = useState('')
   const [nodes, setNodes] = useState<UserNode[]>([])
-  const [regionNodes, setRegionNodes] = useState<Record<string, UserNode[]>>({})
-  const [selectedRegion, setSelectedRegion] = useState<string | null>(null)
+  const [continentNodes, setContinentNodes] = useState<Partial<Record<Continent, UserNode[]>>>({})
+  const [seg, setSeg] = useState<Continent>('亚洲')
   const [selectedNode, setSelectedNode] = useState<UserNode | null>(null)
   const [pwdOpen, setPwdOpen] = useState(false)
   const [pwdForm] = Form.useForm()
-  const chartRef = useRef<HTMLDivElement>(null)
-  const screens = Grid.useBreakpoint()
-  const isMobile = !screens.md
 
   const load = () => {
     getMe().then((d) => { setLocalUser(d.user); setSubUrl(d.subscription_url); setUser(d.user) }).catch((e) => message.error(errMsg(e)))
@@ -83,82 +62,14 @@ export default function Dashboard() {
 
   useEffect(() => {
     if (nodes.length === 0) return
-    const byRegion: Record<string, UserNode[]> = {}
+    const byContinent: Partial<Record<Continent, UserNode[]>> = {}
     for (const n of nodes) {
-      const r = n.region || 'Other'
-      if (!byRegion[r]) byRegion[r] = []
-      byRegion[r].push(n)
+      const c = continentOf(n.region)
+      if (!byContinent[c]) byContinent[c] = []
+      byContinent[c].push(n)
     }
-    setRegionNodes(byRegion)
+    setContinentNodes(byContinent)
   }, [nodes])
-
-  useEffect(() => {
-    if (!chartRef.current || Object.keys(regionNodes).length === 0) return
-    const chart = echarts.init(chartRef.current)
-    // Guard the async map load: if the effect re-runs (breakpoint toggle) or the
-    // component unmounts before the fetch resolves, the cleanup disposes `chart`
-    // and this flag stops the stale callback from touching a disposed instance.
-    let cancelled = false
-
-    loadWorldGeo().then(geoJson => {
-      if (cancelled || chart.isDisposed()) return
-      echarts.registerMap('world', geoJson)
-      const activeRegions = Object.keys(regionNodes).filter(r => r !== 'Other')
-      // Group active regions by their mapped country so China (HK+CN) merges.
-      const activeCountries = Array.from(new Set(activeRegions.map(r => geoOf(r)).filter(Boolean)))
-
-      // Scatter markers make small regions (Singapore, Hong Kong) visible and give
-      // every region a clear, labeled click target regardless of country size.
-      const scatter = activeRegions.map(r => {
-        const coord = coordOf(r)
-        if (!coord) return null
-        return { name: r, value: [...coord, regionNodes[r].length] }
-      }).filter(Boolean) as { name: string; value: number[] }[]
-
-      const option: EChartsOption = {
-        tooltip: {
-          trigger: 'item',
-          formatter: (p: any) => (p.seriesType === 'scatter' ? `${labelOf(p.name)} · ${p.value[2]} 个节点` : ''),
-        },
-        geo: {
-          map: 'world',
-          roam: isMobile ? 'move' : true,
-          scaleLimit: { min: 1, max: 8 },
-          layoutCenter: ['50%', '50%'],
-          layoutSize: isMobile ? '160%' : '120%',
-          silent: true,
-          itemStyle: { areaColor: '#eef0f4', borderColor: '#fff' },
-          regions: activeCountries.map(c => ({ name: c, itemStyle: { areaColor: '#178a3a' } })),
-        },
-        series: [{
-          type: 'scatter',
-          coordinateSystem: 'geo',
-          symbolSize: (val: number[]) => Math.min(16, 8 + val[2]),
-          itemStyle: { color: '#0f7a30', shadowBlur: 6, shadowColor: 'rgba(23,138,58,0.5)' },
-          label: {
-            show: true,
-            position: 'right',
-            formatter: (p: any) => labelOf(p.name),
-            color: '#1f2430',
-            fontSize: 12,
-            fontWeight: 'bold',
-          },
-          emphasis: { scale: 1.3 },
-          data: scatter,
-        }],
-      }
-      chart.setOption(option)
-      chart.on('click', (params: any) => {
-        if (params.seriesType === 'scatter' && regionNodes[params.name]) {
-          setSelectedRegion(params.name)
-        }
-      })
-    }).catch(() => { if (!cancelled) message.error('地图加载失败') })
-
-    const handleResize = () => chart.resize()
-    window.addEventListener('resize', handleResize)
-    return () => { cancelled = true; window.removeEventListener('resize', handleResize); chart.dispose() }
-  }, [regionNodes, isMobile])
 
   if (!user) return null
 
@@ -185,6 +96,14 @@ export default function Dashboard() {
     }
   }
 
+  // Only show continents that actually have nodes; keep the current segment
+  // valid if it becomes empty after a refresh.
+  const segOptions = CONTINENT_ORDER
+    .map((c) => ({ value: c, count: continentNodes[c]?.length ?? 0 }))
+    .filter((o) => o.count > 0)
+    .map((o) => ({ label: `${o.value} ${o.count}`, value: o.value }))
+  const activeSeg = segOptions.some((o) => o.value === seg) ? seg : (segOptions[0]?.value ?? '其他')
+
   return (
     <Space direction="vertical" size="large" style={{ width: '100%' }}>
       <Card title="订阅链接">
@@ -206,32 +125,34 @@ export default function Dashboard() {
         {nodes.length === 0 ? (
           <div style={{ padding: '32px 0', textAlign: 'center', color: '#8c8c8c' }}>暂无节点，请联系管理员开通</div>
         ) : (
-          <div ref={chartRef} style={{ width: '100%', height: isMobile ? 320 : 480 }} />
-        )}
-      </Card>
-
-      <Modal
-        title={`${labelOf(selectedRegion || '')} 节点`}
-        open={!!selectedRegion}
-        onCancel={() => setSelectedRegion(null)}
-        footer={<Button onClick={() => setSelectedRegion(null)}>关闭</Button>}
-        width={720}
-        styles={{ body: { maxHeight: '60vh', overflowY: 'auto' } }}
-      >
-        {selectedRegion && regionNodes[selectedRegion] && (
           <Space direction="vertical" size="middle" style={{ width: '100%' }}>
-            {regionNodes[selectedRegion].map((n) => (
-              <Card key={`${n.server}:${n.port}:${n.name}`} size="small" hoverable onClick={() => setSelectedNode(n)} style={{ cursor: 'pointer' }}>
-                <div style={{ fontWeight: 600, marginBottom: 4 }}>{n.name}</div>
-                <Space size={[4, 4]} wrap>
-                  <Tag color={TYPE_COLORS[n.type]}>{n.type}</Tag>
-                  <span style={{ fontFamily: 'monospace', fontSize: 12, color: '#6b7280' }}>{n.server}:{n.port}</span>
-                </Space>
-              </Card>
-            ))}
+            <Segmented block options={segOptions} value={activeSeg} onChange={(v) => setSeg(v as Continent)} />
+            {(continentNodes[activeSeg]?.length ?? 0) > 0 ? (
+              <List
+                itemLayout="horizontal"
+                dataSource={continentNodes[activeSeg] ?? []}
+                renderItem={(n) => (
+                  <List.Item onClick={() => setSelectedNode(n)} style={{ cursor: 'pointer', padding: '10px 2px' }}>
+                    <List.Item.Meta
+                      avatar={<span style={{ fontSize: 24, lineHeight: '28px' }}>{flagOf(n.region)}</span>}
+                      title={<span style={{ fontWeight: 600 }}>{n.name}</span>}
+                      description={
+                        <Space size={[4, 4]} wrap>
+                          <Tag color={TYPE_COLORS[n.type]}>{n.type}</Tag>
+                          {labelOf(n.region || '') && <span style={{ color: '#8c8c8c', fontSize: 12 }}>{labelOf(n.region || '')}</span>}
+                          <span style={{ fontFamily: 'monospace', fontSize: 12, color: '#6b7280' }}>{n.server}:{n.port}</span>
+                        </Space>
+                      }
+                    />
+                  </List.Item>
+                )}
+              />
+            ) : (
+              <Empty description="该大区暂无节点" style={{ padding: '24px 0' }} />
+            )}
           </Space>
         )}
-      </Modal>
+      </Card>
 
       <Modal title={selectedNode?.name} open={!!selectedNode} onCancel={() => setSelectedNode(null)} footer={<Button onClick={() => setSelectedNode(null)}>关闭</Button>} width={560} styles={{ body: { maxHeight: '70vh', overflowY: 'auto' } }}>
         {selectedNode && (

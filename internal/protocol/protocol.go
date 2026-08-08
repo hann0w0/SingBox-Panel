@@ -271,6 +271,6 @@ type ProgressEvt struct {
 
 // StreamLogsCmd starts or stops continuous log streaming from the sing-box service.
 type StreamLogsCmd struct {
-	Enable bool `json:"enable"`           // true = start streaming, false = stop
-	Lines  int  `json:"lines,omitempty"`  // initial tail lines when enabling
+	Enable bool `json:"enable"`          // true = start streaming, false = stop
+	Lines  int  `json:"lines,omitempty"` // initial tail lines when enabling
 }

@@ -204,6 +204,47 @@ func (a *App) updateUserAccess(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"access": access})
 }
 
+// validateUserNodeIDs checks that every server and inbound referenced by the
+// user's assignment actually exists, and keeps ServerIDs consistent with a
+// non-empty InboundIDs (the inbound's server is always included). Mirrors the
+// validation done in updateUserAccess so both write paths reject bad IDs.
+func (a *App) validateUserNodeIDs(u *model.User) error {
+	if len(u.ServerIDs) > 0 {
+		var servers int64
+		if err := a.db.Model(&model.Server{}).Where("id IN ?", u.ServerIDs).Count(&servers).Error; err != nil {
+			return err
+		}
+		if servers != int64(len(u.ServerIDs)) {
+			return errors.New("服务器列表包含不存在的受管服务器")
+		}
+	}
+	if len(u.InboundIDs) > 0 {
+		var inbounds []model.Inbound
+		if err := a.db.Where("id IN ?", u.InboundIDs).Find(&inbounds).Error; err != nil {
+			return err
+		}
+		if len(inbounds) != len(u.InboundIDs) {
+			return errInvalidInboundAccess
+		}
+		// A user assigned specific inbounds must also be provisioned on the
+		// servers that own them, otherwise proxy-access refreshes would miss
+		// those servers. Merge them so the two lists can never drift.
+		serverSet := make(map[uint]bool, len(u.ServerIDs)+len(inbounds))
+		for _, id := range u.ServerIDs {
+			serverSet[id] = true
+		}
+		for i := range inbounds {
+			serverSet[inbounds[i].ServerID] = true
+		}
+		merged := make([]uint, 0, len(serverSet))
+		for id := range serverSet {
+			merged = append(merged, id)
+		}
+		u.ServerIDs = normalizedIDs(merged)
+	}
+	return nil
+}
+
 func (a *App) listUsers(c *gin.Context) {
 	var users []model.User
 	a.db.Order("id").Find(&users)
@@ -304,6 +345,14 @@ func (a *App) updateUser(c *gin.Context) {
 	if req.InboundIDs != nil {
 		u.InboundIDs = req.InboundIDs
 	}
+
+	// Validate the assigned node lists the same way updateUserAccess does, so an
+	// API client passing a stale/nonexistent ID gets a clear 400 instead of a
+	// silently dropped assignment.
+	if err := a.validateUserNodeIDs(&u); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
 	if req.ExpireAt != nil {
 		u.ExpireAt = unixToTime(req.ExpireAt)
 	}
@@ -343,10 +392,52 @@ func (a *App) deleteUser(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "不能删除管理员账号"})
 		return
 	}
-	if err := a.db.Delete(&model.User{}, id).Error; err != nil {
+	err := a.db.Transaction(func(tx *gorm.DB) error {
+		if err := tx.Delete(&model.User{}, id).Error; err != nil {
+			return err
+		}
+		// Drop the deleted user from every custom node's audience lists so no
+		// stale ID lingers (it would be invisible today but could matter if an
+		// ID is ever reused after a backup restore / manual insert).
+		var nodes []model.CustomNode
+		if err := tx.Order("id").Find(&nodes).Error; err != nil {
+			return err
+		}
+		for i := range nodes {
+			n := &nodes[i]
+			changed := false
+			if ids := removeID(n.UserIDs, id); len(ids) != len(n.UserIDs) {
+				n.UserIDs = ids
+				changed = true
+			}
+			if ids := removeID(n.ExcludedUserIDs, id); len(ids) != len(n.ExcludedUserIDs) {
+				n.ExcludedUserIDs = ids
+				changed = true
+			}
+			if changed {
+				if err := tx.Model(n).Select("UserIDs", "ExcludedUserIDs", "UpdatedAt").Updates(n).Error; err != nil {
+					return err
+				}
+			}
+		}
+		return nil
+	})
+	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
 	a.refreshUserProxyAccess(u.ServerIDs)
 	c.JSON(http.StatusOK, gin.H{"ok": true})
+}
+
+// removeID returns ids without the given value, preserving order. The caller
+// detects change by comparing lengths (IDs are unique and normalized).
+func removeID(ids []uint, id uint) []uint {
+	out := make([]uint, 0, len(ids))
+	for _, existing := range ids {
+		if existing != id {
+			out = append(out, existing)
+		}
+	}
+	return out
 }

@@ -152,8 +152,12 @@ func (a *App) routes() *gin.Engine {
 		// Hand-added external nodes merged into subscriptions (not managed here).
 		admin.GET("/custom-nodes", a.listCustomNodes)
 		admin.POST("/custom-nodes", a.createCustomNode)
+		admin.POST("/custom-nodes/import/preview", a.previewCustomNodeImport)
+		admin.POST("/custom-nodes/import", a.importCustomNodes)
 		admin.PUT("/custom-nodes/:id", a.updateCustomNode)
 		admin.DELETE("/custom-nodes/:id", a.deleteCustomNode)
+		admin.POST("/custom-nodes/batch-delete", a.batchDeleteCustomNodes)
+		admin.POST("/custom-nodes/batch-group", a.batchSetCustomNodeGroup)
 
 		// Panel maintenance: report/update the panel's own version and export
 		// a full data backup (SQLite DB + jwt_secret) for migration.
@@ -179,6 +183,15 @@ func (a *App) mountFrontend(r *gin.Engine) {
 		path := filepath.Join(dir, staticDir)
 		if dirExists(path) {
 			r.Static("/"+staticDir, path)
+		}
+	}
+	// Root-level favicon files live next to index.html in the built dist and
+	// must be served verbatim — the NoRoute fallback would otherwise answer
+	// with index.html (SPA catch-all) and browsers would never see the icon.
+	for _, fav := range []string{"favicon.svg", "favicon-32x32.png", "apple-touch-icon.png"} {
+		path := filepath.Join(dir, fav)
+		if fileExists(path) {
+			r.StaticFile("/"+fav, path)
 		}
 	}
 	r.NoRoute(func(c *gin.Context) {

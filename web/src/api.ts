@@ -293,6 +293,7 @@ export interface CustomNode {
   excluded_user_ids: number[]
   user_emails?: string[]
   name: string
+  group: string
   link: string
   protocol: string
   address: string
@@ -303,6 +304,7 @@ export interface CustomNode {
 }
 export interface CustomNodeBody {
   name?: string
+  group?: string
   link?: string
   protocol?: string
   address?: string
@@ -320,6 +322,98 @@ export const createCustomNode = (body: CustomNodeBody) =>
 export const updateCustomNode = (id: number, body: CustomNodeBody) =>
   http.put<{ node: CustomNode }>(`/api/admin/custom-nodes/${id}`, body).then((r) => r.data.node)
 export const deleteCustomNode = (id: number) => http.delete(`/api/admin/custom-nodes/${id}`).then((r) => r.data)
+export const batchDeleteCustomNodes = (ids: number[]) =>
+  http.post('/api/admin/custom-nodes/batch-delete', { ids }).then((r) => r.data)
+export const batchSetCustomNodeGroup = (ids: number[], group: string) =>
+  http.post('/api/admin/custom-nodes/batch-group', { ids, group }).then((r) => r.data)
+
+// ---- admin: import external node subscriptions ----
+// A source may be a subscription URL, a Clash/Surge YAML or INI document, or
+// one or more newline-separated share links. The server performs the protocol
+// parsing so credentials and transport/TLS flags are retained exactly.
+export interface CustomNodeImportPreviewNode {
+  name: string
+  link?: string
+  protocol: string
+  address: string
+  port: number
+  params?: Record<string, unknown> | null
+}
+
+export interface CustomNodeImportSkipped {
+  input: string
+  error: string
+}
+
+export interface CustomNodeImportPreview {
+  nodes: CustomNodeImportPreviewNode[]
+  skipped: CustomNodeImportSkipped[]
+  source_type?: string
+  count?: number
+  fetched?: boolean
+}
+
+// The import endpoint returns CustomNode records after persistence, but the
+// shape is intentionally kept separate from CustomNodeImportPreviewNode so a
+// preview can never be mistaken for an already-created database row.
+export interface CustomNodeImportResult {
+  nodes: CustomNode[]
+  skipped: CustomNodeImportSkipped[]
+  source_type?: string
+  count?: number
+  fetched?: boolean
+}
+
+interface CustomNodeImportRaw<T> {
+  nodes?: T[]
+  // Older preview builds used `items`; accepting it keeps the UI compatible
+  // during a rolling deployment while the server is being upgraded.
+  items?: T[]
+  skipped?: Array<CustomNodeImportSkipped | string>
+  source_type?: string
+  count?: number
+  fetched?: boolean
+}
+
+function normalizeImportSkipped(values: Array<CustomNodeImportSkipped | string> | undefined): CustomNodeImportSkipped[] {
+  return (values ?? []).map((item) => (
+    typeof item === 'string' ? { input: '', error: item } : {
+      input: item.input ?? '',
+      error: item.error ?? '解析失败',
+    }
+  ))
+}
+
+export const previewCustomNodeImport = (source: string) =>
+  http
+    .post<CustomNodeImportRaw<CustomNodeImportPreviewNode>>('/api/admin/custom-nodes/import/preview', { source })
+    .then((r): CustomNodeImportPreview => ({
+      nodes: r.data.nodes ?? r.data.items ?? [],
+      skipped: normalizeImportSkipped(r.data.skipped),
+      source_type: r.data.source_type,
+      count: r.data.count,
+      fetched: r.data.fetched,
+    }))
+
+export interface CustomNodeImportBody {
+  source: string
+  // Audience is deliberately absent. The import endpoint always creates
+  // unassigned nodes; access is granted only from the user assignment dialog.
+  group?: string
+  enabled?: boolean
+  sort_order?: number
+}
+
+export const importCustomNodes = (body: CustomNodeImportBody) =>
+  http
+    .post<CustomNodeImportRaw<CustomNode>>('/api/admin/custom-nodes/import', body)
+    .then((r): CustomNodeImportResult => ({
+      nodes: r.data.nodes ?? r.data.items ?? [],
+      skipped: normalizeImportSkipped(r.data.skipped),
+      source_type: r.data.source_type,
+      count: r.data.count,
+      fetched: r.data.fetched,
+    }))
 
 // ---- admin: panel maintenance（面板设置：版本更新 + 数据备份）----
 export interface MaintenanceInfo {

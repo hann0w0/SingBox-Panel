@@ -117,7 +117,7 @@ type InboundSettings struct {
 	// hysteria2
 	UpMbps       int    `json:"up_mbps,omitempty"`
 	DownMbps     int    `json:"down_mbps,omitempty"`
-	ObfsType     string `json:"obfs_type,omitempty"` // "" | salamander
+	ObfsType     string `json:"obfs_type,omitempty"`     // "" | salamander
 	ObfsPassword string `json:"obfs_password,omitempty"` // salamander; empty = no obfs
 	// IgnoreClientBandwidth tells the server to ignore client-reported
 	// bandwidth (server always uses up_mbps/down_mbps).
@@ -128,8 +128,10 @@ type InboundSettings struct {
 	AuthTimeout       string `json:"auth_timeout,omitempty"`       // default 3s (server only)
 	ZeroRTTHandshake  bool   `json:"zero_rtt_handshake,omitempty"` // disabled by default due to replay risk
 	Heartbeat         string `json:"heartbeat,omitempty"`          // default 10s
-	// TUICUDPRelayMode mirrors the tuic://?udp_relay_mode=… client option
-	// (nat | stable | quirky). Default is native (nat).
+	// TUICUDPRelayMode mirrors the tuic://?udp_relay_mode=… client option.
+	// The sing-box / mihomo / Surge vocabulary is native | quic. Legacy TUIC v4
+	// values (nat | stable | quirky) are normalized to native by
+	// TUICRelayModeValue so they can never reach a strict enum check.
 	TUICUDPRelayMode string `json:"tuic_udp_relay_mode,omitempty"`
 
 	// trojan
@@ -220,6 +222,22 @@ func (s InboundSettings) TUICHeartbeatValue() string {
 // client subscription so they always match.
 func (s InboundSettings) SingleUserIdentity() ProxyUser {
 	return ProxyUser{Name: "user", Username: s.Username, UUID: s.UUID, Password: s.Password}
+}
+
+// TUICRelayModeValue returns the UDP relay mode in the vocabulary every client
+// understands (native | quic), or "" when unset. Anything else — including the
+// legacy TUIC v4 values (nat/stable/quirky) — normalizes to native, matching
+// what mihomo does for unrecognized values and keeping sing-box's strict enum
+// happy.
+func (s InboundSettings) TUICRelayModeValue() string {
+	switch s.TUICUDPRelayMode {
+	case "native", "quic":
+		return s.TUICUDPRelayMode
+	case "":
+		return ""
+	default:
+		return "native"
+	}
 }
 
 // HysteriaBandwidth returns the effective Hysteria v1 rates. The server side

@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -25,6 +26,11 @@ type node struct {
 	region   string // ISO-ish region code (US/HK/JP…) for the dashboard map; may be empty
 	settings singbox.InboundSettings
 	user     singbox.ProxyUser
+	udp      *bool // nil keeps the historical default: UDP enabled
+}
+
+func (n node) udpEnabled() bool {
+	return n.udp == nil || *n.udp
 }
 
 // userActive reports whether an account may still pull config from the panel.
@@ -36,6 +42,9 @@ func userActive(u *model.User) bool {
 
 // handleSubscription serves a user's subscription in the requested format.
 func (a *App) handleSubscription(c *gin.Context) {
+	// The subscription URL is a bearer credential and the response carries the
+	// node secrets in plaintext — never let any intermediate cache store it.
+	c.Header("Cache-Control", "no-store")
 	token := c.Param("token")
 	var user model.User
 	if err := a.db.Where("sub_token = ?", token).First(&user).Error; err != nil {
@@ -192,86 +201,154 @@ func (a *App) customNodeToNode(c *model.CustomNode) (node, bool) {
 	}
 
 	var p struct {
-		UUID              string `json:"uuid"`
-		Password          string `json:"password"`
-		Method            string `json:"method"`
-		SSPlugin          string `json:"ss_plugin"`
-		Flow              string `json:"flow"`
-		TLS               string `json:"tls"` // none | tls | reality
-		SNI               string `json:"sni"`
-		PBK               string `json:"pbk"`
-		SID               string `json:"sid"`
-		Fingerprint       string `json:"fingerprint"`
-		Insecure          bool   `json:"insecure"`
-		Transport         string `json:"transport"` // tcp | ws | httpupgrade
-		Path              string `json:"path"`
-		Host              string `json:"host"`
-		ALPN              string `json:"alpn"`
-		Congestion        string `json:"congestion_control"`
-		UDPRelayMode      string `json:"udp_relay_mode"`
-		UDPOverStream     bool   `json:"udp_over_stream"`
-		Obfs              string `json:"obfs"`
-		ObfsPassword      string `json:"obfs_password"`
-		UpMbps            int    `json:"up_mbps"`
-		DownMbps          int    `json:"down_mbps"`
-		PSK               string `json:"psk"`
-		Version           int    `json:"version"`
-		ObfsMode          string `json:"obfs_mode"`
-		Mode              string `json:"mode"`
-		Username          string `json:"username"`
+		UUID                 string            `json:"uuid"`
+		Password             string            `json:"password"`
+		Username             string            `json:"username"`
+		Method               string            `json:"method"`
+		SSPlugin             string            `json:"ss_plugin"`
+		Plugin               string            `json:"plugin"`
+		SSPluginOpts         map[string]any    `json:"ss_plugin_opts"`
+		Flow                 string            `json:"flow"`
+		PacketEncoding       string            `json:"packet_encoding"`
+		VMessSecurity        string            `json:"security"`
+		VMessAlterID         int               `json:"alter_id"`
+		TLS                  string            `json:"tls"` // none | tls | reality
+		SNI                  string            `json:"sni"`
+		PBK                  string            `json:"pbk"`
+		SID                  string            `json:"sid"`
+		Fingerprint          string            `json:"fingerprint"`
+		Insecure             bool              `json:"insecure"`
+		SkipCertVerify       bool              `json:"skip_cert_verify"`
+		Transport            string            `json:"transport"` // tcp | ws | httpupgrade
+		Network              string            `json:"network"`
+		Path                 string            `json:"path"`
+		Host                 string            `json:"host"`
+		Headers              map[string]string `json:"headers"`
+		MaxEarlyData         int               `json:"max_early_data"`
+		EarlyDataHeaderName  string            `json:"early_data_header_name"`
+		ALPN                 string            `json:"alpn"`
+		Congestion           string            `json:"congestion_control"`
+		CongestionController string            `json:"congestion_controller"`
+		UDPRelayMode         string            `json:"udp_relay_mode"`
+		UDP                  *bool             `json:"udp"`
+		UDPOverStream        bool              `json:"udp_over_stream"`
+		Obfs                 string            `json:"obfs"`
+		ObfsType             string            `json:"obfs_type"`
+		ObfsPassword         string            `json:"obfs_password"`
+		UpMbps               int               `json:"up_mbps"`
+		DownMbps             int               `json:"down_mbps"`
+		ZeroRTTHandshake     bool              `json:"zero_rtt_handshake"`
+		Heartbeat            string            `json:"heartbeat"`
+		PSK                  string            `json:"psk"`
+		Version              int               `json:"version"`
+		ObfsMode             string            `json:"obfs_mode"`
+		Mode                 string            `json:"mode"`
 	}
 	if len(c.Params) > 0 {
-		_ = json.Unmarshal(c.Params, &p)
+		if err := json.Unmarshal(c.Params, &p); err != nil {
+			return node{}, false
+		}
+	}
+	protocol := strings.ToLower(strings.TrimSpace(c.Protocol))
+	switch protocol {
+	case "ss":
+		protocol = "shadowsocks"
+	case "socks5":
+		protocol = "socks"
+	case "hy2":
+		protocol = "hysteria2"
+	case "hy1":
+		protocol = "hysteria"
 	}
 	name := c.Name
 	if name == "" {
-		name = c.Protocol + " " + c.Address
+		name = protocol + " " + c.Address
 	}
 	st := singbox.InboundSettings{SingleUser: true}
 	u := singbox.ProxyUser{Name: "user"}
 
 	buildTLS := func() {
-		switch p.TLS {
+		mode := strings.ToLower(strings.TrimSpace(p.TLS))
+		if mode == "" && p.PBK != "" {
+			mode = "reality"
+		}
+		if mode == "" {
+			switch protocol {
+			case "trojan", "anytls", "hysteria2", "hysteria", "tuic":
+				mode = "tls"
+			}
+		}
+		st.TLS.ServerName = strings.TrimSpace(p.SNI)
+		st.TLS.Fingerprint = strings.TrimSpace(p.Fingerprint)
+		st.TLS.Insecure = p.Insecure || p.SkipCertVerify
+		for _, value := range strings.Split(p.ALPN, ",") {
+			if value = strings.TrimSpace(value); value != "" {
+				st.TLS.ALPN = append(st.TLS.ALPN, value)
+			}
+		}
+		switch mode {
 		case "reality":
 			st.TLS.Enabled = true
-			st.TLS.ServerName = p.SNI
-			st.TLS.Fingerprint = p.Fingerprint
 			st.TLS.Reality = singbox.RealitySettings{Enabled: true, PublicKey: p.PBK}
-			if p.SID != "" {
-				st.TLS.Reality.ShortID = []string{p.SID}
+			for _, value := range strings.Split(p.SID, ",") {
+				if value = strings.TrimSpace(value); value != "" {
+					st.TLS.Reality.ShortID = append(st.TLS.Reality.ShortID, value)
+				}
 			}
 		case "tls":
 			st.TLS.Enabled = true
-			st.TLS.ServerName = p.SNI
-			st.TLS.Fingerprint = p.Fingerprint
-			st.TLS.Insecure = p.Insecure
-			if p.ALPN != "" {
-				st.TLS.ALPN = strings.Split(p.ALPN, ",")
-			}
 		}
 	}
 	buildTransport := func() {
-		if p.Transport == "ws" || p.Transport == "httpupgrade" {
-			st.Transport.Type = p.Transport
+		transport := strings.ToLower(strings.TrimSpace(p.Transport))
+		if transport == "" {
+			transport = strings.ToLower(strings.TrimSpace(p.Network))
+		}
+		switch transport {
+		case "http-upgrade", "http_upgrade":
+			transport = "httpupgrade"
+		case "websocket":
+			transport = "ws"
+		}
+		if transport == "ws" || transport == "httpupgrade" {
+			st.Transport.Type = transport
 			st.Transport.Path = p.Path
-			if p.Host != "" {
-				st.Transport.Headers = map[string]string{"Host": p.Host}
+			st.Transport.MaxEarlyData = p.MaxEarlyData
+			st.Transport.EarlyDataHeader = p.EarlyDataHeaderName
+			if len(p.Headers) > 0 {
+				st.Transport.Headers = make(map[string]string, len(p.Headers)+1)
+				for key, value := range p.Headers {
+					st.Transport.Headers[key] = value
+					if strings.EqualFold(key, "Host") {
+						st.Transport.Headers["Host"] = value
+					}
+				}
+			}
+			if host := strings.TrimSpace(p.Host); host != "" {
+				if st.Transport.Headers == nil {
+					st.Transport.Headers = map[string]string{}
+				}
+				st.Transport.Headers["Host"] = host
 			}
 		}
 	}
 
-	switch c.Protocol {
+	switch protocol {
 	case "vless":
 		u.UUID = p.UUID
 		st.Flow = p.Flow
+		st.PacketEncoding = p.PacketEncoding
 		buildTLS()
 		buildTransport()
 	case "vmess":
 		u.UUID = p.UUID
+		st.VMessSecurity = p.VMessSecurity
+		st.VMessAlterID = p.VMessAlterID
 		buildTLS()
 		buildTransport()
 	case "trojan":
 		u.Password = p.Password
+		st.PacketEncoding = p.PacketEncoding
 		buildTLS()
 		buildTransport()
 	case "anytls":
@@ -285,15 +362,34 @@ func (a *App) customNodeToNode(c *model.CustomNode) (node, bool) {
 		}
 		st.SSServerPSK = p.Password
 		st.SSPlugin = p.SSPlugin
+		if st.SSPlugin == "" {
+			st.SSPlugin = p.Plugin
+		}
+		st.SSPlugin = mergeSSPluginOptions(st.SSPlugin, p.SSPluginOpts)
 	case "tuic":
 		u.UUID = p.UUID
 		u.Password = p.Password
 		st.CongestionControl = p.Congestion
+		if st.CongestionControl == "" {
+			st.CongestionControl = p.CongestionController
+		}
 		st.TUICUDPRelayMode = p.UDPRelayMode
+		if st.TUICUDPRelayMode != "" {
+			st.TUICUDPRelayMode = st.TUICRelayModeValue()
+		}
+		st.ZeroRTTHandshake = p.ZeroRTTHandshake
+		st.Heartbeat = strings.TrimSpace(p.Heartbeat)
 		buildTLS()
 	case "hysteria2", "hysteria":
 		u.Password = p.Password
+		st.ObfsType = p.ObfsType
+		if st.ObfsType == "" && protocol == "hysteria2" {
+			st.ObfsType = p.Obfs
+		}
 		st.ObfsPassword = p.ObfsPassword
+		if st.ObfsPassword == "" && protocol == "hysteria" {
+			st.ObfsPassword = p.Obfs
+		}
 		st.UpMbps = p.UpMbps
 		st.DownMbps = p.DownMbps
 		buildTLS()
@@ -304,6 +400,9 @@ func (a *App) customNodeToNode(c *model.CustomNode) (node, bool) {
 		st.SnellVersion = p.Version
 		st.SnellPSK = p.PSK
 		st.SnellObfsMode = p.ObfsMode
+		if st.SnellObfsMode == "" {
+			st.SnellObfsMode = p.Obfs
+		}
 		st.SnellMode = p.Mode
 	case "socks", "mixed":
 		st.Username = p.Username
@@ -315,11 +414,59 @@ func (a *App) customNodeToNode(c *model.CustomNode) (node, bool) {
 		name:     name,
 		server:   c.Address,
 		port:     c.Port,
-		typ:      c.Protocol,
+		typ:      protocol,
 		region:   regionFromName(name),
 		settings: st,
 		user:     u,
+		udp:      p.UDP,
 	}, true
+}
+
+// mergeSSPluginOptions keeps Clash's split plugin/plugin-opts representation
+// in the SIP002 string used by share links and the internal node model.
+func mergeSSPluginOptions(plugin string, opts map[string]any) string {
+	plugin = strings.TrimSpace(plugin)
+	if plugin == "" || len(opts) == 0 {
+		return plugin
+	}
+	keys := make([]string, 0, len(opts))
+	for key := range opts {
+		if key = strings.TrimSpace(key); key != "" {
+			keys = append(keys, key)
+		}
+	}
+	sort.Strings(keys)
+	parts := []string{plugin}
+	for _, key := range keys {
+		value := strings.TrimSpace(fmt.Sprint(opts[key]))
+		if value != "" {
+			parts = append(parts, key+"="+value)
+		}
+	}
+	return strings.Join(parts, ";")
+}
+
+func splitSSPluginOptions(plugin string) (string, map[string]any) {
+	parts := strings.Split(plugin, ";")
+	name := strings.TrimSpace(parts[0])
+	opts := map[string]any{}
+	for _, part := range parts[1:] {
+		key, value, ok := strings.Cut(part, "=")
+		key = strings.TrimSpace(key)
+		if !ok || key == "" {
+			continue
+		}
+		value = strings.TrimSpace(value)
+		switch strings.ToLower(value) {
+		case "true":
+			opts[key] = true
+		case "false":
+			opts[key] = false
+		default:
+			opts[key] = value
+		}
+	}
+	return name, opts
 }
 
 // regionFromName extracts a two-letter region code from the first flag emoji in
@@ -516,7 +663,7 @@ func clashProxy(n node, seen map[string]int) map[string]any {
 		base["type"] = "vless"
 		base["uuid"] = u.UUID
 		base["network"] = net
-		base["udp"] = true
+		base["udp"] = n.udpEnabled()
 		if st.Flow != "" {
 			base["flow"] = st.Flow
 		}
@@ -545,7 +692,7 @@ func clashProxy(n node, seen map[string]int) map[string]any {
 		base["alterId"] = st.VMessAlterID
 		base["cipher"] = st.VMessSecurityValue()
 		base["network"] = net
-		base["udp"] = true
+		base["udp"] = n.udpEnabled()
 		if tlsOn {
 			base["tls"] = true
 			base["servername"] = sni
@@ -569,7 +716,10 @@ func clashProxy(n node, seen map[string]int) map[string]any {
 		base["type"] = "trojan"
 		base["password"] = u.Password
 		base["sni"] = sni
-		base["udp"] = true
+		base["udp"] = n.udpEnabled()
+		// Trojan always runs TLS on TCP, so carry the uTLS fingerprint like the
+		// other TCP protocols (vless/vmess/anytls).
+		base["client-fingerprint"] = fp
 		if len(st.TLS.ALPN) > 0 {
 			base["alpn"] = st.TLS.ALPN
 		}
@@ -588,9 +738,16 @@ func clashProxy(n node, seen map[string]int) map[string]any {
 		base["cipher"] = st.Method
 		base["password"] = singbox.SSClientPassword(st, u.Password)
 		if st.SSPlugin != "" {
-			base["plugin"] = st.SSPlugin
+			plugin, opts := splitSSPluginOptions(st.SSPlugin)
+			if plugin == "obfs-local" {
+				plugin = "obfs"
+			}
+			base["plugin"] = plugin
+			if len(opts) > 0 {
+				base["plugin-opts"] = opts
+			}
 		}
-		base["udp"] = true
+		base["udp"] = n.udpEnabled()
 	case "socks":
 		base["type"] = "socks5"
 		if st.Username != "" {
@@ -599,7 +756,7 @@ func clashProxy(n node, seen map[string]int) map[string]any {
 		if st.Password != "" {
 			base["password"] = st.Password
 		}
-		base["udp"] = true
+		base["udp"] = n.udpEnabled()
 	case "mixed": // Clash has no mixed type; clients dial it as SOCKS5
 		base["type"] = "socks5"
 		if u.Username != "" {
@@ -608,11 +765,14 @@ func clashProxy(n node, seen map[string]int) map[string]any {
 		if u.Password != "" {
 			base["password"] = u.Password
 		}
-		base["udp"] = true
+		base["udp"] = n.udpEnabled()
 	case "hysteria2":
 		base["type"] = "hysteria2"
 		base["password"] = u.Password
 		base["sni"] = sni
+		if len(st.TLS.ALPN) > 0 {
+			base["alpn"] = st.TLS.ALPN
+		}
 		if st.ObfsPassword != "" {
 			base["obfs"] = "salamander"
 			base["obfs-password"] = st.ObfsPassword
@@ -636,17 +796,17 @@ func clashProxy(n node, seen map[string]int) map[string]any {
 		if st.SnellVersion == 5 && st.SnellObfsMode != "" && st.SnellObfsMode != "none" {
 			base["obfs-opts"] = map[string]any{"mode": st.SnellObfsMode}
 		}
-		base["udp"] = true
+		base["udp"] = n.udpEnabled()
 	case "anytls":
 		base["type"] = "anytls"
 		base["password"] = u.Password
 		base["sni"] = sni
-		base["udp"] = true
-		if st.AnyTLSUDPOverStream {
-			base["udp-over-stream"] = true
-		}
+		base["udp"] = n.udpEnabled()
+		// AnyTLS runs TLS on TCP, so mirror vless/vmess and carry the uTLS
+		// fingerprint; mihomo honours client-fingerprint for anytls too.
+		base["client-fingerprint"] = fp
 		if len(st.TLS.ALPN) > 0 {
-			base["alpn"] = strings.Join(st.TLS.ALPN, ",")
+			base["alpn"] = st.TLS.ALPN
 		}
 		if st.TLS.ClientInsecure() {
 			base["skip-cert-verify"] = true
@@ -676,9 +836,8 @@ func clashProxy(n node, seen map[string]int) map[string]any {
 			cc = "cubic"
 		}
 		base["congestion-controller"] = cc
-		if st.TUICUDPRelayMode != "" {
-			base["udp-relay-mode"] = st.TUICUDPRelayMode
-		} else {
+		base["udp-relay-mode"] = st.TUICRelayModeValue()
+		if base["udp-relay-mode"] == "" {
 			base["udp-relay-mode"] = "native"
 		}
 		base["sni"] = sni
@@ -935,6 +1094,20 @@ func surgeProxies(nodes []node) (lines, names, skipped []string) {
 	return lines, names, skipped
 }
 
+// surgeALPN renders the ALPN argument for Surge TLS policies. Returns an
+// empty string when the node has no ALPN configured (Surge then uses its
+// protocol default); multi-value lists are quoted per the Surge manual.
+func surgeALPN(alpn []string) string {
+	if len(alpn) == 0 {
+		return ""
+	}
+	v := strings.Join(alpn, ",")
+	if strings.Contains(v, ",") {
+		v = `"` + v + `"`
+	}
+	return ", alpn=" + v
+}
+
 func surgeProxy(n node, name string) string {
 	st := n.settings
 	u := n.getUserIdentity()
@@ -942,8 +1115,8 @@ func surgeProxy(n node, name string) string {
 	switch n.typ {
 	case "shadowsocks":
 		pass := singbox.SSClientPassword(st, u.Password)
-		return fmt.Sprintf("%s = ss, %s, %d, encrypt-method=%s, password=%s, udp-relay=true",
-			name, n.server, n.port, st.Method, pass)
+		return fmt.Sprintf("%s = ss, %s, %d, encrypt-method=%s, password=%s, udp-relay=%t",
+			name, n.server, n.port, st.Method, pass, n.udpEnabled())
 	case "socks":
 		line := fmt.Sprintf("%s = socks5, %s, %d", name, n.server, n.port)
 		if st.Username != "" {
@@ -952,14 +1125,19 @@ func surgeProxy(n node, name string) string {
 		if st.Password != "" {
 			line += ", password=" + st.Password
 		}
-		return line + ", udp-relay=true"
+		return fmt.Sprintf("%s, udp-relay=%t", line, n.udpEnabled())
 	case "trojan":
-		return fmt.Sprintf("%s = trojan, %s, %d, password=%s, sni=%s, skip-cert-verify=%t",
+		line := fmt.Sprintf("%s = trojan, %s, %d, password=%s, tls=true, sni=%s, skip-cert-verify=%t",
 			name, n.server, n.port, u.Password, sni, st.TLS.ClientInsecure())
+		line += surgeALPN(st.TLS.ALPN)
+		return fmt.Sprintf("%s, udp-relay=%t", line, n.udpEnabled())
 	case "anytls":
-		// Surge added AnyTLS support in iOS 5.17.0 / macOS 6.4.3.
-		return fmt.Sprintf("%s = anytls, %s, %d, password=%s, sni=%s, skip-cert-verify=%t",
+		// Surge added AnyTLS support in iOS 5.17.0 / macOS 6.4.3; the shared TLS
+		// parameters (sni, skip-cert-verify, alpn) apply from iOS 5.20.0+.
+		line := fmt.Sprintf("%s = anytls, %s, %d, password=%s, sni=%s, skip-cert-verify=%t",
 			name, n.server, n.port, u.Password, sni, st.TLS.ClientInsecure())
+		line += surgeALPN(st.TLS.ALPN)
+		return fmt.Sprintf("%s, udp-relay=%t", line, n.udpEnabled())
 	case "vmess":
 		if st.TLS.Reality.Enabled {
 			return ""
@@ -967,6 +1145,7 @@ func surgeProxy(n node, name string) string {
 		line := fmt.Sprintf("%s = vmess, %s, %d, username=%s, vmess-aead=%t", name, n.server, n.port, u.UUID, st.VMessAlterID == 0)
 		if nodeTLSOn(st) {
 			line += fmt.Sprintf(", tls=true, sni=%s", sni)
+			line += surgeALPN(st.TLS.ALPN)
 			if st.TLS.ClientInsecure() {
 				line += ", skip-cert-verify=true"
 			}
@@ -977,14 +1156,14 @@ func surgeProxy(n node, name string) string {
 				line += ", ws-headers=Host:" + h
 			}
 		}
-		return line
+		return fmt.Sprintf("%s, udp-relay=%t", line, n.udpEnabled())
 	case "hysteria2":
 		line := fmt.Sprintf("%s = hysteria2, %s, %d, password=%s, sni=%s", name, n.server, n.port, u.Password, sni)
+		line += surgeALPN(st.TLS.ALPN)
 		if st.DownMbps > 0 {
 			line += fmt.Sprintf(", download-bandwidth=%d", st.DownMbps)
 		}
-		// Surge takes the Salamander obfs password in its own field; without it
-		// an obfuscated server rejects the client.
+		// Surge takes the Salamander obfs password in its own field.
 		if st.ObfsPassword != "" {
 			line += ", salamander-password=" + st.ObfsPassword
 		}
@@ -1002,17 +1181,19 @@ func surgeProxy(n node, name string) string {
 		if st.SnellVersion == 5 && st.SnellObfsMode != "" && st.SnellObfsMode != "none" {
 			line += ", obfs=" + st.SnellObfsMode
 		}
-		return line + ", udp-relay=true"
+		return fmt.Sprintf("%s, udp-relay=%t", line, n.udpEnabled())
 	case "tuic":
-		// Surge's TUIC keyword is `tuic` (not tuic-v5) and it authenticates with
-		// a single `token=` field — NOT uuid/password. alpn is optional but must
-		// match the server; default to h3 which sing-box's TUIC uses.
+		// sing-box implements TUIC v5 (uuid + password). Surge distinguishes the
+		// two wire versions with different keywords — `tuic` = v4 (single token)
+		// and `tuic-v5` = v5 (uuid + password) — and the manual states they are
+		// NOT interchangeable. Our servers are sing-box TUIC v5, so emit tuic-v5
+		// with the v5 credential pair or the policy cannot authenticate.
 		alpn := firstOf(st.TLS.ALPN)
 		if alpn == "" {
 			alpn = "h3"
 		}
-		line := fmt.Sprintf("%s = tuic, %s, %d, token=%s, sni=%s, alpn=%s",
-			name, n.server, n.port, u.Password, sni, alpn)
+		line := fmt.Sprintf("%s = tuic-v5, %s, %d, uuid=%s, password=%s, sni=%s, alpn=%s",
+			name, n.server, n.port, u.UUID, u.Password, sni, alpn)
 		if st.TLS.ClientInsecure() {
 			line += ", skip-cert-verify=true"
 		}

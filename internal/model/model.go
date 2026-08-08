@@ -80,7 +80,7 @@ type User struct {
 
 	ExpireAt *time.Time `json:"expire_at"` // nil = never
 
-	Enabled  bool   `gorm:"index" json:"enabled"`
+	Enabled bool `gorm:"index" json:"enabled"`
 	// SubToken is the bearer token in the user's subscription URL. It is never
 	// serialized to API responses: the frontend only needs the assembled
 	// subscription_url, and a leaked token would keep working even after the
@@ -308,9 +308,10 @@ type CustomNode struct {
 	UserIDs         []uint    `gorm:"serializer:json" json:"user_ids"`
 	ExcludedUserIDs []uint    `gorm:"serializer:json" json:"excluded_user_ids"`
 	Name            string    `gorm:"size:128" json:"name"`
-	Link            string    `gorm:"size:1024" json:"link"`   // share link (optional)
-	Protocol        string    `gorm:"size:32" json:"protocol"` // structured node protocol, e.g. snell
-	Address         string    `gorm:"size:255" json:"address"` // structured node host
+	Group           string    `gorm:"size:64;index" json:"group"` // optional admin grouping (e.g. airport name)
+	Link            string    `gorm:"size:1024" json:"link"`      // share link (optional)
+	Protocol        string    `gorm:"size:32" json:"protocol"`    // structured node protocol, e.g. snell
+	Address         string    `gorm:"size:255" json:"address"`    // structured node host
 	Port            int       `json:"port"`
 	Params          JSONText  `gorm:"type:text" json:"params"` // protocol-specific JSON (psk, version, obfs...)
 	Enabled         bool      `gorm:"index" json:"enabled"`

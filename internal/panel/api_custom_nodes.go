@@ -18,6 +18,7 @@ import (
 // without accidentally publishing the node to every account.
 type customNodeReq struct {
 	Name            string          `json:"name"`
+	Group           string          `json:"group"`
 	Link            string          `json:"link"`
 	Protocol        string          `json:"protocol"`
 	Address         string          `json:"address"`
@@ -152,13 +153,17 @@ func (a *App) createCustomNode(c *gin.Context) {
 	if req.Enabled != nil {
 		enabled = *req.Enabled
 	}
-	allUsers := len(req.UserIDs) == 0
+	// Audience defaults to "nobody": an empty user_ids list means "not assigned
+	// to anyone", never "publish to every account". Callers must explicitly pass
+	// all_users=true to broadcast a node. (The admin UI always sends the field.)
+	allUsers := false
 	if req.AllUsers != nil {
 		allUsers = *req.AllUsers
 	}
 	node := &model.CustomNode{
 		AllUsers:  allUsers,
 		Name:      name,
+		Group:     trimRunes(strings.TrimSpace(req.Group), 64),
 		Link:      req.Link,
 		Protocol:  req.Protocol,
 		Address:   req.Address,
@@ -212,8 +217,13 @@ func (a *App) updateCustomNode(c *gin.Context) {
 	node.Address = req.Address
 	node.Port = req.Port
 	node.Params = model.JSONText(req.Params)
+	// Group is overwritten too: an empty value clears the previous grouping.
+	node.Group = trimRunes(strings.TrimSpace(req.Group), 64)
 	wasAllUsers := node.AllUsers
-	allUsers := len(req.UserIDs) == 0
+	// Same safe default as create: without an explicit all_users the node is not
+	// broadcast to every account (empty user_ids = nobody, per the documented
+	// contract). The admin UI always sends the field explicitly.
+	allUsers := false
 	if req.AllUsers != nil {
 		allUsers = *req.AllUsers
 	}
@@ -252,4 +262,57 @@ func (a *App) deleteCustomNode(c *gin.Context) {
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"ok": true})
+}
+
+// batchNodeIDs is the shared payload for batch operations on custom nodes.
+type batchNodeIDs struct {
+	IDs []uint `json:"ids"`
+}
+
+// batchDeleteCustomNodes deletes many custom nodes in one transaction. It is
+// the backend for the table's multi-select delete action so N nodes do not
+// require N round trips (and a partial failure cannot leave the list half
+// deleted).
+func (a *App) batchDeleteCustomNodes(c *gin.Context) {
+	var req batchNodeIDs
+	if !bindJSON(c, &req) {
+		return
+	}
+	ids := normalizedIDs(req.IDs)
+	if len(ids) == 0 {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "请选择要删除的节点"})
+		return
+	}
+	result := a.db.Delete(&model.CustomNode{}, ids)
+	if result.Error != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": result.Error.Error()})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"ok": true, "deleted": result.RowsAffected})
+}
+
+// batchSetCustomNodeGroup moves many custom nodes into one group (or clears
+// the group when group is empty). Used by the table's "移动到分组" action and
+// by the inline group picker on the group column.
+func (a *App) batchSetCustomNodeGroup(c *gin.Context) {
+	var req struct {
+		IDs   []uint `json:"ids"`
+		Group string `json:"group"`
+	}
+	if !bindJSON(c, &req) {
+		return
+	}
+	ids := normalizedIDs(req.IDs)
+	if len(ids) == 0 {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "请选择要分组的节点"})
+		return
+	}
+	group := trimRunes(strings.TrimSpace(req.Group), 64)
+	if err := a.db.Model(&model.CustomNode{}).
+		Where("id IN ?", ids).
+		Update("group", group).Error; err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"ok": true, "updated": int64(len(ids))})
 }

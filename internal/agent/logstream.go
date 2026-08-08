@@ -90,4 +90,3 @@ func (ls *logStreamer) stop() {
 	}
 	ls.running = false
 }
-

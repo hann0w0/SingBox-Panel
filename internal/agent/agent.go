@@ -244,8 +244,8 @@ func (a *Agent) onCommand(ctx context.Context, env protocol.Envelope) protocol.C
 		return protocol.CommandResultEvt{ID: env.ID, OK: true, Output: "log streaming stopped"}
 
 	case protocol.CmdUpdateAgent:
-				a.client.SendEventFor(protocol.EvtProgress, env.ID, protocol.ProgressEvt{ID: env.ID, Line: "开始更新 Agent...", Stream: "stdout"})
-				out, err := SelfUpdate(ctx, a.cfg.PanelURL, a.cfg.Insecure)
+		a.client.SendEventFor(protocol.EvtProgress, env.ID, protocol.ProgressEvt{ID: env.ID, Line: "开始更新 Agent...", Stream: "stdout"})
+		out, err := SelfUpdate(ctx, a.cfg.PanelURL, a.cfg.Insecure)
 		if err != nil {
 			a.client.SendEventFor(protocol.EvtProgress, env.ID, protocol.ProgressEvt{ID: env.ID, Line: err.Error(), Stream: "stderr"})
 		}

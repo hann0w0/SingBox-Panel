@@ -143,11 +143,8 @@ func BuildClientOutbound(n ClientNode) (json.RawMessage, error) {
 		}
 	case "trojan":
 		base["password"] = n.User.Password
-		pe := n.Settings.PacketEncoding
-		if pe == "" {
-			pe = "xudp"
-		}
-		base["packet_encoding"] = pe
+		// sing-box's trojan outbound has no packet_encoding field (UDP is
+		// carried natively); a vless-only option must not leak into it.
 		if tls != nil {
 			base["tls"] = tls
 		}
@@ -157,11 +154,7 @@ func BuildClientOutbound(n ClientNode) (json.RawMessage, error) {
 	case "shadowsocks":
 		base["method"] = n.Settings.Method
 		base["password"] = SSClientPassword(n.Settings, n.User.Password)
-		pe := n.Settings.PacketEncoding
-		if pe == "" {
-			pe = "xudp"
-		}
-		base["packet_encoding"] = pe
+		// sing-box's shadowsocks outbound has no packet_encoding field either.
 	case "hysteria2":
 		base["password"] = n.User.Password
 		if tls != nil {
@@ -187,8 +180,8 @@ func BuildClientOutbound(n ClientNode) (json.RawMessage, error) {
 			cc = "cubic"
 		}
 		base["congestion_control"] = cc
-		if n.Settings.TUICUDPRelayMode != "" {
-			base["udp_relay_mode"] = n.Settings.TUICUDPRelayMode
+		if v := n.Settings.TUICRelayModeValue(); v != "" {
+			base["udp_relay_mode"] = v
 		}
 		base["zero_rtt_handshake"] = n.Settings.ZeroRTTHandshake
 		base["heartbeat"] = n.Settings.TUICHeartbeatValue()
@@ -205,9 +198,8 @@ func BuildClientOutbound(n ClientNode) (json.RawMessage, error) {
 		}
 	case "anytls":
 		base["password"] = n.User.Password
-		if n.Settings.AnyTLSUDPOverStream {
-			base["udp_over_stream"] = true
-		}
+		// AnyTLS always relays UDP over the TLS stream (UOT); the official
+		// outbound schema has no udp_over_stream switch, so nothing to emit.
 		if tls != nil {
 			base["tls"] = tls
 		}
@@ -304,6 +296,9 @@ func BuildShareLink(n ClientNode) (string, error) {
 				}
 			}
 		}
+		if t.tlsEnabled() && len(t.ALPN) > 0 {
+			q.Set("alpn", strings.Join(t.ALPN, ","))
+		}
 		if t.tlsEnabled() && t.ClientInsecure() && !t.Reality.Enabled {
 			q.Set("allowInsecure", "1")
 		}
@@ -375,13 +370,13 @@ func BuildShareLink(n ClientNode) (string, error) {
 				q.Set("path", n.Settings.Transport.Path)
 			}
 			if h := n.Settings.Transport.Headers["Host"]; h != "" {
-			q.Set("host", h)
+				q.Set("host", h)
 			}
 			if n.Settings.Transport.MaxEarlyData > 0 {
 				q.Set("maxEarlyData", strconv.Itoa(n.Settings.Transport.MaxEarlyData))
 				if n.Settings.Transport.EarlyDataHeader != "" {
-				q.Set("earlyDataHeaderName", n.Settings.Transport.EarlyDataHeader)
-			}
+					q.Set("earlyDataHeaderName", n.Settings.Transport.EarlyDataHeader)
+				}
 			}
 		}
 		return fmt.Sprintf("trojan://%s@%s?%s#%s", url.QueryEscape(n.User.Password), hostPort, q.Encode(), name), nil
@@ -456,8 +451,8 @@ func BuildShareLink(n ClientNode) (string, error) {
 			cc = "cubic"
 		}
 		q.Set("congestion_control", cc)
-		if n.Settings.TUICUDPRelayMode != "" {
-			q.Set("udp_relay_mode", n.Settings.TUICUDPRelayMode)
+		if v := n.Settings.TUICRelayModeValue(); v != "" {
+			q.Set("udp_relay_mode", v)
 		}
 		q.Set("sni", clientSNI(t, host))
 		if len(t.ALPN) > 0 {
@@ -475,9 +470,9 @@ func BuildShareLink(n ClientNode) (string, error) {
 		if len(t.ALPN) > 0 {
 			q.Set("alpn", strings.Join(t.ALPN, ","))
 		}
-		if t.Fingerprint != "" {
-			q.Set("fp", t.Fingerprint)
-		}
+		// Mirror the other TCP protocols: always advertise the uTLS fingerprint
+		// (chrome unless overridden) so every client handshakes identically.
+		q.Set("fp", fingerprintOf(t))
 		if n.Settings.AnyTLSUDPOverStream {
 			q.Set("udp_over_stream", "1")
 		}

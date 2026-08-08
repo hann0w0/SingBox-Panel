@@ -1,0 +1,15 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64">
+  <!-- 白色底 -->
+  <rect width="64" height="64" rx="14" fill="#ffffff"/>
+  <rect x="1" y="1" width="62" height="62" rx="13" fill="none" stroke="#e2e8f0" stroke-width="1.5"/>
+  <!-- 代理链路：两个入口节点 -> 中心汇聚 -> 出口节点（深蓝图形，白底高对比） -->
+  <path d="M15 19 L32 33 L49 19" stroke="#1e3a8a" stroke-width="4.5" fill="none" stroke-linecap="round" stroke-linejoin="round"/>
+  <path d="M32 33 L45 47" stroke="#2563eb" stroke-width="4.5" fill="none" stroke-linecap="round"/>
+  <!-- 入口节点 -->
+  <circle cx="15" cy="19" r="6" fill="#1e3a8a"/>
+  <circle cx="49" cy="19" r="6" fill="#1e3a8a"/>
+  <!-- 中心节点（面板 = 汇聚/管理中枢） -->
+  <circle cx="32" cy="33" r="7.5" fill="#2563eb" stroke="#1e3a8a" stroke-width="2.5"/>
+  <!-- 出口节点 -->
+  <circle cx="45" cy="47" r="5" fill="#38bdf8"/>
+</svg>

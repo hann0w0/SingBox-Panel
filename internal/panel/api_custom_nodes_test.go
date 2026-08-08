@@ -82,3 +82,90 @@ func TestValidateCustomNodeRejectsInvalidSnellVersion(t *testing.T) {
 		}
 	}
 }
+
+func TestBatchCustomNodeOperations(t *testing.T) {
+	db := testDB(t)
+	app := &App{db: db}
+	gin.SetMode(gin.TestMode)
+	router := gin.New()
+	router.POST("/custom-nodes/batch-delete", app.batchDeleteCustomNodes)
+	router.POST("/custom-nodes/batch-group", app.batchSetCustomNodeGroup)
+
+	mk := func(name, group string) *model.CustomNode {
+		return &model.CustomNode{
+			Name: name, Group: group, Enabled: true,
+			Link: "socks5://127.0.0.1:1080",
+		}
+	}
+	if err := db.Create(mk("a", "机场A")).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Create(mk("b", "机场A")).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Create(mk("c", "机场B")).Error; err != nil {
+		t.Fatal(err)
+	}
+	var all []model.CustomNode
+	if err := db.Find(&all).Error; err != nil {
+		t.Fatal(err)
+	}
+	if len(all) != 3 {
+		t.Fatalf("seed count = %d", len(all))
+	}
+
+	post := func(path string, body any) *httptest.ResponseRecorder {
+		payload, _ := json.Marshal(body)
+		req := httptest.NewRequest(http.MethodPost, path, bytes.NewReader(payload))
+		req.Header.Set("Content-Type", "application/json")
+		w := httptest.NewRecorder()
+		router.ServeHTTP(w, req)
+		return w
+	}
+
+	// Batch move: ids 1,2 -> 机场C
+	w := post("/custom-nodes/batch-group", map[string]any{"ids": []uint{all[0].ID, all[1].ID}, "group": "机场C"})
+	if w.Code != http.StatusOK {
+		t.Fatalf("batch-group status = %d body=%s", w.Code, w.Body.String())
+	}
+	var first, second model.CustomNode
+	if err := db.First(&first, all[0].ID).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := db.First(&second, all[1].ID).Error; err != nil {
+		t.Fatal(err)
+	}
+	if first.Group != "机场C" || second.Group != "机场C" {
+		t.Fatalf("groups after move: %s / %s", first.Group, second.Group)
+	}
+	// Clearing group via empty string.
+	w = post("/custom-nodes/batch-group", map[string]any{"ids": []uint{all[1].ID}, "group": "  "})
+	if w.Code != http.StatusOK {
+		t.Fatalf("batch-group clear status = %d", w.Code)
+	}
+	if err := db.First(&second, all[1].ID).Error; err != nil {
+		t.Fatal(err)
+	}
+	if second.Group != "" {
+		t.Fatalf("group not cleared: %q", second.Group)
+	}
+
+	// Batch delete two nodes.
+	w = post("/custom-nodes/batch-delete", map[string]any{"ids": []uint{all[0].ID, all[1].ID}})
+	if w.Code != http.StatusOK {
+		t.Fatalf("batch-delete status = %d body=%s", w.Code, w.Body.String())
+	}
+	var left int64
+	if err := db.Model(&model.CustomNode{}).Count(&left).Error; err != nil {
+		t.Fatal(err)
+	}
+	if left != 1 {
+		t.Fatalf("nodes left = %d; want 1", left)
+	}
+
+	// Empty selection must be rejected.
+	w = post("/custom-nodes/batch-delete", map[string]any{"ids": []uint{}})
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("empty batch-delete status = %d", w.Code)
+	}
+}

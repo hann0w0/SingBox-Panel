@@ -195,6 +195,11 @@ func extractBackup(r io.Reader, stageDir string) (dbPath, secret string, err err
 	}
 	defer gz.Close()
 	tr := tar.NewReader(gz)
+	// Defensive cap on archive entries: only the two known files are ever
+	// written, but a pathological archive with a huge number of headers would
+	// otherwise force an unbounded stream scan.
+	const maxEntries = 10_000
+	entries := 0
 	for {
 		hdr, e := tr.Next()
 		if e == io.EOF {
@@ -202,6 +207,10 @@ func extractBackup(r io.Reader, stageDir string) (dbPath, secret string, err err
 		}
 		if e != nil {
 			return "", "", e
+		}
+		entries++
+		if entries > maxEntries {
+			return "", "", fmt.Errorf("备份归档条目过多（> %d）", maxEntries)
 		}
 		if hdr.Typeflag != tar.TypeReg {
 			continue

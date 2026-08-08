@@ -21,7 +21,7 @@ func TestParseShareLinkRoundTrip(t *testing.T) {
 					Flow:           "xtls-rprx-vision",
 					PacketEncoding: "xudp",
 					Transport:      TransportSettings{Type: "ws", Path: "/path", Headers: map[string]string{"Host": "example.com"}, MaxEarlyData: 2048, EarlyDataHeader: "Sec-WebSocket-Protocol"},
-					TLS:             TLSSettings{Enabled: true, ServerName: "example.com", Fingerprint: "firefox", Reality: RealitySettings{Enabled: true, PublicKey: "abc123", ShortID: []string{"abcd"}}},
+					TLS:            TLSSettings{Enabled: true, ServerName: "example.com", Fingerprint: "firefox", Reality: RealitySettings{Enabled: true, PublicKey: "abc123", ShortID: []string{"abcd"}}},
 				},
 				User: ProxyUser{UUID: "a2b0c3d4-e5f6-4a7b-8c9d-0e1f2a3b4c5d"},
 			},

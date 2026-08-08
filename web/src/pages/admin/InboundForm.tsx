@@ -107,6 +107,7 @@ function toForm(ib: Inbound | null): FormVals {
     auth_timeout: s.auth_timeout ?? '3s',
     zero_rtt_handshake: s.zero_rtt_handshake ?? false,
     heartbeat: s.heartbeat ?? '10s',
+    udp_relay_mode: s.tuic_udp_relay_mode ?? '',
     trojan_fallback_server: s.trojan_fallback?.server,
     trojan_fallback_port: s.trojan_fallback?.server_port,
     snell_version: s.snell_version ?? 5,
@@ -132,6 +133,7 @@ function toForm(ib: Inbound | null): FormVals {
     early_data_header: s.transport?.early_data_header,
     tls_fingerprint: tls.fingerprint,
     packet_encoding: s.packet_encoding ?? 'xudp',
+    anytls_udp_over_stream: s.anytls_udp_over_stream ?? false,
     }
 }
 
@@ -168,6 +170,13 @@ function assembleSettings(base: InboundSettings, v: FormVals, type: InboundType)
     s.auth_timeout = v.auth_timeout || '3s'
     s.zero_rtt_handshake = !!v.zero_rtt_handshake
     s.heartbeat = v.heartbeat || '10s'
+    // Client relay mode: native | quic (legacy TUIC v4 values are rejected).
+    s.tuic_udp_relay_mode = v.udp_relay_mode === 'quic' ? 'quic' : v.udp_relay_mode === 'native' ? 'native' : ''
+  }
+  if (type === 'anytls') {
+    // AnyTLS always relays UDP over the TLS stream; the flag only controls
+    // whether the anytls:// share link advertises udp_over_stream=1.
+    s.anytls_udp_over_stream = !!v.anytls_udp_over_stream
   }
   if (type === 'trojan') {
     const server = typeof v.trojan_fallback_server === 'string' ? v.trojan_fallback_server.trim() : ''
@@ -431,6 +440,17 @@ export default function InboundForm({
           </Form.Item>
         )}
 
+        {type === 'anytls' && (
+          <Form.Item
+            name="anytls_udp_over_stream"
+            label="UDP 走 TLS 流"
+            valuePropName="checked"
+            extra="AnyTLS 的 UDP 始终通过 TLS 流传输；开启后在 anytls:// 链接中输出 udp_over_stream=1 供客户端识别"
+          >
+            <Switch />
+          </Form.Item>
+        )}
+
         {type === 'vless' && (
           <Form.Item name="flow" label="Flow">
             <Select
@@ -568,6 +588,20 @@ export default function InboundForm({
               valuePropName="checked"
             >
               <Switch />
+            </Form.Item>
+            <Form.Item
+              name="udp_relay_mode"
+              label="UDP 中继模式"
+              extra="native = UDP 走 QUIC 数据报（默认）；quic = 走 QUIC 流。留空表示不指定"
+            >
+              <Select
+                allowClear
+                options={[
+                  { value: '', label: '不指定（默认 native）' },
+                  { value: 'native', label: 'native' },
+                  { value: 'quic', label: 'quic' },
+                ]}
+              />
             </Form.Item>
           </>
         )}

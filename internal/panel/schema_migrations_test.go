@@ -160,9 +160,15 @@ func TestExplicitCustomNodeAudienceMigrationPreservesLegacyMeaning(t *testing.T)
 	if err := db.Create(&scoped).Error; err != nil {
 		t.Fatal(err)
 	}
-	migration := applicationMigrations[len(applicationMigrations)-1]
+	var migration schemaMigration
+	for _, m := range applicationMigrations {
+		if m.version == 9 {
+			migration = m
+			break
+		}
+	}
 	if migration.version != 9 {
-		t.Fatalf("last migration = %d; want 9", migration.version)
+		t.Fatalf("v9 migration not found")
 	}
 	if err := migration.up(db); err != nil {
 		t.Fatal(err)

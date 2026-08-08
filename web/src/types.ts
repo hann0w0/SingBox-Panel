@@ -149,6 +149,8 @@ export interface InboundSettings {
   auth_timeout?: string
   zero_rtt_handshake?: boolean
   heartbeat?: string
+  tuic_udp_relay_mode?: string
+  anytls_udp_over_stream?: boolean
   trojan_fallback?: FallbackSettings
   snell_version?: number
   snell_psk?: string

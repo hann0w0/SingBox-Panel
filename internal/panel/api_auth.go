@@ -83,8 +83,11 @@ func (a *App) handleLogin(c *gin.Context) {
 	}
 	// Correct password: always accepted, even while the account key is throttled.
 	a.login.succeed(ipKey, pairKey, acctKey)
-	// Disabled or expired accounts must not get a session either.
-	if u.Role != model.RoleAdmin && !userActive(&u) {
+	// Disabled or expired accounts must not get a session either. The panel UI
+	// refuses to disable an admin, so an admin landing here was disabled out of
+	// band (DB edit) — answer 403 with a clear reason instead of issuing a token
+	// that the auth middleware would reject on the very next request.
+	if !userActive(&u) {
 		c.JSON(http.StatusForbidden, gin.H{"error": "账号已停用或已到期"})
 		return
 	}

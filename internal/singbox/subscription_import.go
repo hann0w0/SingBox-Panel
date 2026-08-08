@@ -1,0 +1,1012 @@
+package singbox
+
+// This file contains the deliberately small, dependency-light subscription
+// importer used by the admin API.  It accepts the formats commonly emitted by
+// Clash/Mihomo and Surge, as well as plain or base64 encoded share-link lists.
+// Network fetching is intentionally kept in the panel package: this parser
+// only consumes bytes and therefore cannot accidentally turn a node payload
+// into an SSRF primitive.
+
+import (
+	"bufio"
+	"bytes"
+	"encoding/base64"
+	"encoding/json"
+	"fmt"
+	"net"
+	"strconv"
+	"strings"
+	"time"
+
+	"gopkg.in/yaml.v3"
+)
+
+const (
+	// SubscriptionImportMaxBytes is the maximum payload accepted by the
+	// format parser. The HTTP endpoint applies the same limit before calling
+	// ParseSubscription, so this also protects callers which use the parser
+	// directly.
+	SubscriptionImportMaxBytes = 4 << 20
+	SubscriptionImportMaxNodes = 512
+)
+
+// ImportedNode is the storage-neutral representation returned by the
+// subscription parser. Link is retained only when the input was already a
+// standard share URI. Structured formats intentionally leave Link empty and
+// carry every recognized option in Params; this prevents a lossy canonical
+// link conversion (for example, Clash plugin options or UDP flags).
+type ImportedNode struct {
+	Name     string         `json:"name"`
+	Link     string         `json:"link,omitempty"`
+	Protocol string         `json:"protocol"`
+	Address  string         `json:"address"`
+	Port     int            `json:"port"`
+	Params   map[string]any `json:"params,omitempty"`
+}
+
+// ImportIssue describes one item that could not be parsed. A malformed item
+// does not discard otherwise valid nodes from the same subscription.
+type ImportIssue struct {
+	Input string `json:"input"`
+	Error string `json:"error"`
+}
+
+// SubscriptionParseResult is the result of ParseSubscription.
+type SubscriptionParseResult struct {
+	Nodes      []ImportedNode `json:"nodes"`
+	Skipped    []ImportIssue  `json:"skipped"`
+	SourceType string         `json:"source_type"`
+}
+
+// ParseSubscription parses a plain-text, base64, Clash YAML, or Surge
+// subscription payload. It never performs network I/O. The returned skipped
+// items are suitable for showing in an admin preview.
+func ParseSubscription(raw []byte) (SubscriptionParseResult, error) {
+	if len(raw) > SubscriptionImportMaxBytes {
+		return SubscriptionParseResult{}, fmt.Errorf("订阅内容超过 %d 字节限制", SubscriptionImportMaxBytes)
+	}
+	raw = bytes.TrimSpace(bytes.TrimPrefix(raw, []byte{0xef, 0xbb, 0xbf}))
+	if len(raw) == 0 {
+		return SubscriptionParseResult{}, fmt.Errorf("订阅内容为空")
+	}
+	return parseSubscriptionDepth(raw, 0)
+}
+
+func parseSubscriptionDepth(raw []byte, depth int) (SubscriptionParseResult, error) {
+	if depth > 2 {
+		return SubscriptionParseResult{}, fmt.Errorf("订阅编码嵌套层数过深")
+	}
+	trimmed := bytes.TrimSpace(bytes.TrimPrefix(raw, []byte{0xef, 0xbb, 0xbf}))
+	if len(trimmed) == 0 {
+		return SubscriptionParseResult{}, fmt.Errorf("订阅内容为空")
+	}
+
+	// A Surge profile has a distinctive section header — or, for providers that
+	// ship a bare server list, at least one Surge-shaped proxy line. Parse it
+	// before YAML so comments and arbitrary INI keys cannot be mistaken for
+	// URI lines.
+	if hasSurgeProxySection(trimmed) || looksLikeSurgeProxies(trimmed) {
+		return parseSurgeSubscription(trimmed)
+	}
+
+	// Clash profiles are YAML mappings with a top-level proxies sequence. We
+	// only claim the YAML format when that key is present; this lets a YAML-ish
+	// error payload still produce useful per-line diagnostics below.
+	if isClashYAML(trimmed) {
+		return parseClashSubscription(trimmed)
+	}
+
+	// Providers generally base64-encode a newline-separated URI list. Decode
+	// only strings which look like base64 and recurse once; ordinary URI lists
+	// go straight to line parsing. Both padded and raw URL alphabets are used
+	// in the wild.
+	if decoded, ok := decodeSubscriptionBase64(trimmed); ok {
+		result, err := parseSubscriptionDepth(decoded, depth+1)
+		if err == nil {
+			if result.SourceType == "plain" || result.SourceType == "links" {
+				result.SourceType = "base64"
+			}
+			return result, nil
+		}
+		// A base64-looking value that does not decode to a recognized profile is
+		// reported as an item below rather than returning an opaque decoder error.
+	}
+
+	return parseLinkLines(trimmed)
+}
+
+func hasSurgeProxySection(raw []byte) bool {
+	s := strings.ToLower(string(raw))
+	for _, line := range strings.Split(s, "\n") {
+		line = strings.TrimSpace(line)
+		if line == "[proxy]" || line == "[proxies]" {
+			return true
+		}
+	}
+	return false
+}
+
+// surgeProxyTypes are the proxy type tokens Surge emits as the first field of
+// a [Proxy] line. They are also the tokens recognized when a provider ships a
+// "naked" proxy list without any [Proxy] section header.
+var surgeProxyTypes = map[string]bool{
+	"ss": true, "shadowsocks": true,
+	"vmess": true, "vless": true,
+	"trojan":    true,
+	"hysteria2": true, "hy2": true, "hysteria": true,
+	"tuic": true, "tuic-v4": true, "tuic-v5": true,
+	"anytls": true,
+	"socks5": true, "socks": true,
+	"snell": true,
+}
+
+// isSurgeProxyLine reports whether a non-comment line has the shape
+// "name = <known-type>, server, port, ...". It is used both to detect
+// sectionless Surge profiles and to let parseSurgeSubscription accept proxy
+// lines outside an explicit [Proxy]/[Proxies] header (common with providers
+// that emit a bare server list).
+func isSurgeProxyLine(line string) bool {
+	i := strings.IndexByte(line, '=')
+	if i < 0 {
+		return false
+	}
+	rest := strings.TrimSpace(line[i+1:])
+	if j := strings.IndexByte(rest, ','); j >= 0 {
+		rest = rest[:j]
+	}
+	return surgeProxyTypes[strings.ToLower(strings.TrimSpace(rest))]
+}
+
+// looksLikeSurgeProxies reports whether the payload contains at least one
+// Surge-shaped proxy line (with or without a [Proxy] section header). It
+// deliberately ignores section headers so a bare server list is still
+// recognized, and it never matches YAML (colon key syntax) or share URIs.
+func looksLikeSurgeProxies(raw []byte) bool {
+	scanner := bufio.NewScanner(bytes.NewReader(raw))
+	for scanner.Scan() {
+		line := strings.TrimSpace(scanner.Text())
+		if line == "" || strings.HasPrefix(line, ";") || strings.HasPrefix(line, "#") {
+			continue
+		}
+		if isSurgeProxyLine(line) {
+			return true
+		}
+	}
+	return false
+}
+
+func isClashYAML(raw []byte) bool {
+	var root map[string]any
+	if err := yaml.Unmarshal(raw, &root); err != nil || root == nil {
+		return false
+	}
+	for k, v := range root {
+		if normalizeImportKey(k) != "proxies" {
+			continue
+		}
+		switch v.(type) {
+		case []any, []map[string]any:
+			return true
+		default:
+			return false
+		}
+	}
+	return false
+}
+
+func parseLinkLines(raw []byte) (SubscriptionParseResult, error) {
+	result := SubscriptionParseResult{SourceType: "plain"}
+	scanner := bufio.NewScanner(bytes.NewReader(raw))
+	// A single VMess URI can be large when metadata is embedded. Keep a hard
+	// line limit below the overall payload cap to avoid unbounded allocations.
+	scanner.Buffer(make([]byte, 1024), SubscriptionImportMaxBytes)
+	for scanner.Scan() {
+		line := strings.TrimSpace(scanner.Text())
+		line = strings.TrimPrefix(line, "\ufeff")
+		if line == "" || strings.HasPrefix(line, "#") || strings.HasPrefix(line, ";") {
+			continue
+		}
+		// Some providers prefix links with a list marker. It is safe to strip
+		// only the conventional marker, never arbitrary punctuation.
+		line = strings.TrimSpace(strings.TrimPrefix(line, "- "))
+		if len(result.Nodes) >= SubscriptionImportMaxNodes {
+			result.Skipped = append(result.Skipped, ImportIssue{Input: line, Error: "节点数量超过限制"})
+			continue
+		}
+		cn, err := ParseShareLink(line)
+		if err != nil {
+			result.Skipped = append(result.Skipped, ImportIssue{Input: truncateImportInput(line), Error: err.Error()})
+			continue
+		}
+		if cn.Name == "" {
+			cn.Name = fmt.Sprintf("%s %s:%d", cn.Type, cn.Server, cn.ServerPort)
+		}
+		result.Nodes = append(result.Nodes, importedNodeFromClient(cn, line, true))
+		result.SourceType = "links"
+	}
+	if err := scanner.Err(); err != nil {
+		return result, fmt.Errorf("读取订阅内容失败: %w", err)
+	}
+	if len(result.Nodes) == 0 && len(result.Skipped) == 0 {
+		return result, fmt.Errorf("未找到可识别的分享链接")
+	}
+	return result, nil
+}
+
+func decodeSubscriptionBase64(raw []byte) ([]byte, bool) {
+	s := strings.Map(func(r rune) rune {
+		switch r {
+		case ' ', '\t', '\r', '\n':
+			return -1
+		default:
+			return r
+		}
+	}, string(raw))
+	if len(s) < 16 {
+		return nil, false
+	}
+	for _, r := range s {
+		if (r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z') ||
+			(r >= '0' && r <= '9') || strings.ContainsRune("+/=_-", r) {
+			continue
+		}
+		return nil, false
+	}
+	decoders := []*base64.Encoding{
+		base64.StdEncoding,
+		base64.RawStdEncoding,
+		base64.URLEncoding,
+		base64.RawURLEncoding,
+	}
+	for _, enc := range decoders {
+		decoded, err := enc.DecodeString(s)
+		if err != nil || len(decoded) == 0 || len(decoded) > SubscriptionImportMaxBytes {
+			continue
+		}
+		text := strings.TrimSpace(string(decoded))
+		// Avoid treating arbitrary binary as a subscription. URI schemes,
+		// Clash YAML, and Surge sections are the accepted decoded signatures.
+		lower := strings.ToLower(text)
+		if strings.Contains(lower, "://") || strings.Contains(lower, "proxies:") || strings.Contains(lower, "[proxy]") {
+			return []byte(text), true
+		}
+	}
+	return nil, false
+}
+
+func parseClashSubscription(raw []byte) (SubscriptionParseResult, error) {
+	var root map[string]any
+	if err := yaml.Unmarshal(raw, &root); err != nil {
+		return SubscriptionParseResult{}, fmt.Errorf("Clash YAML 解析失败: %w", err)
+	}
+	var proxies any
+	for k, v := range root {
+		if normalizeImportKey(k) == "proxies" {
+			proxies = v
+			break
+		}
+	}
+	items := yamlList(proxies)
+	if len(items) == 0 {
+		return SubscriptionParseResult{}, fmt.Errorf("Clash YAML 未找到 proxies 节点")
+	}
+	result := SubscriptionParseResult{SourceType: "clash-yaml"}
+	for _, item := range items {
+		if len(result.Nodes) >= SubscriptionImportMaxNodes {
+			result.Skipped = append(result.Skipped, ImportIssue{Error: "节点数量超过限制"})
+			continue
+		}
+		m := yamlMap(item)
+		if m == nil {
+			result.Skipped = append(result.Skipped, ImportIssue{Error: "代理条目不是对象"})
+			continue
+		}
+		node, err := parseClashProxy(m)
+		if err != nil {
+			result.Skipped = append(result.Skipped, ImportIssue{Input: getString(m, "name"), Error: err.Error()})
+			continue
+		}
+		result.Nodes = append(result.Nodes, node)
+	}
+	if len(result.Nodes) == 0 {
+		return result, fmt.Errorf("Clash YAML 中没有可导入节点")
+	}
+	return result, nil
+}
+
+func parseClashProxy(m map[string]any) (ImportedNode, error) {
+	typ := normalizeProtocol(getString(m, "type"))
+	if typ == "" {
+		return ImportedNode{}, fmt.Errorf("缺少代理类型")
+	}
+	if typ == "http" || typ == "wireguard" || typ == "socks4" {
+		return ImportedNode{}, fmt.Errorf("暂不支持 Clash 代理类型 %q", typ)
+	}
+	server := strings.TrimSpace(getString(m, "server", "address", "host"))
+	port := getInt(m, "port", "server-port", "server_port")
+	// Some exporters (Clash→Surge converters, SingBox share links) fold the
+	// port into the server field ("1.2.3.4:8388"). Split it when the port
+	// field is missing or unparseable.
+	if (port < 1 || port > 65535) && strings.Contains(server, ":") {
+		if h, p, err := net.SplitHostPort(server); err == nil {
+			if n, aerr := strconv.Atoi(p); aerr == nil && n > 0 && n <= 65535 {
+				server, port = strings.TrimSpace(h), n
+			}
+		}
+	}
+	if server == "" || port < 1 || port > 65535 {
+		return ImportedNode{}, fmt.Errorf("地址或端口无效")
+	}
+	name := strings.TrimSpace(getString(m, "name", "ps"))
+	if name == "" {
+		name = fmt.Sprintf("%s %s:%d", typ, server, port)
+	}
+
+	cn := ClientNode{Name: name, Server: server, ServerPort: port, Type: typ}
+
+	// Common TLS fields. Trojan and the QUIC protocols are TLS by definition
+	// unless a profile explicitly disables it (Clash normally omits the field).
+	tls := getBool(m, "tls", "tls-enabled")
+	if _, present := lookupMapValue(m, "tls", "tls-enabled"); !present {
+		tls = typ == "trojan" || typ == "hysteria2" || typ == "hysteria" || typ == "tuic" || typ == "anytls"
+	}
+	sni := getString(m, "sni", "servername", "server-name", "server_name", "peer")
+	if sni == "" {
+		sni = server
+	}
+	cn.Settings.TLS.Enabled = tls
+	cn.Settings.TLS.ServerName = sni
+	cn.Settings.TLS.Insecure = getBool(m, "skip-cert-verify", "skip_cert_verify", "insecure", "allow-insecure")
+	cn.Settings.TLS.Fingerprint = getString(m, "client-fingerprint", "fingerprint", "fp")
+	cn.Settings.TLS.ALPN = getStringList(m, "alpn")
+
+	if reality := yamlMap(getAny(m, "reality-opts", "reality_opts")); reality != nil || getBool(m, "reality") {
+		cn.Settings.TLS.Enabled = true
+		cn.Settings.TLS.Reality.Enabled = true
+		if reality != nil {
+			cn.Settings.TLS.Reality.PublicKey = getString(reality, "public-key", "public_key", "pbk")
+			if sid := getString(reality, "short-id", "short_id", "sid"); sid != "" {
+				cn.Settings.TLS.Reality.ShortID = []string{sid}
+			}
+		}
+		if cn.Settings.TLS.Reality.PublicKey == "" {
+			return ImportedNode{}, fmt.Errorf("REALITY 缺少 public-key")
+		}
+	}
+
+	// Clash transport options.
+	network := strings.ToLower(strings.TrimSpace(getString(m, "network", "transport")))
+	var transport map[string]any
+	if network == "ws" {
+		transport = yamlMap(getAny(m, "ws-opts", "ws_opts"))
+	} else if network == "http-upgrade" || network == "httpupgrade" {
+		network = "httpupgrade"
+		transport = yamlMap(getAny(m, "http-upgrade-opts", "http_upgrade_opts"))
+	}
+	if network == "grpc" {
+		return ImportedNode{}, fmt.Errorf("暂不支持 gRPC 传输")
+	}
+	if network == "ws" || network == "httpupgrade" {
+		cn.Settings.Transport.Type = network
+		if transport != nil {
+			cn.Settings.Transport.Path = getString(transport, "path")
+			cn.Settings.Transport.Headers = stringMap(yamlMap(getAny(transport, "headers")))
+			cn.Settings.Transport.MaxEarlyData = getInt(transport, "max-early-data", "max_early_data")
+			cn.Settings.Transport.EarlyDataHeader = getString(transport, "early-data-header-name", "early_data_header_name")
+		}
+	}
+
+	switch typ {
+	case "vless":
+		cn.User.UUID = getString(m, "uuid", "id")
+		if cn.User.UUID == "" {
+			return ImportedNode{}, fmt.Errorf("VLESS 缺少 uuid")
+		}
+		cn.Settings.Flow = getString(m, "flow")
+		cn.Settings.PacketEncoding = getString(m, "packet-encoding", "packet_encoding")
+	case "vmess":
+		cn.User.UUID = getString(m, "uuid", "id")
+		if cn.User.UUID == "" {
+			return ImportedNode{}, fmt.Errorf("VMess 缺少 uuid")
+		}
+		cn.Settings.VMessAlterID = getInt(m, "alter-id", "alter_id", "aid")
+		cn.Settings.VMessSecurity = getString(m, "cipher", "security", "scy")
+		if cn.Settings.VMessSecurity == "" {
+			cn.Settings.VMessSecurity = "auto"
+		}
+	case "trojan":
+		cn.User.Password = getString(m, "password", "passwd")
+		if cn.User.Password == "" {
+			return ImportedNode{}, fmt.Errorf("Trojan 缺少 password")
+		}
+		cn.Settings.PacketEncoding = getString(m, "packet-encoding", "packet_encoding")
+	case "shadowsocks":
+		cn.Settings.Method = getString(m, "cipher", "method", "encrypt-method", "encrypt_method")
+		cn.User.Password = getString(m, "password", "passwd")
+		if cn.Settings.Method == "" || cn.User.Password == "" {
+			return ImportedNode{}, fmt.Errorf("Shadowsocks 缺少 cipher 或 password")
+		}
+		cn.Settings.SingleUser = true
+		cn.Settings.SSServerPSK = cn.User.Password
+		cn.Settings.SSPlugin = getString(m, "plugin")
+		// Surge expresses simple-obfs as separate obfs/obfs-host fields.
+		// Preserve it as the standard SIP002 plugin string used by the panel.
+		if cn.Settings.SSPlugin == "" {
+			if obfs := getString(m, "obfs"); obfs != "" {
+				cn.Settings.SSPlugin = "obfs-local;obfs=" + obfs
+				if host := getString(m, "obfs-host", "obfs_host"); host != "" {
+					cn.Settings.SSPlugin += ";obfs-host=" + host
+				}
+			}
+		}
+	case "socks":
+		cn.Settings.Username = getString(m, "username", "user")
+		cn.Settings.Password = getString(m, "password", "passwd")
+	case "hysteria2":
+		cn.User.Password = getString(m, "password", "auth", "auth-str", "auth_str")
+		if cn.User.Password == "" {
+			return ImportedNode{}, fmt.Errorf("Hysteria2 缺少 password")
+		}
+		cn.Settings.ObfsType = getString(m, "obfs")
+		cn.Settings.ObfsPassword = getString(m, "obfs-password", "obfs_password", "salamander-password")
+		if cn.Settings.ObfsType == "" && cn.Settings.ObfsPassword != "" {
+			cn.Settings.ObfsType = "salamander"
+		}
+		cn.Settings.UpMbps = getRateInt(m, "up", "up-mbps", "up_mbps", "upload-bandwidth")
+		cn.Settings.DownMbps = getRateInt(m, "down", "down-mbps", "down_mbps", "download-bandwidth")
+	case "hysteria":
+		cn.User.Password = getString(m, "auth-str", "auth_str", "auth", "password")
+		if cn.User.Password == "" {
+			return ImportedNode{}, fmt.Errorf("Hysteria 缺少认证信息")
+		}
+		cn.Settings.ObfsPassword = getString(m, "obfs")
+		cn.Settings.UpMbps = getRateInt(m, "up", "up-mbps", "up_mbps")
+		cn.Settings.DownMbps = getRateInt(m, "down", "down-mbps", "down_mbps")
+	case "tuic":
+		cn.User.UUID = getString(m, "uuid", "id")
+		// Surge expresses the TUIC credential as token=, Clash as password=.
+		cn.User.Password = getString(m, "password", "passwd", "token")
+		if cn.User.UUID == "" || cn.User.Password == "" {
+			return ImportedNode{}, fmt.Errorf("TUIC 缺少 uuid 或 password")
+		}
+		cn.Settings.CongestionControl = getString(m, "congestion-controller", "congestion_control", "congestion-control")
+		cn.Settings.TUICUDPRelayMode = getString(m, "udp-relay-mode", "udp_relay_mode")
+		cn.Settings.ZeroRTTHandshake = getBool(m, "reduce-rtt", "reduce_rtt", "zero-rtt-handshake")
+		if hb := getString(m, "heartbeat-interval", "heartbeat_interval", "heartbeat"); hb != "" {
+			if duration, err := time.ParseDuration(hb); err == nil {
+				cn.Settings.Heartbeat = duration.String()
+			} else if millis := getInt(m, "heartbeat-interval", "heartbeat_interval"); millis > 0 {
+				cn.Settings.Heartbeat = (time.Duration(millis) * time.Millisecond).String()
+			}
+		}
+	case "anytls":
+		cn.User.Password = getString(m, "password", "passwd")
+		if cn.User.Password == "" {
+			return ImportedNode{}, fmt.Errorf("AnyTLS 缺少 password")
+		}
+		cn.Settings.AnyTLSUDPOverStream = getBool(m, "udp-over-stream", "udp_over_stream")
+	case "snell":
+		cn.Settings.SnellPSK = getString(m, "psk", "password")
+		if cn.Settings.SnellPSK == "" {
+			return ImportedNode{}, fmt.Errorf("Snell 缺少 psk")
+		}
+		cn.Settings.SnellVersion = getInt(m, "version")
+		if cn.Settings.SnellVersion == 0 {
+			cn.Settings.SnellVersion = 5
+		}
+		if cn.Settings.SnellVersion != 5 && cn.Settings.SnellVersion != 6 {
+			return ImportedNode{}, fmt.Errorf("Snell 版本必须是 5 或 6")
+		}
+		obfs := yamlMap(getAny(m, "obfs-opts", "obfs_opts"))
+		if obfs != nil {
+			cn.Settings.SnellObfsMode = getString(obfs, "mode")
+		} else {
+			cn.Settings.SnellObfsMode = getString(m, "obfs")
+		}
+	default:
+		return ImportedNode{}, fmt.Errorf("暂不支持协议 %q", typ)
+	}
+
+	node := importedNodeFromClient(cn, "", false)
+	node.Params["udp"] = getBoolDefault(m, true, "udp", "udp-relay")
+	if cn.Settings.PacketEncoding != "" {
+		node.Params["packet_encoding"] = cn.Settings.PacketEncoding
+	}
+	if len(cn.Settings.Transport.Headers) > 0 {
+		node.Params["headers"] = cn.Settings.Transport.Headers
+	}
+	if pluginOpts := yamlMap(getAny(m, "plugin-opts", "plugin_opts")); len(pluginOpts) > 0 {
+		node.Params["ss_plugin_opts"] = pluginOpts
+	}
+	return node, nil
+}
+
+// parseSurgeSubscription handles the [Proxy] section of a Surge profile. It
+// intentionally ignores [Proxy Group], [Rule], and other sections: only
+// concrete proxy entries can become custom nodes.
+func parseSurgeSubscription(raw []byte) (SubscriptionParseResult, error) {
+	result := SubscriptionParseResult{SourceType: "surge"}
+	section := ""
+	scanner := bufio.NewScanner(bytes.NewReader(raw))
+	for scanner.Scan() {
+		line := strings.TrimSpace(scanner.Text())
+		if line == "" || strings.HasPrefix(line, ";") || strings.HasPrefix(line, "#") {
+			continue
+		}
+		if strings.HasPrefix(line, "[") && strings.HasSuffix(line, "]") {
+			section = strings.ToLower(strings.TrimSpace(line[1 : len(line)-1]))
+			continue
+		}
+		// Accept proxy lines both inside [Proxy]/[Proxies] and in sectionless
+		// profiles where the provider omitted the header entirely. Group lines
+		// (GLOBAL = select, ...) fail isSurgeProxyLine and stay skipped.
+		if section != "proxy" && section != "proxies" && !isSurgeProxyLine(line) {
+			continue
+		}
+		i := strings.IndexByte(line, '=')
+		if i < 0 {
+			continue
+		}
+		name := strings.TrimSpace(line[:i])
+		fields := splitSurgeFields(line[i+1:])
+		if len(fields) < 3 {
+			result.Skipped = append(result.Skipped, ImportIssue{Input: name, Error: "Surge 代理字段不足"})
+			continue
+		}
+		// Some exporters fold the port into the host field ("1.2.3.4:8388").
+		// Split it up front so the real parameters (fields[2] onwards) do not
+		// get misaligned: otherwise encrypt-method= would be swallowed as the
+		// port and the proxy would fail with "缺少 cipher 或 password".
+		extraStart := 3
+		serverField, portField := fields[1], fields[2]
+		if strings.Contains(serverField, ":") {
+			if h, p, err := net.SplitHostPort(serverField); err == nil {
+				if n, aerr := strconv.Atoi(p); aerr == nil && n > 0 && n <= 65535 {
+					serverField, portField, extraStart = h, p, 2
+				}
+			}
+		}
+		m := map[string]any{"name": name, "type": fields[0], "server": serverField, "port": portField}
+		for _, field := range fields[extraStart:] {
+			field = strings.TrimSpace(field)
+			if field == "" {
+				continue
+			}
+			if k, v, ok := strings.Cut(field, "="); ok {
+				m[strings.TrimSpace(k)] = strings.Trim(strings.TrimSpace(v), "\"")
+			} else {
+				m[field] = true
+			}
+		}
+		// Surge uses slightly different names from Clash. Normalize the fields
+		// into the Clash-shaped map understood by parseClashProxy.
+		if b, ok := m["tls"].(bool); ok && b {
+			m["tls"] = true
+		}
+		for k, v := range map[string]string{
+			"encrypt-method":   "cipher",
+			"username":         "uuid", // corrected below for SOCKS
+			"ws-path":          "path",
+			"ws-headers":       "headers",
+			"servername":       "sni",
+			"skip-cert-verify": "skip-cert-verify",
+		} {
+			if x, exists := m[k]; exists {
+				m[v] = x
+			}
+		}
+		typ := normalizeProtocol(getString(m, "type"))
+		if typ == "socks" {
+			if x, ok := m["username"]; ok {
+				m["username"] = x
+				delete(m, "uuid")
+			}
+		}
+		// Surge's ws=true is a flag rather than a network value.
+		if getBool(m, "ws") {
+			m["network"] = "ws"
+			opts := map[string]any{}
+			if path := getString(m, "ws-path", "path"); path != "" {
+				opts["path"] = path
+			}
+			if headers := getString(m, "ws-headers"); headers != "" {
+				opts["headers"] = parseSurgeHeaders(headers)
+			}
+			m["ws-opts"] = opts
+		}
+		// Surge's bare `tls` marker is a bool; protocol defaults are handled by
+		// parseClashProxy for TLS-native protocols.
+		if len(result.Nodes) >= SubscriptionImportMaxNodes {
+			result.Skipped = append(result.Skipped, ImportIssue{Input: name, Error: "节点数量超过限制"})
+			continue
+		}
+		node, err := parseClashProxy(m)
+		if err != nil {
+			result.Skipped = append(result.Skipped, ImportIssue{Input: name, Error: err.Error()})
+			continue
+		}
+		result.Nodes = append(result.Nodes, node)
+	}
+	if err := scanner.Err(); err != nil {
+		return result, fmt.Errorf("读取 Surge 订阅失败: %w", err)
+	}
+	if len(result.Nodes) == 0 {
+		return result, fmt.Errorf("Surge [Proxy] 中没有可导入节点")
+	}
+	return result, nil
+}
+
+func splitSurgeFields(raw string) []string {
+	var out []string
+	var buf strings.Builder
+	quoted := false
+	escaped := false
+	for _, r := range raw {
+		if escaped {
+			buf.WriteRune(r)
+			escaped = false
+			continue
+		}
+		if r == '\\' && quoted {
+			escaped = true
+			continue
+		}
+		if r == '"' {
+			quoted = !quoted
+			continue
+		}
+		if r == ',' && !quoted {
+			out = append(out, strings.TrimSpace(buf.String()))
+			buf.Reset()
+			continue
+		}
+		buf.WriteRune(r)
+	}
+	out = append(out, strings.TrimSpace(buf.String()))
+	return out
+}
+
+func parseSurgeHeaders(raw string) map[string]any {
+	out := map[string]any{}
+	for _, item := range strings.FieldsFunc(raw, func(r rune) bool { return r == '|' || r == ';' }) {
+		item = strings.TrimSpace(item)
+		if k, v, ok := strings.Cut(item, ":"); ok {
+			out[strings.TrimSpace(k)] = strings.TrimSpace(v)
+		} else if k, v, ok := strings.Cut(item, "="); ok {
+			out[strings.TrimSpace(k)] = strings.TrimSpace(v)
+		}
+	}
+	return out
+}
+
+func importedNodeFromClient(cn ClientNode, link string, preserveLink bool) ImportedNode {
+	name := strings.TrimSpace(cn.Name)
+	if name == "" {
+		name = fmt.Sprintf("%s %s:%d", cn.Type, cn.Server, cn.ServerPort)
+	}
+	params := clientParams(cn)
+	if !preserveLink {
+		link = ""
+	}
+	return ImportedNode{Name: name, Link: link, Protocol: cn.Type, Address: cn.Server, Port: cn.ServerPort, Params: params}
+}
+
+// clientParams mirrors the fields consumed by panel.customNodeToNode. Keep
+// this map explicit rather than serializing InboundSettings directly: the
+// latter would expose server-only certificate/private-key fields in an admin
+// response and would not match the structured-node API's stable names.
+func clientParams(cn ClientNode) map[string]any {
+	p := map[string]any{"udp": true}
+	st := cn.Settings
+	if cn.User.UUID != "" {
+		p["uuid"] = cn.User.UUID
+	}
+	if cn.User.Password != "" {
+		p["password"] = cn.User.Password
+	}
+	if cn.User.Username != "" {
+		p["username"] = cn.User.Username
+	}
+	if cn.Type == "shadowsocks" && st.SSServerPSK != "" {
+		p["password"] = st.SSServerPSK
+	}
+	if cn.Type == "socks" {
+		if st.Username != "" {
+			p["username"] = st.Username
+		}
+		if st.Password != "" {
+			p["password"] = st.Password
+		}
+	}
+	if st.Method != "" {
+		p["method"] = st.Method
+	}
+	if st.SSPlugin != "" {
+		p["ss_plugin"] = st.SSPlugin
+	}
+	if st.Flow != "" {
+		p["flow"] = st.Flow
+	}
+	if st.PacketEncoding != "" {
+		p["packet_encoding"] = st.PacketEncoding
+	}
+	if st.VMessSecurity != "" {
+		p["security"] = st.VMessSecurity
+	}
+	if st.VMessAlterID != 0 {
+		p["alter_id"] = st.VMessAlterID
+	}
+	if st.TLS.Reality.Enabled {
+		p["tls"] = "reality"
+		p["pbk"] = st.TLS.Reality.PublicKey
+		if len(st.TLS.Reality.ShortID) > 0 {
+			p["sid"] = st.TLS.Reality.ShortID[0]
+		}
+	} else if st.TLS.Enabled {
+		p["tls"] = "tls"
+	} else {
+		p["tls"] = "none"
+	}
+	if st.TLS.ServerName != "" {
+		p["sni"] = st.TLS.ServerName
+	}
+	if st.TLS.Fingerprint != "" {
+		p["fingerprint"] = st.TLS.Fingerprint
+	}
+	if st.TLS.Insecure {
+		p["insecure"] = true
+	}
+	if len(st.TLS.ALPN) > 0 {
+		p["alpn"] = strings.Join(st.TLS.ALPN, ",")
+	}
+	if st.Transport.Type != "" {
+		p["transport"] = st.Transport.Type
+		if st.Transport.Path != "" {
+			p["path"] = st.Transport.Path
+		}
+		if h := st.Transport.Headers["Host"]; h != "" {
+			p["host"] = h
+		}
+		if len(st.Transport.Headers) > 0 {
+			p["headers"] = st.Transport.Headers
+		}
+		if st.Transport.MaxEarlyData > 0 {
+			p["max_early_data"] = st.Transport.MaxEarlyData
+		}
+		if st.Transport.EarlyDataHeader != "" {
+			p["early_data_header_name"] = st.Transport.EarlyDataHeader
+		}
+	}
+	if st.ObfsType != "" {
+		p["obfs"] = st.ObfsType
+	}
+	if st.ObfsPassword != "" {
+		p["obfs_password"] = st.ObfsPassword
+	}
+	if st.UpMbps != 0 {
+		p["up_mbps"] = st.UpMbps
+	}
+	if st.DownMbps != 0 {
+		p["down_mbps"] = st.DownMbps
+	}
+	if st.CongestionControl != "" {
+		p["congestion_control"] = st.CongestionControl
+	}
+	if st.TUICUDPRelayMode != "" {
+		p["udp_relay_mode"] = st.TUICUDPRelayMode
+	}
+	if st.ZeroRTTHandshake {
+		p["zero_rtt_handshake"] = true
+	}
+	if st.Heartbeat != "" {
+		p["heartbeat"] = st.Heartbeat
+	}
+	if st.AnyTLSUDPOverStream {
+		p["udp_over_stream"] = true
+	}
+	if st.SnellPSK != "" {
+		p["psk"] = st.SnellPSK
+	}
+	if st.SnellVersion != 0 {
+		p["version"] = st.SnellVersion
+	}
+	if st.SnellObfsMode != "" {
+		p["obfs_mode"] = st.SnellObfsMode
+	}
+	if st.SnellMode != "" {
+		p["mode"] = st.SnellMode
+	}
+	return p
+}
+
+func normalizeProtocol(v string) string {
+	switch strings.ToLower(strings.TrimSpace(v)) {
+	case "ss", "shadowsocks":
+		return "shadowsocks"
+	case "socks", "socks5":
+		return "socks"
+	case "hy2", "hysteria2":
+		return "hysteria2"
+	case "hy", "hysteria":
+		return "hysteria"
+	case "tuic", "tuic-v4", "tuic-v5":
+		return "tuic"
+	case "httpupgrade":
+		return "httpupgrade"
+	default:
+		return strings.ToLower(strings.TrimSpace(v))
+	}
+}
+
+func normalizeImportKey(k string) string {
+	k = strings.ToLower(strings.TrimSpace(k))
+	return strings.NewReplacer("-", "", "_", "", " ", "").Replace(k)
+}
+
+func lookupMapValue(m map[string]any, keys ...string) (any, bool) {
+	for _, want := range keys {
+		want = normalizeImportKey(want)
+		for k, v := range m {
+			if normalizeImportKey(k) == want {
+				return v, true
+			}
+		}
+	}
+	return nil, false
+}
+
+func getAny(m map[string]any, keys ...string) any {
+	v, _ := lookupMapValue(m, keys...)
+	return v
+}
+
+func getString(m map[string]any, keys ...string) string {
+	v, ok := lookupMapValue(m, keys...)
+	if !ok || v == nil {
+		return ""
+	}
+	switch x := v.(type) {
+	case string:
+		return strings.TrimSpace(x)
+	case json.Number:
+		return x.String()
+	default:
+		return strings.TrimSpace(fmt.Sprint(x))
+	}
+}
+
+func getStringList(m map[string]any, keys ...string) []string {
+	v, ok := lookupMapValue(m, keys...)
+	if !ok {
+		return nil
+	}
+	switch x := v.(type) {
+	case []any:
+		out := make([]string, 0, len(x))
+		for _, item := range x {
+			if s := strings.TrimSpace(fmt.Sprint(item)); s != "" {
+				out = append(out, s)
+			}
+		}
+		return out
+	case []string:
+		return x
+	default:
+		if s := strings.TrimSpace(fmt.Sprint(x)); s != "" {
+			return strings.Split(s, ",")
+		}
+	}
+	return nil
+}
+
+func getBool(m map[string]any, keys ...string) bool {
+	v, ok := lookupMapValue(m, keys...)
+	if !ok {
+		return false
+	}
+	switch x := v.(type) {
+	case bool:
+		return x
+	case string:
+		return isTruthy(x)
+	case int:
+		return x != 0
+	case int64:
+		return x != 0
+	case float64:
+		return x != 0
+	default:
+		return false
+	}
+}
+
+func getBoolDefault(m map[string]any, fallback bool, keys ...string) bool {
+	if _, ok := lookupMapValue(m, keys...); !ok {
+		return fallback
+	}
+	return getBool(m, keys...)
+}
+
+func getInt(m map[string]any, keys ...string) int {
+	v, ok := lookupMapValue(m, keys...)
+	if !ok || v == nil {
+		return 0
+	}
+	switch x := v.(type) {
+	case int:
+		return x
+	case int64:
+		return int(x)
+	case uint64:
+		return int(x)
+	case float64:
+		return int(x)
+	case string:
+		return atoiSafe(x)
+	default:
+		return atoiSafe(fmt.Sprint(x))
+	}
+}
+
+func getRateInt(m map[string]any, keys ...string) int {
+	v := getString(m, keys...)
+	if v == "" {
+		return getInt(m, keys...)
+	}
+	fields := strings.FieldsFunc(v, func(r rune) bool { return r < '0' || r > '9' })
+	if len(fields) > 0 {
+		return atoiSafe(fields[0])
+	}
+	return 0
+}
+
+func yamlMap(v any) map[string]any {
+	switch m := v.(type) {
+	case map[string]any:
+		return m
+	case map[any]any:
+		out := make(map[string]any, len(m))
+		for k, value := range m {
+			if s, ok := k.(string); ok {
+				out[s] = value
+			}
+		}
+		return out
+	default:
+		return nil
+	}
+}
+
+func yamlList(v any) []any {
+	switch x := v.(type) {
+	case []any:
+		return x
+	case []map[string]any:
+		out := make([]any, len(x))
+		for i := range x {
+			out[i] = x[i]
+		}
+		return out
+	default:
+		return nil
+	}
+}
+
+func stringMap(m map[string]any) map[string]string {
+	if len(m) == 0 {
+		return nil
+	}
+	out := make(map[string]string, len(m))
+	for k, v := range m {
+		out[k] = strings.TrimSpace(fmt.Sprint(v))
+	}
+	return out
+}
+
+func truncateImportInput(s string) string {
+	const max = 240
+	if len(s) <= max {
+		return s
+	}
+	return s[:max] + "…"
+}

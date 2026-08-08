@@ -48,10 +48,10 @@ type Client struct {
 	OnConnected func()
 
 	// send is the outbound message channel, created once and reused across
-			// reconnections. It is drained by the active session's writeLoop. Other
-			// goroutines (traffic, progress) push spontaneous events via
-			// SendEvent, which is non-blocking: a full buffer drops the oldest stale
-			// sample — acceptable for time-bound telemetry.
+	// reconnections. It is drained by the active session's writeLoop. Other
+	// goroutines (traffic, progress) push spontaneous events via
+	// SendEvent, which is non-blocking: a full buffer drops the oldest stale
+	// sample — acceptable for time-bound telemetry.
 	send chan protocol.Envelope
 }
 

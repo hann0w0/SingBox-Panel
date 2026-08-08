@@ -142,6 +142,9 @@ func parseVLESS(uri string) (ClientNode, error) {
 	if err := parseTLSSecurity(q.Get("security"), q.Get("sni"), q.Get("pbk"), q.Get("sid"), insecureFromQuery(q), q.Get("fp"), &cn.Settings.TLS); err != nil {
 		return ClientNode{}, err
 	}
+	if a := q.Get("alpn"); a != "" {
+		cn.Settings.TLS.ALPN = strings.Split(a, ",")
+	}
 	return cn, nil
 }
 

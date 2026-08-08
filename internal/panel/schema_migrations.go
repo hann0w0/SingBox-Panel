@@ -139,6 +139,15 @@ var applicationMigrations = []schemaMigration{
 			return nil
 		},
 	},
+	{
+		version: 10,
+		name:    "custom node groups",
+		up: func(tx *gorm.DB) error {
+			// AutoMigrate adds the new group column (and its index) to the
+			// existing custom_nodes table; existing rows keep an empty group.
+			return tx.AutoMigrate(&model.CustomNode{})
+		},
+	},
 }
 
 // runSchemaMigrations applies every pending migration in order. If any

@@ -166,38 +166,9 @@ func runSchemaMigrations(db *gorm.DB, cfg config.DatabaseConfig) error {
 		return err
 	}
 
-	hasVersionTable := db.Migrator().HasTable(&model.SchemaMigration{})
-	applied := map[uint]bool{}
-	if hasVersionTable {
-		var rows []model.SchemaMigration
-		if err := db.Order("version").Find(&rows).Error; err != nil {
-			return fmt.Errorf("read schema version: %w", err)
-		}
-		for _, row := range rows {
-			if row.Dirty {
-				return fmt.Errorf("database schema migration %d (%s) is marked dirty; restore the pre-migration backup before starting", row.Version, row.Name)
-			}
-			applied[row.Version] = true
-		}
-	}
-	known := make(map[uint]bool, len(migrations))
-	for _, migration := range migrations {
-		known[migration.version] = true
-	}
-	for version := range applied {
-		if !known[version] {
-			return fmt.Errorf("database schema version %d is newer than or unknown to this panel binary", version)
-		}
-	}
-	missingEarlier := false
-	for _, migration := range migrations {
-		if !applied[migration.version] {
-			missingEarlier = true
-			continue
-		}
-		if missingEarlier {
-			return fmt.Errorf("database schema history is not an ordered prefix: version %d is applied after a missing migration", migration.version)
-		}
+	applied, hasVersionTable, err := validateSchemaMigrationHistory(db, migrations)
+	if err != nil {
+		return err
 	}
 
 	pending := make([]schemaMigration, 0, len(migrations))
@@ -249,6 +220,49 @@ func runSchemaMigrations(db *gorm.DB, cfg config.DatabaseConfig) error {
 		log.Printf("database schema migrated to version %d (%s)", migration.version, migration.name)
 	}
 	return nil
+}
+
+// validateSchemaMigrationHistory reads and validates the migration ledger
+// without applying anything. Keeping this check separate lets the restore path
+// reject a dirty, future, or internally inconsistent database before it can
+// replace the live SQLite file.
+func validateSchemaMigrationHistory(db *gorm.DB, migrations []schemaMigration) (map[uint]bool, bool, error) {
+	hasVersionTable := db.Migrator().HasTable(&model.SchemaMigration{})
+	applied := map[uint]bool{}
+	if hasVersionTable {
+		var rows []model.SchemaMigration
+		if err := db.Order("version").Find(&rows).Error; err != nil {
+			return nil, true, fmt.Errorf("read schema version: %w", err)
+		}
+		for _, row := range rows {
+			if row.Dirty {
+				return nil, true, fmt.Errorf("database schema migration %d (%s) is marked dirty; restore the pre-migration backup before starting", row.Version, row.Name)
+			}
+			applied[row.Version] = true
+		}
+	}
+
+	known := make(map[uint]bool, len(migrations))
+	for _, migration := range migrations {
+		known[migration.version] = true
+	}
+	for version := range applied {
+		if !known[version] {
+			return nil, hasVersionTable, fmt.Errorf("database schema version %d is newer than or unknown to this panel binary", version)
+		}
+	}
+
+	missingEarlier := false
+	for _, migration := range migrations {
+		if !applied[migration.version] {
+			missingEarlier = true
+			continue
+		}
+		if missingEarlier {
+			return nil, hasVersionTable, fmt.Errorf("database schema history is not an ordered prefix: version %d is applied after a missing migration", migration.version)
+		}
+	}
+	return applied, hasVersionTable, nil
 }
 
 func validateMigrations(source []schemaMigration) ([]schemaMigration, error) {

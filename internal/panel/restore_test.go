@@ -11,6 +11,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/gin-gonic/gin"
 	"gorm.io/gorm"
@@ -205,6 +206,176 @@ func TestRestoreRejectsArchiveWithoutDB(t *testing.T) {
 	}
 }
 
+func TestValidateSQLiteFileRejectsCorruptDatabaseWithMagicHeader(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "corrupt.db")
+	data := append([]byte(sqliteMagic), bytes.Repeat([]byte{0}, 128)...)
+	if err := os.WriteFile(path, data, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := validateSQLiteFile(path); err == nil {
+		t.Fatal("database with only a valid magic header must be rejected")
+	}
+}
+
+func TestValidateSQLiteFileRejectsDirtySchema(t *testing.T) {
+	path := panelDBWithMigrationRows(t, []model.SchemaMigration{{
+		Version:   1,
+		Name:      "dirty",
+		Dirty:     true,
+		AppliedAt: time.Now(),
+	}})
+	if err := validateSQLiteFile(path); err == nil || !strings.Contains(err.Error(), "dirty") {
+		t.Fatalf("error = %v, want dirty migration rejection", err)
+	}
+}
+
+func TestValidateSQLiteFileRejectsFutureSchema(t *testing.T) {
+	future := applicationMigrations[len(applicationMigrations)-1].version + 1
+	path := panelDBWithMigrationRows(t, []model.SchemaMigration{{
+		Version:   future,
+		Name:      "future",
+		AppliedAt: time.Now(),
+	}})
+	if err := validateSQLiteFile(path); err == nil || !strings.Contains(err.Error(), "newer than or unknown") {
+		t.Fatalf("error = %v, want future migration rejection", err)
+	}
+}
+
+func TestValidateSQLiteFileRejectsNonPrefixSchema(t *testing.T) {
+	path := panelDBWithMigrationRows(t, []model.SchemaMigration{
+		{Version: 1, Name: "one", AppliedAt: time.Now()},
+		{Version: 3, Name: "three", AppliedAt: time.Now()},
+	})
+	if err := validateSQLiteFile(path); err == nil || !strings.Contains(err.Error(), "ordered prefix") {
+		t.Fatalf("error = %v, want non-prefix migration rejection", err)
+	}
+}
+
+func TestValidateSQLiteFileAcceptsLegacyPanelDatabase(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "legacy.db")
+	db := testDBAt(t, path)
+	if sqlDB, err := db.DB(); err == nil {
+		_ = sqlDB.Close()
+	}
+	if err := validateSQLiteFile(path); err != nil {
+		t.Fatalf("legacy panel database rejected: %v", err)
+	}
+}
+
+func TestValidateSQLiteFileRejectsUnrelatedSQLiteDatabase(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "unrelated.db")
+	db := testDBAt(t, path)
+	if err := db.Migrator().DropTable(&model.User{}); err != nil {
+		t.Fatal(err)
+	}
+	if sqlDB, err := db.DB(); err == nil {
+		_ = sqlDB.Close()
+	}
+	if err := validateSQLiteFile(path); err == nil || !strings.Contains(err.Error(), "users") {
+		t.Fatalf("error = %v, want missing core table rejection", err)
+	}
+}
+
+func TestExtractBackupRejectsOversizedDatabaseEntry(t *testing.T) {
+	archive := archiveWithDeclaredEntry(t, "singbox-panel.db", maxBackupDatabase+1)
+	if _, _, err := extractBackup(bytes.NewReader(archive), t.TempDir()); err == nil || !strings.Contains(err.Error(), "数据库文件过大") {
+		t.Fatalf("error = %v, want oversized database rejection", err)
+	}
+}
+
+func TestExtractBackupRejectsOversizedSecretEntry(t *testing.T) {
+	archive := archiveWithDeclaredEntry(t, "jwt_secret", maxBackupSecret+1)
+	if _, _, err := extractBackup(bytes.NewReader(archive), t.TempDir()); err == nil || !strings.Contains(err.Error(), "jwt_secret 过大") {
+		t.Fatalf("error = %v, want oversized secret rejection", err)
+	}
+}
+
+func TestExtractBackupRejectsTruncatedArchive(t *testing.T) {
+	archive := makeBackupArchive(t, "test-secret", nil)
+	archive = archive[:len(archive)-4]
+	if _, _, err := extractBackup(bytes.NewReader(archive), t.TempDir()); err == nil {
+		t.Fatal("truncated gzip/tar archive must be rejected")
+	}
+}
+
+func TestRestoreWithoutConfigPathPersistsSecretSidecar(t *testing.T) {
+	t.Setenv("JWT_SECRET", "")
+	t.Setenv("SINGBOX_PANEL_JWT_SECRET", "")
+	dir := t.TempDir()
+	dbPath := filepath.Join(dir, "singbox-panel.db")
+	live := testDBAt(t, dbPath)
+	archive := makeBackupArchive(t, "restored-sidecar-secret", nil)
+
+	a := &App{
+		cfg: config.PanelConfig{Database: config.DatabaseConfig{Driver: "sqlite", DSN: dbPath}},
+		db:  live,
+	}
+	w := uploadRestore(t, a, archive)
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d, body = %s", w.Code, w.Body.String())
+	}
+	secretPath := filepath.Join(dir, jwtSecretFile)
+	raw, err := os.ReadFile(secretPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.TrimSpace(string(raw)) != "restored-sidecar-secret" {
+		t.Fatalf("sidecar secret = %q", raw)
+	}
+	info, err := os.Stat(secretPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if info.Mode().Perm() != 0o600 {
+		t.Fatalf("sidecar mode = %o, want 600", info.Mode().Perm())
+	}
+}
+
+func TestPersistRestoredJWTSecretWarnsWhenEnvironmentDiffers(t *testing.T) {
+	t.Setenv("JWT_SECRET", "environment-secret")
+	t.Setenv("SINGBOX_PANEL_JWT_SECRET", "")
+	dbPath := filepath.Join(t.TempDir(), "singbox-panel.db")
+	applied, warning := persistRestoredJWTSecret("", dbPath, "imported-secret")
+	if applied || !strings.Contains(warning, "JWT_SECRET") || !strings.Contains(warning, "不一致") {
+		t.Fatalf("applied = %v, warning = %q", applied, warning)
+	}
+	if _, err := os.Stat(filepath.Join(filepath.Dir(dbPath), jwtSecretFile)); !os.IsNotExist(err) {
+		t.Fatalf("environment-backed secret must not create a sidecar: %v", err)
+	}
+}
+
+func TestPruneRestoreRollbacksKeepsNewestFive(t *testing.T) {
+	dir := t.TempDir()
+	dbPath := filepath.Join(dir, "singbox-panel.db")
+	base := time.Now().Add(-time.Hour)
+	for i := 0; i < 7; i++ {
+		path := dbPath + ".pre-restore-" + time.Date(2026, 1, 1, 0, 0, i, 0, time.UTC).Format("20060102T150405.000000000Z")
+		if err := os.WriteFile(path, []byte("snapshot"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		stamp := base.Add(time.Duration(i) * time.Minute)
+		if err := os.Chtimes(path, stamp, stamp); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := pruneRestoreRollbacks(dbPath, 5); err != nil {
+		t.Fatal(err)
+	}
+	matches, err := filepath.Glob(dbPath + ".pre-restore-*")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(matches) != 5 {
+		t.Fatalf("rollback count = %d, want 5", len(matches))
+	}
+	for _, removedSecond := range []int{0, 1} {
+		removed := dbPath + ".pre-restore-" + time.Date(2026, 1, 1, 0, 0, removedSecond, 0, time.UTC).Format("20060102T150405.000000000Z")
+		if _, err := os.Stat(removed); !os.IsNotExist(err) {
+			t.Fatalf("old rollback still exists: %s", removed)
+		}
+	}
+}
+
 func TestRewriteJWTSecretAppendsWhenMissing(t *testing.T) {
 	dir := t.TempDir()
 	p := filepath.Join(dir, "panel.yaml")
@@ -220,4 +391,40 @@ func TestRewriteJWTSecretAppendsWhenMissing(t *testing.T) {
 	if !strings.Contains(string(raw), "base_url:") {
 		t.Errorf("existing config lost: %s", raw)
 	}
+}
+
+func panelDBWithMigrationRows(t *testing.T, rows []model.SchemaMigration) string {
+	t.Helper()
+	path := filepath.Join(t.TempDir(), "panel.db")
+	db := testDBAt(t, path)
+	if err := db.AutoMigrate(&model.SchemaMigration{}); err != nil {
+		t.Fatal(err)
+	}
+	for i := range rows {
+		if err := db.Create(&rows[i]).Error; err != nil {
+			t.Fatal(err)
+		}
+	}
+	if sqlDB, err := db.DB(); err == nil {
+		_ = sqlDB.Close()
+	}
+	return path
+}
+
+func archiveWithDeclaredEntry(t *testing.T, name string, size int64) []byte {
+	t.Helper()
+	var buf bytes.Buffer
+	gz := gzip.NewWriter(&buf)
+	tw := tar.NewWriter(gz)
+	if err := tw.WriteHeader(&tar.Header{Name: name, Mode: 0o600, Size: size}); err != nil {
+		t.Fatal(err)
+	}
+	// Closing the tar writer reports the deliberately missing body. The header
+	// is nevertheless complete, which is enough to exercise size validation
+	// before extraction attempts to read or allocate the declared entry.
+	_ = tw.Close()
+	if err := gz.Close(); err != nil {
+		t.Fatal(err)
+	}
+	return buf.Bytes()
 }

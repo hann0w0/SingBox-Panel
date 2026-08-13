@@ -18,17 +18,18 @@ import (
 
 // App is the panel HTTP server and its dependencies.
 type App struct {
-	cfg       config.PanelConfig
-	db        *gorm.DB
-	hub       *Hub
-	auth      *Auth
-	orch      *Orchestrator
-	host      *hostStats
-	engine    *gin.Engine
-	startedAt time.Time
-	login     *loginGuard
-	version   string
-	cfgPath   string
+	cfg                 config.PanelConfig
+	db                  *gorm.DB
+	hub                 *Hub
+	auth                *Auth
+	orch                *Orchestrator
+	host                *hostStats
+	engine              *gin.Engine
+	startedAt           time.Time
+	login               *loginGuard
+	customSubscriptions *customNodeSubscriptionManager
+	version             string
+	cfgPath             string
 
 	// selfUpdating serializes panel self-update requests so two admins cannot
 	// launch competing binary swaps at once.
@@ -50,14 +51,15 @@ func NewApp(cfg config.PanelConfig, db *gorm.DB) *App {
 	hub.AfterRegister = func(serverID uint) { orch.PushConfigIfManaged(serverID) }
 
 	a := &App{
-		cfg:       cfg,
-		db:        db,
-		hub:       hub,
-		auth:      NewAuth(cfg.JWTSecret, db),
-		orch:      orch,
-		host:      &hostStats{},
-		startedAt: time.Now(),
-		login:     newLoginGuard(),
+		cfg:                 cfg,
+		db:                  db,
+		hub:                 hub,
+		auth:                NewAuth(cfg.JWTSecret, db),
+		orch:                orch,
+		host:                &hostStats{},
+		startedAt:           time.Now(),
+		login:               newLoginGuard(),
+		customSubscriptions: newCustomNodeSubscriptionManager(db),
 	}
 	a.engine = a.routes()
 	return a
@@ -158,6 +160,11 @@ func (a *App) routes() *gin.Engine {
 		admin.DELETE("/custom-nodes/:id", a.deleteCustomNode)
 		admin.POST("/custom-nodes/batch-delete", a.batchDeleteCustomNodes)
 		admin.POST("/custom-nodes/batch-group", a.batchSetCustomNodeGroup)
+		admin.GET("/custom-node-subscriptions", a.listCustomNodeSubscriptions)
+		admin.POST("/custom-node-subscriptions", a.createCustomNodeSubscription)
+		admin.PUT("/custom-node-subscriptions/:id", a.updateCustomNodeSubscription)
+		admin.DELETE("/custom-node-subscriptions/:id", a.deleteCustomNodeSubscription)
+		admin.POST("/custom-node-subscriptions/:id/sync", a.syncCustomNodeSubscription)
 
 		// Panel maintenance: report/update the panel's own version and export
 		// a full data backup (SQLite DB + jwt_secret) for migration.
@@ -201,6 +208,12 @@ func (a *App) mountFrontend(r *gin.Engine) {
 		}
 		index := filepath.Join(dir, "index.html")
 		if fileExists(index) {
+			// The SPA entry selects content-hashed JavaScript bundles. Never cache
+			// index.html itself, otherwise a long-lived admin tab can keep loading an
+			// obsolete Users chunk after an in-place deployment.
+			c.Header("Cache-Control", "no-store, no-cache, must-revalidate, max-age=0")
+			c.Header("Pragma", "no-cache")
+			c.Header("Expires", "0")
 			c.File(index)
 			return
 		}
@@ -217,6 +230,7 @@ func (a *App) Run(ctx context.Context) error {
 
 	rec := NewReconciler(a.db, func(serverIDs []uint) { a.refreshUserProxyAccess(serverIDs) })
 	go rec.Run(ctx)
+	go a.customSubscriptions.run(ctx)
 
 	srv := &http.Server{Addr: a.cfg.Listen, Handler: a.engine}
 	go func() {

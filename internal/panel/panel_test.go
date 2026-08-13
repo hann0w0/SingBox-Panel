@@ -879,3 +879,22 @@ func TestFrontendServesBundledClientLogos(t *testing.T) {
 		t.Fatalf("logo response = %q, want PNG bytes", w.Body.Bytes())
 	}
 }
+
+func TestFrontendIndexDisablesCaching(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "index.html"), []byte("spa-index"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	r := gin.New()
+	(&App{cfg: config.PanelConfig{WebDir: dir}}).mountFrontend(r)
+
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/admin/users", nil))
+	if w.Code != http.StatusOK {
+		t.Fatalf("index status = %d, body = %q", w.Code, w.Body.String())
+	}
+	if got := w.Header().Get("Cache-Control"); !strings.Contains(got, "no-store") {
+		t.Fatalf("Cache-Control = %q; want no-store", got)
+	}
+}

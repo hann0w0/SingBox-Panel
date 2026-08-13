@@ -26,12 +26,15 @@ func InitDB(cfg config.PanelConfig) (*gorm.DB, error) {
 	var dial gorm.Dialector
 	switch cfg.Database.Driver {
 	case "sqlite", "":
-		if dir := filepath.Dir(cfg.Database.DSN); dir != "" && dir != "." {
-			if err := os.MkdirAll(dir, 0o755); err != nil {
-				return nil, fmt.Errorf("create sqlite dir: %w", err)
+		if databaseFile := sqliteFilePath(cfg.Database.DSN); databaseFile != "" {
+			dir := filepath.Dir(databaseFile)
+			if dir != "" && dir != "." {
+				if err := os.MkdirAll(dir, 0o755); err != nil {
+					return nil, fmt.Errorf("create sqlite dir: %w", err)
+				}
 			}
 		}
-		dial = sqlite.Open(cfg.Database.DSN)
+		dial = sqlite.Open(sqliteDSN(cfg.Database.DSN))
 	case "mysql":
 		dial = mysql.Open(cfg.Database.DSN)
 	case "postgres":
@@ -46,6 +49,17 @@ func InitDB(cfg config.PanelConfig) (*gorm.DB, error) {
 	if err != nil {
 		return nil, fmt.Errorf("open db: %w", err)
 	}
+	if strings.EqualFold(cfg.Database.Driver, "sqlite") || cfg.Database.Driver == "" {
+		// Subscription reconciliation can run in parallel with HTTP writes. WAL
+		// plus a busy timeout prevents transient writer collisions, while a single
+		// pooled connection keeps SQLite transaction ordering deterministic.
+		sqlDB, err := db.DB()
+		if err != nil {
+			return nil, fmt.Errorf("get sqlite db: %w", err)
+		}
+		sqlDB.SetMaxOpenConns(1)
+		sqlDB.SetMaxIdleConns(1)
+	}
 	if err := runSchemaMigrations(db, cfg.Database); err != nil {
 		return nil, fmt.Errorf("migrate: %w", err)
 	}
@@ -53,6 +67,14 @@ func InitDB(cfg config.PanelConfig) (*gorm.DB, error) {
 		return nil, err
 	}
 	return db, nil
+}
+
+func sqliteDSN(dsn string) string {
+	separator := "?"
+	if strings.Contains(dsn, "?") {
+		separator = "&"
+	}
+	return dsn + separator + "_pragma=busy_timeout(10000)&_pragma=journal_mode(WAL)"
 }
 
 func seed(db *gorm.DB, cfg config.PanelConfig) error {

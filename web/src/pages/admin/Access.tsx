@@ -1,11 +1,10 @@
 import { memo, useCallback, useEffect, useMemo, useState } from 'react'
-import type { Key as ReactKey } from 'react'
 import {
-  Alert,
   AutoComplete,
   Button,
   Card,
   Checkbox,
+  Descriptions,
   Empty,
   Form,
   Grid,
@@ -13,7 +12,6 @@ import {
   InputNumber,
   Modal,
   Popover,
-  Radio,
   Select,
   Space,
   Spin,
@@ -21,37 +19,39 @@ import {
   Table,
   Tabs,
   Tag,
+  Typography,
   message,
 } from 'antd'
 import {
-  CheckOutlined,
-  CloudDownloadOutlined,
   DeleteOutlined,
   DownOutlined,
   EditOutlined,
-  FileSearchOutlined,
   FolderAddOutlined,
   PlusOutlined,
+  ReloadOutlined,
   RightOutlined,
   SaveOutlined,
   UndoOutlined,
-  WarningOutlined,
 } from '@ant-design/icons'
 import {
   batchDeleteCustomNodes,
   batchSetCustomNodeGroup,
+  createCustomNodeSubscription,
   createCustomNode,
+  deleteCustomNodeSubscription,
   deleteCustomNode,
   errMsg,
   getUserAccess,
-  importCustomNodes,
+  listCustomNodeSubscriptions,
   listServers,
-  previewCustomNodeImport,
+  syncCustomNodeSubscription,
+  updateCustomNodeSubscription,
   updateCustomNode,
   updateUserAccess,
 } from '../../api'
-import type { CustomNode, CustomNodeImportPreview, CustomNodeImportPreviewNode } from '../../api'
+import type { CustomNode, CustomNodeSubscription } from '../../api'
 import type { Inbound, Server } from '../../types'
+import { RegionFlag, regionCodeFromFlag, removeRegionFlag } from '../../components/RegionFlag'
 
 // ======================= 节点分配 =======================
 
@@ -232,15 +232,16 @@ export function AssignModal({ userId, userEmail, nodes, open, onClose, onSaved }
     })
   }, [nodes])
 
-  // Expand every group when the dialog opens so all nodes are visible at once
-  // (rows are memoized, so ticking a chip does not re-render the whole list).
   const allGroupKeys = useMemo(
     () => [...managedGroups, ...customGroups].map((g) => g.key),
     [customGroups, managedGroups],
   )
+
+  // Start each assignment session with compact group rows. Administrators can
+  // expand only the groups they need or use the existing "全部展开" action.
   useEffect(() => {
-    if (open) setExpandedGroups(new Set(allGroupKeys))
-  }, [open, allGroupKeys])
+    if (open) setExpandedGroups(new Set())
+  }, [open, userId])
 
   const selectedInboundSet = useMemo(() => new Set(inboundIDs), [inboundIDs])
   const selectedCustomSet = useMemo(() => new Set(customNodeIDs), [customNodeIDs])
@@ -248,9 +249,6 @@ export function AssignModal({ userId, userEmail, nodes, open, onClose, onSaved }
     item.kind === 'managed' ? selectedInboundSet.has(item.id) : selectedCustomSet.has(item.id)
   )
 
-  const totalNodeCount = managedGroups.reduce((sum, group) => sum + group.items.length, 0)
-    + customGroups.reduce((sum, group) => sum + group.items.length, 0)
-  const selectedCount = inboundIDs.length + customNodeIDs.length
   const isDirty = useMemo(() => {
     const equal = (a: number[], b: number[]) => {
       if (a.length !== b.length) return false
@@ -393,8 +391,7 @@ export function AssignModal({ userId, userEmail, nodes, open, onClose, onSaved }
       style={{ maxWidth: 'calc(100vw - 16px)' }}
       destroyOnClose
     >
-      <div className="access-target-bar" style={{ marginBottom: 12, display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-        <Tag color="blue">已选 {selectedCount} / {totalNodeCount}</Tag>
+      <div className="access-target-bar" style={{ marginBottom: 12, display: 'flex', alignItems: 'center', justifyContent: 'flex-end' }}>
         {allGroupKeys.length > 1 ? (
           <Button size="small" type="text" icon={allCollapsed ? <DownOutlined /> : <RightOutlined />} onClick={toggleAllGroups}>
             {allCollapsed ? '全部展开' : '全部收起'}
@@ -449,18 +446,6 @@ const TLS_REALITY = ['vless', 'vmess', 'trojan']
 const HAS_TRANSPORT = ['vless', 'vmess', 'trojan']
 const HAS_BANDWIDTH = ['hysteria2', 'hysteria']
 
-const importSourceLabels: Record<string, string> = {
-  url: '订阅 URL',
-  subscription_url: '订阅 URL',
-  clash: 'Clash / Mihomo',
-  'clash-yaml': 'Clash / Mihomo YAML',
-  yaml: 'YAML',
-  surge: 'Surge',
-  links: '分享链接',
-  link: '分享链接',
-  base64: 'Base64 列表',
-}
-
 function hasPreviewValue(value: unknown): boolean {
   if (typeof value === 'boolean') return value
   if (typeof value === 'number') return value !== 0
@@ -468,32 +453,32 @@ function hasPreviewValue(value: unknown): boolean {
   return value != null
 }
 
-function previewParamSummary(node: CustomNodeImportPreviewNode): string[] {
-  const params = node.params ?? {}
-  const labels: Record<string, string> = {
-    uuid: 'UUID',
-    password: '密码',
-    psk: 'PSK',
-    method: '加密',
-    tls: 'TLS',
-    sni: 'SNI',
-    insecure: '跳过证书',
-    skip_cert_verify: '跳过证书',
-    udp: 'UDP',
-    udp_over_stream: 'UDP over Stream',
-    transport: '传输',
-    flow: 'Flow',
-    fingerprint: '指纹',
-    pbk: 'REALITY',
-    plugin: 'Plugin',
-  }
-  const result: string[] = []
-  for (const [key, value] of Object.entries(params)) {
-    if (!hasPreviewValue(value)) continue
-    const label = labels[key] ?? key
-    if (!result.includes(label)) result.push(label)
-  }
-  return result.slice(0, 5)
+const detailParamLabels: Record<string, string> = {
+  uuid: 'UUID', password: '密码', username: '用户名', psk: 'PSK', method: '加密方式',
+  flow: 'Flow', tls: '安全', sni: 'SNI', pbk: 'PublicKey', sid: 'ShortID',
+  fingerprint: '指纹', insecure: '跳过证书验证', transport: '传输', network: '网络',
+  path: 'Path', host: 'Host', alpn: 'ALPN', congestion_control: '拥塞控制',
+  udp_relay_mode: 'UDP Relay', udp_over_stream: 'UDP over Stream', ss_plugin: 'Plugin',
+  obfs: '混淆', obfs_password: '混淆密码', up_mbps: '上行 Mbps', down_mbps: '下行 Mbps',
+  version: '版本', obfs_mode: '混淆模式', mode: '模式', security: '加密', alter_id: 'AlterId',
+}
+
+function nodeDisplayName(node: CustomNode) {
+  const code = node.detail?.region || regionCodeFromFlag(node.name)
+  const name = removeRegionFlag(node.name) || '（未命名）'
+  return (
+    <span className="custom-node-name">
+      {code ? <RegionFlag code={code} fallback={false} /> : null}
+      <span>{name}</span>
+    </span>
+  )
+}
+
+function detailValue(value: unknown): string {
+  if (typeof value === 'boolean') return value ? 'true' : 'false'
+  if (value == null) return ''
+  if (typeof value === 'object') return JSON.stringify(value)
+  return String(value)
 }
 
 export function CustomNodesPanel({ nodes, onNodesChange }: { nodes: CustomNode[]; onNodesChange: () => void }) {
@@ -502,45 +487,39 @@ export function CustomNodesPanel({ nodes, onNodesChange }: { nodes: CustomNode[]
   const [nodeOpen, setNodeOpen] = useState(false)
   const [editingNode, setEditingNode] = useState<CustomNode | null>(null)
   const [nodeForm] = Form.useForm()
-  const nodeMode = Form.useWatch('node_mode', nodeForm) ?? 'link'
   const nodeProtocol = Form.useWatch('protocol', nodeForm)
   const nodeTransport = Form.useWatch('transport', nodeForm)
   const nodeTLSMode = Form.useWatch('tls_mode', nodeForm)
-  const nodeGroup = Form.useWatch('group', nodeForm)
   const nodeSnellVersion = Form.useWatch('snell_version', nodeForm)
   const nodeLinkSource = Form.useWatch('link', nodeForm)
-  const [importPreview, setImportPreview] = useState<CustomNodeImportPreview | null>(null)
-  const [previewSource, setPreviewSource] = useState('')
-  const [previewLoading, setPreviewLoading] = useState(false)
-  const [importLoading, setImportLoading] = useState(false)
-  const [importError, setImportError] = useState('')
   const [selectedNodeIDs, setSelectedNodeIDs] = useState<number[]>([])
+  const [selectedGroups, setSelectedGroups] = useState<string[]>([])
+  const [detailNode, setDetailNode] = useState<CustomNode | null>(null)
   const [groupMoveOpen, setGroupMoveOpen] = useState(false)
   const [groupMoveValue, setGroupMoveValue] = useState('')
   const [groupMoving, setGroupMoving] = useState(false)
   const [batchDeleting, setBatchDeleting] = useState(false)
+  const [subscriptions, setSubscriptions] = useState<CustomNodeSubscription[]>([])
+  const [subscriptionOpen, setSubscriptionOpen] = useState(false)
+  const [editingSubscription, setEditingSubscription] = useState<CustomNodeSubscription | null>(null)
+  const [subscriptionForm] = Form.useForm()
+  const [subscriptionSaving, setSubscriptionSaving] = useState(false)
+  const [syncingSubscriptionID, setSyncingSubscriptionID] = useState<number | null>(null)
   // Inline group quick-edit on the group column (Popover).
   const [quickGroup, setQuickGroup] = useState<CustomNode | null>(null)
   const [quickGroupValue, setQuickGroupValue] = useState('')
-  const normalizedLinkSource = typeof nodeLinkSource === 'string' ? nodeLinkSource.trim() : ''
-  const previewReady = !!importPreview && previewSource === normalizedLinkSource
+  const normalizedNodeLink = typeof nodeLinkSource === 'string' ? nodeLinkSource.trim() : ''
+  const hasNodeURI = normalizedNodeLink.length > 0
 
-  const resetImportState = () => {
-    setImportPreview(null)
-    setPreviewSource('')
-    setPreviewLoading(false)
-    setImportLoading(false)
-    setImportError('')
-  }
+  const loadSubscriptions = useCallback(() => {
+    listCustomNodeSubscriptions()
+      .then(setSubscriptions)
+      .catch((e) => message.error(errMsg(e)))
+  }, [])
 
-  // Never leave a stale preview visible after the source text changes.
   useEffect(() => {
-    if (previewSource && previewSource !== normalizedLinkSource) {
-      setImportPreview(null)
-      setPreviewSource('')
-      setImportError('')
-    }
-  }, [normalizedLinkSource, previewSource])
+    loadSubscriptions()
+  }, [loadSubscriptions])
 
   // Distinct groups already in use, offered as selectable options in the node
   // form. Each option shows how many nodes it currently holds; the field also
@@ -563,21 +542,102 @@ export function CustomNodesPanel({ nodes, onNodesChange }: { nodes: CustomNode[]
 
   const openNodeCreate = () => {
     setEditingNode(null)
-    resetImportState()
     nodeForm.resetFields()
-    nodeForm.setFieldsValue({ enabled: true, node_mode: 'link', sort_order: 0, tls_mode: 'tls', transport: 'tcp', snell_version: 5, snell_obfs_mode: 'none', snell_mode: '', method: '2022-blake3-aes-128-gcm', group: '' })
+    nodeForm.setFieldsValue({ enabled: true, link: '', tls_mode: 'tls', transport: 'tcp', snell_version: 5, snell_obfs_mode: 'none', snell_mode: '', method: '2022-blake3-aes-128-gcm', group: '' })
     setNodeOpen(true)
+  }
+
+  const openSubscriptionCreate = () => {
+    setEditingSubscription(null)
+    subscriptionForm.resetFields()
+    subscriptionForm.setFieldsValue({ enabled: true, auto_update: true, group: '' })
+    setSubscriptionOpen(true)
+  }
+
+  const openSubscriptionEdit = (subscription: CustomNodeSubscription) => {
+    setEditingSubscription(subscription)
+    subscriptionForm.resetFields()
+    subscriptionForm.setFieldsValue({
+      name: subscription.name,
+      url: subscription.url,
+      group: subscription.group || '',
+      enabled: subscription.enabled,
+      auto_update: subscription.auto_update,
+    })
+    setSubscriptionOpen(true)
+  }
+
+  const saveSubscription = async () => {
+    const values = await subscriptionForm.validateFields()
+    setSubscriptionSaving(true)
+    try {
+      const body = {
+        name: values.name.trim(),
+        url: values.url.trim(),
+        group: typeof values.group === 'string' ? values.group.trim() : '',
+        enabled: values.enabled !== false,
+        auto_update: values.auto_update !== false,
+        update_interval_minutes: editingSubscription?.update_interval_minutes ?? 60,
+        base_sort_order: editingSubscription?.base_sort_order ?? 0,
+      }
+      if (editingSubscription) {
+        await updateCustomNodeSubscription(editingSubscription.id, body)
+        message.success('订阅源已保存')
+      } else {
+        const result = await createCustomNodeSubscription(body)
+        if (result.sync_error) {
+          message.warning(`订阅源已保存，首次同步失败：${result.sync_error}`)
+        } else {
+          message.success(`订阅源已保存并同步 ${result.sync.total} 个节点`)
+        }
+      }
+      setSubscriptionOpen(false)
+      loadSubscriptions()
+      onNodesChange()
+    } catch (e) {
+      message.error(errMsg(e))
+    } finally {
+      setSubscriptionSaving(false)
+    }
+  }
+
+  const syncSubscription = async (subscription: CustomNodeSubscription) => {
+    setSyncingSubscriptionID(subscription.id)
+    try {
+      const result = await syncCustomNodeSubscription(subscription.id)
+      message.success(`同步完成：新增 ${result.sync.created}，更新 ${result.sync.updated}，删除 ${result.sync.deleted}`)
+      loadSubscriptions()
+      onNodesChange()
+    } catch (e) {
+      message.error(errMsg(e))
+      loadSubscriptions()
+    } finally {
+      setSyncingSubscriptionID(null)
+    }
+  }
+
+  const removeSubscription = (subscription: CustomNodeSubscription) => {
+    Modal.confirm({
+      title: `删除订阅源「${subscription.name}」？`,
+      content: `这会同时删除该订阅源管理的 ${subscription.node_count} 个节点，手工节点不受影响。`,
+      okType: 'danger',
+      okText: '删除',
+      onOk: async () => {
+        await deleteCustomNodeSubscription(subscription.id)
+        message.success('订阅源及其节点已删除')
+        loadSubscriptions()
+        onNodesChange()
+      },
+    })
   }
 
   const openNodeEdit = (n: CustomNode) => {
     setEditingNode(n)
-    resetImportState()
     const p = n.params ?? {}
     nodeForm.resetFields()
     nodeForm.setFieldsValue({
       name: n.name,
       group: n.group || '',
-      node_mode: n.link && n.link.trim() ? 'link' : 'manual',
       link: n.link,
       protocol: n.protocol,
       address: n.address,
@@ -611,85 +671,11 @@ export function CustomNodesPanel({ nodes, onNodesChange }: { nodes: CustomNode[]
       username: p.username,
       all_users: n.all_users,
       enabled: n.enabled,
-      sort_order: n.sort_order,
     })
     setNodeOpen(true)
   }
 
-  const previewNodeImport = async () => {
-    const source = normalizedLinkSource
-    if (!source) {
-      nodeForm.setFields([{ name: 'link', errors: ['请粘贴订阅 URL、配置文本或分享链接'] }])
-      return
-    }
-    nodeForm.setFields([{ name: 'link', errors: [] }])
-    setPreviewLoading(true)
-    setImportError('')
-    try {
-      const result = await previewCustomNodeImport(source)
-      setImportPreview(result)
-      setPreviewSource(source)
-      if (result.nodes.length === 0) {
-        message.warning(result.skipped[0]?.error || '没有解析到可添加的节点')
-      }
-    } catch (e) {
-      setImportPreview(null)
-      setPreviewSource('')
-      const error = errMsg(e)
-      setImportError(error)
-      message.error(error)
-    } finally {
-      setPreviewLoading(false)
-    }
-  }
-
   const submitNode = async () => {
-    if (!editingNode && nodeMode === 'link') {
-      if (!normalizedLinkSource) {
-        nodeForm.setFields([{ name: 'link', errors: ['请粘贴订阅 URL、配置文本或分享链接'] }])
-        return
-      }
-      // The first confirmation is intentionally non-mutating: it only parses
-      // and displays exactly what will be added. A second confirmation imports.
-      if (!previewReady) {
-        await previewNodeImport()
-        return
-      }
-      if (!importPreview || importPreview.nodes.length === 0) return
-
-      const v = nodeForm.getFieldsValue(['enabled', 'sort_order', 'group'])
-      const group = typeof v.group === 'string' ? v.group.trim() : ''
-      setImportLoading(true)
-      setImportError('')
-      try {
-        const result = await importCustomNodes({
-          source: normalizedLinkSource,
-          group,
-          enabled: v.enabled !== false,
-          sort_order: v.sort_order ?? 0,
-        })
-        const createdCount = result.nodes.length || result.count || 0
-        if (createdCount === 0) {
-          const error = result.skipped[0]?.error || '没有添加任何节点'
-          setImportError(error)
-          message.error(error)
-          return
-        }
-        message.success(`已添加 ${createdCount} 个其他节点`)
-        if (result.skipped.length > 0) message.warning(`${result.skipped.length} 项未导入，请检查提示`)
-        setNodeOpen(false)
-        resetImportState()
-        onNodesChange()
-      } catch (e) {
-        const error = errMsg(e)
-        setImportError(error)
-        message.error(error)
-      } finally {
-        setImportLoading(false)
-      }
-      return
-    }
-
     const v = await nodeForm.validateFields()
     const body: Record<string, unknown> = {
       name: v.name,
@@ -699,12 +685,12 @@ export function CustomNodesPanel({ nodes, onNodesChange }: { nodes: CustomNode[]
       all_users: editingNode ? editingNode.all_users : false,
       user_ids: editingNode && !editingNode.all_users ? editingNode.user_ids ?? [] : [],
       excluded_user_ids: editingNode && editingNode.all_users ? editingNode.excluded_user_ids ?? [] : [],
-      enabled: v.enabled,
-      sort_order: v.sort_order ?? 0,
+      enabled: v.enabled !== false,
+      sort_order: editingNode?.sort_order ?? 0,
     }
-    if (v.node_mode === 'link' && v.link && v.link.trim()) {
+    if (normalizedNodeLink) {
       Object.assign(body, {
-        link: v.link.trim(),
+        link: normalizedNodeLink,
         protocol: '',
         address: '',
         port: undefined,
@@ -851,30 +837,51 @@ export function CustomNodesPanel({ nodes, onNodesChange }: { nodes: CustomNode[]
     }
   }
 
-  // Filter options for the group column: every distinct group plus a sentinel
-  // for nodes without any group.
+  // A wide, searchable group selector above the table is easier to use than
+  // Ant Table's narrow column-filter popover, especially with many groups.
   const groupFilterOptions = useMemo(() => {
-    const opts = groupOptions.map((g) => ({ text: g.value, value: g.value }))
-    if (nodes.some((n) => !(n.group || '').trim())) opts.push({ text: '未分组', value: '__none__' })
+    const opts = groupOptions.map((g) => ({ label: g.label, value: g.value }))
+    const ungrouped = nodes.filter((n) => !(n.group || '').trim()).length
+    if (ungrouped > 0) opts.push({ label: `未分组（${ungrouped} 个节点）`, value: '__none__' })
     return opts
   }, [groupOptions, nodes])
+
+  const filteredNodes = useMemo(() => {
+    if (selectedGroups.length === 0) return nodes
+    const selected = new Set(selectedGroups)
+    return nodes.filter((node) => {
+      const group = (node.group || '').trim()
+      return group ? selected.has(group) : selected.has('__none__')
+    })
+  }, [nodes, selectedGroups])
+
+  const detailParams = useMemo(() => {
+    if (!detailNode) return []
+    const source = detailNode.detail?.params ?? detailNode.params ?? {}
+    return Object.entries(source)
+      .filter(([key, value]) => !['服务器', '端口', '协议'].includes(key) && hasPreviewValue(value))
+      .map(([key, value]) => [detailParamLabels[key] ?? key, detailValue(value)] as const)
+  }, [detailNode])
+
+  const detailSubscription = detailNode?.subscription_id
+    ? subscriptions.find((subscription) => subscription.id === detailNode.subscription_id)
+    : undefined
 
   const nodeColumns = [
     {
       title: '名称',
       dataIndex: 'name',
-      render: (v: string) => v || <span style={{ color: '#999' }}>（未命名）</span>,
+      ellipsis: true,
+      render: (_: string, node: CustomNode) => nodeDisplayName(node),
     },
     {
       title: '分组',
       dataIndex: 'group',
       width: 150,
-      filters: groupFilterOptions,
-      onFilter: (value: ReactKey | boolean, n: CustomNode) => {
-        const g = (n.group || '').trim()
-        return value === '__none__' ? !g : g === value
-      },
-      render: (v: string, n: CustomNode) => (
+      render: (v: string, n: CustomNode) => n.subscription_id ? (
+        <Tag color="geekblue" title="分组由订阅源统一管理">{v?.trim() || '未分组'}</Tag>
+      ) : (
+      <span className="custom-node-row-action">
       <Popover
       trigger="click"
       open={quickGroup?.id === n.id}
@@ -918,6 +925,7 @@ export function CustomNodesPanel({ nodes, onNodesChange }: { nodes: CustomNode[]
             <Tag style={{ cursor: 'pointer', color: '#999' }} title="点击设置分组">未分组 ▾</Tag>
           )}
         </Popover>
+      </span>
       ),
     },
     {
@@ -931,9 +939,10 @@ export function CustomNodesPanel({ nodes, onNodesChange }: { nodes: CustomNode[]
     },
     {
       title: '操作',
-      width: isMobile ? 96 : 130,
+      width: 160,
       render: (_: unknown, n: CustomNode) => (
-        <Space size={isMobile ? 2 : 8}>
+        <Space size={isMobile ? 2 : 6} className="custom-node-row-action">
+          <Button size="small" type="link" style={{ padding: '0 4px' }} onClick={() => setDetailNode(n)}>详情</Button>
           <Button size="small" type="link" style={{ padding: '0 4px' }} onClick={() => openNodeEdit(n)}>编辑</Button>
           <Button size="small" type="link" danger style={{ padding: '0 4px' }} onClick={() => removeNode(n)}>删除</Button>
         </Space>
@@ -941,14 +950,152 @@ export function CustomNodesPanel({ nodes, onNodesChange }: { nodes: CustomNode[]
     },
   ]
 
+  const mobileSubscriptionList = subscriptions.length === 0 ? (
+    <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="暂无保存的订阅。" />
+  ) : (
+    <div className="mobile-admin-list">
+      {subscriptions.map((subscription) => (
+        <div className="mobile-subscription-card" key={subscription.id}>
+          <div className="mobile-card-heading">
+            <span className="mobile-subscription-name">{subscription.name}</span>
+            <span className="mobile-subscription-count">{subscription.node_count} 个节点</span>
+          </div>
+          <div className="mobile-card-meta">
+            <span className={subscription.last_error ? 'mobile-card-error' : undefined}>
+              同步：{subscription.last_sync_at ? new Date(subscription.last_sync_at).toLocaleString() : '尚未同步'}
+            </span>
+          </div>
+          <div className="mobile-card-actions">
+            <Button
+              size="small"
+              type="link"
+              icon={<ReloadOutlined />}
+              loading={syncingSubscriptionID === subscription.id}
+              onClick={() => void syncSubscription(subscription)}
+            >刷新</Button>
+            <Button size="small" type="link" onClick={() => openSubscriptionEdit(subscription)}>编辑</Button>
+            <Button size="small" type="link" danger onClick={() => removeSubscription(subscription)}>删除</Button>
+          </div>
+        </div>
+      ))}
+    </div>
+  )
+
+  const mobileNodeList = filteredNodes.length === 0 ? (
+    <Empty
+      image={Empty.PRESENTED_IMAGE_SIMPLE}
+      description={selectedGroups.length > 0 ? '当前分组筛选下没有节点' : '暂无其他节点。'}
+    />
+  ) : (
+    <div className="mobile-admin-list">
+      {filteredNodes.map((node) => {
+        const protocol = node.link?.trim() ? protocolOf(node.link) : node.protocol
+        const type = nodeTypeLabel[protocol]
+        const group = node.group?.trim() || '未分组'
+        return (
+          <div
+            className="mobile-node-card"
+            key={node.id}
+            onClick={(event) => {
+              const target = event.target as HTMLElement
+              if (target.closest('button, input, .ant-checkbox-wrapper')) return
+              setDetailNode(node)
+            }}
+          >
+            <div className="mobile-node-card-top">
+              <Checkbox
+                checked={selectedNodeIDs.includes(node.id)}
+                disabled={!!node.subscription_id}
+                onChange={(event) => {
+                  setSelectedNodeIDs((current) => event.target.checked
+                    ? [...current, node.id]
+                    : current.filter((id) => id !== node.id))
+                }}
+              />
+              <div className="mobile-node-card-name">{nodeDisplayName(node)}</div>
+              <Tag color={type?.color}>{type?.label || protocol || '-'}</Tag>
+            </div>
+            <div className="mobile-node-card-meta">
+              <span>分组：{group}</span>
+              {node.detail?.address || node.address ? (
+                <span>{node.detail?.address || node.address}{(node.detail?.port || node.port) ? `:${node.detail?.port || node.port}` : ''}</span>
+              ) : null}
+            </div>
+            <div className="mobile-card-actions">
+              <Button size="small" type="link" onClick={() => setDetailNode(node)}>详情</Button>
+              <Button size="small" type="link" onClick={() => openNodeEdit(node)}>编辑</Button>
+              <Button size="small" type="link" danger onClick={() => removeNode(node)}>删除</Button>
+            </div>
+          </div>
+        )
+      })}
+    </div>
+  )
+
   return (
     <>
+      <div style={{ width: '100%' }}>
+      <Card
+        title="订阅源"
+        size="small"
+        extra={<Button type="primary" size="small" icon={<PlusOutlined />} onClick={openSubscriptionCreate}>添加订阅</Button>}
+        style={{ marginBottom: 12 }}
+      >
+        {isMobile ? mobileSubscriptionList : <Table
+          rowKey="id"
+          size="small"
+          dataSource={subscriptions}
+          pagination={false}
+          scroll={{ x: 720 }}
+          columns={[
+            {
+              title: '名称',
+              dataIndex: 'name',
+              width: 280,
+              render: (value: string) => value,
+            },
+            {
+              title: '节点',
+              dataIndex: 'node_count',
+              width: 70,
+              render: (value: number) => `${value} 个`,
+            },
+            {
+              title: '最近同步',
+              width: 180,
+              render: (_: unknown, subscription: CustomNodeSubscription) => (
+                <span title={subscription.last_error || undefined} style={{ color: subscription.last_error ? '#cf1322' : undefined }}>
+                  {subscription.last_sync_at ? new Date(subscription.last_sync_at).toLocaleString() : '尚未同步'}
+                </span>
+              ),
+            },
+            {
+              title: '操作',
+              width: 190,
+              render: (_: unknown, subscription: CustomNodeSubscription) => (
+                <Space size={4}>
+                  <Button
+                    size="small"
+                    type="link"
+                    icon={<ReloadOutlined />}
+                    loading={syncingSubscriptionID === subscription.id}
+                    onClick={() => void syncSubscription(subscription)}
+                  >刷新</Button>
+                  <Button size="small" type="link" onClick={() => openSubscriptionEdit(subscription)}>编辑</Button>
+                  <Button size="small" type="link" danger onClick={() => removeSubscription(subscription)}>删除</Button>
+                </Space>
+              ),
+            },
+          ]}
+          locale={{ emptyText: '暂无保存的订阅源。添加后会定期同步节点增删和配置变化。' }}
+        />}
+      </Card>
       <Card
         title="其他节点"
         size="small"
         extra={<Button type="primary" size="small" icon={<PlusOutlined />} onClick={openNodeCreate}>新增节点</Button>}
         style={{ flex: 1, display: 'flex', flexDirection: 'column', width: '100%' }}
-        styles={{ body: { flex: 1, overflow: 'auto' } }}
+        styles={{ body: { flex: 1, minWidth: 0 } }}
       >
         {selectedNodeIDs.length > 0 ? (
           <div className="custom-node-batch-bar">
@@ -978,21 +1125,117 @@ export function CustomNodesPanel({ nodes, onNodesChange }: { nodes: CustomNode[]
             </Space>
           </div>
         ) : null}
-        <Table
+        <div className="custom-node-filter-bar">
+          <span className="custom-node-filter-label">分组筛选</span>
+          <Select
+            mode="multiple"
+            allowClear
+            showSearch
+            maxTagCount="responsive"
+            value={selectedGroups}
+            onChange={setSelectedGroups}
+            options={groupFilterOptions}
+            placeholder="全部分组（可搜索、多选）"
+            optionFilterProp="label"
+            className="custom-node-group-filter"
+          />
+          <span className="custom-node-filter-count">显示 {filteredNodes.length} / {nodes.length} 个节点</span>
+        </div>
+        {isMobile ? mobileNodeList : <Table
           rowKey="id"
           size="small"
           className="compact-rows"
-          dataSource={nodes}
+          dataSource={filteredNodes}
           pagination={false}
-          scroll={{ x: isMobile ? undefined : 700, y: 340 }}
+          tableLayout="fixed"
+          scroll={{ y: 340 }}
           columns={nodeColumns}
           rowSelection={{
             selectedRowKeys: selectedNodeIDs,
             onChange: (keys) => setSelectedNodeIDs(keys as number[]),
+            getCheckboxProps: (node) => ({ disabled: !!node.subscription_id }),
           }}
-          locale={{ emptyText: '暂无其他节点。可粘贴朋友分享的链接（vless://、ss://、trojan:// 等），合并进订阅输出。' }}
-        />
+          onRow={(node) => ({
+            className: 'custom-node-clickable-row',
+            onClick: (event) => {
+              const target = event.target as HTMLElement
+              if (target.closest('.custom-node-row-action, .ant-checkbox-wrapper, button, input')) return
+              setDetailNode(node)
+            },
+          })}
+          locale={{ emptyText: selectedGroups.length > 0 ? '当前分组筛选下没有节点' : '暂无其他节点。可粘贴朋友分享的链接（vless://、ss://、trojan:// 等），合并进订阅输出。' }}
+        />}
       </Card>
+      </div>
+
+      <Modal
+        title={editingSubscription ? '编辑订阅' : '添加订阅'}
+        open={subscriptionOpen}
+        onOk={() => void saveSubscription()}
+        onCancel={() => setSubscriptionOpen(false)}
+        okText={editingSubscription ? '保存' : '保存并同步'}
+        confirmLoading={subscriptionSaving}
+        destroyOnClose
+      >
+        <Form form={subscriptionForm} layout="vertical">
+          <Form.Item name="name" label="名称" rules={[{ required: true, whitespace: true, message: '请输入订阅源名称' }]}>
+            <Input placeholder="例如：机场 A" />
+          </Form.Item>
+          <Form.Item name="url" label="订阅链接" rules={[{ required: true, whitespace: true, message: '请输入 HTTP(S) 订阅链接' }]}>
+            <Input.TextArea rows={3} placeholder="https://example.com/sub" spellCheck={false} />
+          </Form.Item>
+          <Form.Item name="group" label="节点分组" extra="同步出来的节点统一归入这个分组；新节点默认不分配给任何用户，需在「节点分配」中手动授权。">
+            <AutoComplete
+              placeholder="选择已有分组，或输入新分组名"
+              options={groupOptions}
+              allowClear
+              filterOption={(input, option) => (option?.value ?? '').toLowerCase().includes(input.toLowerCase())}
+            />
+          </Form.Item>
+          <div className="subscription-switch-row">
+            <Form.Item name="auto_update" label="自动更新" valuePropName="checked">
+              <Switch />
+            </Form.Item>
+            <Form.Item name="enabled" label="节点启用" valuePropName="checked">
+              <Switch />
+            </Form.Item>
+          </div>
+        </Form>
+      </Modal>
+
+      <Modal
+        title={detailNode ? nodeDisplayName(detailNode) : '节点详情'}
+        open={!!detailNode}
+        onCancel={() => setDetailNode(null)}
+        footer={<Button onClick={() => setDetailNode(null)}>关闭</Button>}
+        width={680}
+        destroyOnClose
+      >
+        {detailNode ? (
+          <Descriptions bordered size="small" column={1} labelStyle={{ width: 130 }}>
+              <Descriptions.Item label="来源">
+                {detailNode.subscription_id ? `订阅同步 · ${detailSubscription?.name || `订阅源 #${detailNode.subscription_id}`}` : '手动节点'}
+              </Descriptions.Item>
+              <Descriptions.Item label="分组">{detailNode.group?.trim() || '未分组'}</Descriptions.Item>
+              <Descriptions.Item label="协议">{detailNode.detail?.protocol || detailNode.protocol || protocolOf(detailNode.link || '')}</Descriptions.Item>
+              <Descriptions.Item label="服务器">
+                {detailNode.detail?.address || detailNode.address || '—'}{(detailNode.detail?.port || detailNode.port) ? `:${detailNode.detail?.port || detailNode.port}` : ''}
+              </Descriptions.Item>
+              <Descriptions.Item label="URI 链接">
+                {detailNode.detail?.uri ? (
+                  <Typography.Text className="custom-node-detail-value" copyable={{ text: detailNode.detail.uri }}>{detailNode.detail.uri}</Typography.Text>
+                ) : (
+                  <Typography.Text type="secondary">该协议无通用 URI</Typography.Text>
+                )}
+              </Descriptions.Item>
+              {detailParams.map(([label, value]) => (
+                <Descriptions.Item label={label} key={label}>
+                  <Typography.Text className="custom-node-detail-value" copyable={{ text: value }}>{value}</Typography.Text>
+                </Descriptions.Item>
+              ))}
+            </Descriptions>
+        ) : null}
+      </Modal>
 
       {/* 批量移动到分组 dialog */}
       <Modal
@@ -1028,34 +1271,15 @@ export function CustomNodesPanel({ nodes, onNodesChange }: { nodes: CustomNode[]
         title={editingNode ? '编辑其他节点' : '新增其他节点'}
         open={nodeOpen}
         onOk={submitNode}
-        onCancel={() => {
-          setNodeOpen(false)
-          resetImportState()
-        }}
-        okText={
-          !editingNode && nodeMode === 'link'
-            ? (previewReady ? `确认添加 ${importPreview?.nodes.length ?? 0} 个节点` : '解析并预览')
-            : '保存'
-        }
+        onCancel={() => setNodeOpen(false)}
+        okText="保存"
         cancelText="取消"
-        confirmLoading={previewLoading || importLoading}
-        okButtonProps={{
-          disabled: !editingNode && nodeMode === 'link' && previewReady && (importPreview?.nodes.length ?? 0) === 0,
-        }}
         destroyOnClose
-        width={!editingNode && nodeMode === 'link' ? 680 : 560}
+        width={560}
         style={{ maxWidth: 'calc(100vw - 16px)', top: 24 }}
         styles={{ body: { maxHeight: 'calc(100vh - 200px)', overflowY: 'auto', paddingInline: 4 } }}
       >
         <Form form={nodeForm} layout="vertical">
-          <Form.Item name="node_mode" label="添加方式" extra="Snell 等没有通用链接格式的协议可手动填写。">
-            <Radio.Group
-              options={[
-                { value: 'link', label: editingNode ? '分享链接' : '订阅 / 分享链接' },
-                { value: 'manual', label: '手动填写' },
-              ]}
-            />
-          </Form.Item>
           <Form.Item name="group" label="分组" extra="可选：给节点分组（如机场名），便于列表筛选与批量管理。">
             <AutoComplete
               placeholder="选择已有分组，或输入新分组名"
@@ -1064,113 +1288,18 @@ export function CustomNodesPanel({ nodes, onNodesChange }: { nodes: CustomNode[]
               filterOption={(input, option) => (option?.value ?? '').toLowerCase().includes(input.toLowerCase())}
             />
           </Form.Item>
-          {nodeMode === 'link' && (
-            <>
-              <Form.Item
-                name="link"
-                label={editingNode ? '分享链接' : '订阅链接或配置内容'}
-                rules={[{ required: true, whitespace: true, message: '请粘贴订阅 URL、配置文本或分享链接' }]}
-              >
-                <Input.TextArea
-                  placeholder={editingNode ? 'vless://...' : 'https://example.com/sub\n\n也可直接粘贴 Clash YAML、Surge 配置或多行分享链接'}
-                  autoSize={{ minRows: editingNode ? 2 : 4, maxRows: editingNode ? 4 : 9 }}
-                  spellCheck={false}
-                />
-              </Form.Item>
-
-              {!editingNode ? (
-                <div className="custom-import-workspace">
-                  <div className="custom-import-actions">
-                    <span className="custom-import-source-note">
-                      <CloudDownloadOutlined /> 自动识别 URL、Clash / Mihomo YAML、Surge 配置及多行分享链接
-                    </span>
-                    <Button
-                      icon={<FileSearchOutlined />}
-                      loading={previewLoading}
-                      disabled={!normalizedLinkSource || importLoading}
-                      onClick={() => void previewNodeImport()}
-                    >
-                      {previewReady ? '重新解析' : '解析并预览'}
-                    </Button>
-                  </div>
-
-                  {importError ? (
-                    <Alert className="custom-import-request-error" type="error" showIcon message={importError} />
-                  ) : null}
-
-                  {previewReady && importPreview ? (
-                    <div className="custom-import-preview" aria-live="polite">
-                      <div className="custom-import-summary">
-                        <Space size={[6, 6]} wrap>
-                          <Tag color="green" icon={<CheckOutlined />}>可添加 {importPreview.nodes.length}</Tag>
-                          {importPreview.skipped.length > 0 ? (
-                            <Tag color="orange" icon={<WarningOutlined />}>未解析 {importPreview.skipped.length}</Tag>
-                          ) : null}
-                          {importPreview.fetched ? <Tag color="blue">远程订阅</Tag> : null}
-                          <Tag>
-                            {importSourceLabels[(importPreview.source_type ?? '').toLowerCase()] || importPreview.source_type || '自动识别'}
-                          </Tag>
-                          <Tag color={nodeGroup && nodeGroup.trim() ? 'geekblue' : 'default'}>
-                            {nodeGroup && nodeGroup.trim() ? `归入分组：${nodeGroup.trim()}` : '未设置分组'}
-                          </Tag>
-                        </Space>
-                        <span>导入后默认不绑定用户，请在用户列表中分配。</span>
-                      </div>
-
-                      {importPreview.nodes.length > 0 ? (
-                        <div className="custom-import-node-list">
-                          {importPreview.nodes.map((node, index) => {
-                            const protocol = (node.protocol || protocolOf(node.link || '')).toLowerCase()
-                            const type = nodeTypeLabel[protocol]
-                            const params = previewParamSummary(node)
-                            const endpoint = node.address
-                              ? `${node.address}${node.port ? `:${node.port}` : ''}`
-                              : '地址未解析'
-                            return (
-                              <div className="custom-import-node" key={`${protocol}:${node.address}:${node.port}:${index}`}>
-                                <div className="custom-import-node-main">
-                                  <strong title={node.name || undefined}>{node.name || `未命名节点 ${index + 1}`}</strong>
-                                  <Tag color={type?.color}>{type?.label || protocol || '-'}</Tag>
-                                </div>
-                                <code title={endpoint}>{endpoint}</code>
-                                {params.length > 0 ? (
-                                  <span className="custom-import-node-params" title={params.join('、')}>
-                                    已识别：{params.join('、')}
-                                  </span>
-                                ) : null}
-                              </div>
-                            )
-                          })}
-                        </div>
-                      ) : (
-                        <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="没有解析到可添加的节点" />
-                      )}
-
-                      {importPreview.skipped.length > 0 ? (
-                        <Alert
-                          type="warning"
-                          showIcon
-                          message={`${importPreview.skipped.length} 项无法解析`}
-                          description={(
-                            <div className="custom-import-errors">
-                              {importPreview.skipped.slice(0, 10).map((item, index) => (
-                                <div key={`${item.input}:${index}`}>
-                                  <strong>{item.error}</strong>
-                                  {item.input ? <code title={item.input}>{item.input}</code> : null}
-                                </div>
-                              ))}
-                              {importPreview.skipped.length > 10 ? <span>另有 {importPreview.skipped.length - 10} 项未显示</span> : null}
-                            </div>
-                          )}
-                        />
-                      ) : null}
-                    </div>
-                  ) : null}
-                </div>
-              ) : null}
-            </>
-          )}
-          {nodeMode === 'manual' && (
+          <Form.Item
+            name="link"
+            label="URI 链接（可选）"
+            extra={hasNodeURI ? '已使用 URI 链接，保存时将自动解析节点参数。' : '粘贴单个 vless://、ss://、trojan:// 等链接；留空则在下方手动填写。'}
+          >
+            <Input.TextArea
+              placeholder="vless://..."
+              autoSize={{ minRows: 2, maxRows: 4 }}
+              spellCheck={false}
+            />
+          </Form.Item>
+          {!hasNodeURI && (
             <>
               <Form.Item name="protocol" label="协议" rules={[{ required: true, message: '请选择协议' }]}>
                 <Select
@@ -1419,19 +1548,14 @@ export function CustomNodesPanel({ nodes, onNodesChange }: { nodes: CustomNode[]
               )}
             </>
           )}
-          {(editingNode || nodeMode === 'manual') && (
+          {(!hasNodeURI || editingNode) && (
             <Form.Item name="name" label="显示名称（留空自动生成）">
               <Input placeholder="例如：朋友的 HK 节点" />
             </Form.Item>
           )}
-          <Space size={24}>
-            <Form.Item name="enabled" label="启用" valuePropName="checked">
-              <Switch />
-            </Form.Item>
-            <Form.Item name="sort_order" label="排序">
-              <InputNumber min={0} />
-            </Form.Item>
-          </Space>
+          <Form.Item name="enabled" label="启用" valuePropName="checked">
+            <Switch />
+          </Form.Item>
         </Form>
       </Modal>
     </>

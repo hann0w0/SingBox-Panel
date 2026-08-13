@@ -473,6 +473,187 @@ body {
   }
 }
 
+/* External-node table controls and normalized flag rendering. */
+.custom-node-filter-bar {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 10px;
+  padding: 9px 10px;
+  border: 1px solid #eef0f4;
+  border-radius: 8px;
+  background: #fafbfc;
+}
+
+.custom-node-filter-label {
+  flex: 0 0 auto;
+  color: #4b5563;
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.custom-node-group-filter {
+  width: min(440px, 55vw);
+}
+
+.custom-node-filter-count {
+  margin-left: auto;
+  color: #8a919f;
+  font-size: 12px;
+  white-space: nowrap;
+}
+
+.custom-node-name {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  min-width: 0;
+}
+
+.custom-node-name > span:last-child {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.custom-node-clickable-row {
+  cursor: pointer;
+}
+
+.custom-node-detail-value {
+  max-width: 460px;
+  overflow-wrap: anywhere;
+  white-space: pre-wrap;
+}
+
+.subscription-switch-row {
+  display: flex;
+  align-items: flex-start;
+  gap: 48px;
+}
+
+.subscription-switch-row .ant-form-item {
+  margin-bottom: 18px;
+}
+
+.mobile-admin-list {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.mobile-subscription-card,
+.mobile-node-card {
+  min-width: 0;
+  padding: 12px;
+  border: 1px solid #eef0f4;
+  border-radius: 10px;
+  background: #fff;
+}
+
+.mobile-node-card {
+  cursor: pointer;
+}
+
+.mobile-card-heading,
+.mobile-node-card-top {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  min-width: 0;
+}
+
+.mobile-card-heading {
+  justify-content: flex-start;
+}
+
+.mobile-card-heading strong,
+.mobile-subscription-name,
+.mobile-node-card-name {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.mobile-subscription-name {
+  flex: 0 1 auto;
+}
+
+.mobile-subscription-count {
+  flex: 0 0 auto;
+  color: #8a919f;
+  font-size: 12px;
+}
+
+.mobile-node-card-name {
+  flex: 1;
+}
+
+.mobile-node-card-top > .ant-tag {
+  flex: 0 0 auto;
+  margin-inline-end: 0;
+}
+
+.mobile-card-meta,
+.mobile-node-card-meta {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  margin-top: 8px;
+  color: #68707d;
+  font-size: 12px;
+  overflow-wrap: anywhere;
+}
+
+.mobile-card-error {
+  color: #cf1322;
+}
+
+.mobile-card-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 2px;
+  margin-top: 6px;
+  border-top: 1px solid #f2f3f5;
+  padding-top: 5px;
+}
+
+.mobile-card-actions .ant-btn {
+  padding-inline: 7px;
+}
+
+@media (max-width: 576px) {
+  .custom-node-filter-bar {
+    align-items: stretch;
+    flex-wrap: wrap;
+  }
+
+  .custom-node-group-filter {
+    order: 3;
+    width: 100%;
+  }
+
+  .custom-node-filter-count {
+    margin-left: auto;
+  }
+
+  .subscription-switch-row {
+    gap: 36px;
+  }
+
+  .custom-node-batch-bar {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+
+  .custom-node-batch-bar .ant-space {
+    width: 100%;
+  }
+}
+
 /* External subscription import: parse first, then confirm the exact nodes. */
 .custom-import-workspace {
   margin: -8px 0 20px;

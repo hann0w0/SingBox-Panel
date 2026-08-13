@@ -303,27 +303,55 @@ type SchemaMigration struct {
 // behaviour explicit; ExcludedUserIDs records per-user exceptions without
 // collapsing that default into a snapshot of the current account list.
 type CustomNode struct {
-	ID              uint      `gorm:"primaryKey" json:"id"`
-	AllUsers        bool      `gorm:"not null;default:false" json:"all_users"`
-	UserIDs         []uint    `gorm:"serializer:json" json:"user_ids"`
-	ExcludedUserIDs []uint    `gorm:"serializer:json" json:"excluded_user_ids"`
-	Name            string    `gorm:"size:128" json:"name"`
-	Group           string    `gorm:"size:64;index" json:"group"` // optional admin grouping (e.g. airport name)
-	Link            string    `gorm:"size:1024" json:"link"`      // share link (optional)
-	Protocol        string    `gorm:"size:32" json:"protocol"`    // structured node protocol, e.g. snell
-	Address         string    `gorm:"size:255" json:"address"`    // structured node host
-	Port            int       `json:"port"`
-	Params          JSONText  `gorm:"type:text" json:"params"` // protocol-specific JSON (psk, version, obfs...)
-	Enabled         bool      `gorm:"index" json:"enabled"`
-	SortOrder       int       `json:"sort_order"`
+	ID              uint     `gorm:"primaryKey" json:"id"`
+	AllUsers        bool     `gorm:"not null;default:false" json:"all_users"`
+	UserIDs         []uint   `gorm:"serializer:json" json:"user_ids"`
+	ExcludedUserIDs []uint   `gorm:"serializer:json" json:"excluded_user_ids"`
+	Name            string   `gorm:"size:128" json:"name"`
+	Group           string   `gorm:"size:64;index" json:"group"` // optional admin grouping (e.g. airport name)
+	Link            string   `gorm:"size:1024" json:"link"`      // share link (optional)
+	Protocol        string   `gorm:"size:32" json:"protocol"`    // structured node protocol, e.g. snell
+	Address         string   `gorm:"size:255" json:"address"`    // structured node host
+	Port            int      `json:"port"`
+	Params          JSONText `gorm:"type:text" json:"params"` // protocol-specific JSON (psk, version, obfs...)
+	Enabled         bool     `gorm:"index" json:"enabled"`
+	SortOrder       int      `json:"sort_order"`
+	// SubscriptionID/SubscriptionKey are set only for nodes managed by a saved
+	// remote subscription. Manual nodes keep both fields empty. The key is stable
+	// within one subscription and lets refreshes update rows without losing their
+	// per-user audience assignments.
+	SubscriptionID  *uint     `gorm:"index;uniqueIndex:idx_custom_node_subscription_key" json:"subscription_id,omitempty"`
+	SubscriptionKey string    `gorm:"size:64;uniqueIndex:idx_custom_node_subscription_key" json:"-"`
 	CreatedAt       time.Time `json:"created_at"`
 	UpdatedAt       time.Time `json:"updated_at"`
+}
+
+// CustomNodeSubscription is a saved HTTP(S) subscription whose generated
+// CustomNode rows are reconciled on a schedule. Failed refreshes only update
+// the status fields; they never remove the last known-good node set.
+type CustomNodeSubscription struct {
+	ID                    uint       `gorm:"primaryKey" json:"id"`
+	Name                  string     `gorm:"size:128;not null" json:"name"`
+	URL                   string     `gorm:"size:2048;not null" json:"url"`
+	Group                 string     `gorm:"size:64;index" json:"group"`
+	Enabled               bool       `gorm:"index;not null;default:true" json:"enabled"`
+	AutoUpdate            bool       `gorm:"index;not null;default:true" json:"auto_update"`
+	UpdateIntervalMinutes int        `gorm:"not null;default:60" json:"update_interval_minutes"`
+	BaseSortOrder         int        `json:"base_sort_order"`
+	LastSyncAt            *time.Time `json:"last_sync_at"`
+	LastSuccessAt         *time.Time `json:"last_success_at"`
+	LastError             string     `gorm:"type:text" json:"last_error"`
+	SourceType            string     `gorm:"size:32" json:"source_type"`
+	NodeCount             int        `json:"node_count"`
+	CreatedAt             time.Time  `json:"created_at"`
+	UpdatedAt             time.Time  `json:"updated_at"`
 }
 
 // AllModels lists every entity for AutoMigrate.
 func AllModels() []any {
 	return []any{
-		&User{}, &Server{}, &Inbound{}, &Outbound{}, &RouteRule{}, &RuleSet{}, &Setting{}, &TrafficRecord{}, &CustomNode{},
+		&User{}, &Server{}, &Inbound{}, &Outbound{}, &RouteRule{}, &RuleSet{}, &Setting{}, &TrafficRecord{},
+		&CustomNodeSubscription{}, &CustomNode{},
 	}
 }
 

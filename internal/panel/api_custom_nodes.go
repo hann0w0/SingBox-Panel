@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	"github.com/gin-gonic/gin"
+	"gorm.io/gorm"
 
 	"github.com/hann0w0/singbox-panel/internal/model"
 	"github.com/hann0w0/singbox-panel/internal/singbox"
@@ -33,7 +34,21 @@ type customNodeReq struct {
 
 type customNodeRow struct {
 	model.CustomNode
-	UserEmails []string `json:"user_emails,omitempty"`
+	UserEmails []string          `json:"user_emails,omitempty"`
+	Detail     *customNodeDetail `json:"detail,omitempty"`
+}
+
+// customNodeDetail is the normalized, human-readable connection definition
+// shown to administrators. Link-backed rows otherwise only expose their raw
+// URI, while structured rows expose address/params separately; normalizing
+// both through customNodeToNode gives the UI one consistent detail view.
+type customNodeDetail struct {
+	Protocol string            `json:"protocol"`
+	Address  string            `json:"address"`
+	Port     int               `json:"port"`
+	Region   string            `json:"region,omitempty"`
+	URI      string            `json:"uri,omitempty"`
+	Params   map[string]string `json:"params"`
 }
 
 // validateCustomNode checks that the payload describes at least one usable
@@ -119,10 +134,24 @@ func validateCustomNode(req *customNodeReq) (parsedName string, err error) {
 
 func (a *App) listCustomNodes(c *gin.Context) {
 	var nodes []model.CustomNode
-	a.db.Order("sort_order, id").Find(&nodes)
+	if err := a.db.Order("sort_order, id").Find(&nodes).Error; err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
 	out := make([]customNodeRow, 0, len(nodes))
 	for i := range nodes {
 		row := customNodeRow{CustomNode: nodes[i]}
+		if normalized, ok := a.customNodeToNode(&nodes[i]); ok {
+			uri, _ := singbox.BuildShareLink(normalized.clientNode())
+			row.Detail = &customNodeDetail{
+				Protocol: normalized.typ,
+				Address:  normalized.server,
+				Port:     normalized.port,
+				Region:   normalized.region,
+				URI:      uri,
+				Params:   nodeParams(normalized),
+			}
+		}
 		if !nodes[i].AllUsers && len(nodes[i].UserIDs) > 0 {
 			var users []model.User
 			a.db.Select("email").Where("id IN ?", nodes[i].UserIDs).Find(&users)
@@ -199,6 +228,14 @@ func (a *App) updateCustomNode(c *gin.Context) {
 		c.JSON(http.StatusNotFound, gin.H{"error": "node not found"})
 		return
 	}
+	unlock := a.lockCustomNodeSubscription(node.SubscriptionID)
+	defer unlock()
+	// Re-read after taking the subscription lock so a concurrent source delete
+	// cannot turn this request into an orphaned managed node.
+	if err := a.db.First(&node, id).Error; err != nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "node not found"})
+		return
+	}
 	var req customNodeReq
 	if !bindJSON(c, &req) {
 		return
@@ -257,7 +294,36 @@ func (a *App) deleteCustomNode(c *gin.Context) {
 	if !ok {
 		return
 	}
-	if err := a.db.Delete(&model.CustomNode{}, id).Error; err != nil {
+	var node model.CustomNode
+	if err := a.db.First(&node, id).Error; err != nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "node not found"})
+		return
+	}
+	unlock := a.lockCustomNodeSubscription(node.SubscriptionID)
+	defer unlock()
+	err := a.db.Transaction(func(tx *gorm.DB) error {
+		if err := tx.First(&node, id).Error; err != nil {
+			return err
+		}
+		if err := tx.Delete(&node).Error; err != nil {
+			return err
+		}
+		if node.SubscriptionID != nil {
+			var count int64
+			if err := tx.Model(&model.CustomNode{}).Where("subscription_id = ?", *node.SubscriptionID).Count(&count).Error; err != nil {
+				return err
+			}
+			if err := tx.Model(&model.CustomNodeSubscription{}).Where("id = ?", *node.SubscriptionID).Update("node_count", count).Error; err != nil {
+				return err
+			}
+		}
+		return nil
+	})
+	if errors.Is(err, gorm.ErrRecordNotFound) {
+		c.JSON(http.StatusNotFound, gin.H{"error": "node not found"})
+		return
+	}
+	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
@@ -283,6 +349,15 @@ func (a *App) batchDeleteCustomNodes(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "请选择要删除的节点"})
 		return
 	}
+	var managed int64
+	if err := a.db.Model(&model.CustomNode{}).Where("id IN ? AND subscription_id IS NOT NULL", ids).Count(&managed).Error; err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+	if managed > 0 {
+		c.JSON(http.StatusConflict, gin.H{"error": "所选节点包含订阅源管理的节点，不能单独删除"})
+		return
+	}
 	result := a.db.Delete(&model.CustomNode{}, ids)
 	if result.Error != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": result.Error.Error()})
@@ -305,6 +380,15 @@ func (a *App) batchSetCustomNodeGroup(c *gin.Context) {
 	ids := normalizedIDs(req.IDs)
 	if len(ids) == 0 {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "请选择要分组的节点"})
+		return
+	}
+	var managed int64
+	if err := a.db.Model(&model.CustomNode{}).Where("id IN ? AND subscription_id IS NOT NULL", ids).Count(&managed).Error; err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+	if managed > 0 {
+		c.JSON(http.StatusConflict, gin.H{"error": "订阅节点的分组由订阅源统一管理"})
 		return
 	}
 	group := trimRunes(strings.TrimSpace(req.Group), 64)

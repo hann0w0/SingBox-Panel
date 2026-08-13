@@ -148,6 +148,13 @@ var applicationMigrations = []schemaMigration{
 			return tx.AutoMigrate(&model.CustomNode{})
 		},
 	},
+	{
+		version: 11,
+		name:    "saved custom node subscriptions",
+		up: func(tx *gorm.DB) error {
+			return tx.AutoMigrate(&model.CustomNodeSubscription{}, &model.CustomNode{})
+		},
+	},
 }
 
 // runSchemaMigrations applies every pending migration in order. If any
@@ -273,6 +280,17 @@ func sqliteFilePath(dsn string) string {
 func backupSQLiteBeforeMigration(db *gorm.DB, dsn string, targetVersion uint) (string, error) {
 	databaseFile := sqliteFilePath(dsn)
 	if databaseFile == "" {
+		return "", nil
+	}
+	// Opening a brand-new database in WAL mode creates a small, non-empty file
+	// before migrations run. Back up only databases that already contain user or
+	// application tables; otherwise every first boot would produce a meaningless
+	// "upgrade" backup.
+	var tableCount int64
+	if err := db.Raw(`SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name NOT LIKE 'sqlite_%'`).Scan(&tableCount).Error; err != nil {
+		return "", err
+	}
+	if tableCount == 0 {
 		return "", nil
 	}
 	info, err := os.Stat(databaseFile)

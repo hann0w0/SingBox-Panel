@@ -8,6 +8,7 @@ import { copyToClipboard } from '../../util'
 import { useAuth } from '../../store'
 import { CONTINENT_ORDER, continentOf, type Continent } from '../../continents'
 import regionData from '../../assets/regions.json'
+import { RegionFlag } from '../../components/RegionFlag'
 
 type RegionInfo = { geo: string; coord: [number, number]; label: string }
 const REGIONS = regionData as unknown as Record<string, RegionInfo>
@@ -33,14 +34,6 @@ function ClientLogo({ src, monochrome = false }: { src: string; monochrome?: boo
 
 // Chinese label for an ISO region code (HK → 香港), falls back to the code.
 const labelOf = (code: string): string => REGIONS[code]?.label || (code === 'Other' ? '其他' : code)
-
-// Regional indicator flag emoji from an ISO code (HK → 🇭🇰). Unknown/blank
-// codes fall back to a globe so rows never render an empty box.
-function flagOf(code?: string): string {
-  const c = (code || '').toUpperCase()
-  if (!/^[A-Z]{2}$/.test(c)) return '🌐'
-  return [...c].map((ch) => String.fromCodePoint(0x1F1E6 + ch.charCodeAt(0) - 65)).join('')
-}
 
 export default function Dashboard() {
   const setAuth = useAuth((s) => s.setAuth)
@@ -134,7 +127,7 @@ export default function Dashboard() {
                 renderItem={(n) => (
                   <List.Item onClick={() => setSelectedNode(n)} style={{ cursor: 'pointer', padding: '10px 2px' }}>
                     <List.Item.Meta
-                      avatar={<span style={{ fontSize: 24, lineHeight: '28px' }}>{flagOf(n.region)}</span>}
+                      avatar={<RegionFlag code={n.region} size={24} />}
                       title={<span style={{ fontWeight: 600 }}>{n.name}</span>}
                       description={
                         <Space size={[4, 4]} wrap>

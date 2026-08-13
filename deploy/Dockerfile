@@ -19,7 +19,7 @@ RUN apk add --no-cache git
 COPY go.mod go.sum ./
 RUN go mod download
 COPY . .
-ARG VERSION=v1.0.4
+ARG VERSION=v1.0.7
 ARG AGENT_VERSION
 ARG TARGETOS
 ARG TARGETARCH

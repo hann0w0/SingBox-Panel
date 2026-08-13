@@ -301,6 +301,15 @@ export interface CustomNode {
   params: Record<string, unknown> | null
   enabled: boolean
   sort_order: number
+  subscription_id?: number | null
+  detail?: {
+    protocol: string
+    address: string
+    port: number
+    region?: string
+    uri?: string
+    params: Record<string, string>
+  }
 }
 export interface CustomNodeBody {
   name?: string
@@ -326,6 +335,57 @@ export const batchDeleteCustomNodes = (ids: number[]) =>
   http.post('/api/admin/custom-nodes/batch-delete', { ids }).then((r) => r.data)
 export const batchSetCustomNodeGroup = (ids: number[], group: string) =>
   http.post('/api/admin/custom-nodes/batch-group', { ids, group }).then((r) => r.data)
+
+export interface CustomNodeSubscription {
+  id: number
+  name: string
+  url: string
+  group: string
+  enabled: boolean
+  auto_update: boolean
+  update_interval_minutes: number
+  base_sort_order: number
+  last_sync_at?: string | null
+  last_success_at?: string | null
+  last_error: string
+  source_type: string
+  node_count: number
+  created_at: string
+  updated_at: string
+}
+
+export interface CustomNodeSubscriptionBody {
+  name: string
+  url: string
+  group?: string
+  enabled?: boolean
+  auto_update?: boolean
+  update_interval_minutes?: number
+  base_sort_order?: number
+}
+
+export interface CustomNodeSubscriptionSync {
+  created: number
+  updated: number
+  deleted: number
+  total: number
+  skipped: number
+}
+
+export const listCustomNodeSubscriptions = () =>
+  http.get<{ subscriptions: CustomNodeSubscription[] }>('/api/admin/custom-node-subscriptions').then((r) => r.data.subscriptions)
+export const createCustomNodeSubscription = (body: CustomNodeSubscriptionBody) =>
+  http
+    .post<{ subscription: CustomNodeSubscription; sync: CustomNodeSubscriptionSync; sync_error?: string }>('/api/admin/custom-node-subscriptions', body)
+    .then((r) => r.data)
+export const updateCustomNodeSubscription = (id: number, body: CustomNodeSubscriptionBody) =>
+  http.put<{ subscription: CustomNodeSubscription }>(`/api/admin/custom-node-subscriptions/${id}`, body).then((r) => r.data.subscription)
+export const deleteCustomNodeSubscription = (id: number) =>
+  http.delete(`/api/admin/custom-node-subscriptions/${id}`).then((r) => r.data)
+export const syncCustomNodeSubscription = (id: number) =>
+  http
+    .post<{ subscription: CustomNodeSubscription; sync: CustomNodeSubscriptionSync }>(`/api/admin/custom-node-subscriptions/${id}/sync`)
+    .then((r) => r.data)
 
 // ---- admin: import external node subscriptions ----
 // A source may be a subscription URL, a Clash/Surge YAML or INI document, or

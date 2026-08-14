@@ -1,7 +1,7 @@
 # ---- frontend build ----
 # Run the JS toolchain on the builder's native arch instead of emulating the
 # target: the frontend output is architecture-independent.
-FROM --platform=$BUILDPLATFORM node:20-alpine AS web
+FROM --platform=$BUILDPLATFORM node:24-alpine AS web
 WORKDIR /web
 COPY web/package.json web/package-lock.json* ./
 RUN npm install

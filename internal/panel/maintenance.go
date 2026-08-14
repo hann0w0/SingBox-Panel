@@ -279,7 +279,9 @@ func (a *App) selfUpdate(c *gin.Context) {
 	var body struct {
 		Version string `json:"version"`
 	}
-	_ = c.ShouldBindJSON(&body)
+	if !bindOptionalJSON(c, &body) {
+		return
+	}
 	target := strings.TrimSpace(body.Version)
 	if target == "" {
 		latest, err := latestPanelRelease()

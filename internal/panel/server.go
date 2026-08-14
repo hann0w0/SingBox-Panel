@@ -70,7 +70,7 @@ func (a *App) routes() *gin.Engine {
 		gin.SetMode(gin.ReleaseMode)
 	}
 	r := gin.New()
-	r.Use(gin.Recovery(), gin.Logger(), corsMiddleware())
+	r.Use(gin.Recovery(), panelRequestLogger(a.cfg.Subscription.PathPrefix), corsMiddleware())
 
 	// Public endpoints.
 	r.GET("/api/agent/install.sh", a.handleAgentInstallScript)
@@ -232,7 +232,7 @@ func (a *App) Run(ctx context.Context) error {
 	go rec.Run(ctx)
 	go a.customSubscriptions.run(ctx)
 
-	srv := &http.Server{Addr: a.cfg.Listen, Handler: a.engine}
+	srv := newPanelHTTPServer(a.cfg.Listen, a.engine)
 	go func() {
 		<-ctx.Done()
 		shutCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
@@ -245,6 +245,35 @@ func (a *App) Run(ctx context.Context) error {
 		return err
 	}
 	return nil
+}
+
+const (
+	panelReadHeaderTimeout = 10 * time.Second
+	panelIdleTimeout       = 60 * time.Second
+)
+
+func newPanelHTTPServer(addr string, handler http.Handler) *http.Server {
+	return &http.Server{
+		Addr:              addr,
+		Handler:           handler,
+		ReadHeaderTimeout: panelReadHeaderTimeout,
+		IdleTimeout:       panelIdleTimeout,
+		MaxHeaderBytes:    1 << 20,
+	}
+}
+
+func panelRequestLogger(subscriptionPrefix string) gin.HandlerFunc {
+	prefix := strings.TrimRight(subscriptionPrefix, "/") + "/"
+	return gin.LoggerWithConfig(gin.LoggerConfig{
+		SkipQueryString: true,
+		Skip: func(c *gin.Context) bool {
+			return subscriptionRequestPath(c.Request.URL.Path, prefix)
+		},
+	})
+}
+
+func subscriptionRequestPath(path, prefix string) bool {
+	return strings.HasPrefix(path, prefix)
 }
 
 func corsMiddleware() gin.HandlerFunc {

@@ -12,7 +12,7 @@ RUN npm run build
 # Compile on the builder's native arch and cross-compile to the target with
 # GOOS/GOARCH. Emulating the Go toolchain under QEMU (the alternative for arm64
 # on an amd64 runner) is many times slower.
-FROM --platform=$BUILDPLATFORM golang:1.25-alpine AS build
+FROM --platform=$BUILDPLATFORM golang:1.26.6-alpine AS build
 WORKDIR /src
 ENV CGO_ENABLED=0
 RUN apk add --no-cache git

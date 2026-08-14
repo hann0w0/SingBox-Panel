@@ -1,6 +1,7 @@
 package panel
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"log"
@@ -44,7 +45,7 @@ func InitDB(cfg config.PanelConfig) (*gorm.DB, error) {
 	}
 
 	db, err := gorm.Open(dial, &gorm.Config{
-		Logger: gormlogger.Default.LogMode(gormlogger.Warn),
+		Logger: newDatabaseLogger(log.New(os.Stdout, "\r\n", log.LstdFlags), gormlogger.Warn),
 	})
 	if err != nil {
 		return nil, fmt.Errorf("open db: %w", err)
@@ -67,6 +68,37 @@ func InitDB(cfg config.PanelConfig) (*gorm.DB, error) {
 		return nil, err
 	}
 	return db, nil
+}
+
+func newDatabaseLogger(writer gormlogger.Writer, level gormlogger.LogLevel) gormlogger.Interface {
+	base := gormlogger.New(writer, gormlogger.Config{
+		SlowThreshold:             200 * time.Millisecond,
+		LogLevel:                  level,
+		IgnoreRecordNotFoundError: true,
+		ParameterizedQueries:      true,
+		Colorful:                  false,
+	})
+	return &secureDatabaseLogger{Interface: base}
+}
+
+type secureDatabaseLogger struct {
+	gormlogger.Interface
+}
+
+func (l *secureDatabaseLogger) LogMode(level gormlogger.LogLevel) gormlogger.Interface {
+	return &secureDatabaseLogger{Interface: l.Interface.LogMode(level)}
+}
+
+func (l *secureDatabaseLogger) Trace(
+	ctx context.Context,
+	begin time.Time,
+	fc func() (string, int64),
+	err error,
+) {
+	l.Interface.Trace(ctx, begin, func() (string, int64) {
+		_, rows := fc()
+		return "[SQL redacted]", rows
+	}, err)
 }
 
 func sqliteDSN(dsn string) string {

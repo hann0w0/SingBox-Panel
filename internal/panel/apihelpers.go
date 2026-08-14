@@ -1,6 +1,8 @@
 package panel
 
 import (
+	"errors"
+	"io"
 	"net/http"
 	"strconv"
 	"time"
@@ -10,8 +12,36 @@ import (
 	"github.com/hann0w0/singbox-panel/internal/model"
 )
 
+const maxJSONRequestBytes int64 = 1 << 20
+
 func bindJSON(c *gin.Context, v any) bool {
+	c.Request.Body = http.MaxBytesReader(c.Writer, c.Request.Body, maxJSONRequestBytes)
 	if err := c.ShouldBindJSON(v); err != nil {
+		var maxErr *http.MaxBytesError
+		if errors.As(err, &maxErr) {
+			c.JSON(http.StatusRequestEntityTooLarge, gin.H{"error": "request body too large"})
+			return false
+		}
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid request: " + err.Error()})
+		return false
+	}
+	return true
+}
+
+func bindOptionalJSON(c *gin.Context, v any) bool {
+	if c.Request.Body == nil || c.Request.ContentLength == 0 {
+		return true
+	}
+	c.Request.Body = http.MaxBytesReader(c.Writer, c.Request.Body, maxJSONRequestBytes)
+	if err := c.ShouldBindJSON(v); err != nil {
+		if errors.Is(err, io.EOF) {
+			return true
+		}
+		var maxErr *http.MaxBytesError
+		if errors.As(err, &maxErr) {
+			c.JSON(http.StatusRequestEntityTooLarge, gin.H{"error": "request body too large"})
+			return false
+		}
 		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid request: " + err.Error()})
 		return false
 	}

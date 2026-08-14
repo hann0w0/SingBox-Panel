@@ -23,3 +23,4 @@
 # ide / AI metadata
 .claude/
 .workbuddy/
+.codex-build/

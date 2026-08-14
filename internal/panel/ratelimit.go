@@ -2,7 +2,6 @@ package panel
 
 import (
 	"net"
-	"strings"
 	"sync"
 	"time"
 
@@ -131,25 +130,29 @@ func (g *loginGuard) sweepLocked(now time.Time) {
 	}
 }
 
-// clientIP resolves the real caller address behind Cloudflare / a reverse proxy.
-// Header values are only consulted because this panel is always deployed behind
-// one; the account-keyed limit is what actually stops an attacker who can forge
-// these headers by talking to the container directly.
+// clientIP resolves the caller address behind the local reverse proxy.
+//
+// Never trust forwarding headers from an arbitrary peer: a public client could
+// forge CF-Connecting-IP/X-Forwarded-For and rotate the login limiter key on
+// every request. The supported deployments expose the panel only on loopback or
+// a private container network, so X-Real-IP is accepted only from such a peer.
 func clientIP(c *gin.Context) string {
-	if v := strings.TrimSpace(c.GetHeader("CF-Connecting-IP")); v != "" {
-		return v
-	}
-	if v := strings.TrimSpace(c.GetHeader("X-Real-IP")); v != "" {
-		return v
-	}
-	if v := c.GetHeader("X-Forwarded-For"); v != "" {
-		if first := strings.TrimSpace(strings.Split(v, ",")[0]); first != "" {
-			return first
-		}
-	}
 	host, _, err := net.SplitHostPort(c.Request.RemoteAddr)
 	if err != nil {
-		return c.Request.RemoteAddr
+		host = c.Request.RemoteAddr
+	}
+	peer := net.ParseIP(host)
+	if trustedProxyPeer(peer) {
+		if forwarded := net.ParseIP(c.GetHeader("X-Real-IP")); forwarded != nil {
+			return forwarded.String()
+		}
+	}
+	if peer != nil {
+		return peer.String()
 	}
 	return host
+}
+
+func trustedProxyPeer(ip net.IP) bool {
+	return ip != nil && (ip.IsLoopback() || ip.IsPrivate() || ip.IsLinkLocalUnicast())
 }

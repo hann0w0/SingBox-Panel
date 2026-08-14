@@ -149,3 +149,68 @@ func TestCustomNodeHasUser(t *testing.T) {
 		})
 	}
 }
+
+func TestListUsersIncludesEffectiveNodeCount(t *testing.T) {
+	db := testDB(t)
+	server := model.Server{Name: "count-server", AgentToken: "count-token"}
+	if err := db.Create(&server).Error; err != nil {
+		t.Fatal(err)
+	}
+	inbounds := []model.Inbound{
+		{ServerID: server.ID, Tag: "one", Type: model.InboundVLESS, ListenPort: 12001, Enabled: true},
+		{ServerID: server.ID, Tag: "two", Type: model.InboundTrojan, ListenPort: 12002, Enabled: true},
+	}
+	if err := db.Create(&inbounds).Error; err != nil {
+		t.Fatal(err)
+	}
+	wildcardUser := model.User{
+		Email: "wildcard", Password: "unused", Role: model.RoleUser, Enabled: true,
+		ServerIDs: []uint{server.ID}, SubToken: "count-wildcard-token",
+	}
+	explicitUser := model.User{
+		Email: "explicit", Password: "unused", Role: model.RoleUser, Enabled: true,
+		ServerIDs: []uint{server.ID}, InboundIDs: []uint{inbounds[0].ID}, SubToken: "count-explicit-token",
+	}
+	if err := db.Create(&wildcardUser).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Create(&explicitUser).Error; err != nil {
+		t.Fatal(err)
+	}
+	nodes := []model.CustomNode{
+		{Name: "global", Link: "socks5://127.0.0.1:13001#global", AllUsers: true, Enabled: true, ExcludedUserIDs: []uint{explicitUser.ID}},
+		{Name: "scoped", Link: "socks5://127.0.0.1:13002#scoped", UserIDs: []uint{wildcardUser.ID}, Enabled: true},
+	}
+	if err := db.Create(&nodes).Error; err != nil {
+		t.Fatal(err)
+	}
+
+	gin.SetMode(gin.TestMode)
+	app := &App{db: db}
+	router := gin.New()
+	router.GET("/users", app.listUsers)
+	w := httptest.NewRecorder()
+	router.ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/users", nil))
+	if w.Code != http.StatusOK {
+		t.Fatalf("list status = %d, body=%s", w.Code, w.Body.String())
+	}
+	var response struct {
+		Users []struct {
+			ID        uint `json:"id"`
+			NodeCount int  `json:"node_count"`
+		} `json:"users"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &response); err != nil {
+		t.Fatal(err)
+	}
+	counts := make(map[uint]int, len(response.Users))
+	for _, user := range response.Users {
+		counts[user.ID] = user.NodeCount
+	}
+	if got, want := counts[wildcardUser.ID], 4; got != want {
+		t.Fatalf("wildcard node_count = %d; want %d", got, want)
+	}
+	if got, want := counts[explicitUser.ID], 1; got != want {
+		t.Fatalf("explicit node_count = %d; want %d", got, want)
+	}
+}

@@ -355,7 +355,7 @@ func (a *App) batchDeleteCustomNodes(c *gin.Context) {
 		return
 	}
 	if managed > 0 {
-		c.JSON(http.StatusConflict, gin.H{"error": "所选节点包含订阅源管理的节点，不能单独删除"})
+		c.JSON(http.StatusConflict, gin.H{"error": "所选节点包含订阅管理的节点，不能单独删除"})
 		return
 	}
 	result := a.db.Delete(&model.CustomNode{}, ids)
@@ -388,7 +388,7 @@ func (a *App) batchSetCustomNodeGroup(c *gin.Context) {
 		return
 	}
 	if managed > 0 {
-		c.JSON(http.StatusConflict, gin.H{"error": "订阅节点的分组由订阅源统一管理"})
+		c.JSON(http.StatusConflict, gin.H{"error": "订阅节点的分组由订阅统一管理"})
 		return
 	}
 	group := trimRunes(strings.TrimSpace(req.Group), 64)

@@ -34,10 +34,42 @@ const TRAFFIC_SERIES = [
   { key: 'upload' as const, className: 'traffic-line-upload', legendClass: 'traffic-legend-upload', label: '上传' },
 ]
 
+type TrafficChartMode = 'rate' | 'usage'
+
+function chartLabelCount(range: TrafficRange, width: number): number {
+  const compact = width < 560
+  if (range === '15m') return compact ? 5 : 9
+  if (range === '24h') return compact ? 6 : 12
+  if (range === '7d') return compact ? 4 : 7
+  return compact ? 5 : 10
+}
+
+function tooltipTime(time: string, range: TrafficRange): string {
+  const date = new Date(time)
+  if (Number.isNaN(date.getTime())) return ''
+  if (range === '15m') {
+    return date.toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit', second: '2-digit' })
+  }
+  return date.toLocaleString('zh-CN', {
+    year: 'numeric', month: '2-digit', day: '2-digit',
+    hour: '2-digit', minute: '2-digit',
+  })
+}
+
 // TrafficTrend renders one SVG area chart. Memoized: geometry, axes and path
 // data are recomputed only when points/width/step/range change; mouse hover
 // only re-renders the tooltip overlay.
-const TrafficTrend = memo(function TrafficTrend({ points, range, stepSeconds }: { points: TrafficPoint[]; range: TrafficRange; stepSeconds: number }) {
+const TrafficTrend = memo(function TrafficTrend({
+  points,
+  range,
+  stepSeconds,
+  mode,
+}: {
+  points: TrafficPoint[]
+  range: TrafficRange
+  stepSeconds: number
+  mode: TrafficChartMode
+}) {
   const containerRef = useRef<HTMLDivElement>(null)
   const svgRef = useRef<SVGSVGElement>(null)
   const [width, setWidth] = useState(760)
@@ -63,6 +95,7 @@ const TrafficTrend = memo(function TrafficTrend({ points, range, stepSeconds }: 
 
   const chart = useMemo(() => {
     const valueFor = (point: TrafficPoint, key: 'upload' | 'download') => {
+      if (mode === 'usage') return point[key]
       const sampledRate = key === 'upload' ? point.upload_rate : point.download_rate
       return sampledRate > 0 ? sampledRate : point[key] / Math.max(1, stepSeconds)
     }
@@ -71,9 +104,9 @@ const TrafficTrend = memo(function TrafficTrend({ points, range, stepSeconds }: 
     const y = (value: number) => top + chartHeight - (value / max) * chartHeight
     const line = (key: 'upload' | 'download') =>
       points.map((point, index) => `${x(index)},${y(valueFor(point, key))}`).join(' ')
-    const labelCount = range === '7d' ? 7 : range === '30d' ? 10 : range === '24h' ? 6 : 5
+    const labelCount = Math.min(points.length, chartLabelCount(range, width))
     const labelIndices = points.length > 1
-      ? Array.from({ length: labelCount }, (_, i) => Math.round((i / (labelCount - 1)) * (points.length - 1)))
+      ? Array.from({ length: labelCount }, (_, i) => Math.round((i / Math.max(1, labelCount - 1)) * (points.length - 1)))
       : [0]
     const labels = points.length
       ? [...new Set(labelIndices)]
@@ -85,7 +118,7 @@ const TrafficTrend = memo(function TrafficTrend({ points, range, stepSeconds }: 
       return { key: ratio, y: gridY, value: max * (1 - ratio) }
     })
     return { valueFor, max, x, y, line, labels, gridLines }
-  }, [points, range, stepSeconds, left, top, chartWidth, chartHeight])
+  }, [points, range, stepSeconds, mode, width, left, top, chartWidth, chartHeight])
 
   const activeIndex = hoveredIndex === null || points.length === 0 ? null : Math.min(hoveredIndex, points.length - 1)
   const activePoint = activeIndex === null ? null : points[activeIndex]
@@ -102,7 +135,8 @@ const TrafficTrend = memo(function TrafficTrend({ points, range, stepSeconds }: 
   const tooltipHeight = 80
   const tooltipX = activeIndex === null ? 0 : Math.max(left, Math.min(width - right - tooltipWidth, chart.x(activeIndex) - tooltipWidth / 2))
   const tooltipY = top + 8
-  const valueLabel = (point: TrafficPoint, key: 'upload' | 'download') => `${formatBytes(chart.valueFor(point, key))}/s`
+  const valueLabel = (point: TrafficPoint, key: 'upload' | 'download') =>
+    `${formatBytes(chart.valueFor(point, key))}${mode === 'rate' ? '/s' : ''}`
 
   return (
     <div className="traffic-chart" ref={containerRef}>
@@ -110,7 +144,7 @@ const TrafficTrend = memo(function TrafficTrend({ points, range, stepSeconds }: 
         ref={svgRef}
         viewBox={`0 0 ${width} ${height}`}
         role="img"
-        aria-label="上传下载流量趋势图"
+        aria-label={mode === 'rate' ? '上传下载实时速度趋势图' : '上传下载历史流量趋势图'}
         onMouseMove={(event) => choosePoint(event.clientX)}
         onMouseLeave={() => setHoveredIndex(null)}
         onTouchMove={(event) => {
@@ -136,7 +170,7 @@ const TrafficTrend = memo(function TrafficTrend({ points, range, stepSeconds }: 
             <circle cx={chart.x(activeIndex)} cy={chart.y(chart.valueFor(activePoint, TRAFFIC_SERIES[0].key))} r="4" className={`traffic-point ${TRAFFIC_SERIES[0].className}`} />
             <circle cx={chart.x(activeIndex)} cy={chart.y(chart.valueFor(activePoint, TRAFFIC_SERIES[1].key))} r="4" className={`traffic-point ${TRAFFIC_SERIES[1].className}`} />
             <rect x={tooltipX} y={tooltipY} width={tooltipWidth} height={tooltipHeight} rx="8" className="traffic-tooltip-box" />
-            <text x={tooltipX + 12} y={tooltipY + 19} className="traffic-tooltip-time">{new Date(activePoint.time).toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit', second: '2-digit' })}</text>
+            <text x={tooltipX + 12} y={tooltipY + 19} className="traffic-tooltip-time">{tooltipTime(activePoint.time, range)}</text>
             <text x={tooltipX + 12} y={tooltipY + 43} className="traffic-tooltip-value">{TRAFFIC_SERIES[0].label}　{valueLabel(activePoint, TRAFFIC_SERIES[0].key)}</text>
             <text x={tooltipX + 12} y={tooltipY + 64} className="traffic-tooltip-value">{TRAFFIC_SERIES[1].label}　{valueLabel(activePoint, TRAFFIC_SERIES[1].key)}</text>
           </g>
@@ -185,7 +219,7 @@ const LiveChart = memo(function LiveChart({ serverId }: { serverId: number }) {
         </span>
       </div>
       <div className="traffic-panel-label">速度</div>
-      <TrafficTrend points={livePoints} range="15m" stepSeconds={3} />
+      <TrafficTrend points={livePoints} range="15m" stepSeconds={3} mode="rate" />
     </section>
   )
 })
@@ -263,9 +297,9 @@ export default function Traffic() {
               <div className="traffic-panel-heading">
                 <Typography.Title level={5}>历史</Typography.Title>
               </div>
-              <div className="traffic-panel-label">速度</div>
+              <div className="traffic-panel-label">流量使用量</div>
               {data ? (
-                <TrafficTrend points={historicalChartPoints} range={range} stepSeconds={data.step_seconds} />
+                <TrafficTrend points={historicalChartPoints} range={range} stepSeconds={data.step_seconds} mode="usage" />
               ) : (
                 <div className="traffic-empty">{loading ? '读取中...' : '暂无历史数据'}</div>
               )}

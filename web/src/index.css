@@ -496,6 +496,10 @@ body {
   width: min(440px, 55vw);
 }
 
+.custom-node-name-search {
+  width: 220px;
+}
+
 .custom-node-filter-count {
   margin-left: auto;
   color: #8a919f;
@@ -544,6 +548,16 @@ body {
   gap: 10px;
 }
 
+.mobile-user-list.is-scrollable,
+.mobile-subscription-list.is-scrollable,
+.mobile-node-list.is-scrollable {
+  max-height: 560px;
+  padding-inline-end: 4px;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+
+.mobile-user-card,
 .mobile-subscription-card,
 .mobile-node-card {
   min-width: 0;
@@ -570,6 +584,7 @@ body {
 }
 
 .mobile-card-heading strong,
+.mobile-user-name,
 .mobile-subscription-name,
 .mobile-node-card-name {
   min-width: 0;
@@ -578,10 +593,12 @@ body {
   white-space: nowrap;
 }
 
+.mobile-user-name,
 .mobile-subscription-name {
   flex: 0 1 auto;
 }
 
+.mobile-user-count,
 .mobile-subscription-count {
   flex: 0 0 auto;
   color: #8a919f;
@@ -625,6 +642,14 @@ body {
   padding-inline: 7px;
 }
 
+.mobile-user-actions {
+  flex-wrap: nowrap;
+}
+
+.mobile-user-actions .ant-btn {
+  flex: 0 0 auto;
+}
+
 @media (max-width: 576px) {
   .custom-node-filter-bar {
     align-items: stretch;
@@ -633,6 +658,11 @@ body {
 
   .custom-node-group-filter {
     order: 3;
+    width: 100%;
+  }
+
+  .custom-node-name-search {
+    order: 4;
     width: 100%;
   }
 
@@ -1227,6 +1257,60 @@ pre {
   gap: 16px;
 }
 
+.users-page-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  grid-template-areas:
+    "users subscriptions"
+    "nodes nodes";
+  gap: 16px;
+  align-items: start;
+}
+
+.users-overview-card {
+  grid-area: users;
+}
+
+.subscription-overview-card {
+  grid-area: subscriptions;
+}
+
+.nodes-wide-card {
+  grid-area: nodes;
+  min-width: 0;
+  width: 100%;
+}
+
+.users-top-card {
+  display: flex;
+  flex-direction: column;
+  height: 308px;
+  min-width: 0;
+}
+
+.users-top-card > .ant-card-head {
+  flex: 0 0 auto;
+}
+
+.users-top-card > .ant-card-body {
+  flex: 1 1 auto;
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.management-fixed-table .ant-table-body {
+  scrollbar-gutter: stable;
+}
+
+.management-fixed-table .ant-table-tbody > tr > td {
+  height: 40px;
+}
+
+.nodes-wide-card > .ant-card-body {
+  min-width: 0;
+}
+
 /* Tighter rows for the user / other-nodes tables (denser than antd "small"). */
 .compact-rows .ant-table-tbody > tr > td,
 .compact-rows .ant-table-thead > tr > th {
@@ -1263,9 +1347,44 @@ pre {
   margin-inline-end: 0;
 }
 
-@media (max-width: 768px) {
-  .users-management-section {
-    order: 1;
+@media (max-width: 1199px) {
+  .users-page-grid {
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-areas:
+      "users"
+      "subscriptions"
+      "nodes";
+  }
+}
+
+@media (max-width: 900px) {
+  .custom-node-filter-bar {
+    flex-wrap: wrap;
+  }
+
+  .custom-node-filter-count {
+    margin-left: 0;
+  }
+}
+
+@media (max-width: 767px) {
+  .users-top-card {
+    height: clamp(380px, 58dvh, 520px);
+  }
+
+  .users-top-card > .ant-card-body {
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+  }
+
+  .mobile-user-list,
+  .mobile-subscription-list {
+    flex: 1;
+    min-height: 0;
+    padding-inline-end: 4px;
+    overflow-y: auto;
+    overscroll-behavior: contain;
   }
 }
 

@@ -42,7 +42,7 @@ func (a *App) createCustomNodeSubscription(c *gin.Context) {
 	}
 	name := trimRunes(strings.TrimSpace(req.Name), 128)
 	if name == "" {
-		name = "订阅源"
+		name = "订阅"
 	}
 	autoUpdate := true
 	if req.AutoUpdate != nil {
@@ -103,7 +103,7 @@ func (a *App) updateCustomNodeSubscription(c *gin.Context) {
 		}
 		name := trimRunes(strings.TrimSpace(req.Name), 128)
 		if name == "" {
-			name = "订阅源"
+			name = "订阅"
 		}
 		group := trimRunes(strings.TrimSpace(req.Group), 64)
 		baseSortOrder := req.BaseSortOrder

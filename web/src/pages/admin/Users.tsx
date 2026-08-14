@@ -1,11 +1,14 @@
 import { useEffect, useState } from 'react'
-import { Button, Card, Col, DatePicker, Form, Grid, Input, Modal, Row, Space, Switch, Table, Tag, message } from 'antd'
+import { Button, Card, DatePicker, Empty, Form, Grid, Input, Modal, Space, Switch, Table, Tag, message } from 'antd'
 import { PlusOutlined } from '@ant-design/icons'
 import dayjs from 'dayjs'
 import { createUser, deleteUser, errMsg, listCustomNodes, listUsers, updateUser } from '../../api'
 import type { CustomNode } from '../../api'
 import type { User } from '../../types'
 import { AssignModal, CustomNodesPanel } from './Access'
+
+const MAX_VISIBLE_USERS = 5
+const MANAGEMENT_TABLE_SCROLL_HEIGHT = MAX_VISIBLE_USERS * 41
 
 export default function Users() {
   const [users, setUsers] = useState<User[]>([])
@@ -78,95 +81,111 @@ export default function Users() {
     }
   }
 
+  const addUserButton = <Button type="primary" size="small" icon={<PlusOutlined />} onClick={openCreate}>新增用户</Button>
+
+  const removeUser = (user: User) => {
+    Modal.confirm({
+      title: `删除用户 ${user.email}?`,
+      okType: 'danger',
+      onOk: async () => {
+        await deleteUser(user.id)
+        load()
+      },
+    })
+  }
+
+  const mobileUserList = users.length === 0 ? (
+    <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="暂无用户" />
+  ) : (
+    <div className={`mobile-admin-list mobile-user-list${users.length > MAX_VISIBLE_USERS ? ' is-scrollable' : ''}`}>
+      {users.map((user) => (
+        <div className="mobile-user-card" key={user.id}>
+          <div className="mobile-card-heading">
+            <span className="mobile-user-name">{user.email}</span>
+            <span className="mobile-user-count">{user.node_count ?? 0} 个节点</span>
+          </div>
+          <div className="mobile-card-meta">
+            <span>角色：{user.role === 'admin' ? '管理员' : '用户'}</span>
+          </div>
+          <div className="mobile-card-actions mobile-user-actions">
+            <Button size="small" type="link" onClick={() => openEdit(user)}>编辑</Button>
+            <Button size="small" type="link" onClick={() => setAssignUser(user)}>分配</Button>
+            {user.role !== 'admin' ? (
+              <Button size="small" type="link" danger onClick={() => removeUser(user)}>删除</Button>
+            ) : null}
+          </div>
+        </div>
+      ))}
+    </div>
+  )
+
   return (
     <>
       <div className="users-page">
-        <Row className="users-management-section" gutter={[16, 16]}>
-          <Col xs={24} xl={12} style={{ display: 'flex' }}>
+        <div className="users-page-grid">
           <Card
             title="用户"
             size="small"
-            extra={<Button type="primary" size="small" icon={<PlusOutlined />} onClick={openCreate}>新增用户</Button>}
-            style={{ flex: 1, display: 'flex', flexDirection: 'column', width: '100%' }}
-            styles={{ body: { flex: 1, overflow: 'auto' } }}
+            className="users-top-card users-overview-card"
+            extra={addUserButton}
           >
-            <Table
+            {isMobile ? mobileUserList : <Table
               rowKey="id"
               size="small"
-              className="compact-rows"
+              className="compact-rows management-fixed-table users-table"
               loading={loading}
               dataSource={users}
               pagination={false}
-              scroll={{ x: isMobile ? undefined : 560, y: 340 }}
+              scroll={{
+                x: 650,
+                y: users.length > MAX_VISIBLE_USERS ? MANAGEMENT_TABLE_SCROLL_HEIGHT : undefined,
+              }}
               columns={[
                 {
                   title: '用户名',
                   dataIndex: 'email',
                   ellipsis: true,
-                  // On mobile the 角色 column is hidden, so fold the admin marker
-                  // into the name cell to keep it visible.
-                  render: (v: string, u: User) =>
-                    isMobile && u.role === 'admin' ? (
-                      <Space size={4}>
-                        <span>{v}</span>
-                        <Tag color="red" style={{ marginInlineEnd: 0 }}>管理员</Tag>
-                      </Space>
-                    ) : (
-                      v
-                    ),
                 },
                 {
                   title: '角色',
                   width: 90,
                   dataIndex: 'role',
-                  hidden: isMobile,
                   render: (v: string) => (v === 'admin' ? <Tag color="red">管理员</Tag> : <Tag>用户</Tag>),
                 },
                 {
-                  title: '状态',
-                  width: 80,
-                  dataIndex: 'enabled',
-                  render: (v: boolean) => (v ? <Tag color="green">启用</Tag> : <Tag color="red">停用</Tag>),
+                  title: '节点',
+                  width: 70,
+                  dataIndex: 'node_count',
+                  render: (value: number) => `${value ?? 0} 个`,
                 },
                 {
                   title: '操作',
-                  width: isMobile ? 150 : 180,
-                  fixed: isMobile ? undefined : ('right' as const),
+                  width: 180,
+                  fixed: 'right' as const,
                   render: (_, u: User) => (
-                    <Space size={isMobile ? 2 : 8} wrap>
+                    <Space size={8} wrap>
                       <Button size="small" type="link" style={{ padding: '0 4px' }} onClick={() => openEdit(u)}>编辑</Button>
                       <Button size="small" type="link" style={{ padding: '0 4px' }} onClick={() => setAssignUser(u)}>分配节点</Button>
-                      <Button
-                        size="small"
-                        type="link"
-                        danger
-                        style={{ padding: '0 4px' }}
-                        disabled={u.role === 'admin'}
-                        onClick={() =>
-                          Modal.confirm({
-                            title: `删除用户 ${u.email}?`,
-                            okType: 'danger',
-                            onOk: async () => {
-                              await deleteUser(u.id)
-                              load()
-                            },
-                          })
-                        }
-                      >
-                        删除
-                      </Button>
+                      {u.role !== 'admin' ? (
+                        <Button
+                          size="small"
+                          type="link"
+                          danger
+                          style={{ padding: '0 4px' }}
+                          onClick={() => removeUser(u)}
+                        >
+                          删除
+                        </Button>
+                      ) : null}
                     </Space>
                   ),
                 },
               ]}
               locale={{ emptyText: '暂无用户' }}
-            />
+            />}
           </Card>
-          </Col>
-          <Col xs={24} xl={12} style={{ display: 'flex' }}>
-            <CustomNodesPanel nodes={nodes} onNodesChange={loadNodes} />
-          </Col>
-        </Row>
+          <CustomNodesPanel nodes={nodes} onNodesChange={loadNodes} />
+        </div>
       </div>
 
       <AssignModal

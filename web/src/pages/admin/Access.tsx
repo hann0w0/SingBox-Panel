@@ -78,6 +78,11 @@ const nodeTypeLabel: Record<string, { label: string; color: string }> = {
   mixed: { label: 'Mixed', color: 'volcano' },
 }
 
+const MAX_VISIBLE_SUBSCRIPTIONS = 5
+const MAX_VISIBLE_MOBILE_NODES = 5
+const MANAGEMENT_TABLE_ROW_HEIGHT = 41
+const SUBSCRIPTION_TABLE_SCROLL_HEIGHT = MAX_VISIBLE_SUBSCRIPTIONS * MANAGEMENT_TABLE_ROW_HEIGHT
+
 type AccessKind = 'managed' | 'custom'
 
 interface AccessNodeItem {
@@ -414,9 +419,9 @@ export function AssignModal({ userId, userEmail, nodes, open, onClose, onSaved }
             },
             {
               key: 'custom',
-              label: `其他节点（${customGroups.reduce((sum, g) => sum + g.items.length, 0)}）`,
+              label: `节点（${customGroups.reduce((sum, g) => sum + g.items.length, 0)}）`,
               children: customGroups.length === 0 ? (
-                <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="暂无其他节点，请先在「其他节点」添加" />
+                <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="暂无节点，请先在「节点」中添加" />
               ) : (
                 <div className="access-modal-body">{renderGroupSections(customGroups)}</div>
               ),
@@ -494,6 +499,7 @@ export function CustomNodesPanel({ nodes, onNodesChange }: { nodes: CustomNode[]
   const nodeLinkSource = Form.useWatch('link', nodeForm)
   const [selectedNodeIDs, setSelectedNodeIDs] = useState<number[]>([])
   const [selectedGroups, setSelectedGroups] = useState<string[]>([])
+  const [nodeSearch, setNodeSearch] = useState('')
   const [detailNode, setDetailNode] = useState<CustomNode | null>(null)
   const [groupMoveOpen, setGroupMoveOpen] = useState(false)
   const [groupMoveValue, setGroupMoveValue] = useState('')
@@ -582,13 +588,13 @@ export function CustomNodesPanel({ nodes, onNodesChange }: { nodes: CustomNode[]
       }
       if (editingSubscription) {
         await updateCustomNodeSubscription(editingSubscription.id, body)
-        message.success('订阅源已保存')
+        message.success('订阅已保存')
       } else {
         const result = await createCustomNodeSubscription(body)
         if (result.sync_error) {
-          message.warning(`订阅源已保存，首次同步失败：${result.sync_error}`)
+          message.warning(`订阅已保存，首次同步失败：${result.sync_error}`)
         } else {
-          message.success(`订阅源已保存并同步 ${result.sync.total} 个节点`)
+          message.success(`订阅已保存并同步 ${result.sync.total} 个节点`)
         }
       }
       setSubscriptionOpen(false)
@@ -618,13 +624,13 @@ export function CustomNodesPanel({ nodes, onNodesChange }: { nodes: CustomNode[]
 
   const removeSubscription = (subscription: CustomNodeSubscription) => {
     Modal.confirm({
-      title: `删除订阅源「${subscription.name}」？`,
-      content: `这会同时删除该订阅源管理的 ${subscription.node_count} 个节点，手工节点不受影响。`,
+      title: `删除订阅「${subscription.name}」？`,
+      content: `这会同时删除该订阅管理的 ${subscription.node_count} 个节点，手工节点不受影响。`,
       okType: 'danger',
       okText: '删除',
       onOk: async () => {
         await deleteCustomNodeSubscription(subscription.id)
-        message.success('订阅源及其节点已删除')
+        message.success('订阅及其节点已删除')
         loadSubscriptions()
         onNodesChange()
       },
@@ -847,13 +853,16 @@ export function CustomNodesPanel({ nodes, onNodesChange }: { nodes: CustomNode[]
   }, [groupOptions, nodes])
 
   const filteredNodes = useMemo(() => {
-    if (selectedGroups.length === 0) return nodes
     const selected = new Set(selectedGroups)
+    const query = nodeSearch.trim().toLocaleLowerCase()
     return nodes.filter((node) => {
       const group = (node.group || '').trim()
-      return group ? selected.has(group) : selected.has('__none__')
+      const groupMatches = selected.size === 0 || (group ? selected.has(group) : selected.has('__none__'))
+      if (!groupMatches || !query) return groupMatches
+      return [node.name, removeRegionFlag(node.name), node.address, node.detail?.address, node.protocol]
+        .some((value) => typeof value === 'string' && value.toLocaleLowerCase().includes(query))
     })
-  }, [nodes, selectedGroups])
+  }, [nodeSearch, nodes, selectedGroups])
 
   const detailParams = useMemo(() => {
     if (!detailNode) return []
@@ -879,7 +888,7 @@ export function CustomNodesPanel({ nodes, onNodesChange }: { nodes: CustomNode[]
       dataIndex: 'group',
       width: 150,
       render: (v: string, n: CustomNode) => n.subscription_id ? (
-        <Tag color="geekblue" title="分组由订阅源统一管理">{v?.trim() || '未分组'}</Tag>
+        <Tag color="geekblue" title="分组由订阅统一管理">{v?.trim() || '未分组'}</Tag>
       ) : (
       <span className="custom-node-row-action">
       <Popover
@@ -953,7 +962,7 @@ export function CustomNodesPanel({ nodes, onNodesChange }: { nodes: CustomNode[]
   const mobileSubscriptionList = subscriptions.length === 0 ? (
     <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="暂无保存的订阅。" />
   ) : (
-    <div className="mobile-admin-list">
+    <div className={`mobile-admin-list mobile-subscription-list${subscriptions.length > MAX_VISIBLE_SUBSCRIPTIONS ? ' is-scrollable' : ''}`}>
       {subscriptions.map((subscription) => (
         <div className="mobile-subscription-card" key={subscription.id}>
           <div className="mobile-card-heading">
@@ -984,10 +993,10 @@ export function CustomNodesPanel({ nodes, onNodesChange }: { nodes: CustomNode[]
   const mobileNodeList = filteredNodes.length === 0 ? (
     <Empty
       image={Empty.PRESENTED_IMAGE_SIMPLE}
-      description={selectedGroups.length > 0 ? '当前分组筛选下没有节点' : '暂无其他节点。'}
+      description={nodeSearch.trim() ? '没有匹配的节点' : selectedGroups.length > 0 ? '当前分组筛选下没有节点' : '暂无节点。'}
     />
   ) : (
-    <div className="mobile-admin-list">
+    <div className={`mobile-admin-list mobile-node-list${filteredNodes.length > MAX_VISIBLE_MOBILE_NODES ? ' is-scrollable' : ''}`}>
       {filteredNodes.map((node) => {
         const protocol = node.link?.trim() ? protocolOf(node.link) : node.protocol
         const type = nodeTypeLabel[protocol]
@@ -1034,19 +1043,22 @@ export function CustomNodesPanel({ nodes, onNodesChange }: { nodes: CustomNode[]
 
   return (
     <>
-      <div style={{ width: '100%' }}>
       <Card
-        title="订阅源"
+        title="订阅"
         size="small"
-        extra={<Button type="primary" size="small" icon={<PlusOutlined />} onClick={openSubscriptionCreate}>添加订阅</Button>}
-        style={{ marginBottom: 12 }}
+        className="users-top-card subscription-overview-card"
+        extra={<Button type="primary" size="small" icon={<PlusOutlined />} onClick={openSubscriptionCreate}>新增订阅</Button>}
       >
         {isMobile ? mobileSubscriptionList : <Table
           rowKey="id"
           size="small"
+          className="compact-rows management-fixed-table subscription-table"
           dataSource={subscriptions}
           pagination={false}
-          scroll={{ x: 720 }}
+          scroll={{
+            x: 720,
+            y: subscriptions.length > MAX_VISIBLE_SUBSCRIPTIONS ? SUBSCRIPTION_TABLE_SCROLL_HEIGHT : undefined,
+          }}
           columns={[
             {
               title: '名称',
@@ -1087,15 +1099,14 @@ export function CustomNodesPanel({ nodes, onNodesChange }: { nodes: CustomNode[]
               ),
             },
           ]}
-          locale={{ emptyText: '暂无保存的订阅源。添加后会定期同步节点增删和配置变化。' }}
+          locale={{ emptyText: '暂无保存的订阅。新增后会定期同步节点增删和配置变化。' }}
         />}
       </Card>
       <Card
-        title="其他节点"
+        title="节点"
         size="small"
+        className="nodes-wide-card"
         extra={<Button type="primary" size="small" icon={<PlusOutlined />} onClick={openNodeCreate}>新增节点</Button>}
-        style={{ flex: 1, display: 'flex', flexDirection: 'column', width: '100%' }}
-        styles={{ body: { flex: 1, minWidth: 0 } }}
       >
         {selectedNodeIDs.length > 0 ? (
           <div className="custom-node-batch-bar">
@@ -1139,6 +1150,13 @@ export function CustomNodesPanel({ nodes, onNodesChange }: { nodes: CustomNode[]
             optionFilterProp="label"
             className="custom-node-group-filter"
           />
+          <Input.Search
+            allowClear
+            value={nodeSearch}
+            onChange={(event) => setNodeSearch(event.target.value)}
+            placeholder="搜索节点名称"
+            className="custom-node-name-search"
+          />
           <span className="custom-node-filter-count">显示 {filteredNodes.length} / {nodes.length} 个节点</span>
         </div>
         {isMobile ? mobileNodeList : <Table
@@ -1148,7 +1166,7 @@ export function CustomNodesPanel({ nodes, onNodesChange }: { nodes: CustomNode[]
           dataSource={filteredNodes}
           pagination={false}
           tableLayout="fixed"
-          scroll={{ y: 340 }}
+          scroll={{ x: 900, y: 420 }}
           columns={nodeColumns}
           rowSelection={{
             selectedRowKeys: selectedNodeIDs,
@@ -1163,13 +1181,12 @@ export function CustomNodesPanel({ nodes, onNodesChange }: { nodes: CustomNode[]
               setDetailNode(node)
             },
           })}
-          locale={{ emptyText: selectedGroups.length > 0 ? '当前分组筛选下没有节点' : '暂无其他节点。可粘贴朋友分享的链接（vless://、ss://、trojan:// 等），合并进订阅输出。' }}
+          locale={{ emptyText: nodeSearch.trim() ? '没有匹配的节点' : selectedGroups.length > 0 ? '当前分组筛选下没有节点' : '暂无节点。可粘贴朋友分享的链接（vless://、ss://、trojan:// 等），合并进订阅输出。' }}
         />}
       </Card>
-      </div>
 
       <Modal
-        title={editingSubscription ? '编辑订阅' : '添加订阅'}
+        title={editingSubscription ? '编辑订阅' : '新增订阅'}
         open={subscriptionOpen}
         onOk={() => void saveSubscription()}
         onCancel={() => setSubscriptionOpen(false)}
@@ -1178,7 +1195,7 @@ export function CustomNodesPanel({ nodes, onNodesChange }: { nodes: CustomNode[]
         destroyOnClose
       >
         <Form form={subscriptionForm} layout="vertical">
-          <Form.Item name="name" label="名称" rules={[{ required: true, whitespace: true, message: '请输入订阅源名称' }]}>
+          <Form.Item name="name" label="名称" rules={[{ required: true, whitespace: true, message: '请输入订阅名称' }]}>
             <Input placeholder="例如：机场 A" />
           </Form.Item>
           <Form.Item name="url" label="订阅链接" rules={[{ required: true, whitespace: true, message: '请输入 HTTP(S) 订阅链接' }]}>
@@ -1214,7 +1231,7 @@ export function CustomNodesPanel({ nodes, onNodesChange }: { nodes: CustomNode[]
         {detailNode ? (
           <Descriptions bordered size="small" column={1} labelStyle={{ width: 130 }}>
               <Descriptions.Item label="来源">
-                {detailNode.subscription_id ? `订阅同步 · ${detailSubscription?.name || `订阅源 #${detailNode.subscription_id}`}` : '手动节点'}
+                {detailNode.subscription_id ? `订阅同步 · ${detailSubscription?.name || `订阅 #${detailNode.subscription_id}`}` : '手动节点'}
               </Descriptions.Item>
               <Descriptions.Item label="分组">{detailNode.group?.trim() || '未分组'}</Descriptions.Item>
               <Descriptions.Item label="协议">{detailNode.detail?.protocol || detailNode.protocol || protocolOf(detailNode.link || '')}</Descriptions.Item>
@@ -1268,7 +1285,7 @@ export function CustomNodesPanel({ nodes, onNodesChange }: { nodes: CustomNode[]
 
       {/* 自定义节点 modal */}
       <Modal
-        title={editingNode ? '编辑其他节点' : '新增其他节点'}
+        title={editingNode ? '编辑节点' : '新增节点'}
         open={nodeOpen}
         onOk={submitNode}
         onCancel={() => setNodeOpen(false)}

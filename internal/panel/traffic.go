@@ -29,7 +29,7 @@ var trafficRanges = map[string]trafficRangeConfig{
 	"1h":  {duration: time.Hour, step: 2 * time.Minute},
 	"12h": {duration: 12 * time.Hour, step: 30 * time.Minute},
 	"24h": {duration: 24 * time.Hour, step: time.Hour},
-	"7d":  {duration: 7 * 24 * time.Hour, step: 6 * time.Hour},
+	"7d":  {duration: 7 * 24 * time.Hour, step: 24 * time.Hour},
 	"30d": {duration: 30 * 24 * time.Hour, step: 24 * time.Hour},
 }
 

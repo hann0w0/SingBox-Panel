@@ -8,6 +8,7 @@ export interface User {
   role: Role
   server_ids: number[]
   inbound_ids: number[]
+  node_count?: number
   expire_at: string | null
   enabled: boolean
   // sub_token intentionally absent: the API never returns it (see model.User).

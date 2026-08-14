@@ -37,6 +37,11 @@ type userAccessResp struct {
 	CustomNodeIDs []uint `json:"custom_node_ids"`
 }
 
+type userListItem struct {
+	model.User
+	NodeCount int `json:"node_count"`
+}
+
 func normalizedIDs(ids []uint) []uint {
 	seen := make(map[uint]bool, len(ids))
 	out := make([]uint, 0, len(ids))
@@ -247,8 +252,55 @@ func (a *App) validateUserNodeIDs(u *model.User) error {
 
 func (a *App) listUsers(c *gin.Context) {
 	var users []model.User
-	a.db.Order("id").Find(&users)
-	c.JSON(http.StatusOK, gin.H{"users": users})
+	if err := a.db.Order("id").Find(&users).Error; err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+	var inbounds []model.Inbound
+	if err := a.db.Select("id", "server_id").Find(&inbounds).Error; err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+	var nodes []model.CustomNode
+	if err := a.db.Select("id", "all_users", "user_ids", "excluded_user_ids").Find(&nodes).Error; err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+
+	inboundServers := make(map[uint]uint, len(inbounds))
+	serverInboundCounts := make(map[uint]int)
+	for i := range inbounds {
+		inboundServers[inbounds[i].ID] = inbounds[i].ServerID
+		serverInboundCounts[inbounds[i].ServerID]++
+	}
+	items := make([]userListItem, 0, len(users))
+	for i := range users {
+		count := 0
+		if len(users[i].InboundIDs) > 0 {
+			seen := make(map[uint]bool, len(users[i].InboundIDs))
+			for _, inboundID := range users[i].InboundIDs {
+				if _, exists := inboundServers[inboundID]; exists && !seen[inboundID] {
+					seen[inboundID] = true
+					count++
+				}
+			}
+		} else {
+			seen := make(map[uint]bool, len(users[i].ServerIDs))
+			for _, serverID := range users[i].ServerIDs {
+				if !seen[serverID] {
+					seen[serverID] = true
+					count += serverInboundCounts[serverID]
+				}
+			}
+		}
+		for j := range nodes {
+			if nodes[j].HasUser(users[i].ID) {
+				count++
+			}
+		}
+		items = append(items, userListItem{User: users[i], NodeCount: count})
+	}
+	c.JSON(http.StatusOK, gin.H{"users": items})
 }
 
 func (a *App) createUser(c *gin.Context) {

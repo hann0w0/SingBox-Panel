@@ -10,7 +10,7 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
-	"gopkg.in/yaml.v3"
+	"github.com/goccy/go-yaml"
 
 	"github.com/hann0w0/singbox-panel/internal/model"
 	"github.com/hann0w0/singbox-panel/internal/singbox"
@@ -605,9 +605,86 @@ func (a *App) writeSingbox(c *gin.Context, nodes []node) {
 func (a *App) writeClash(c *gin.Context, nodes []node) {
 	proxies, _ := clashProxies(nodes)
 	// Only the proxies array: rules/groups belong to the user's own config.
-	doc := map[string]any{"proxies": proxies}
-	data, _ := yaml.Marshal(doc)
+	data, _ := marshalClashProxiesYAML(proxies)
 	c.Data(http.StatusOK, "text/yaml; charset=utf-8", data)
+}
+
+var clashProxyLeadingKeys = []string{
+	"type",
+	"name",
+	"server",
+	"port",
+	"username",
+	"uuid",
+	"password",
+	"psk",
+	"auth-str",
+	"version",
+}
+
+var clashProxyTrailingKeys = []string{
+	"client-fingerprint",
+	"tls",
+	"skip-cert-verify",
+	"udp",
+}
+
+// marshalClashProxiesYAML keeps the human-facing Clash fields in a stable,
+// conventional order and emits names as native Unicode so flag emoji remain
+// readable. MapSlice provides ordering directly without inspecting names.
+func marshalClashProxiesYAML(proxies []map[string]any) ([]byte, error) {
+	ordered := make([]yaml.MapSlice, 0, len(proxies))
+	for _, proxy := range proxies {
+		ordered = append(ordered, orderedClashProxyMap(proxy))
+	}
+	doc := yaml.MapSlice{{Key: "proxies", Value: ordered}}
+	return yaml.MarshalWithOptions(doc, yaml.IndentSequence(true))
+}
+
+func orderedClashProxyMap(proxy map[string]any) yaml.MapSlice {
+	ordered := make(yaml.MapSlice, 0, len(proxy))
+	written := make(map[string]struct{}, len(proxy))
+	appendKey := func(key string) {
+		value, ok := proxy[key]
+		if !ok {
+			return
+		}
+		ordered = append(ordered, yaml.MapItem{Key: key, Value: value})
+		written[key] = struct{}{}
+	}
+
+	for _, key := range clashProxyLeadingKeys {
+		appendKey(key)
+	}
+
+	middleKeys := make([]string, 0, len(proxy))
+	for key := range proxy {
+		if _, ok := written[key]; ok {
+			continue
+		}
+		if clashProxyKeyListed(clashProxyTrailingKeys, key) {
+			continue
+		}
+		middleKeys = append(middleKeys, key)
+	}
+	sort.Strings(middleKeys)
+	for _, key := range middleKeys {
+		appendKey(key)
+	}
+
+	for _, key := range clashProxyTrailingKeys {
+		appendKey(key)
+	}
+	return ordered
+}
+
+func clashProxyKeyListed(keys []string, target string) bool {
+	for _, key := range keys {
+		if key == target {
+			return true
+		}
+	}
+	return false
 }
 
 func clashProxies(nodes []node) (proxies []map[string]any, names []string) {
@@ -1227,8 +1304,7 @@ func buildNodeFormatItems(nodes []node) []NodeFormatItem {
 
 		var clashStr string
 		if p := clashProxy(n, seenClash); p != nil {
-			doc := map[string]any{"proxies": []any{p}}
-			d, _ := yaml.Marshal(doc)
+			d, _ := marshalClashProxiesYAML([]map[string]any{p})
 			clashStr = string(d)
 		}
 
@@ -1252,8 +1328,7 @@ func buildNodeFormatItems(nodes []node) []NodeFormatItem {
 // clashProxiesYAML 将 nodes 转为 Clash YAML proxies 块字符串，供管理员弹窗展示。
 func clashProxiesYAML(nodes []node) string {
 	proxies, _ := clashProxies(nodes)
-	doc := map[string]any{"proxies": proxies}
-	data, _ := yaml.Marshal(doc)
+	data, _ := marshalClashProxiesYAML(proxies)
 	return string(data)
 }
 

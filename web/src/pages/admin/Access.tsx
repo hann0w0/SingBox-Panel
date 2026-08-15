@@ -486,6 +486,58 @@ function detailValue(value: unknown): string {
   return String(value)
 }
 
+const MobileNodeCard = memo(function MobileNodeCard({
+  node,
+  selected,
+  onSelectionChange,
+  onDetail,
+  onEdit,
+  onRemove,
+}: {
+  node: CustomNode
+  selected: boolean
+  onSelectionChange: (id: number, checked: boolean) => void
+  onDetail: (node: CustomNode) => void
+  onEdit: (node: CustomNode) => void
+  onRemove: (node: CustomNode) => void
+}) {
+  const protocol = node.link?.trim() ? protocolOf(node.link) : node.protocol
+  const type = nodeTypeLabel[protocol]
+  const group = node.group?.trim() || '未分组'
+
+  return (
+    <div
+      className="mobile-node-card"
+      onClick={(event) => {
+        const target = event.target as HTMLElement
+        if (target.closest('button, input, .ant-checkbox-wrapper')) return
+        onDetail(node)
+      }}
+    >
+      <div className="mobile-node-card-top">
+        <Checkbox
+          checked={selected}
+          disabled={!!node.subscription_id}
+          onChange={(event) => onSelectionChange(node.id, event.target.checked)}
+        />
+        <div className="mobile-node-card-name">{nodeDisplayName(node)}</div>
+        <Tag color={type?.color}>{type?.label || protocol || '-'}</Tag>
+      </div>
+      <div className="mobile-node-card-meta">
+        <span>分组：{group}</span>
+        {node.detail?.address || node.address ? (
+          <span>{node.detail?.address || node.address}{(node.detail?.port || node.port) ? `:${node.detail?.port || node.port}` : ''}</span>
+        ) : null}
+      </div>
+      <div className="mobile-card-actions">
+        <Button size="small" type="link" onClick={() => onDetail(node)}>详情</Button>
+        <Button size="small" type="link" onClick={() => onEdit(node)}>编辑</Button>
+        <Button size="small" type="link" danger onClick={() => onRemove(node)}>删除</Button>
+      </div>
+    </div>
+  )
+})
+
 export function CustomNodesPanel({ nodes, onNodesChange }: { nodes: CustomNode[]; onNodesChange: () => void }) {
   const screens = Grid.useBreakpoint()
   const isMobile = !screens.md
@@ -761,6 +813,13 @@ export function CustomNodesPanel({ nodes, onNodesChange }: { nodes: CustomNode[]
     })
   }
 
+  const changeMobileNodeSelection = useCallback((id: number, checked: boolean) => {
+    setSelectedNodeIDs((current) => {
+      if (checked) return current.includes(id) ? current : [...current, id]
+      return current.filter((currentID) => currentID !== id)
+    })
+  }, [])
+
   // ---- batch operations on the node table ----
 
   const selectedNodes = useMemo(
@@ -997,47 +1056,17 @@ export function CustomNodesPanel({ nodes, onNodesChange }: { nodes: CustomNode[]
     />
   ) : (
     <div className={`mobile-admin-list mobile-node-list${filteredNodes.length > MAX_VISIBLE_MOBILE_NODES ? ' is-scrollable' : ''}`}>
-      {filteredNodes.map((node) => {
-        const protocol = node.link?.trim() ? protocolOf(node.link) : node.protocol
-        const type = nodeTypeLabel[protocol]
-        const group = node.group?.trim() || '未分组'
-        return (
-          <div
-            className="mobile-node-card"
-            key={node.id}
-            onClick={(event) => {
-              const target = event.target as HTMLElement
-              if (target.closest('button, input, .ant-checkbox-wrapper')) return
-              setDetailNode(node)
-            }}
-          >
-            <div className="mobile-node-card-top">
-              <Checkbox
-                checked={selectedNodeIDs.includes(node.id)}
-                disabled={!!node.subscription_id}
-                onChange={(event) => {
-                  setSelectedNodeIDs((current) => event.target.checked
-                    ? [...current, node.id]
-                    : current.filter((id) => id !== node.id))
-                }}
-              />
-              <div className="mobile-node-card-name">{nodeDisplayName(node)}</div>
-              <Tag color={type?.color}>{type?.label || protocol || '-'}</Tag>
-            </div>
-            <div className="mobile-node-card-meta">
-              <span>分组：{group}</span>
-              {node.detail?.address || node.address ? (
-                <span>{node.detail?.address || node.address}{(node.detail?.port || node.port) ? `:${node.detail?.port || node.port}` : ''}</span>
-              ) : null}
-            </div>
-            <div className="mobile-card-actions">
-              <Button size="small" type="link" onClick={() => setDetailNode(node)}>详情</Button>
-              <Button size="small" type="link" onClick={() => openNodeEdit(node)}>编辑</Button>
-              <Button size="small" type="link" danger onClick={() => removeNode(node)}>删除</Button>
-            </div>
-          </div>
-        )
-      })}
+      {filteredNodes.map((node) => (
+        <MobileNodeCard
+          key={node.id}
+          node={node}
+          selected={selectedNodeIDs.includes(node.id)}
+          onSelectionChange={changeMobileNodeSelection}
+          onDetail={setDetailNode}
+          onEdit={openNodeEdit}
+          onRemove={removeNode}
+        />
+      ))}
     </div>
   )
 

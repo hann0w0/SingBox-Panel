@@ -560,6 +560,7 @@ body {
 .mobile-user-card,
 .mobile-subscription-card,
 .mobile-node-card {
+  box-sizing: border-box;
   min-width: 0;
   padding: 12px;
   border: 1px solid #eef0f4;
@@ -623,6 +624,12 @@ body {
   color: #68707d;
   font-size: 12px;
   overflow-wrap: anywhere;
+}
+
+.mobile-node-card-meta > span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .mobile-card-error {
@@ -1368,8 +1375,26 @@ pre {
 }
 
 @media (max-width: 767px) {
+  html,
+  body,
+  #root {
+    height: auto;
+    min-height: 100%;
+  }
+
+  #root {
+    overflow-x: clip;
+    overflow-y: visible;
+  }
+
   .users-top-card {
-    height: clamp(380px, 58dvh, 520px);
+    height: 480px;
+  }
+
+  @supports (height: 1svh) {
+    .users-top-card {
+      height: clamp(380px, 58svh, 520px);
+    }
   }
 
   .users-top-card > .ant-card-body {
@@ -1379,13 +1404,20 @@ pre {
   }
 
   .mobile-user-list,
-  .mobile-subscription-list {
+  .mobile-subscription-list,
+  .mobile-node-list {
     flex: 1;
     min-height: 0;
     padding-inline-end: 4px;
     overflow-y: auto;
-    overscroll-behavior: contain;
   }
+
+  .mobile-user-list.is-scrollable,
+  .mobile-subscription-list.is-scrollable,
+  .mobile-node-list.is-scrollable {
+    overscroll-behavior-y: auto;
+  }
+
 }
 
 /* The date+time popup is ~457px wide (288px date panel + 3 time columns), which

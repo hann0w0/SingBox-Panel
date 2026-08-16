@@ -515,13 +515,95 @@ export const downloadBackup = async (): Promise<void> => {
 
 // restoreBackup uploads a backup archive; on success the panel restarts to load
 // the imported database.
+export interface RestoreBackupResult {
+  ok: boolean
+  restarting: boolean
+  secret_applied: boolean
+  message: string
+}
+
 export const restoreBackup = (file: File) => {
   const fd = new FormData()
   fd.append('file', file)
   return http
-    .post<{ ok: boolean; restarting: boolean; secret_applied: boolean; message: string }>(
+    .post<RestoreBackupResult>(
       '/api/admin/maintenance/restore',
       fd,
     )
     .then((r) => r.data)
 }
+
+export interface OneDriveBackupFile {
+  id: string
+  name: string
+  size: number
+  lastModifiedDateTime: string
+}
+
+export interface OneDriveStatus {
+  connected: boolean
+  auto_sync: boolean
+  interval_hours: number
+  last_sync_at?: string
+  last_backup_name?: string
+  last_error?: string
+  cloud_error?: string
+  folder: string
+  backup_name: string
+  files: OneDriveBackupFile[]
+}
+
+export const getOneDriveStatus = () =>
+  http.get<OneDriveStatus>('/api/admin/maintenance/onedrive').then((r) => r.data)
+
+export const updateOneDriveSettings = (body: { auto_sync: boolean }) =>
+  http.put<{ ok: boolean }>('/api/admin/maintenance/onedrive', body).then((r) => r.data)
+
+export interface OneDriveAuthStart {
+  session_id: string
+  user_code: string
+  verification_uri: string
+  verification_uri_complete?: string
+  message?: string
+  interval: number
+  expires_in: number
+}
+
+export const startOneDriveAuth = (signal?: AbortSignal) =>
+  http.post<OneDriveAuthStart>('/api/admin/maintenance/onedrive/auth/start', undefined, { signal }).then((r) => r.data)
+
+export const pollOneDriveAuth = (sessionID: string, signal?: AbortSignal) =>
+  http
+    .post<{ status: 'pending' | 'connected'; interval?: number }>(
+      `/api/admin/maintenance/onedrive/auth/${encodeURIComponent(sessionID)}/poll`,
+      undefined,
+      { signal },
+    )
+    .then((r) => r.data)
+
+export const syncOneDriveBackup = () =>
+  http
+    .post<{ ok: boolean; name: string; message: string }>('/api/admin/maintenance/onedrive/sync')
+    .then((r) => r.data)
+
+export const downloadOneDriveBackup = async (id: string, name: string): Promise<void> => {
+  const resp = await http.get(`/api/admin/maintenance/onedrive/backups/${encodeURIComponent(id)}/download`, {
+    responseType: 'blob',
+  })
+  const url = URL.createObjectURL(resp.data as Blob)
+  const a = document.createElement('a')
+  a.href = url
+  a.download = name
+  document.body.appendChild(a)
+  a.click()
+  document.body.removeChild(a)
+  URL.revokeObjectURL(url)
+}
+
+export const restoreOneDriveBackup = (id: string) =>
+  http
+    .post<RestoreBackupResult>(`/api/admin/maintenance/onedrive/backups/${encodeURIComponent(id)}/restore`)
+    .then((r) => r.data)
+
+export const deleteOneDriveBackup = (id: string) =>
+  http.delete<{ ok: boolean }>(`/api/admin/maintenance/onedrive/backups/${encodeURIComponent(id)}`).then((r) => r.data)

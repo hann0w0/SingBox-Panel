@@ -3,6 +3,8 @@ package panel
 import (
 	"archive/tar"
 	"compress/gzip"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"io"
 	"net/http"
@@ -151,6 +153,23 @@ func TestDownloadBackupContainsDBAndSecret(t *testing.T) {
 	}
 	if _, ok := names["MANIFEST.txt"]; !ok {
 		t.Errorf("backup missing MANIFEST.txt")
+	}
+	if _, ok := names["backup.json"]; !ok {
+		t.Fatalf("backup missing backup.json")
+	}
+	var metadata backupMetadata
+	if err := json.Unmarshal([]byte(contents["backup.json"]), &metadata); err != nil {
+		t.Fatalf("backup.json: %v", err)
+	}
+	if metadata.FormatVersion != backupFormatVersion || metadata.SchemaVersion != currentSchemaVersion() || metadata.PanelVersion != "v1.0.0" {
+		t.Fatalf("backup metadata = %#v", metadata)
+	}
+	dbSum := sha256.Sum256([]byte(contents["singbox-panel.db"]))
+	if metadata.DatabaseSHA256 != hex.EncodeToString(dbSum[:]) {
+		t.Fatalf("database sha256 = %q, want %x", metadata.DatabaseSHA256, dbSum)
+	}
+	if metadata.CredentialVersion != backupCredentialVersion || metadata.CredentialCount != 0 || metadata.CredentialSHA256 == "" {
+		t.Fatalf("credential metadata = %#v", metadata)
 	}
 	// The DB snapshot must be a real SQLite file (magic header), not empty.
 	if dbBytes := contents["singbox-panel.db"]; !strings.HasPrefix(dbBytes, "SQLite format 3") {

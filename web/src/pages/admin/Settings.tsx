@@ -1,8 +1,24 @@
-import { useEffect, useState } from 'react'
-import { Alert, Button, Card, Col, Modal, Row, Space, Statistic, Tag, Upload, message } from 'antd'
+import { useEffect, useRef, useState } from 'react'
+import { Alert, Button, Card, Col, Divider, List, Modal, Popconfirm, Row, Space, Statistic, Tag, Typography, Upload, message } from 'antd'
 import type { UploadFile } from 'antd'
-import { CloudDownloadOutlined, DownloadOutlined, InboxOutlined, ReloadOutlined, RocketOutlined, UploadOutlined } from '@ant-design/icons'
-import { downloadBackup, errMsg, getMaintenanceInfo, restoreBackup, selfUpdate, type MaintenanceInfo } from '../../api'
+import { CloudDownloadOutlined, CloudOutlined, DeleteOutlined, DownloadOutlined, InboxOutlined, LinkOutlined, ReloadOutlined, RocketOutlined, UploadOutlined } from '@ant-design/icons'
+import {
+  deleteOneDriveBackup,
+  downloadBackup,
+  downloadOneDriveBackup,
+  errMsg,
+  getMaintenanceInfo,
+  getOneDriveStatus,
+  pollOneDriveAuth,
+  restoreBackup,
+  restoreOneDriveBackup,
+  selfUpdate,
+  startOneDriveAuth,
+  syncOneDriveBackup,
+  type MaintenanceInfo,
+  type OneDriveAuthStart,
+  type OneDriveStatus,
+} from '../../api'
 import { formatDuration } from '../../util'
 
 export default function Settings() {
@@ -12,6 +28,14 @@ export default function Settings() {
   const [backing, setBacking] = useState(false)
   const [restoring, setRestoring] = useState(false)
   const [restoreFile, setRestoreFile] = useState<UploadFile | null>(null)
+  const [cloud, setCloud] = useState<OneDriveStatus | null>(null)
+  const [cloudLoading, setCloudLoading] = useState(false)
+  const [cloudSyncing, setCloudSyncing] = useState(false)
+  const [cloudRestoring, setCloudRestoring] = useState(false)
+  const [authPending, setAuthPending] = useState<OneDriveAuthStart | null>(null)
+  const authTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const authAbort = useRef<AbortController | null>(null)
+  const authGeneration = useRef(0)
 
   const load = () => {
     setLoading(true)
@@ -20,7 +44,28 @@ export default function Settings() {
       .catch((e) => message.error(errMsg(e)))
       .finally(() => setLoading(false))
   }
-  useEffect(load, [])
+
+  const loadCloud = async () => {
+    setCloudLoading(true)
+    try {
+      const status = await getOneDriveStatus()
+      setCloud(status)
+    } catch (e) {
+      message.error(errMsg(e))
+    } finally {
+      setCloudLoading(false)
+    }
+  }
+
+  useEffect(() => {
+    load()
+    loadCloud()
+    return () => {
+      authGeneration.current += 1
+      if (authTimer.current) clearTimeout(authTimer.current)
+      authAbort.current?.abort()
+    }
+  }, [])
 
   const doBackup = () => {
     setBacking(true)
@@ -28,6 +73,129 @@ export default function Settings() {
       .then(() => message.success('备份已开始下载'))
       .catch((e) => message.error(errMsg(e)))
       .finally(() => setBacking(false))
+  }
+
+  const pollCloudAuth = (sessionID: string, delaySeconds: number, generation: number) => {
+    if (generation !== authGeneration.current) return
+    authTimer.current = setTimeout(async () => {
+      if (generation !== authGeneration.current) return
+      const controller = new AbortController()
+      authAbort.current = controller
+      try {
+        const result = await pollOneDriveAuth(sessionID, controller.signal)
+        if (generation !== authGeneration.current) return
+        if (result.status === 'connected') {
+          setAuthPending(null)
+          message.success('OneDrive 已连接')
+          void loadCloud()
+          return
+        }
+        pollCloudAuth(sessionID, result.interval || delaySeconds, generation)
+      } catch (e) {
+        if (controller.signal.aborted || generation !== authGeneration.current) return
+        setAuthPending(null)
+        message.error(errMsg(e))
+      } finally {
+        if (authAbort.current === controller) authAbort.current = null
+      }
+    }, Math.max(delaySeconds, 3) * 1000)
+  }
+
+  const doConnectCloud = async () => {
+    authGeneration.current += 1
+    const generation = authGeneration.current
+    if (authTimer.current) clearTimeout(authTimer.current)
+    authTimer.current = null
+    authAbort.current?.abort()
+    const controller = new AbortController()
+    authAbort.current = controller
+    setCloudLoading(true)
+    try {
+      const auth = await startOneDriveAuth(controller.signal)
+      if (generation !== authGeneration.current) return
+      setAuthPending(auth)
+      const target = auth.verification_uri_complete || auth.verification_uri
+      window.open(target, '_blank', 'noopener,noreferrer')
+      pollCloudAuth(auth.session_id, auth.interval || 5, generation)
+    } catch (e) {
+      if (controller.signal.aborted || generation !== authGeneration.current) return
+      message.error(errMsg(e))
+    } finally {
+      if (authAbort.current === controller) authAbort.current = null
+      if (generation === authGeneration.current) setCloudLoading(false)
+    }
+  }
+
+  const doCloudSync = async () => {
+    setCloudSyncing(true)
+    try {
+      const result = await syncOneDriveBackup()
+      message.success(result.message)
+      loadCloud()
+    } catch (e) {
+      message.error(errMsg(e))
+      loadCloud()
+    } finally {
+      setCloudSyncing(false)
+    }
+  }
+
+  const doCloudDownload = async (id: string, name: string) => {
+    try {
+      await downloadOneDriveBackup(id, name)
+    } catch (e) {
+      message.error(errMsg(e))
+    }
+  }
+
+  const doCloudDelete = async (id: string) => {
+    try {
+      await deleteOneDriveBackup(id)
+      message.success('云端备份已删除')
+      loadCloud()
+    } catch (e) {
+      message.error(errMsg(e))
+    }
+  }
+
+  const doCloudRestore = (id: string, name: string) => {
+    Modal.confirm({
+      title: '从 OneDrive 恢复备份',
+      content: (
+        <div>
+          <p>服务器将直接从 OneDrive 读取 <b>{name}</b>，覆盖当前节点、用户、订阅和被控 Agent 数据。</p>
+          <p style={{ color: '#a61d24', marginBottom: 0 }}>
+            恢复前会自动保留当前数据库快照，恢复完成后面板会重启。请确认备份来源可信。
+          </p>
+        </div>
+      ),
+      okText: '确认恢复',
+      okButtonProps: { danger: true },
+      cancelText: '取消',
+      onOk: async () => {
+        setCloudRestoring(true)
+        try {
+          const result = await restoreOneDriveBackup(id)
+          message.success(result.message)
+          if (result.restarting) {
+            setTimeout(() => {
+              localStorage.removeItem('singbox-panel_token')
+              localStorage.removeItem('singbox-panel_user')
+              location.href = '/login'
+            }, 3500)
+          }
+        } catch (e) {
+          message.error(errMsg(e))
+        } finally {
+          setCloudRestoring(false)
+        }
+      },
+    })
+  }
+
+  const formatBackupSize = (size: number) => {
+    if (size < 1024 * 1024) return `${Math.max(1, Math.round(size / 1024))} KB`
+    return `${(size / 1024 / 1024).toFixed(1)} MB`
   }
 
   const doRestore = () => {
@@ -146,7 +314,7 @@ export default function Settings() {
         <Card
           title="面板版本"
           loading={loading}
-          extra={<Button size="small" icon={<ReloadOutlined />} onClick={load} disabled={updating}>刷新</Button>}
+          extra={<Button size="small" icon={<ReloadOutlined />} onClick={() => { load(); loadCloud() }} disabled={updating}>刷新</Button>}
         >
           {info && (
             <Row gutter={[16, 16]} align="middle">
@@ -198,7 +366,7 @@ export default function Settings() {
       </Col>
 
       <Col xs={24} lg={12}>
-        <Card title="数据备份" style={{ height: '100%' }}>
+        <Card title="数据备份" style={{ height: '100%' }} loading={cloudLoading && !cloud}>
           <p style={{ color: '#595959', minHeight: 66 }}>
             导出包含全部数据（节点、用户、订阅 token、被控 Agent 密钥）与会话密钥（jwt_secret）的备份。
             在新服务器上恢复此备份并让原域名指向新机，被控 Agent 会自动重连、用户登录也不会失效，无需重装。
@@ -211,6 +379,108 @@ export default function Settings() {
           >
             下载备份
           </Button>
+
+          <Divider style={{ margin: '24px 0 18px' }} />
+          <Space align="center" size={10}>
+            <Typography.Text strong>OneDrive 云端同步</Typography.Text>
+            {cloud?.connected ? <Tag color="success">已连接</Tag> : <Tag>未连接</Tag>}
+          </Space>
+          <Space wrap size={[10, 10]} style={{ display: 'flex', marginTop: 14 }}>
+            <Button type="primary" icon={<CloudOutlined />} onClick={doConnectCloud} loading={cloudLoading}>
+              {cloud?.connected ? '重新连接 OneDrive' : '连接 OneDrive'}
+            </Button>
+            {cloud?.connected && (
+              <>
+                <Button type="primary" icon={<CloudOutlined />} loading={cloudSyncing} onClick={doCloudSync}>
+                  立即同步
+                </Button>
+                <Button icon={<ReloadOutlined />} onClick={loadCloud} loading={cloudLoading}>
+                  刷新列表
+                </Button>
+              </>
+            )}
+          </Space>
+
+          {authPending && (
+            <Alert
+              type="warning"
+              showIcon
+              style={{ marginTop: 16 }}
+              message="请完成 OneDrive 授权"
+              description={(
+                <Space direction="vertical" size={4}>
+                  <span>{authPending.message || '打开授权页面并输入下面的代码。'}</span>
+                  <Typography.Text copyable={{ text: authPending.user_code }} strong>
+                    验证码：{authPending.user_code}
+                  </Typography.Text>
+                  <Button
+                    type="link"
+                    icon={<LinkOutlined />}
+                    href={authPending.verification_uri_complete || authPending.verification_uri}
+                    target="_blank"
+                    rel="noreferrer"
+                    style={{ padding: 0, width: 'fit-content' }}
+                  >
+                    打开 Microsoft 授权页面
+                  </Button>
+                </Space>
+              )}
+            />
+          )}
+
+          {cloud?.connected && (
+            <>
+              {(cloud.last_error || cloud.cloud_error) && (
+                <Alert
+                  type="error"
+                  showIcon
+                  message={cloud.last_error || cloud.cloud_error}
+                  style={{ marginTop: 16 }}
+                />
+              )}
+              {cloud.last_sync_at && (
+                <Typography.Text type="secondary" style={{ display: 'block', marginTop: 14 }}>
+                  最近同步：{new Date(cloud.last_sync_at).toLocaleString()}
+                  {cloud.last_backup_name ? ` · ${cloud.last_backup_name}` : ''}
+                </Typography.Text>
+              )}
+              <List
+                size="small"
+                bordered
+                style={{ marginTop: 14, maxHeight: 280, overflowY: 'auto' }}
+                locale={{ emptyText: '暂无云端备份，点击“立即同步”创建第一份备份' }}
+                dataSource={cloud.files ?? []}
+                renderItem={(file) => (
+                  <List.Item
+                    actions={[
+                      <Button key="restore" type="link" icon={<UploadOutlined />} loading={cloudRestoring} onClick={() => doCloudRestore(file.id, file.name)}>
+                        恢复
+                      </Button>,
+                      <Button key="download" type="link" icon={<DownloadOutlined />} onClick={() => doCloudDownload(file.id, file.name)}>
+                        下载
+                      </Button>,
+                      <Popconfirm
+                        key="delete"
+                        title="删除这份云端备份？"
+                        description="删除后无法从 OneDrive 恢复。"
+                        okText="删除"
+                        cancelText="取消"
+                        okButtonProps={{ danger: true }}
+                        onConfirm={() => doCloudDelete(file.id)}
+                      >
+                        <Button danger type="link" icon={<DeleteOutlined />}>删除</Button>
+                      </Popconfirm>,
+                    ]}
+                  >
+                    <List.Item.Meta
+                      title={file.name}
+                      description={`${formatBackupSize(file.size)} · ${new Date(file.lastModifiedDateTime).toLocaleString()}`}
+                    />
+                  </List.Item>
+                )}
+              />
+            </>
+          )}
         </Card>
       </Col>
 
@@ -252,6 +522,7 @@ export default function Settings() {
           </Space>
         </Card>
       </Col>
+
     </Row>
   )
 }

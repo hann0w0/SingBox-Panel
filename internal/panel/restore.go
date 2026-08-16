@@ -3,6 +3,8 @@ package panel
 import (
 	"archive/tar"
 	"compress/gzip"
+	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -21,6 +23,8 @@ import (
 	"github.com/glebarez/sqlite"
 	"gorm.io/gorm"
 	"gorm.io/gorm/logger"
+
+	"github.com/hann0w0/singbox-panel/internal/model"
 )
 
 // Backup restore: import a .tar.gz produced by downloadBackup, replacing the
@@ -54,7 +58,7 @@ const (
 // POST /api/admin/maintenance/restore — multipart upload field "file".
 func (a *App) restoreBackup(c *gin.Context) {
 	// Restore only makes sense for the file-backed SQLite deployment.
-	dbPath, ok := a.sqliteDBPath()
+	_, ok := a.sqliteDBPath()
 	if !ok {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "仅 SQLite 部署支持一键恢复"})
 		return
@@ -92,8 +96,19 @@ func (a *App) restoreBackup(c *gin.Context) {
 	}
 	defer src.Close()
 
-	// Stage the extracted DB + secret next to the live DB so the final rename is
-	// on the same filesystem (atomic) and confined to our writable install dir.
+	a.restoreBackupReader(c, src)
+}
+
+// restoreBackupReader is shared by browser uploads and direct OneDrive
+// restores. It validates and migrates the staged copy completely before the
+// live database is closed or renamed.
+func (a *App) restoreBackupReader(c *gin.Context, src io.Reader) {
+	dbPath, ok := a.sqliteDBPath()
+	if !ok {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "仅 SQLite 部署支持一键恢复"})
+		return
+	}
+
 	stageDir, err := os.MkdirTemp(filepath.Dir(dbPath), ".restore-")
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "创建暂存目录失败：" + err.Error()})
@@ -101,7 +116,7 @@ func (a *App) restoreBackup(c *gin.Context) {
 	}
 	defer os.RemoveAll(stageDir)
 
-	stagedDB, importedSecret, err := extractBackup(src, stageDir)
+	stagedDB, importedSecret, metadata, metadataPresent, err := extractBackupWithMetadata(src, stageDir)
 	if err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "解析备份失败：" + err.Error()})
 		return
@@ -113,6 +128,109 @@ func (a *App) restoreBackup(c *gin.Context) {
 	if err := validateSQLiteFile(stagedDB); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
+	}
+	if metadataPresent {
+		if err := validateBackupMetadata(metadata, stagedDB, a.version); err != nil {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "备份版本或完整性校验失败：" + err.Error()})
+			return
+		}
+	}
+
+	// Capture the currently valid cloud authorization before the live DB is
+	// closed. It will be re-encrypted with the secret that the restored process
+	// will actually use, so a restore does not require another OneDrive login.
+	currentCloud := defaultOneDriveSettings()
+	if loadedCloud, loadErr := a.loadOneDriveSettings(); loadErr != nil {
+		// A broken cloud setting must not make the local disaster-recovery path
+		// unusable. Leave the archived setting untouched; with its matching
+		// jwt_secret it may still become usable after restart.
+		log.Printf("restore: skip preserving unreadable OneDrive authorization: %v", loadErr)
+	} else {
+		currentCloud = loadedCloud
+	}
+	beforeFingerprint, err := fingerprintFromPath(stagedDB)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "校验节点凭据失败：" + err.Error()})
+		return
+	}
+
+	// Run all pending migrations against the staged file. The migration runner
+	// creates only temporary pre-migration snapshots inside stageDir; none can
+	// affect the live database.
+	staged, err := openSQLiteForMigration(stagedDB)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "打开暂存数据库失败：" + err.Error()})
+		return
+	}
+	stagedCfg := a.cfg.Database
+	stagedCfg.Driver = "sqlite"
+	stagedCfg.DSN = stagedDB
+	if err := runSchemaMigrations(staged, stagedCfg); err != nil {
+		if sqlDB, closeErr := staged.DB(); closeErr == nil {
+			_ = sqlDB.Close()
+		}
+		c.JSON(http.StatusBadRequest, gin.H{"error": "备份需要升级但迁移失败：" + err.Error()})
+		return
+	}
+	afterFingerprint, err := calculateCredentialFingerprint(staged)
+	if err != nil {
+		if sqlDB, closeErr := staged.DB(); closeErr == nil {
+			_ = sqlDB.Close()
+		}
+		c.JSON(http.StatusBadRequest, gin.H{"error": "迁移后校验节点凭据失败：" + err.Error()})
+		return
+	}
+	var adminCount int64
+	if err := staged.Model(&model.User{}).Where("role = ?", model.RoleAdmin).Count(&adminCount).Error; err != nil {
+		if sqlDB, closeErr := staged.DB(); closeErr == nil {
+			_ = sqlDB.Close()
+		}
+		c.JSON(http.StatusBadRequest, gin.H{"error": "检查管理员账户失败：" + err.Error()})
+		return
+	}
+	if adminCount == 0 {
+		if sqlDB, closeErr := staged.DB(); closeErr == nil {
+			_ = sqlDB.Close()
+		}
+		c.JSON(http.StatusBadRequest, gin.H{"error": "备份中没有管理员账户，已拒绝恢复"})
+		return
+	}
+	if beforeFingerprint.Available && afterFingerprint.Available && beforeFingerprint.SHA256 != afterFingerprint.SHA256 {
+		if sqlDB, closeErr := staged.DB(); closeErr == nil {
+			_ = sqlDB.Close()
+		}
+		c.JSON(http.StatusBadRequest, gin.H{"error": "数据库迁移改变了多用户节点凭据，已拒绝恢复"})
+		return
+	}
+	if metadataPresent && (metadata.CredentialSHA256 != afterFingerprint.SHA256 || metadata.CredentialCount != afterFingerprint.Count) {
+		if sqlDB, closeErr := staged.DB(); closeErr == nil {
+			_ = sqlDB.Close()
+		}
+		c.JSON(http.StatusBadRequest, gin.H{"error": "备份中的多用户节点凭据校验失败，已拒绝恢复"})
+		return
+	}
+
+	runtimeSecret, secretWarning := restoreRuntimeJWTSecret(a, importedSecret)
+	if runtimeSecret == "" {
+		if sqlDB, closeErr := staged.DB(); closeErr == nil {
+			_ = sqlDB.Close()
+		}
+		c.JSON(http.StatusBadRequest, gin.H{"error": "无法确定恢复后使用的 jwt_secret"})
+		return
+	}
+	if currentCloud.RefreshToken != "" {
+		stagedApp := &App{cfg: a.cfg, db: staged}
+		stagedApp.cfg.JWTSecret = runtimeSecret
+		if err := stagedApp.saveOneDriveSettings(currentCloud); err != nil {
+			if sqlDB, closeErr := staged.DB(); closeErr == nil {
+				_ = sqlDB.Close()
+			}
+			c.JSON(http.StatusBadRequest, gin.H{"error": "保留 OneDrive 授权失败：" + err.Error()})
+			return
+		}
+	}
+	if sqlDB, err := staged.DB(); err == nil {
+		_ = sqlDB.Close()
 	}
 
 	// From here on the archive is trusted. Do the destructive work in an order
@@ -164,6 +282,9 @@ func (a *App) restoreBackup(c *gin.Context) {
 	// 4) Persist the imported jwt_secret so admin/user sessions and, more
 	// importantly, nothing about agent auth changes across the migration.
 	secretApplied, restoreWarning := persistRestoredJWTSecret(a.cfgPath, dbPath, importedSecret)
+	if restoreWarning == "" {
+		restoreWarning = secretWarning
+	}
 	if restoreWarning != "" {
 		c.Header("X-Restore-Warning", restoreWarning)
 	}
@@ -190,6 +311,49 @@ func (a *App) restoreBackup(c *gin.Context) {
 	a.scheduleRestart()
 }
 
+func fingerprintFromPath(path string) (credentialFingerprint, error) {
+	db, err := openSQLiteReadOnly(path)
+	if err != nil {
+		return credentialFingerprint{}, err
+	}
+	fingerprint, fingerprintErr := calculateCredentialFingerprint(db)
+	if sqlDB, closeErr := db.DB(); closeErr == nil {
+		_ = sqlDB.Close()
+	}
+	return fingerprint, fingerprintErr
+}
+
+func openSQLiteForMigration(path string) (*gorm.DB, error) {
+	db, err := gorm.Open(sqlite.Open(sqliteDSN(path)), &gorm.Config{Logger: logger.Default.LogMode(logger.Silent)})
+	if err != nil {
+		return nil, err
+	}
+	if sqlDB, err := db.DB(); err == nil {
+		sqlDB.SetMaxOpenConns(1)
+		sqlDB.SetMaxIdleConns(1)
+	}
+	return db, nil
+}
+
+func restoreRuntimeJWTSecret(a *App, imported string) (string, string) {
+	for _, name := range []string{"JWT_SECRET", "SINGBOX_PANEL_JWT_SECRET"} {
+		if value := strings.TrimSpace(os.Getenv(name)); value != "" {
+			if imported != "" && value != imported {
+				return value, name + " 环境变量与备份中的 jwt_secret 不一致，请更新该环境变量后重启"
+			}
+			return value, ""
+		}
+	}
+	if strings.TrimSpace(imported) != "" {
+		return imported, ""
+	}
+	secret, err := ResolveJWTSecret(a.cfg)
+	if err != nil {
+		return "", err.Error()
+	}
+	return secret, ""
+}
+
 // scheduleRestart exits the process shortly after, giving the HTTP response time
 // to flush. A supervisor (systemd Restart=always, Docker restart policy) brings
 // the panel back up against whatever is now on disk.
@@ -209,9 +373,14 @@ func (a *App) scheduleRestart() { scheduleRestartFn() }
 // returning its path plus the jwt_secret contents (if present). Entry names are
 // sanitized to their base name to defeat path traversal.
 func extractBackup(r io.Reader, stageDir string) (dbPath, secret string, err error) {
+	dbPath, secret, _, _, err = extractBackupWithMetadata(r, stageDir)
+	return dbPath, secret, err
+}
+
+func extractBackupWithMetadata(r io.Reader, stageDir string) (dbPath, secret string, metadata backupMetadata, metadataPresent bool, err error) {
 	gz, err := gzip.NewReader(r)
 	if err != nil {
-		return "", "", fmt.Errorf("不是有效的 gzip 文件")
+		return "", "", backupMetadata{}, false, fmt.Errorf("不是有效的 gzip 文件")
 	}
 	defer gz.Close()
 	limited := &io.LimitedReader{R: gz, N: maxBackupUncompressed + 1}
@@ -224,20 +393,21 @@ func extractBackup(r io.Reader, stageDir string) (dbPath, secret string, err err
 	var payloadSize int64
 	seenDB := false
 	seenSecret := false
+	seenMetadata := false
 	for {
 		hdr, e := tr.Next()
 		if e == io.EOF {
 			break
 		}
 		if e != nil {
-			return "", "", e
+			return "", "", backupMetadata{}, false, e
 		}
 		entries++
 		if entries > maxEntries {
-			return "", "", fmt.Errorf("备份归档条目过多（> %d）", maxEntries)
+			return "", "", backupMetadata{}, false, fmt.Errorf("备份归档条目过多（> %d）", maxEntries)
 		}
 		if hdr.Size < 0 || hdr.Size > maxBackupPayload-payloadSize {
-			return "", "", fmt.Errorf("备份归档解压后内容过大")
+			return "", "", backupMetadata{}, false, fmt.Errorf("备份归档解压后内容过大")
 		}
 		payloadSize += hdr.Size
 		if hdr.Typeflag != tar.TypeReg {
@@ -247,51 +417,134 @@ func extractBackup(r io.Reader, stageDir string) (dbPath, secret string, err err
 		switch name {
 		case "singbox-panel.db":
 			if seenDB {
-				return "", "", fmt.Errorf("备份中包含重复的 singbox-panel.db")
+				return "", "", backupMetadata{}, false, fmt.Errorf("备份中包含重复的 singbox-panel.db")
 			}
 			seenDB = true
 			if hdr.Size > maxBackupDatabase {
-				return "", "", fmt.Errorf("备份中的数据库文件过大")
+				return "", "", backupMetadata{}, false, fmt.Errorf("备份中的数据库文件过大")
 			}
 			dst := filepath.Join(stageDir, "singbox-panel.db")
 			f, e := os.OpenFile(dst, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600)
 			if e != nil {
-				return "", "", e
+				return "", "", backupMetadata{}, false, e
 			}
 			if _, e := io.CopyN(f, tr, hdr.Size); e != nil {
 				_ = f.Close()
-				return "", "", e
+				return "", "", backupMetadata{}, false, e
 			}
 			if e := f.Close(); e != nil {
-				return "", "", e
+				return "", "", backupMetadata{}, false, e
 			}
 			dbPath = dst
 		case "jwt_secret":
 			if seenSecret {
-				return "", "", fmt.Errorf("备份中包含重复的 jwt_secret")
+				return "", "", backupMetadata{}, false, fmt.Errorf("备份中包含重复的 jwt_secret")
 			}
 			seenSecret = true
 			if hdr.Size > maxBackupSecret {
-				return "", "", fmt.Errorf("备份中的 jwt_secret 过大")
+				return "", "", backupMetadata{}, false, fmt.Errorf("备份中的 jwt_secret 过大")
 			}
 			b := make([]byte, int(hdr.Size))
 			_, e := io.ReadFull(tr, b)
 			if e != nil {
-				return "", "", e
+				return "", "", backupMetadata{}, false, e
 			}
 			secret = strings.TrimSpace(string(b))
+		case "backup.json":
+			if seenMetadata {
+				return "", "", backupMetadata{}, false, fmt.Errorf("备份中包含重复的 backup.json")
+			}
+			seenMetadata = true
+			if hdr.Size > 64<<10 {
+				return "", "", backupMetadata{}, false, fmt.Errorf("备份元数据过大")
+			}
+			b := make([]byte, int(hdr.Size))
+			if _, e := io.ReadFull(tr, b); e != nil {
+				return "", "", backupMetadata{}, false, e
+			}
+			if e := json.Unmarshal(b, &metadata); e != nil {
+				return "", "", backupMetadata{}, false, fmt.Errorf("backup.json 格式无效：%w", e)
+			}
+			metadataPresent = true
 		}
 	}
 	// tar.Reader stops at the end-of-archive marker. Drain the gzip stream so a
 	// truncated checksum or an oversized decompressed tail is not silently
 	// accepted.
 	if _, err := io.Copy(io.Discard, limited); err != nil {
-		return "", "", err
+		return "", "", backupMetadata{}, false, err
 	}
 	if limited.N <= 0 {
-		return "", "", fmt.Errorf("备份归档解压后内容过大")
+		return "", "", backupMetadata{}, false, fmt.Errorf("备份归档解压后内容过大")
 	}
-	return dbPath, secret, nil
+	return dbPath, secret, metadata, metadataPresent, nil
+}
+
+func validateBackupMetadata(metadata backupMetadata, stagedDB, currentVersion string) error {
+	if metadata.FormatVersion != backupFormatVersion {
+		if metadata.FormatVersion > backupFormatVersion {
+			return fmt.Errorf("备份格式版本 %d 高于当前支持的 %d，请先升级面板", metadata.FormatVersion, backupFormatVersion)
+		}
+		return fmt.Errorf("备份格式版本无效：%d", metadata.FormatVersion)
+	}
+	if metadata.DatabaseDriver != "sqlite" {
+		return fmt.Errorf("不支持的备份数据库类型：%s", metadata.DatabaseDriver)
+	}
+	if metadata.DatabaseSHA256 == "" || len(metadata.DatabaseSHA256) != 64 {
+		return fmt.Errorf("缺少数据库完整性校验值")
+	}
+	if _, err := hex.DecodeString(metadata.DatabaseSHA256); err != nil {
+		return fmt.Errorf("数据库完整性校验值无效")
+	}
+	hash, err := hashFile(stagedDB)
+	if err != nil {
+		return fmt.Errorf("计算数据库完整性校验值失败：%w", err)
+	}
+	if !strings.EqualFold(hash, metadata.DatabaseSHA256) {
+		return fmt.Errorf("数据库文件校验值不匹配")
+	}
+	if metadata.SchemaVersion == 0 {
+		return fmt.Errorf("缺少数据库版本")
+	}
+	if metadata.SchemaVersion > currentSchemaVersion() {
+		return fmt.Errorf("备份数据库版本 %d 高于当前支持的 %d，请先升级面板", metadata.SchemaVersion, currentSchemaVersion())
+	}
+	if currentVersion != "" && metadata.PanelVersion != "" {
+		comparison, err := comparePanelVersions(metadata.PanelVersion, currentVersion)
+		if err != nil {
+			return err
+		}
+		if comparison > 0 {
+			return fmt.Errorf("备份来自更高版本 %s，当前面板为 %s，请先升级面板", metadata.PanelVersion, currentVersion)
+		}
+	}
+	if metadata.CredentialVersion != backupCredentialVersion {
+		return fmt.Errorf("不支持的节点凭据校验版本：%d", metadata.CredentialVersion)
+	}
+	if metadata.CredentialCount < 0 || metadata.CredentialSHA256 == "" || len(metadata.CredentialSHA256) != 64 {
+		return fmt.Errorf("缺少节点凭据校验信息")
+	}
+	if _, err := hex.DecodeString(metadata.CredentialSHA256); err != nil {
+		return fmt.Errorf("节点凭据校验值无效")
+	}
+	actualSchema, err := func() (uint, error) {
+		db, err := openSQLiteReadOnly(stagedDB)
+		if err != nil {
+			return 0, err
+		}
+		version, versionErr := schemaVersionInDB(db)
+		if sqlDB, closeErr := db.DB(); closeErr == nil {
+			_ = sqlDB.Close()
+		}
+		return version, versionErr
+	}()
+	if err != nil {
+		return fmt.Errorf("读取备份数据库版本失败：%w", err)
+	}
+	if actualSchema != metadata.SchemaVersion {
+		return fmt.Errorf("备份元数据版本与数据库记录不一致")
+	}
+	return nil
 }
 
 // validateSQLiteFile confirms the staged file is a healthy Panel SQLite

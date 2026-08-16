@@ -157,67 +157,171 @@ func sameVersion(a, b string) bool {
 // agents authenticate with per-server tokens stored in the database, and user
 // sessions survive because the jwt_secret is preserved.
 func (a *App) downloadBackup(c *gin.Context) {
-	// downloadBackup snapshots via VACUUM INTO rather than reading the live file
-	// directly, so it only needs to confirm this is a SQLite deployment.
 	if _, ok := a.sqliteDBPath(); !ok {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "仅 SQLite 部署支持一键备份"})
 		return
 	}
-
-	// VACUUM INTO produces a valid snapshot even under WAL, without blocking
-	// writers. Stage it in a private temp file we control, then stream it.
-	snapDir, err := os.MkdirTemp("", "sbpanel-backup-")
+	archivePath, archiveName, cleanup, err := a.createBackupArchive()
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "创建临时目录失败：" + err.Error()})
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
-	defer os.RemoveAll(snapDir)
+	defer cleanup()
+
+	c.Header("Content-Type", "application/gzip")
+	c.Header("Content-Disposition", fmt.Sprintf(`attachment; filename="%s"`, archiveName))
+	f, err := os.Open(archivePath)
+	if err != nil {
+		c.Error(err)
+		return
+	}
+	defer f.Close()
+	_, _ = io.Copy(c.Writer, f)
+}
+
+// createBackupArchive creates the same data-only archive exposed by the
+// download endpoint. Keeping archive creation separate lets the OneDrive
+// integration upload exactly this file without including binaries or runtime
+// directories.
+func (a *App) createBackupArchive() (archivePath, archiveName string, cleanup func(), err error) {
+	cleanup = func() {}
+	if _, ok := a.sqliteDBPath(); !ok {
+		return "", "", cleanup, fmt.Errorf("仅 SQLite 部署支持一键备份")
+	}
+
+	snapDir, err := os.MkdirTemp("", "sbpanel-backup-")
+	if err != nil {
+		return "", "", cleanup, fmt.Errorf("创建临时目录失败：%w", err)
+	}
+	cleanup = func() { _ = os.RemoveAll(snapDir) }
 	snapPath := filepath.Join(snapDir, "singbox-panel.db")
 	quoted := strings.ReplaceAll(snapPath, "'", "''")
 	if err := a.db.Exec("VACUUM INTO '" + quoted + "'").Error; err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "生成数据库快照失败：" + err.Error()})
-		return
+		cleanup()
+		return "", "", func() {}, fmt.Errorf("生成数据库快照失败：%w", err)
 	}
 
-	stamp := time.Now().Format("20060102-150405")
-	c.Header("Content-Type", "application/gzip")
-	c.Header("Content-Disposition", fmt.Sprintf(`attachment; filename="singbox-panel-backup-%s.tar.gz"`, stamp))
-
-	gz := gzip.NewWriter(c.Writer)
+	archiveName = fmt.Sprintf("singbox-panel-backup-%s.tar.gz", time.Now().Format("20060102-150405"))
+	archivePath = filepath.Join(snapDir, archiveName)
+	f, err := os.Create(archivePath)
+	if err != nil {
+		cleanup()
+		return "", "", func() {}, fmt.Errorf("创建备份归档失败：%w", err)
+	}
+	gz := gzip.NewWriter(f)
 	tw := tar.NewWriter(gz)
-
-	// The DB snapshot.
-	if err := addFileToTar(tw, snapPath, "singbox-panel.db"); err != nil {
-		// Headers are already sent; the truncated stream + logged error is the
-		// best we can do to signal failure to the client.
-		tw.Close()
-		gz.Close()
-		return
+	closeArchive := func() error {
+		if err := tw.Close(); err != nil {
+			_ = f.Close()
+			return err
+		}
+		if err := gz.Close(); err != nil {
+			_ = f.Close()
+			return err
+		}
+		return f.Close()
 	}
 
-	// The jwt_secret: from config if set, otherwise the persisted sidecar file.
-	// Restoring this keeps existing admin/user sessions valid after migration.
+	if err := addFileToTar(tw, snapPath, "singbox-panel.db"); err != nil {
+		_ = closeArchive()
+		cleanup()
+		return "", "", func() {}, fmt.Errorf("写入数据库快照失败：%w", err)
+	}
+
 	if secret, err := ResolveJWTSecret(a.cfg); err == nil && secret != "" {
 		content := secret + "\n"
-		hdr := &tar.Header{
-			Name: "jwt_secret",
-			Mode: 0o600,
-			Size: int64(len(content)),
+		hdr := &tar.Header{Name: "jwt_secret", Mode: 0o600, Size: int64(len(content))}
+		if err := tw.WriteHeader(hdr); err != nil {
+			_ = closeArchive()
+			cleanup()
+			return "", "", func() {}, fmt.Errorf("写入会话密钥失败：%w", err)
 		}
-		if tw.WriteHeader(hdr) == nil {
-			_, _ = io.WriteString(tw, content)
+		if _, err := io.WriteString(tw, content); err != nil {
+			_ = closeArchive()
+			cleanup()
+			return "", "", func() {}, fmt.Errorf("写入会话密钥失败：%w", err)
 		}
 	}
 
-	// A short manifest so a human opening the archive knows how to restore it.
+	databaseSHA256, err := hashFile(snapPath)
+	if err != nil {
+		_ = closeArchive()
+		cleanup()
+		return "", "", func() {}, fmt.Errorf("计算数据库校验值失败：%w", err)
+	}
+	snapshotDB, err := openSQLiteReadOnly(snapPath)
+	if err != nil {
+		_ = closeArchive()
+		cleanup()
+		return "", "", func() {}, fmt.Errorf("读取数据库快照失败：%w", err)
+	}
+	credentials, credentialErr := calculateCredentialFingerprint(snapshotDB)
+	schemaVersion, schemaErr := schemaVersionInDB(snapshotDB)
+	if sqlDB, closeErr := snapshotDB.DB(); closeErr == nil {
+		_ = sqlDB.Close()
+	}
+	if credentialErr != nil {
+		_ = closeArchive()
+		cleanup()
+		return "", "", func() {}, fmt.Errorf("计算节点凭据校验值失败：%w", credentialErr)
+	}
+	if !credentials.Available {
+		_ = closeArchive()
+		cleanup()
+		return "", "", func() {}, fmt.Errorf("数据库中存在缺少稳定种子的用户，无法生成安全备份")
+	}
+	if schemaErr != nil {
+		_ = closeArchive()
+		cleanup()
+		return "", "", func() {}, fmt.Errorf("读取数据库版本失败：%w", schemaErr)
+	}
+	if schemaVersion == 0 {
+		// A normally-started panel always has the migration ledger. This fallback
+		// only covers manually-created compatible databases and test fixtures.
+		schemaVersion = currentSchemaVersion()
+	}
+	metadataRaw, err := json.MarshalIndent(backupMetadata{
+		FormatVersion: backupFormatVersion, PanelVersion: a.version,
+		SchemaVersion: schemaVersion, CreatedAt: time.Now().UTC().Format(time.RFC3339Nano),
+		DatabaseDriver: "sqlite", DatabaseSHA256: databaseSHA256, BaseURL: a.cfg.BaseURL,
+		CredentialVersion: backupCredentialVersion, CredentialCount: credentials.Count,
+		CredentialSHA256: credentials.SHA256,
+	}, "", "  ")
+	if err != nil {
+		_ = closeArchive()
+		cleanup()
+		return "", "", func() {}, fmt.Errorf("生成备份元数据失败：%w", err)
+	}
+	metadataRaw = append(metadataRaw, '\n')
+	metadataHeader := &tar.Header{Name: "backup.json", Mode: 0o600, Size: int64(len(metadataRaw))}
+	if err := tw.WriteHeader(metadataHeader); err != nil {
+		_ = closeArchive()
+		cleanup()
+		return "", "", func() {}, fmt.Errorf("写入备份元数据失败：%w", err)
+	}
+	if _, err := tw.Write(metadataRaw); err != nil {
+		_ = closeArchive()
+		cleanup()
+		return "", "", func() {}, fmt.Errorf("写入备份元数据失败：%w", err)
+	}
+
 	manifest := backupManifest(a.version, a.cfg.BaseURL)
 	mh := &tar.Header{Name: "MANIFEST.txt", Mode: 0o644, Size: int64(len(manifest))}
-	if tw.WriteHeader(mh) == nil {
-		_, _ = io.WriteString(tw, manifest)
+	if err := tw.WriteHeader(mh); err != nil {
+		_ = closeArchive()
+		cleanup()
+		return "", "", func() {}, fmt.Errorf("写入备份清单失败：%w", err)
 	}
-
-	tw.Close()
-	gz.Close()
+	if _, err := io.WriteString(tw, manifest); err != nil {
+		_ = closeArchive()
+		cleanup()
+		return "", "", func() {}, fmt.Errorf("写入备份清单失败：%w", err)
+	}
+	if err := closeArchive(); err != nil {
+		cleanup()
+		return "", "", func() {}, fmt.Errorf("关闭备份归档失败：%w", err)
+	}
+	return archivePath, archiveName, cleanup, nil
 }
 
 func addFileToTar(tw *tar.Writer, path, nameInTar string) error {
@@ -248,6 +352,7 @@ func backupManifest(version, baseURL string) string {
 		"内容:",
 		"  singbox-panel.db  — 全部数据（节点、用户、订阅 token、被控 Agent 密钥）",
 		"  jwt_secret        — 会话签名密钥（保留则迁移后登录不失效）",
+		"  backup.json       — 数据库版本、完整性和多用户节点凭据校验信息",
 		"",
 		"迁移到新服务器:",
 		"  1. 用 install.sh 以 binary 或 docker 方式装好面板",

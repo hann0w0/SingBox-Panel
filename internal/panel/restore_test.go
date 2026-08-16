@@ -4,6 +4,7 @@ import (
 	"archive/tar"
 	"bytes"
 	"compress/gzip"
+	"encoding/json"
 	"mime/multipart"
 	"net/http"
 	"net/http/httptest"
@@ -18,6 +19,7 @@ import (
 
 	"github.com/hann0w0/singbox-panel/internal/config"
 	"github.com/hann0w0/singbox-panel/internal/model"
+	"github.com/hann0w0/singbox-panel/internal/singbox"
 )
 
 // makeBackupArchive builds an in-memory .tar.gz like downloadBackup produces:
@@ -26,6 +28,22 @@ func makeBackupArchive(t *testing.T, secret string, seed func(db *gorm.DB)) []by
 	t.Helper()
 	dbPath := filepath.Join(t.TempDir(), "src.db")
 	db := testDBAt(t, dbPath)
+	if err := db.AutoMigrate(&model.SchemaMigration{}); err != nil {
+		t.Fatal(err)
+	}
+	for _, migration := range applicationMigrations {
+		if err := db.Create(&model.SchemaMigration{
+			Version: migration.version, Name: migration.name, AppliedAt: time.Now(),
+		}).Error; err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := db.Create(&model.User{
+		Email: "backup-admin", Password: "$2a$10$test-placeholder", Role: model.RoleAdmin,
+		Enabled: true, SubToken: "backup-admin-sub", ProxyToken: "backup-admin-proxy",
+	}).Error; err != nil {
+		t.Fatal(err)
+	}
 	if seed != nil {
 		seed(db)
 	}
@@ -154,6 +172,102 @@ func TestRestoreReplacesDBAndSecret(t *testing.T) {
 	}
 	if strings.Contains(string(cfgRaw), "OLDSECRET") {
 		t.Errorf("old secret still present")
+	}
+}
+
+func TestRestorePreservesAdminPasswordAndMultiUserCredential(t *testing.T) {
+	dir := t.TempDir()
+	dbPath := filepath.Join(dir, "singbox-panel.db")
+	live := testDBAt(t, dbPath)
+	if err := live.Create(&model.User{
+		Email: "temporary-admin", Password: "temporary-hash", Role: model.RoleAdmin,
+		Enabled: true, SubToken: "temporary-sub", ProxyToken: "temporary-proxy",
+	}).Error; err != nil {
+		t.Fatal(err)
+	}
+
+	const restoredPasswordHash = "$2a$10$restored-password-hash-must-not-change"
+	archive := makeBackupArchive(t, "RESTOREDSECRET", func(db *gorm.DB) {
+		var admin model.User
+		if err := db.First(&admin, "email = ?", "backup-admin").Error; err != nil {
+			t.Fatal(err)
+		}
+		server := model.Server{Name: "managed", AgentToken: "agent-token"}
+		if err := db.Create(&server).Error; err != nil {
+			t.Fatal(err)
+		}
+		settings, err := json.Marshal(singbox.InboundSettings{MultiUser: true})
+		if err != nil {
+			t.Fatal(err)
+		}
+		inbound := model.Inbound{
+			ServerID: server.ID, Tag: "admin-vless", Type: model.InboundVLESS,
+			ListenPort: 443, Enabled: true, Settings: settings,
+		}
+		if err := db.Create(&inbound).Error; err != nil {
+			t.Fatal(err)
+		}
+		admin.Password = restoredPasswordHash
+		admin.ProxyToken = "stable-admin-proxy-token"
+		admin.ServerIDs = []uint{server.ID}
+		admin.InboundIDs = []uint{inbound.ID}
+		if err := db.Select("Password", "ProxyToken", "ServerIDs", "InboundIDs").Save(&admin).Error; err != nil {
+			t.Fatal(err)
+		}
+	})
+
+	a := &App{
+		cfg: config.PanelConfig{JWTSecret: "LIVESECRET", Database: config.DatabaseConfig{Driver: "sqlite", DSN: dbPath}},
+		db:  live, version: "v1.0.7",
+	}
+	w := uploadRestore(t, a, archive)
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d body = %s", w.Code, w.Body.String())
+	}
+
+	restored := testDBAt(t, dbPath)
+	var admin model.User
+	if err := restored.First(&admin, "email = ?", "backup-admin").Error; err != nil {
+		t.Fatal(err)
+	}
+	if admin.ID != 1 || admin.Password != restoredPasswordHash || admin.ProxyToken != "stable-admin-proxy-token" {
+		t.Fatalf("restored admin = %#v", admin)
+	}
+	var inbound model.Inbound
+	if err := restored.First(&inbound, "tag = ?", "admin-vless").Error; err != nil {
+		t.Fatal(err)
+	}
+	got := proxyIdentity(&admin, inbound.ID)
+	want := proxyIdentity(&model.User{
+		ID: 1, Email: "backup-admin", ProxyToken: "stable-admin-proxy-token",
+	}, inbound.ID)
+	if got != want {
+		t.Fatalf("proxy credential changed: got %#v want %#v", got, want)
+	}
+}
+
+func TestRestoreIsNotBlockedByUnreadableCurrentOneDriveSettings(t *testing.T) {
+	dir := t.TempDir()
+	dbPath := filepath.Join(dir, "singbox-panel.db")
+	live := testDBAt(t, dbPath)
+	if err := live.Save(&model.Setting{Key: oneDriveSettingKey, Value: "{not-json"}).Error; err != nil {
+		t.Fatal(err)
+	}
+
+	archive := makeBackupArchive(t, "RESTOREDSECRET", nil)
+	a := &App{
+		cfg: config.PanelConfig{JWTSecret: "LIVESECRET", Database: config.DatabaseConfig{Driver: "sqlite", DSN: dbPath}},
+		db:  live, version: "v1.0.7",
+	}
+	w := uploadRestore(t, a, archive)
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d body = %s", w.Code, w.Body.String())
+	}
+
+	restored := testDBAt(t, dbPath)
+	var admin model.User
+	if err := restored.First(&admin, "email = ?", "backup-admin").Error; err != nil {
+		t.Fatal(err)
 	}
 }
 

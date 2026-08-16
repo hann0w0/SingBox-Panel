@@ -34,6 +34,16 @@ type App struct {
 	// selfUpdating serializes panel self-update requests so two admins cannot
 	// launch competing binary swaps at once.
 	selfUpdating sync.Mutex
+
+	// OneDrive device-code sessions are short-lived and never persisted. The
+	// refresh token is stored encrypted in the existing settings table.
+	oneDriveMu      sync.Mutex
+	oneDrivePending map[string]oneDriveDeviceSession
+	oneDriveSyncMu  sync.Mutex
+	// Settings updates are stored as one JSON value. Serialize read-modify-write
+	// operations so token rotation cannot overwrite sync metadata (or vice versa).
+	oneDriveSettingsMu sync.Mutex
+	oneDriveTokenMu    sync.Mutex
 }
 
 // SetVersion records the running panel version (set from main via ldflags) so
@@ -60,6 +70,7 @@ func NewApp(cfg config.PanelConfig, db *gorm.DB) *App {
 		startedAt:           time.Now(),
 		login:               newLoginGuard(),
 		customSubscriptions: newCustomNodeSubscriptionManager(db),
+		oneDrivePending:     make(map[string]oneDriveDeviceSession),
 	}
 	a.engine = a.routes()
 	return a
@@ -172,6 +183,14 @@ func (a *App) routes() *gin.Engine {
 		admin.POST("/maintenance/update", a.selfUpdate)
 		admin.GET("/maintenance/backup", a.downloadBackup)
 		admin.POST("/maintenance/restore", a.restoreBackup)
+		admin.GET("/maintenance/onedrive", a.oneDriveStatus)
+		admin.PUT("/maintenance/onedrive", a.updateOneDriveSettings)
+		admin.POST("/maintenance/onedrive/auth/start", a.startOneDriveAuth)
+		admin.POST("/maintenance/onedrive/auth/:sessionID/poll", a.pollOneDriveAuth)
+		admin.POST("/maintenance/onedrive/sync", a.syncOneDriveBackup)
+		admin.GET("/maintenance/onedrive/backups/:id/download", a.downloadOneDriveBackup)
+		admin.POST("/maintenance/onedrive/backups/:id/restore", a.restoreOneDriveBackup)
+		admin.DELETE("/maintenance/onedrive/backups/:id", a.deleteOneDriveBackup)
 	}
 
 	a.mountFrontend(r)
@@ -231,6 +250,7 @@ func (a *App) Run(ctx context.Context) error {
 	rec := NewReconciler(a.db, func(serverIDs []uint) { a.refreshUserProxyAccess(serverIDs) })
 	go rec.Run(ctx)
 	go a.customSubscriptions.run(ctx)
+	go a.runOneDriveBackupScheduler(ctx)
 
 	srv := newPanelHTTPServer(a.cfg.Listen, a.engine)
 	go func() {

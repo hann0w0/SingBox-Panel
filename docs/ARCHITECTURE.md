@@ -82,10 +82,11 @@ Setting     KV 配置。
 - 根据 `User-Agent` / `?target=` 返回：
   - `sing-box` — 原生 outbound JSON（含 selector/urltest）
   - `clash` / `clash-meta` — **仅 `proxies:` 数组**，规则与策略组由用户自己的配置决定
+  - `shadowrocket` — **Shadowrocket 可导入的 `proxies:` YAML**，支持没有通用 URI 的 Snell
   - 默认 — **URI 链接逐行输出**（不做 base64）
   - `surge` — **仅 `[Proxy]` 段**
 - 内容 = 用户被授权的节点 × 被授权的协议。节点地址取 `Server.Address`，为空则回退到 Agent 上报的公网 IP。
-- snell **没有通用的分享链接格式**，不会出现在 URI 订阅里；用户端「详情」会展示完整参数供手动添加。
+- snell **没有通用的分享链接格式**，不会出现在默认 URI 订阅里；Shadowrocket 使用 `target=shadowrocket` 的结构化 YAML 订阅，用户端「详情」仍会展示完整参数。
 
 ## 5. 配置生成与导入
 

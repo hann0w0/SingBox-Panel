@@ -69,6 +69,8 @@ func (a *App) handleSubscription(c *gin.Context) {
 		a.writeSingbox(c, nodes)
 	case "clash", "clash-meta", "clashmeta":
 		a.writeClash(c, nodes)
+	case "shadowrocket":
+		a.writeShadowrocket(c, nodes)
 	case "surge":
 		a.writeSurge(c, nodes)
 	default:
@@ -87,6 +89,8 @@ func subFormat(c *gin.Context) string {
 	switch {
 	case strings.Contains(ua, "sing-box"), strings.Contains(ua, "singbox"):
 		return "sing-box"
+	case strings.Contains(ua, "shadowrocket"):
+		return "shadowrocket"
 	case strings.Contains(ua, "clash"), strings.Contains(ua, "mihomo"), strings.Contains(ua, "stash"):
 		return "clash"
 	case strings.Contains(ua, "surge"):
@@ -609,6 +613,15 @@ func (a *App) writeClash(c *gin.Context, nodes []node) {
 	c.Data(http.StatusOK, "text/yaml; charset=utf-8", data)
 }
 
+// writeShadowrocket emits the YAML proxy list understood by Shadowrocket.
+// Shadowrocket supports Snell as a structured proxy, while Snell has no
+// portable share URI. Keep this format separate from the default URI output.
+func (a *App) writeShadowrocket(c *gin.Context, nodes []node) {
+	proxies, _ := shadowrocketProxies(nodes)
+	data, _ := marshalClashProxiesYAML(proxies)
+	c.Data(http.StatusOK, "text/yaml; charset=utf-8", data)
+}
+
 var clashProxyLeadingKeys = []string{
 	"type",
 	"name",
@@ -693,6 +706,25 @@ func clashProxies(nodes []node) (proxies []map[string]any, names []string) {
 		p := clashProxy(n, seen)
 		if p == nil {
 			continue
+		}
+		proxies = append(proxies, p)
+		names = append(names, p["name"].(string))
+	}
+	return proxies, names
+}
+
+func shadowrocketProxies(nodes []node) (proxies []map[string]any, names []string) {
+	seen := map[string]int{}
+	for _, n := range nodes {
+		p := clashProxy(n, seen)
+		if p == nil {
+			continue
+		}
+		// Shadowrocket supports Snell v6's mode field. It is intentionally
+		// added here instead of clashProxy so the regular Clash output keeps
+		// its existing protocol compatibility contract.
+		if n.typ == "snell" && n.settings.SnellVersion == 6 && n.settings.SnellMode != "" && n.settings.SnellMode != "default" {
+			p["mode"] = n.settings.SnellMode
 		}
 		proxies = append(proxies, p)
 		names = append(names, p["name"].(string))

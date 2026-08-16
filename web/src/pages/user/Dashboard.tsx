@@ -103,7 +103,7 @@ export default function Dashboard() {
         <div style={{ color: '#888', marginBottom: 12 }}>点击按钮复制对应客户端的订阅链接</div>
         <Space wrap>
           <Button type="primary" icon={<ClientLogo src="/logos/clashmeta.png" />} style={SUB_STYLES.clash} onClick={() => copySub('clash', 'ClashMeta')}>ClashMeta</Button>
-          <Button type="primary" icon={<ClientLogo src="/logos/shadowrocket.png" monochrome />} style={SUB_STYLES.shadowrocket} onClick={() => copySub('', 'Shadowrocket')}>Shadowrocket</Button>
+          <Button type="primary" icon={<ClientLogo src="/logos/shadowrocket.png" monochrome />} style={SUB_STYLES.shadowrocket} onClick={() => copySub('shadowrocket', 'Shadowrocket')}>Shadowrocket</Button>
           <Button type="primary" icon={<ClientLogo src="/logos/surge.png" monochrome />} style={SUB_STYLES.surge} onClick={() => copySub('surge', 'Surge')}>Surge</Button>
         </Space>
         <div style={{ marginTop: 20 }}>

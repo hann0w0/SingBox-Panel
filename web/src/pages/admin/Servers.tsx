@@ -8,7 +8,7 @@ import type { Server } from '../../types'
 export default function Servers() {
   const nav = useNavigate()
   const [servers, setServers] = useState<Server[]>([])
-  const [latestAgentVer, setLatestAgentVer] = useState<string>('v1.0.0')
+  const [latestAgentVer, setLatestAgentVer] = useState<string>('unknown')
   const [loading, setLoading] = useState(false)
   const [updatingAll, setUpdatingAll] = useState(false)
   const [updatingSingbox, setUpdatingSingbox] = useState(false)
@@ -200,8 +200,9 @@ export default function Servers() {
     }
   }
 
+  const agentVersionKnown = latestAgentVer !== '' && latestAgentVer !== 'unknown'
   const outdatedServers = servers.filter(
-    (s) => s.online && s.agent_version && s.agent_version !== latestAgentVer
+    (s) => agentVersionKnown && s.online && s.agent_version && s.agent_version !== latestAgentVer
   )
 
   return (
@@ -328,7 +329,7 @@ export default function Servers() {
             title: 'Agent',
             render: (_, s: Server) => {
               if (!s.agent_version) return <Tag>—</Tag>
-              const isOutdated = s.online && s.agent_version !== latestAgentVer
+              const isOutdated = agentVersionKnown && s.online && s.agent_version !== latestAgentVer
               return isOutdated ? (
                 <Tag color="orange" title={`可升级至 ${latestAgentVer}`}>
                   {s.agent_version} (可升级)

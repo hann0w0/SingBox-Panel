@@ -3,20 +3,23 @@ package agent
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
 	"errors"
 	"fmt"
 	"io"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"time"
 )
 
 const (
-	tmpConfigFile  = ConfigDir + "/.config.json.tmp"
-	bakConfigFile  = ConfigDir + "/config.json.bak"
-	origConfigFile = ConfigDir + "/config.json.orig"
-	maxConfigSize  = 16 << 20
+	tmpConfigFile   = ConfigDir + "/.config.json.tmp"
+	bakConfigFile   = ConfigDir + "/config.json.bak"
+	origConfigFile  = ConfigDir + "/config.json.orig"
+	maxConfigSize   = 16 << 20
+	systemdUnitPath = "/org/freedesktop/systemd1/unit/sing_2dbox_2eservice"
 )
 
 // preserveOriginal copies the very first (pre-panel) config to config.json.orig
@@ -62,14 +65,19 @@ func ApplyConfig(ctx context.Context, configBytes []byte, reload bool) (string, 
 	if err := preserveOriginal(); err != nil {
 		return "", fmt.Errorf("preserve original config: %w", err)
 	}
+	expectedHash := sha256.Sum256(configBytes)
 
 	// Nothing to do when the node already runs exactly this config: the panel
 	// re-pushes on every agent reconnect (i.e. after every panel restart), and
 	// applying would restart sing-box — dropping every live connection — for a
-	// byte-identical file.
+	// byte-identical file. Do not trust file equality alone: the running process
+	// must also have started after this file was written and explicitly load the
+	// managed config path. Otherwise continue below and perform a real restart.
 	if existing, err := os.ReadFile(ConfigFile); err == nil &&
 		bytes.Equal(existing, configBytes) && ServiceActive(ctx) {
-		return "config unchanged; sing-box left running", nil
+		if _, err := currentServiceConfigEvidence(ctx, expectedHash); err == nil {
+			return "config unchanged; running sing-box verified", nil
+		}
 	}
 
 	// 1) write temp (extension is .tmp so the -C directory loader ignores it).
@@ -159,9 +167,10 @@ func ApplyConfig(ctx context.Context, configBytes []byte, reload bool) (string, 
 		}
 	}
 
-	// 6) verify the service is active; roll back otherwise.
+	// 6) verify deterministic evidence that the installed config is the one
+	// loaded by this service run; roll back if any part cannot be proven.
 	if applyErr == nil {
-		applyErr = waitServiceStable(ctx, 3*time.Second)
+		applyErr = waitServiceStable(ctx, 3*time.Second, expectedHash)
 	}
 	if applyErr != nil {
 		if rollbackErr := rollbackApply(hadOld, moved, previousState); rollbackErr != nil {
@@ -169,7 +178,7 @@ func ApplyConfig(ctx context.Context, configBytes []byte, reload bool) (string, 
 		}
 		return "", applyErr
 	}
-	return "config applied and service active", nil
+	return "config applied and running sing-box verified", nil
 }
 
 // rollbackApply restores the previous config and every JSON file moved by this
@@ -180,23 +189,197 @@ type serviceState struct {
 	enabled bool
 }
 
-func waitServiceStable(ctx context.Context, stableFor time.Duration) error {
+type serviceConfigEvidence struct {
+	pid       int
+	startedAt time.Time
+}
+
+func waitServiceStable(ctx context.Context, stableFor time.Duration, expectedHash [sha256.Size]byte) error {
 	deadline := time.NewTimer(stableFor)
 	defer deadline.Stop()
 	ticker := time.NewTicker(250 * time.Millisecond)
 	defer ticker.Stop()
+	var applied *serviceConfigEvidence
 	for {
-		if !ServiceActive(ctx) {
-			return errors.New("service did not remain active after apply")
+		current, err := currentServiceConfigEvidence(ctx, expectedHash)
+		if err != nil {
+			return err
+		}
+		if applied == nil {
+			applied = &current
+		} else if current.pid != applied.pid || !current.startedAt.Equal(applied.startedAt) {
+			return fmt.Errorf("sing-box process changed while verifying config apply (pid %d -> %d)", applied.pid, current.pid)
 		}
 		select {
 		case <-deadline.C:
+			// The timer firing is not evidence by itself. Perform one final
+			// complete read so a restart at the end of the stability window
+			// cannot be reported as success.
+			final, err := currentServiceConfigEvidence(ctx, expectedHash)
+			if err != nil {
+				return err
+			}
+			if final.pid != applied.pid || !final.startedAt.Equal(applied.startedAt) {
+				return fmt.Errorf("sing-box process changed at the end of config verification (pid %d -> %d)", applied.pid, final.pid)
+			}
 			return nil
 		case <-ticker.C:
 		case <-ctx.Done():
 			return fmt.Errorf("verify service after apply: %w", ctx.Err())
 		}
 	}
+}
+
+func currentServiceConfigEvidence(ctx context.Context, expectedHash [sha256.Size]byte) (serviceConfigEvidence, error) {
+	if !ServiceActive(ctx) {
+		return serviceConfigEvidence{}, errors.New("sing-box service is not active after apply")
+	}
+	pid, err := serviceMainPID(ctx)
+	if err != nil {
+		return serviceConfigEvidence{}, fmt.Errorf("read sing-box main pid after apply: %w", err)
+	}
+	if pid <= 0 {
+		return serviceConfigEvidence{}, errors.New("sing-box service is active but has no main process")
+	}
+	startedAt, err := serviceStartTime(ctx)
+	if err != nil {
+		return serviceConfigEvidence{}, fmt.Errorf("read sing-box start time after apply: %w", err)
+	}
+	if err := verifyManagedConfigFile(ConfigFile, expectedHash, startedAt); err != nil {
+		return serviceConfigEvidence{}, err
+	}
+	if err := verifyProcessLoadsManagedConfig(pid); err != nil {
+		return serviceConfigEvidence{}, err
+	}
+	return serviceConfigEvidence{pid: pid, startedAt: startedAt}, nil
+}
+
+// serviceMainPID returns systemd's MainPID for the fixed sing-box unit. It is
+// deliberately read through systemctl rather than inspecting /proc, because
+// systemd is the authority that owns the service lifecycle.
+func serviceMainPID(ctx context.Context) (int, error) {
+	out, err := run(ctx, "systemctl", "show", ServiceName, "--property=MainPID", "--value")
+	if err != nil {
+		return 0, fmt.Errorf("systemctl show MainPID: %w: %s", err, out)
+	}
+	pid, err := strconv.Atoi(strings.TrimSpace(out))
+	if err != nil {
+		return 0, fmt.Errorf("invalid MainPID %q: %w", strings.TrimSpace(out), err)
+	}
+	return pid, nil
+}
+
+// serviceStartTime returns systemd's exact realtime start timestamp in
+// microseconds. busctl exposes the underlying uint64 without localized text or
+// the second-level truncation of `systemctl show`.
+func serviceStartTime(ctx context.Context) (time.Time, error) {
+	out, err := run(ctx, "busctl", "get-property", "org.freedesktop.systemd1", systemdUnitPath,
+		"org.freedesktop.systemd1.Service", "ExecMainStartTimestamp")
+	if err != nil {
+		return time.Time{}, fmt.Errorf("busctl get ExecMainStartTimestamp: %w: %s", err, out)
+	}
+	return parseSystemdTimestamp(out)
+}
+
+func parseSystemdTimestamp(out string) (time.Time, error) {
+	fields := strings.Fields(out)
+	if len(fields) != 2 || fields[0] != "t" {
+		return time.Time{}, fmt.Errorf("invalid ExecMainStartTimestamp %q", out)
+	}
+	micros, err := strconv.ParseUint(fields[1], 10, 64)
+	const maxInt64 = int64(^uint64(0) >> 1)
+	if err != nil || micros == 0 || micros > uint64(maxInt64/int64(time.Microsecond)) {
+		return time.Time{}, fmt.Errorf("invalid ExecMainStartTimestamp %q", out)
+	}
+	return time.Unix(0, int64(micros)*int64(time.Microsecond)), nil
+}
+
+func verifyManagedConfigFile(path string, expectedHash [sha256.Size]byte, serviceStartedAt time.Time) error {
+	f, err := os.Open(path)
+	if err != nil {
+		return fmt.Errorf("open applied config: %w", err)
+	}
+	defer f.Close()
+	beforeInfo, err := f.Stat()
+	if err != nil {
+		return fmt.Errorf("stat opened config before hashing: %w", err)
+	}
+	h := sha256.New()
+	n, err := io.Copy(h, io.LimitReader(f, maxConfigSize+1))
+	if err != nil {
+		return fmt.Errorf("hash applied config: %w", err)
+	}
+	if n > maxConfigSize {
+		return fmt.Errorf("applied config exceeds %d-byte limit", maxConfigSize)
+	}
+	var actualHash [sha256.Size]byte
+	copy(actualHash[:], h.Sum(nil))
+	if actualHash != expectedHash {
+		return fmt.Errorf("applied config hash mismatch: got %x, want %x", actualHash, expectedHash)
+	}
+	openedInfo, err := f.Stat()
+	if err != nil {
+		return fmt.Errorf("stat opened config: %w", err)
+	}
+	if beforeInfo.Size() != n || openedInfo.Size() != n || beforeInfo.ModTime() != openedInfo.ModTime() {
+		return errors.New("applied config changed while it was being hashed")
+	}
+	pathInfo, err := os.Stat(path)
+	if err != nil {
+		return fmt.Errorf("stat applied config: %w", err)
+	}
+	if !os.SameFile(openedInfo, pathInfo) || pathInfo.Size() != n || pathInfo.ModTime() != openedInfo.ModTime() {
+		return errors.New("applied config changed while it was being verified")
+	}
+	if serviceStartedAt.IsZero() || !serviceStartedAt.After(pathInfo.ModTime()) {
+		return fmt.Errorf("sing-box started at %s, not after config update at %s",
+			serviceStartedAt.Format(time.RFC3339Nano), pathInfo.ModTime().Format(time.RFC3339Nano))
+	}
+	return nil
+}
+
+func verifyProcessLoadsManagedConfig(pid int) error {
+	raw, err := os.ReadFile(fmt.Sprintf("/proc/%d/cmdline", pid))
+	if err != nil {
+		return fmt.Errorf("read sing-box process arguments: %w", err)
+	}
+	parts := bytes.Split(raw, []byte{0})
+	args := make([]string, 0, len(parts))
+	for _, part := range parts {
+		if len(part) > 0 {
+			args = append(args, string(part))
+		}
+	}
+	if processArgsLoadManagedConfig(args) {
+		return nil
+	}
+	return fmt.Errorf("sing-box process does not load %s or %s", ConfigFile, ConfigDir)
+}
+
+func processArgsLoadManagedConfig(args []string) bool {
+	for i, arg := range args {
+		switch arg {
+		case "-c", "--config":
+			if i+1 < len(args) && filepath.Clean(args[i+1]) == ConfigFile {
+				return true
+			}
+		case "-C", "--config-directory":
+			if i+1 < len(args) && filepath.Clean(args[i+1]) == ConfigDir {
+				return true
+			}
+		}
+		for _, prefix := range []string{"-c=", "--config="} {
+			if strings.HasPrefix(arg, prefix) && filepath.Clean(strings.TrimPrefix(arg, prefix)) == ConfigFile {
+				return true
+			}
+		}
+		for _, prefix := range []string{"-C=", "--config-directory="} {
+			if strings.HasPrefix(arg, prefix) && filepath.Clean(strings.TrimPrefix(arg, prefix)) == ConfigDir {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 func rollbackApply(hadOld bool, moved *strayMove, previous serviceState) error {

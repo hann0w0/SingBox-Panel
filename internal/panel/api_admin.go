@@ -140,7 +140,11 @@ func (a *App) latestAgentVersion() string {
 			}
 		}
 	}
-	return "v1.0.3"
+	// A missing VERSION file means the panel cannot safely identify the Agent
+	// binary it would serve. Never report an old hard-coded version here: that
+	// makes a panel upgrade look like an Agent downgrade. The install/upgrade
+	// endpoint will still fail clearly if the actual binary is missing.
+	return "unknown"
 }
 
 func (a *App) listServers(c *gin.Context) {

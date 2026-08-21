@@ -97,7 +97,7 @@ WantedBy=multi-user.target
   - `sing-box generate reality-keypair`（输出两行 `PrivateKey: <base64url>` / `PublicKey: <base64url>`，X25519）
   - `sing-box generate tls-keypair <server_name> [-m <月数>]`（自签 PEM 私钥+证书）
 
-**Agent 落盘流程（apply_config）**：写临时文件 → `sing-box check -c <tmp>` → 通过则备份旧 `config.json` 并原子替换 → `systemctl restart sing-box`（服务未运行则 `start`）→ 失败则回滚旧配置并再次 `restart`，回执错误。这里不使用 `reload`，因为实际版本中 SIGHUP 可能返回成功但仍继续使用旧配置。
+**Agent 落盘流程（apply_config）**：写临时文件 → `sing-box check -c <tmp>` → 通过则备份旧 `config.json` 并原子替换 → `systemctl restart sing-box`（服务未运行则 `start`）→ 校验文件 SHA-256 与下发内容一致、进程参数加载受管配置、服务启动时间晚于文件更新时间，并持续确认 active/MainPID 稳定 → 失败则回滚旧配置并再次 `restart`，回执错误。这里不使用 `reload`，因为实际版本中 SIGHUP 可能返回成功但仍继续使用旧配置。
 
 ## 5. 服务端 inbound 生成规范（stable 1.13 可用字段）
 

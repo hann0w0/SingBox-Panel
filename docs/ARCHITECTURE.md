@@ -29,7 +29,7 @@ Panel 与 Agent 在**同一个 Go module**里，共享 `internal/protocol` 与 `
 
 **Panel → Agent（指令，白名单）**
 - `install_singbox`  {channel: stable|beta, version?: string, method: script|apt|dnf}
-- `apply_config`     {config: <sing-box config.json>} → 与磁盘比对（相同则跳过）→ `sing-box check` → 备份 → 原子替换 → `daemon-reload` + `restart` → 校验 active，失败回滚
+- `apply_config`     {config: <sing-box config.json>} → 与磁盘比对 → `sing-box check` → 备份 → 原子替换 → `daemon-reload` + `restart` → 校验文件 SHA-256、进程加载路径、服务启动时间晚于文件更新时间且持续 active，失败回滚
 - `service_action`   {action: start|stop|restart|reload|enable|disable}
 - `get_status`
 - `get_config`       读取节点现有 config.json（用于「识别并导入」）

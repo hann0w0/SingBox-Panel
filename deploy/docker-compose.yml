@@ -15,6 +15,8 @@ services:
       # 面板仅供宿主机反向代理访问，不开放公网 IP 直连。
       - "127.0.0.1:${PANEL_PORT:-32334}:32334"
     environment:
+      # 生产模式会拒绝 HTTP 面板地址和 Agent 的非加密控制通道。
+      SINGBOX_PANEL_ENV: "production"
       # 管理员账号/密码（用户名登录），仅在空库首次启动时创建。
       ADMIN: "${ADMIN:-admin}"
       ADMIN_PASSWORD: "${ADMIN_PASSWORD:-}"

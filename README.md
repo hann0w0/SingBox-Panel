@@ -23,6 +23,9 @@ curl -fsSL https://raw.githubusercontent.com/hann0w0/SingBox-Panel/refs/heads/ma
 
 两种方式都只监听 `127.0.0.1`，必须通过 HTTPS 反向代理访问，面板不直接暴露公网。
 
+生产环境会拒绝非 HTTPS 的 `base_url`，Agent 也只建立 WSS 控制连接。仅本机开发时，才可设置
+`SINGBOX_PANEL_ENV=development` 使用 HTTP/WS；`--insecure` 同样只在该开发模式有效。
+
 直接指定方式（跳过交互）：
 
 ```bash

@@ -89,6 +89,33 @@ func TestPanelHTTPServerHasResourceTimeouts(t *testing.T) {
 	}
 }
 
+func TestSecurityHeadersAndCORSAreScopedToPanelOrigin(t *testing.T) {
+	r := gin.New()
+	r.Use(securityHeadersMiddleware("https://panel.example.com"), corsMiddleware("https://panel.example.com", "production"))
+	r.GET("/", func(c *gin.Context) { c.Status(http.StatusNoContent) })
+
+	allowed := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/", nil)
+	req.Header.Set("Origin", "https://panel.example.com")
+	r.ServeHTTP(allowed, req)
+	if allowed.Code != http.StatusNoContent || allowed.Header().Get("Access-Control-Allow-Origin") != "https://panel.example.com" {
+		t.Fatalf("allowed origin response = %d, headers=%v", allowed.Code, allowed.Header())
+	}
+	for _, name := range []string{"Content-Security-Policy", "Strict-Transport-Security", "X-Content-Type-Options", "X-Frame-Options", "Referrer-Policy"} {
+		if allowed.Header().Get(name) == "" {
+			t.Fatalf("missing security header %s", name)
+		}
+	}
+
+	denied := httptest.NewRecorder()
+	deniedReq := httptest.NewRequest(http.MethodOptions, "/", nil)
+	deniedReq.Header.Set("Origin", "https://evil.example")
+	r.ServeHTTP(denied, deniedReq)
+	if denied.Code != http.StatusForbidden {
+		t.Fatalf("denied origin status = %d, want 403", denied.Code)
+	}
+}
+
 func TestSubscriptionLogSkipper(t *testing.T) {
 	prefix := "/api/sub/"
 	if !subscriptionRequestPath("/api/sub/secret-token", prefix) {

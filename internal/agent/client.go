@@ -67,6 +67,35 @@ func NewClient(panelURL, token string, insecure bool) *Client {
 	}
 }
 
+// ValidatePanelURL prevents an Agent from silently downgrading its control
+// channel. HTTP/WS and certificate bypasses are development-only escape hatches.
+func ValidatePanelURL(raw string, insecure bool, environment string) error {
+	u, err := url.Parse(strings.TrimSpace(raw))
+	if err != nil || u.Host == "" {
+		return errors.New("panel URL must be an absolute URL")
+	}
+	if u.User != nil || u.RawQuery != "" || u.Fragment != "" {
+		return errors.New("panel URL must not contain credentials, query, or fragment")
+	}
+	if u.Path != "" && u.Path != "/" && u.Path != "/api/agent/ws" {
+		return errors.New("panel URL path must be empty or /api/agent/ws")
+	}
+	dev := strings.EqualFold(strings.TrimSpace(environment), "development")
+	switch u.Scheme {
+	case "https", "wss":
+	case "http", "ws":
+		if !dev {
+			return errors.New("panel URL must use HTTPS/WSS in production; set SINGBOX_PANEL_ENV=development only for local testing")
+		}
+	default:
+		return errors.New("panel URL scheme must be https, wss, http, or ws")
+	}
+	if insecure && !dev {
+		return errors.New("--insecure is allowed only when SINGBOX_PANEL_ENV=development")
+	}
+	return nil
+}
+
 // SendEvent pushes a spontaneous event (no correlation id) to the panel.
 // Non-blocking: if the buffer is full the event is dropped.
 func (c *Client) SendEvent(t protocol.MessageType, payload any) {

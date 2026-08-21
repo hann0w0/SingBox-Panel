@@ -3,13 +3,18 @@ package config
 
 import (
 	"fmt"
+	"net/url"
 	"os"
+	"strings"
 
 	"gopkg.in/yaml.v3"
 )
 
 // PanelConfig is the panel server configuration.
 type PanelConfig struct {
+	// Environment controls security-sensitive development exceptions. Production
+	// rejects insecure public URLs; development may use localhost HTTP.
+	Environment string `yaml:"environment"`
 	// Listen is the HTTP listen address, e.g. ":8080".
 	Listen string `yaml:"listen"`
 	// BaseURL is the public origin of the panel (used to build subscription
@@ -55,10 +60,11 @@ type SubConfig struct {
 // Default returns a config with sensible defaults applied.
 func Default() PanelConfig {
 	return PanelConfig{
-		Listen:    ":8080",
-		BaseURL:   "http://localhost:8080",
-		AgentsDir: "./dist/agents",
-		WebDir:    "./web/dist",
+		Environment: "production",
+		Listen:      ":8080",
+		BaseURL:     "http://localhost:8080",
+		AgentsDir:   "./dist/agents",
+		WebDir:      "./web/dist",
 		Database: DatabaseConfig{
 			Driver: "sqlite",
 			DSN:    "./data/singbox-panel.db",
@@ -100,6 +106,9 @@ func firstEnv(names ...string) string {
 }
 
 func applyEnv(cfg *PanelConfig) {
+	if v := firstEnv("SINGBOX_PANEL_ENV"); v != "" {
+		cfg.Environment = v
+	}
 	if v := firstEnv("LISTEN", "SINGBOX_PANEL_LISTEN"); v != "" {
 		cfg.Listen = v
 	}
@@ -130,6 +139,9 @@ func applyEnv(cfg *PanelConfig) {
 }
 
 func applyDefaults(cfg *PanelConfig) {
+	if cfg.Environment == "" {
+		cfg.Environment = "production"
+	}
 	if cfg.Listen == "" {
 		cfg.Listen = ":8080"
 	}
@@ -148,4 +160,34 @@ func applyDefaults(cfg *PanelConfig) {
 	if cfg.WebDir == "" {
 		cfg.WebDir = "./web/dist"
 	}
+}
+
+// Validate checks settings that must be safe before the HTTP server starts.
+// TLS terminates at the configured reverse proxy, so the panel itself still
+// listens on HTTP internally; BaseURL is the externally reachable origin.
+func (cfg PanelConfig) Validate() error {
+	env := strings.ToLower(strings.TrimSpace(cfg.Environment))
+	if env == "" {
+		env = "production"
+	}
+	if env != "production" && env != "development" {
+		return fmt.Errorf("environment must be production or development")
+	}
+	u, err := url.Parse(strings.TrimSpace(cfg.BaseURL))
+	if err != nil || u.Host == "" {
+		return fmt.Errorf("base_url must be an absolute URL")
+	}
+	if u.User != nil || u.RawQuery != "" || u.Fragment != "" {
+		return fmt.Errorf("base_url must not contain credentials, query, or fragment")
+	}
+	if u.Path != "" && u.Path != "/" {
+		return fmt.Errorf("base_url must be an origin without a path")
+	}
+	if u.Scheme != "https" && u.Scheme != "http" {
+		return fmt.Errorf("base_url scheme must be https or http")
+	}
+	if env != "development" && u.Scheme != "https" {
+		return fmt.Errorf("production base_url must use HTTPS; set SINGBOX_PANEL_ENV=development only for local HTTP testing")
+	}
+	return nil
 }

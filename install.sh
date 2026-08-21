@@ -859,6 +859,7 @@ write_panel_config() {
 # Edit it and restart with: systemctl restart ${SERVICE_NAME}
 
 # Loopback only: reach the panel through an HTTPS reverse proxy, never directly.
+environment: "production"
 listen: "127.0.0.1:${PANEL_PORT}"
 base_url: "${BASE_URL}"
 jwt_secret: "${JWT_SECRET}"

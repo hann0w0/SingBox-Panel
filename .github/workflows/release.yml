@@ -17,6 +17,8 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: write  # 允许上传 Release Assets
+      id-token: write
+      attestations: write
 
     steps:
       - name: Checkout
@@ -99,6 +101,16 @@ jobs:
             | sed 's#panel/##' > checksums.txt
           cat checksums.txt
 
+      - name: Attest release assets
+        uses: actions/attest-build-provenance@v3
+        with:
+          subject-path: |
+            dist/panel/singbox-panel-linux-amd64
+            dist/panel/singbox-panel-linux-arm64
+            dist/singbox-panel-agents-${{ github.ref_name }}.tar.gz
+            dist/singbox-panel-web-${{ github.ref_name }}.tar.gz
+            dist/checksums.txt
+
       - name: Create / update GitHub Release and upload assets
         uses: softprops/action-gh-release@v3
         with:
@@ -130,7 +142,8 @@ jobs:
 
             ### Binary 手动部署
             下载对应架构的 `singbox-panel-linux-{amd64|arm64}` 并参考 [部署文档](https://github.com/hann0w0/SingBox-Panel/blob/main/README.md)。
-            所有产物的 SHA256 见 `checksums.txt`，安装脚本会强制校验。
+            所有产物的 SHA256 见 `checksums.txt`，安装脚本会强制校验。发布产物还包含 GitHub
+            Artifact Attestation，可使用 `gh attestation verify <文件> --repo hann0w0/SingBox-Panel` 验证构建来源。
 
           files: |
             dist/panel/singbox-panel-linux-amd64

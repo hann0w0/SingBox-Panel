@@ -18,12 +18,12 @@ import (
 // installs/manages the official sing-box on the host.
 const agentInstallScript = `#!/bin/sh
 set -e
-URL=""; TOKEN=""; INSECURE=""
+URL=""; TOKEN=""
 while [ $# -gt 0 ]; do
   case "$1" in
     --url) URL="$2"; shift 2 ;;
     --token) TOKEN="$2"; shift 2 ;;
-    --insecure) INSECURE="true"; shift ;;
+	--insecure) echo "--insecure is disabled in production"; exit 1 ;;
     *) shift ;;
   esac
 done
@@ -76,7 +76,6 @@ mkdir -p /etc/singbox-panel-agent
 cat > /etc/singbox-panel-agent/agent.conf <<EOF
 URL=$URL
 TOKEN=$TOKEN
-INSECURE=$INSECURE
 EOF
 chmod 600 /etc/singbox-panel-agent/agent.conf
 

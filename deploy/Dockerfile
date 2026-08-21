@@ -19,7 +19,7 @@ RUN apk add --no-cache git
 COPY go.mod go.sum ./
 RUN go mod download
 COPY . .
-ARG VERSION=v1.0.7
+ARG VERSION=v1.0.8
 ARG AGENT_VERSION
 ARG TARGETOS
 ARG TARGETARCH
@@ -33,7 +33,7 @@ RUN mkdir -p /out/agents && \
     GOOS=linux GOARCH=arm64 go build -ldflags "-s -w -X main.version=${FINAL_AGENT_VER}" -o /out/agents/singbox-panel-agent-linux-arm64 ./cmd/agent
 
 # ---- runtime ----
-FROM alpine:3.20
+FROM alpine:3.24
 RUN apk add --no-cache ca-certificates tzdata
 WORKDIR /opt/singbox-panel
 COPY --from=build /out/singbox-panel ./singbox-panel

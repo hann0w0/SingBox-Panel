@@ -20,9 +20,11 @@ import (
 var ErrAgentOffline = errors.New("agent offline")
 
 const (
-	hubWriteWait  = 10 * time.Second
-	hubPongWait   = 90 * time.Second
-	hubPingPeriod = (hubPongWait * 9) / 10
+	hubWriteWait             = 10 * time.Second
+	hubPongWait              = 90 * time.Second
+	hubPingPeriod            = (hubPongWait * 9) / 10
+	maxPanelAgentMessageSize = 16 << 20
+	maxPanelAgentPayloadSize = 15 << 20
 )
 
 // Hub tracks live agent connections and brokers request/response commands.
@@ -188,6 +190,7 @@ func (ac *agentConn) readPump() {
 		ac.close()
 		ac.hub.unregister(ac)
 	}()
+	ac.conn.SetReadLimit(maxPanelAgentMessageSize)
 	_ = ac.conn.SetReadDeadline(time.Now().Add(hubPongWait))
 	ac.conn.SetPongHandler(func(string) error {
 		return ac.conn.SetReadDeadline(time.Now().Add(hubPongWait))
@@ -201,6 +204,9 @@ func (ac *agentConn) readPump() {
 		var env protocol.Envelope
 		if err := json.Unmarshal(data, &env); err != nil {
 			continue
+		}
+		if len(env.Payload) > maxPanelAgentPayloadSize {
+			return
 		}
 		if env.Type == protocol.EvtCommandResult {
 			ac.routeResult(env)

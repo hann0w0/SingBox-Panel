@@ -17,14 +17,14 @@ import (
 )
 
 // version is set via -ldflags "-X main.version=x.y.z".
-var version = "v1.0.7"
+var version = "v1.0.8"
 
 func main() {
 	var (
 		urlFlag   = flag.String("url", "", "panel base URL, e.g. https://panel.example.com")
 		tokenFlag = flag.String("token", "", "agent token")
 		confFlag  = flag.String("config", "/etc/singbox-panel-agent/agent.conf", "agent config file (KEY=VALUE)")
-		insecure  = flag.Bool("insecure", false, "skip TLS verification (self-signed panel)")
+		insecure  = flag.Bool("insecure", false, "skip TLS verification (development environment only)")
 		showVer   = flag.Bool("version", false, "print version and exit")
 	)
 	flag.Parse()
@@ -40,9 +40,13 @@ func main() {
 	token := firstNonEmpty(*tokenFlag, os.Getenv("SINGBOX_PANEL_TOKEN"), fileConf["TOKEN"])
 	insecureVal := *insecure || strings.EqualFold(fileConf["INSECURE"], "true") ||
 		strings.EqualFold(os.Getenv("SINGBOX_PANEL_INSECURE"), "true")
+	environment := strings.ToLower(firstNonEmpty(os.Getenv("SINGBOX_PANEL_ENV"), fileConf["ENVIRONMENT"]))
 
 	if panelURL == "" || token == "" {
 		log.Fatal("agent: missing panel URL or token (set --url/--token, env SINGBOX_PANEL_URL/SINGBOX_PANEL_TOKEN, or the config file)")
+	}
+	if err := agent.ValidatePanelURL(panelURL, insecureVal, environment); err != nil {
+		log.Fatalf("agent: %v", err)
 	}
 
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)

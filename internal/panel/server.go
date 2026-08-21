@@ -4,6 +4,7 @@ import (
 	"context"
 	"log"
 	"net/http"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
@@ -28,6 +29,8 @@ type App struct {
 	startedAt           time.Time
 	login               *loginGuard
 	customSubscriptions *customNodeSubscriptionManager
+	wsLimiter           *wsHandshakeLimiter
+	wsLimiterMu         sync.Mutex
 	version             string
 	cfgPath             string
 
@@ -70,6 +73,7 @@ func NewApp(cfg config.PanelConfig, db *gorm.DB) *App {
 		startedAt:           time.Now(),
 		login:               newLoginGuard(),
 		customSubscriptions: newCustomNodeSubscriptionManager(db),
+		wsLimiter:           newWSHandshakeLimiter(),
 		oneDrivePending:     make(map[string]oneDriveDeviceSession),
 	}
 	a.engine = a.routes()
@@ -81,7 +85,7 @@ func (a *App) routes() *gin.Engine {
 		gin.SetMode(gin.ReleaseMode)
 	}
 	r := gin.New()
-	r.Use(gin.Recovery(), panelRequestLogger(a.cfg.Subscription.PathPrefix), corsMiddleware())
+	r.Use(gin.Recovery(), panelRequestLogger(a.cfg.Subscription.PathPrefix), securityHeadersMiddleware(a.cfg.BaseURL), corsMiddleware(a.cfg.BaseURL, a.cfg.Environment))
 
 	// Public endpoints.
 	r.GET("/api/agent/install.sh", a.handleAgentInstallScript)
@@ -282,6 +286,16 @@ func newPanelHTTPServer(addr string, handler http.Handler) *http.Server {
 	}
 }
 
+func (a *App) allowWSHandshake(key string, now time.Time) time.Duration {
+	a.wsLimiterMu.Lock()
+	if a.wsLimiter == nil {
+		a.wsLimiter = newWSHandshakeLimiter()
+	}
+	limiter := a.wsLimiter
+	a.wsLimiterMu.Unlock()
+	return limiter.allow(key, now)
+}
+
 func panelRequestLogger(subscriptionPrefix string) gin.HandlerFunc {
 	prefix := strings.TrimRight(subscriptionPrefix, "/") + "/"
 	return gin.LoggerWithConfig(gin.LoggerConfig{
@@ -296,15 +310,59 @@ func subscriptionRequestPath(path, prefix string) bool {
 	return strings.HasPrefix(path, prefix)
 }
 
-func corsMiddleware() gin.HandlerFunc {
+func corsMiddleware(baseURL, environment string) gin.HandlerFunc {
+	allowedOrigin := originFromBaseURL(baseURL)
 	return func(c *gin.Context) {
-		c.Header("Access-Control-Allow-Origin", "*")
-		c.Header("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS")
-		c.Header("Access-Control-Allow-Headers", "Authorization, Content-Type")
+		requestOrigin := strings.TrimSpace(c.GetHeader("Origin"))
+		if requestOrigin != "" {
+			c.Header("Vary", "Origin")
+			if requestOrigin == allowedOrigin || (strings.EqualFold(environment, "development") && isLoopbackOrigin(requestOrigin)) {
+				c.Header("Access-Control-Allow-Origin", allowedOrigin)
+				if requestOrigin != allowedOrigin {
+					c.Header("Access-Control-Allow-Origin", requestOrigin)
+				}
+				c.Header("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS")
+				c.Header("Access-Control-Allow-Headers", "Authorization, Content-Type")
+			} else {
+				c.AbortWithStatus(http.StatusForbidden)
+				return
+			}
+		}
 		if c.Request.Method == http.MethodOptions {
 			c.AbortWithStatus(http.StatusNoContent)
 			return
 		}
+		c.Next()
+	}
+}
+
+func isLoopbackOrigin(raw string) bool {
+	u, err := url.Parse(raw)
+	if err != nil || (u.Scheme != "http" && u.Scheme != "https") {
+		return false
+	}
+	host := strings.Trim(u.Hostname(), "[]")
+	return host == "localhost" || host == "127.0.0.1" || host == "::1"
+}
+
+func originFromBaseURL(raw string) string {
+	u, err := url.Parse(strings.TrimSpace(raw))
+	if err != nil || u.Host == "" || (u.Scheme != "http" && u.Scheme != "https") {
+		return ""
+	}
+	return u.Scheme + "://" + u.Host
+}
+
+func securityHeadersMiddleware(baseURL string) gin.HandlerFunc {
+	secureOrigin := strings.HasPrefix(originFromBaseURL(baseURL), "https://")
+	return func(c *gin.Context) {
+		c.Header("Content-Security-Policy", "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'self'; font-src 'self' data:; object-src 'none'; frame-ancestors 'none'; base-uri 'self'; form-action 'self'")
+		if secureOrigin {
+			c.Header("Strict-Transport-Security", "max-age=31536000; includeSubDomains")
+		}
+		c.Header("X-Content-Type-Options", "nosniff")
+		c.Header("X-Frame-Options", "DENY")
+		c.Header("Referrer-Policy", "strict-origin-when-cross-origin")
 		c.Next()
 	}
 }

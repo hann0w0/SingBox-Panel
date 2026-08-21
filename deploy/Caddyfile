@@ -2,5 +2,7 @@
 # Caddy handles TLS; the Docker deployment exposes the panel on :32334.
 # The agent's reverse WebSocket (/api/agent/ws) is proxied transparently.
 panel.example.com {
-	reverse_proxy 127.0.0.1:32334
+	reverse_proxy 127.0.0.1:32334 {
+		header_up X-Real-IP {http.request.remote.host}
+	}
 }

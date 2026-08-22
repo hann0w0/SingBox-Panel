@@ -186,3 +186,54 @@ func TestExplicitCustomNodeAudienceMigrationPreservesLegacyMeaning(t *testing.T)
 		t.Fatalf("legacy scoped node migrated incorrectly: %+v", scoped)
 	}
 }
+
+func TestNameRewriteMigrationBackfillsManagedSourceNames(t *testing.T) {
+	db := testDB(t)
+	source := model.CustomNodeSubscription{Name: "订阅", URL: "https://example.com/sub"}
+	if err := db.Create(&source).Error; err != nil {
+		t.Fatal(err)
+	}
+	node := model.CustomNode{Name: "旧名称", SubscriptionID: &source.ID, SubscriptionKey: "key"}
+	if err := db.Create(&node).Error; err != nil {
+		t.Fatal(err)
+	}
+	var migration schemaMigration
+	for _, candidate := range applicationMigrations {
+		if candidate.version == 12 {
+			migration = candidate
+			break
+		}
+	}
+	if migration.version != 12 {
+		t.Fatal("v12 migration not found")
+	}
+	if err := migration.up(db); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.First(&node, node.ID).Error; err != nil {
+		t.Fatal(err)
+	}
+	if node.SourceName != node.Name {
+		t.Fatalf("source name = %q; want %q", node.SourceName, node.Name)
+	}
+}
+
+func TestProtocolFilterMigrationAddsHiddenNodeState(t *testing.T) {
+	db := testDB(t)
+	var migration schemaMigration
+	for _, candidate := range applicationMigrations {
+		if candidate.version == 13 {
+			migration = candidate
+			break
+		}
+	}
+	if migration.version != 13 {
+		t.Fatal("v13 migration not found")
+	}
+	if err := migration.up(db); err != nil {
+		t.Fatal(err)
+	}
+	if !db.Migrator().HasColumn(&model.CustomNode{}, "HiddenBySubscriptionRule") {
+		t.Fatal("hidden subscription rule column was not added")
+	}
+}

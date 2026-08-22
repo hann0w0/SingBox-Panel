@@ -88,7 +88,7 @@ func effectiveUserAccess(db *gorm.DB, user *model.User) (userAccessResp, error) 
 		resp.InboundIDs = normalizedIDs(resp.InboundIDs)
 	}
 	var nodes []model.CustomNode
-	if err := db.Order("id").Find(&nodes).Error; err != nil {
+	if err := db.Where("hidden_by_subscription_rule = ?", false).Order("id").Find(&nodes).Error; err != nil {
 		return resp, err
 	}
 	for i := range nodes {
@@ -157,7 +157,7 @@ func (a *App) updateUserAccess(c *gin.Context) {
 		user.InboundIDs = inboundIDs
 
 		var nodes []model.CustomNode
-		if err := tx.Order("id").Find(&nodes).Error; err != nil {
+		if err := tx.Where("hidden_by_subscription_rule = ?", false).Order("id").Find(&nodes).Error; err != nil {
 			return err
 		}
 		knownCustomIDs := make(map[uint]bool, len(nodes))
@@ -262,7 +262,8 @@ func (a *App) listUsers(c *gin.Context) {
 		return
 	}
 	var nodes []model.CustomNode
-	if err := a.db.Select("id", "all_users", "user_ids", "excluded_user_ids").Find(&nodes).Error; err != nil {
+	if err := a.db.Where("hidden_by_subscription_rule = ?", false).
+		Select("id", "all_users", "user_ids", "excluded_user_ids").Find(&nodes).Error; err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}

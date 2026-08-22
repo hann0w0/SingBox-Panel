@@ -69,7 +69,7 @@ func TestCreateCustomNodeAcceptsTypedSnellParams(t *testing.T) {
 
 func TestValidateCustomNodeRejectsInvalidSnellVersion(t *testing.T) {
 	for _, params := range []string{
-		`{"psk":"secret","version":4}`,
+		`{"psk":"secret","version":3}`,
 		`{"psk":"secret","version":"5"}`,
 	} {
 		req := customNodeReq{

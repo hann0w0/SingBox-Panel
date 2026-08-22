@@ -229,10 +229,19 @@ func TestCustomNodeToNodeMapsProtocolSpecificImportedParams(t *testing.T) {
 	})
 
 	t.Run("snell credentials and obfs", func(t *testing.T) {
-		n := customNodeFromParams(t, "snell", `{"psk":"snell-secret","version":5,"obfs":"http","udp":true}`)
+		n := customNodeFromParams(t, "snell", `{"psk":"snell-secret","userkey":"snell-user","reuse":true,"network":"udp","version":5,"obfs":"http","obfs_host":"cdn.example.com","udp":true}`)
 		st := n.settings
-		if st.SnellPSK != "snell-secret" || st.SnellVersion != 5 || st.SnellObfsMode != "http" {
+		if st.SnellPSK != "snell-secret" || !st.SnellReuse ||
+			st.SnellNetwork != "udp" || st.SnellVersion != 5 || st.SnellObfsMode != "http" || st.SnellObfsHost != "cdn.example.com" {
 			t.Fatalf("Snell settings = %#v", st)
+		}
+		raw, err := singbox.BuildClientOutbound(n.clientNode())
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !strings.Contains(string(raw), `"version":4`) || strings.Contains(string(raw), `userkey`) ||
+			!strings.Contains(string(raw), `"network":"udp"`) || !strings.Contains(string(raw), `"obfs_host":"cdn.example.com"`) {
+			t.Fatalf("sing-box Snell = %s", raw)
 		}
 		proxy := clashProxy(n, map[string]int{})
 		opts, _ := proxy["obfs-opts"].(map[string]any)

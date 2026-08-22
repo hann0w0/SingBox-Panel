@@ -121,6 +121,58 @@ func TestBuildInbound_Shadowsocks2022MultiUser(t *testing.T) {
 	}
 }
 
+func TestBuildInbound_SnellAlwaysUsesSharedPSK(t *testing.T) {
+	raw, err := BuildInbound(InboundInput{
+		Tag: "snell", Type: "snell", ListenPort: 443,
+		Settings: InboundSettings{SnellVersion: 5, SnellPSK: "shared-psk", SnellObfsMode: "tls", MultiUser: true},
+		Users:    sampleUsers(),
+	})
+	if err != nil {
+		t.Fatalf("BuildInbound snell: %v", err)
+	}
+	var got map[string]any
+	if err := json.Unmarshal(raw, &got); err != nil {
+		t.Fatal(err)
+	}
+	if got["psk"] != "shared-psk" || got["obfs_mode"] != "tls" {
+		t.Fatalf("Snell shared settings = %#v", got)
+	}
+	if _, ok := got["users"]; ok {
+		t.Fatalf("Snell must not emit users: %#v", got)
+	}
+}
+
+func TestBuildHysteria2GeckoParameters(t *testing.T) {
+	settings := InboundSettings{
+		TLS:      TLSSettings{Enabled: true, CertificatePath: "cert.pem", KeyPath: "key.pem"},
+		ObfsType: "gecko", ObfsPassword: "gecko-secret", GeckoMinPacketSize: 512, GeckoMaxPacketSize: 1200,
+	}
+	raw, err := BuildInbound(InboundInput{Tag: "hy2", Type: "hysteria2", ListenPort: 443, Settings: settings, Users: sampleUsers()})
+	if err != nil {
+		t.Fatalf("BuildInbound hysteria2 gecko: %v", err)
+	}
+	var inbound map[string]any
+	if err := json.Unmarshal(raw, &inbound); err != nil {
+		t.Fatal(err)
+	}
+	obfs := inbound["obfs"].(map[string]any)
+	if obfs["type"] != "gecko" || obfs["password"] != "gecko-secret" || obfs["min_packet_size"] != float64(512) || obfs["max_packet_size"] != float64(1200) {
+		t.Fatalf("Gecko inbound = %#v", obfs)
+	}
+	out, err := BuildClientOutbound(ClientNode{Name: "hy2", Server: "hy.example.com", ServerPort: 443, Type: "hysteria2", Settings: settings, User: ProxyUser{Password: "gecko-secret"}})
+	if err != nil {
+		t.Fatalf("BuildClientOutbound hysteria2 gecko: %v", err)
+	}
+	var outbound map[string]any
+	if err := json.Unmarshal(out, &outbound); err != nil {
+		t.Fatal(err)
+	}
+	clientObfs := outbound["obfs"].(map[string]any)
+	if clientObfs["type"] != "gecko" || clientObfs["min_packet_size"] != float64(512) || clientObfs["max_packet_size"] != float64(1200) {
+		t.Fatalf("Gecko outbound = %#v", clientObfs)
+	}
+}
+
 func TestBuildShareLinks(t *testing.T) {
 	nodes := []ClientNode{
 		{Name: "n-vless", Server: "1.2.3.4", ServerPort: 443, Type: "vless",
@@ -168,7 +220,7 @@ func TestBuildShareLinks(t *testing.T) {
 func TestBuildShareLinkBracketsIPv6(t *testing.T) {
 	link, err := BuildShareLink(ClientNode{
 		Name: "ipv6", Server: "2001:db8::10", ServerPort: 443, Type: "vless",
-		Settings: InboundSettings{TLS: TLSSettings{Enabled: true, ServerName: "example.com"}},
+		Settings: InboundSettings{TLS: TLSSettings{Enabled: true, ServerName: "example.com", CertificatePath: "cert.pem", KeyPath: "key.pem"}},
 		User:     ProxyUser{UUID: "bf000d23-0752-40b4-affe-68f7707a9661"},
 	})
 	if err != nil {
@@ -213,7 +265,7 @@ func TestVMessParametersStayAligned(t *testing.T) {
 	st := InboundSettings{
 		VMessSecurity: "chacha20-poly1305",
 		VMessAlterID:  1,
-		TLS:           TLSSettings{Enabled: true, ServerName: "example.com", ALPN: []string{"h2", "http/1.1"}},
+		TLS:           TLSSettings{Enabled: true, ServerName: "example.com", ALPN: []string{"h2", "http/1.1"}, CertificatePath: "cert.pem", KeyPath: "key.pem"},
 	}
 	user := ProxyUser{Name: "user", UUID: "bf000d23-0752-40b4-affe-68f7707a9661"}
 
@@ -260,7 +312,7 @@ func TestTUICOfficialParametersStayAligned(t *testing.T) {
 		AuthTimeout:       "5s",
 		ZeroRTTHandshake:  true,
 		Heartbeat:         "15s",
-		TLS:               TLSSettings{Enabled: true, ServerName: "example.com", ALPN: []string{"h3"}},
+		TLS:               TLSSettings{Enabled: true, ServerName: "example.com", ALPN: []string{"h3"}, CertificatePath: "cert.pem", KeyPath: "key.pem"},
 	}
 	user := ProxyUser{Name: "user", UUID: "bf000d23-0752-40b4-affe-68f7707a9661", Password: "secret"}
 
@@ -296,7 +348,7 @@ func TestTUICOfficialParametersStayAligned(t *testing.T) {
 
 func TestTrojanFallbackAndALPN(t *testing.T) {
 	st := InboundSettings{
-		TLS:            TLSSettings{Enabled: true, ServerName: "example.com", ALPN: []string{"h2", "http/1.1"}},
+		TLS:            TLSSettings{Enabled: true, ServerName: "example.com", ALPN: []string{"h2", "http/1.1"}, CertificatePath: "cert.pem", KeyPath: "key.pem"},
 		TrojanFallback: &FallbackSettings{Server: "127.0.0.1", ServerPort: 8080},
 	}
 	user := ProxyUser{Name: "user", Password: "secret"}
@@ -322,7 +374,7 @@ func TestProtocolParameterValidation(t *testing.T) {
 		typ  string
 		st   InboundSettings
 	}{
-		{name: "vmess security", typ: "vmess", st: InboundSettings{VMessSecurity: "none"}},
+		{name: "vmess security", typ: "vmess", st: InboundSettings{VMessSecurity: "invalid"}},
 		{name: "tuic duration", typ: "tuic", st: InboundSettings{TLS: TLSSettings{Enabled: true}, AuthTimeout: "soon"}},
 		{name: "trojan fallback", typ: "trojan", st: InboundSettings{TLS: TLSSettings{Enabled: true}, TrojanFallback: &FallbackSettings{Server: "127.0.0.1"}}},
 	}
@@ -332,6 +384,112 @@ func TestProtocolParameterValidation(t *testing.T) {
 				t.Fatal("expected validation error")
 			}
 		})
+	}
+}
+
+func TestSnellOutboundVersionMapping(t *testing.T) {
+	for _, tt := range []struct {
+		name string
+		in   int
+		want float64
+	}{
+		{name: "v4", in: 4, want: 4},
+		{name: "v5 uses v4 wire value", in: 5, want: 4},
+		{name: "v6", in: 6, want: 6},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			raw, err := BuildClientOutbound(ClientNode{
+				Name: "snell", Server: "snell.example.com", ServerPort: 443,
+				Type: "snell", Settings: InboundSettings{SnellVersion: tt.in},
+				User: ProxyUser{Password: "snell-psk"},
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+			var outbound map[string]any
+			if err := json.Unmarshal(raw, &outbound); err != nil {
+				t.Fatal(err)
+			}
+			if got := outbound["version"]; got != tt.want {
+				t.Fatalf("version = %v, want %v; JSON = %s", got, tt.want, raw)
+			}
+		})
+	}
+}
+
+func TestSnellInboundAndOutboundVersionsAreValidatedSeparately(t *testing.T) {
+	inboundPSK := "123456789012"
+	for _, version := range []int{5, 6} {
+		if err := (InboundSettings{SnellVersion: version, SnellPSK: inboundPSK}).Validate("snell"); err != nil {
+			t.Fatalf("inbound v%d rejected: %v", version, err)
+		}
+	}
+	if err := (InboundSettings{SnellVersion: 4, SnellPSK: inboundPSK}).Validate("snell"); err == nil {
+		t.Fatal("inbound v4 was accepted")
+	}
+	for _, version := range []int{4, 6} {
+		if err := (InboundSettings{SnellVersion: version, SnellPSK: inboundPSK}).ValidateClientOutbound("snell"); err != nil {
+			t.Fatalf("outbound v%d rejected: %v", version, err)
+		}
+	}
+	for _, version := range []int{3, 5} {
+		if err := (InboundSettings{SnellVersion: version, SnellPSK: inboundPSK}).ValidateClientOutbound("snell"); err == nil {
+			t.Fatalf("outbound v%d was accepted", version)
+		}
+	}
+}
+
+func TestSnellOutboundOfficialFields(t *testing.T) {
+	raw, err := BuildClientOutbound(ClientNode{
+		Name: "snell", Server: "snell.example.com", ServerPort: 443, Type: "snell",
+		Settings: InboundSettings{
+			SnellVersion: 6, SnellPSK: "123456789012",
+			SnellReuse: true, SnellNetwork: "udp", SnellMode: "unshaped",
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var got map[string]any
+	if err := json.Unmarshal(raw, &got); err != nil {
+		t.Fatal(err)
+	}
+	for key, want := range map[string]any{
+		"psk": "123456789012", "reuse": true,
+		"network": "udp", "version": float64(6), "mode": "unshaped",
+	} {
+		if got[key] != want {
+			t.Errorf("%s = %v, want %v", key, got[key], want)
+		}
+	}
+	if _, ok := got["obfs_mode"]; ok {
+		t.Error("v6 outbound must not contain obfs_mode")
+	}
+
+	legacy, err := BuildClientOutbound(ClientNode{
+		Name: "snell-v5", Server: "snell.example.com", ServerPort: 443, Type: "snell",
+		Settings: InboundSettings{SnellVersion: 5, SnellPSK: "server-psk", SnellObfsMode: "http", SnellObfsHost: "cdn.example.com"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var legacyMap map[string]any
+	if err := json.Unmarshal(legacy, &legacyMap); err != nil {
+		t.Fatal(err)
+	}
+	if legacyMap["version"] != float64(4) || legacyMap["obfs_mode"] != "http" || legacyMap["obfs_host"] != "cdn.example.com" {
+		t.Fatalf("legacy v5 outbound mapping = %#v", legacyMap)
+	}
+}
+
+func TestSnellClientPSKFallsBackToImportedServerPSK(t *testing.T) {
+	got := SnellClientPSK(InboundSettings{SingleUser: true, SnellPSK: "server-psk"}, "")
+	if got != "server-psk" {
+		t.Fatalf("PSK = %q, want imported server PSK", got)
+	}
+	got = SnellClientPSK(InboundSettings{SnellPSK: "server-psk"}, "")
+	if got != "server-psk" {
+		t.Fatalf("empty user fallback PSK = %q, want imported server PSK", got)
 	}
 }
 
@@ -613,7 +771,7 @@ func TestQUICOutboundsOmitUTLS(t *testing.T) {
 // non vless/vmess/trojan type) must be rejected before it reaches the node.
 func TestWSTransportRejectedOnNonV2Ray(t *testing.T) {
 	err := InboundSettings{
-		TLS:       TLSSettings{Enabled: true},
+		TLS:       TLSSettings{Enabled: true, CertificatePath: "cert.pem", KeyPath: "key.pem"},
 		Transport: TransportSettings{Type: "ws", Path: "/x"},
 	}.Validate("hysteria2")
 	if err == nil {
@@ -654,5 +812,103 @@ func TestTrojanRealityShareLink(t *testing.T) {
 	}
 	if strings.Contains(link, "security=tls") {
 		t.Errorf("trojan+reality link must not claim plain tls: %s", link)
+	}
+}
+
+func TestTransportUsesOfficialHTTPUpgradeShape(t *testing.T) {
+	raw, err := BuildClientOutbound(ClientNode{
+		Name: "upgrade", Server: "example.com", ServerPort: 443, Type: "vless",
+		Settings: InboundSettings{Transport: TransportSettings{
+			Type: "httpupgrade", Path: "/upgrade",
+			Headers:      map[string]string{"Host": "cdn.example.com", "X-Test": "yes"},
+			MaxEarlyData: 1024, EarlyDataHeader: "Sec-WebSocket-Protocol",
+		}},
+		User: ProxyUser{UUID: "bf000d23-0752-40b4-affe-68f7707a9661"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var got map[string]any
+	if err := json.Unmarshal(raw, &got); err != nil {
+		t.Fatal(err)
+	}
+	transport := got["transport"].(map[string]any)
+	if transport["type"] != "httpupgrade" || transport["host"] != "cdn.example.com" {
+		t.Fatalf("HTTPUpgrade transport = %#v", transport)
+	}
+	if _, ok := transport["max_early_data"]; ok {
+		t.Fatal("HTTPUpgrade must not contain WebSocket early data")
+	}
+	if _, ok := transport["early_data_header_name"]; ok {
+		t.Fatal("HTTPUpgrade must not contain WebSocket early data header")
+	}
+	headers, _ := transport["headers"].(map[string]any)
+	if headers["Host"] != nil || headers["X-Test"] != "yes" {
+		t.Fatalf("HTTPUpgrade headers = %#v", headers)
+	}
+}
+
+func TestTransportPreservesRepeatedHeaderValues(t *testing.T) {
+	transport := TransportSettings{Type: "ws", Path: "/ws", HeaderValues: map[string][]string{
+		"Accept": {"text/html", "application/json"},
+	}}
+	raw, err := BuildClientOutbound(ClientNode{
+		Name: "multi-header", Server: "example.com", ServerPort: 443, Type: "vless",
+		Settings: InboundSettings{Transport: transport},
+		User:     ProxyUser{UUID: "bf000d23-0752-40b4-affe-68f7707a9661"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var got map[string]any
+	if err := json.Unmarshal(raw, &got); err != nil {
+		t.Fatal(err)
+	}
+	headers := got["transport"].(map[string]any)["headers"].(map[string]any)
+	values, ok := headers["Accept"].([]any)
+	if !ok || len(values) != 2 || values[0] != "text/html" || values[1] != "application/json" {
+		t.Fatalf("repeated headers = %#v", headers["Accept"])
+	}
+}
+
+func TestShadowsocksPluginIsRenderedForBeta(t *testing.T) {
+	settings := InboundSettings{Method: "aes-256-gcm", SSPlugin: "v2ray-plugin;mode=websocket;host=cdn.example.com"}
+	raw, err := BuildClientOutbound(ClientNode{
+		Name: "ss", Server: "example.com", ServerPort: 443, Type: "shadowsocks", Settings: settings,
+		User: ProxyUser{Password: "secret"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var got map[string]any
+	if err := json.Unmarshal(raw, &got); err != nil {
+		t.Fatal(err)
+	}
+	if got["plugin"] != "v2ray-plugin" || got["plugin_opts"] != "mode=websocket;host=cdn.example.com" {
+		t.Fatalf("Shadowsocks plugin fields = %#v", got)
+	}
+}
+
+func TestBetaProtocolValidation(t *testing.T) {
+	if err := (InboundSettings{TLS: TLSSettings{Enabled: true}}).Validate("trojan"); err == nil {
+		t.Fatal("TLS without certificate material must be rejected")
+	}
+	if err := (InboundSettings{TLS: TLSSettings{Enabled: true, CertificatePath: "cert.pem", KeyPath: "key.pem"}}).Validate("trojan"); err != nil {
+		t.Fatalf("valid certificate paths rejected: %v", err)
+	}
+	if err := (InboundSettings{Flow: "unsupported"}).ValidateClientOutbound("vless"); err == nil {
+		t.Fatal("unsupported VLESS flow was accepted")
+	}
+	if err := (InboundSettings{
+		TLS:                   TLSSettings{Enabled: true, CertificatePath: "cert.pem", KeyPath: "key.pem"},
+		UpMbps:                100,
+		IgnoreClientBandwidth: true,
+	}).Validate("hysteria2"); err == nil {
+		t.Fatal("conflicting Hysteria2 bandwidth settings were accepted")
+	}
+	for _, security := range []string{"auto", "none", "zero", "aes-128-gcm", "chacha20-poly1305", "aes-128-cfb"} {
+		if err := (InboundSettings{VMessSecurity: security}).Validate("vmess"); err != nil {
+			t.Fatalf("VMess security %q rejected: %v", security, err)
+		}
 	}
 }

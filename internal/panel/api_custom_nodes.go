@@ -62,6 +62,9 @@ func validateCustomNode(req *customNodeReq) (parsedName string, err error) {
 		if perr != nil {
 			return "", errors.New("链接解析失败: " + perr.Error())
 		}
+		if err := cn.Settings.ValidateClientOutbound(cn.Type); err != nil {
+			return "", errors.New("链接参数无效: " + err.Error())
+		}
 		return cn.Name, nil
 	}
 	req.Protocol = strings.ToLower(strings.TrimSpace(req.Protocol))
@@ -95,16 +98,31 @@ func validateCustomNode(req *customNodeReq) (parsedName string, err error) {
 		if err := need("psk"); err != nil {
 			return "", err
 		}
+		version := 5 // A missing version is the historical Snell v5 node shape.
 		if versionJSON, ok := raw["version"]; ok {
-			var version int
-			if err := json.Unmarshal(versionJSON, &version); err != nil || (version != 5 && version != 6) {
-				return "", errors.New("Snell 版本必须是 5 或 6")
+			if err := json.Unmarshal(versionJSON, &version); err != nil || (version != 4 && version != 5 && version != 6) {
+				return "", errors.New("Snell 出站版本必须是 4、5 或 6")
 			}
-			if version == 6 {
-				if psk := stringParam("psk"); len(psk) < 12 || len(psk) > 255 {
-					return "", errors.New("Snell v6 的 PSK 长度必须在 12-255 字节之间")
-				}
-			}
+		}
+		// Snell v5 is a valid server/node version but sing-box represents its
+		// client wire mode as outbound version 4. Validate both through the
+		// official outbound schema so fields cannot be combined across versions.
+		outboundVersion := singbox.SnellOutboundVersion(version)
+		obfsMode := stringParam("obfs_mode")
+		if obfsMode == "" {
+			obfsMode = stringParam("obfs")
+		}
+		settings := singbox.InboundSettings{
+			SnellVersion: outboundVersion,
+			SnellPSK:     stringParam("psk"),
+			// Snell is fixed to one PSK in this panel; ignore legacy userkey.
+			SnellNetwork:  strings.ToLower(strings.TrimSpace(stringParam("network"))),
+			SnellObfsMode: obfsMode,
+			SnellObfsHost: stringParam("obfs_host"),
+			SnellMode:     stringParam("mode"),
+		}
+		if err := settings.ValidateClientOutbound("snell"); err != nil {
+			return "", errors.New("Snell 参数无效: " + err.Error())
 		}
 	case "socks", "mixed":
 		if (strings.TrimSpace(stringParam("username")) == "") != (strings.TrimSpace(stringParam("password")) == "") {
@@ -129,12 +147,25 @@ func validateCustomNode(req *customNodeReq) (parsedName string, err error) {
 	default:
 		return "", errors.New("暂不支持的结构化节点协议: " + req.Protocol)
 	}
+	if req.Protocol != "snell" {
+		candidate := &model.CustomNode{
+			Name: req.Name, Link: req.Link, Protocol: req.Protocol,
+			Address: req.Address, Port: req.Port, Params: model.JSONText(req.Params),
+		}
+		n, ok := (&App{}).customNodeToNode(candidate)
+		if !ok {
+			return "", errors.New("节点参数无法解析")
+		}
+		if err := n.settings.ValidateClientOutbound(n.typ); err != nil {
+			return "", errors.New("节点参数无效: " + err.Error())
+		}
+	}
 	return "", nil
 }
 
 func (a *App) listCustomNodes(c *gin.Context) {
 	var nodes []model.CustomNode
-	if err := a.db.Order("sort_order, id").Find(&nodes).Error; err != nil {
+	if err := a.db.Where("hidden_by_subscription_rule = ?", false).Order("sort_order, id").Find(&nodes).Error; err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
@@ -310,7 +341,9 @@ func (a *App) deleteCustomNode(c *gin.Context) {
 		}
 		if node.SubscriptionID != nil {
 			var count int64
-			if err := tx.Model(&model.CustomNode{}).Where("subscription_id = ?", *node.SubscriptionID).Count(&count).Error; err != nil {
+			if err := tx.Model(&model.CustomNode{}).
+				Where("subscription_id = ? AND hidden_by_subscription_rule = ?", *node.SubscriptionID, false).
+				Count(&count).Error; err != nil {
 				return err
 			}
 			if err := tx.Model(&model.CustomNodeSubscription{}).Where("id = ?", *node.SubscriptionID).Update("node_count", count).Error; err != nil {

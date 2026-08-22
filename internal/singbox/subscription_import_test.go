@@ -87,10 +87,14 @@ proxies:
     server: snell.example.com
     port: 10023
     psk: 123456789012
+    userkey: snell-user
+    reuse: true
+    network: udp
     version: 5
     udp: true
     obfs-opts:
       mode: http
+      host: cdn.example.com
   - name: Unsupported
     type: wireguard
     server: wg.example.com
@@ -117,7 +121,7 @@ proxies:
 	if trojan.Params["host"] != "cdn.example.com" || trojan.Params["max_early_data"] != 2048 {
 		t.Fatalf("trojan WS params = %#v", trojan.Params)
 	}
-	headers, ok := trojan.Params["headers"].(map[string]string)
+	headers, ok := trojan.Params["headers"].(map[string]any)
 	if !ok || headers["X-Test"] != "one" {
 		t.Fatalf("trojan headers = %#v", trojan.Params["headers"])
 	}
@@ -131,7 +135,9 @@ proxies:
 		t.Fatalf("hy2 params = %#v", hy2.Params)
 	}
 	snell := byName["Snell"]
-	if snell.Params["psk"] != "123456789012" || snell.Params["version"] != 5 || snell.Params["obfs_mode"] != "http" {
+	if snell.Params["psk"] != "123456789012" || snell.Params["userkey"] != nil || snell.Params["reuse"] != true ||
+		snell.Params["network"] != "udp" || snell.Params["version"] != 5 || snell.Params["obfs_mode"] != "http" ||
+		snell.Params["obfs_host"] != "cdn.example.com" {
 		t.Fatalf("snell params = %#v", snell.Params)
 	}
 }
@@ -169,7 +175,7 @@ Auto = url-test, SS, Trojan
 	if trojan.Params["path"] != "/ws" || trojan.Params["host"] != "cdn.example.com" || trojan.Params["insecure"] != true {
 		t.Fatalf("surge trojan params = %#v", trojan.Params)
 	}
-	headers, ok := trojan.Params["headers"].(map[string]string)
+	headers, ok := trojan.Params["headers"].(map[string]any)
 	if !ok || headers["X-Test"] != "one" {
 		t.Fatalf("surge trojan headers = %#v", trojan.Params["headers"])
 	}

@@ -130,9 +130,9 @@ export function InstallSingboxModal({
   return (
     <Modal title="安装 / 升级 Sing-box" open={open} onOk={onConfirm} onCancel={onCancel} destroyOnClose>
       <div style={{ fontSize: 13, color: 'rgba(0, 0, 0, 0.45)', marginBottom: 12 }}>
-        安装官方最新稳定版 sing-box；已安装时再次执行即升级到目标版本。
+        安装官方最新 beta 版 sing-box；已安装时再次执行即升级到目标版本。
       </div>
-      <Form form={form} layout="vertical" initialValues={{ channel: 'stable', method: 'script' }}>
+      <Form form={form} layout="vertical" initialValues={{ channel: 'beta', method: 'script' }}>
         <Form.Item name="channel" label="渠道"><Select options={[{ value: 'stable', label: 'stable' }, { value: 'beta', label: 'beta' }]} /></Form.Item>
         <Form.Item name="method" label="安装方式">
           <Select options={[
@@ -141,7 +141,7 @@ export function InstallSingboxModal({
             { value: 'dnf', label: '官方 DNF 源' },
           ]} />
         </Form.Item>
-        <Form.Item name="version" label="指定版本"><Input placeholder="1.13.14" /></Form.Item>
+        <Form.Item name="version" label="指定版本"><Input placeholder="1.14.0-beta.17" /></Form.Item>
       </Form>
     </Modal>
   )

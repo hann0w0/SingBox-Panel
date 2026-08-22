@@ -291,6 +291,17 @@ type SchemaMigration struct {
 	AppliedAt time.Time `gorm:"not null" json:"applied_at"`
 }
 
+// NameRewriteRule is one ordered processing rule for nodes managed by a saved
+// remote subscription. Actions include rename, protocol exclusion, and node
+// inclusion/exclusion. An empty Action and replace_text remain legacy aliases
+// for rename so older databases continue to work.
+type NameRewriteRule struct {
+	Action      string `json:"action,omitempty"`
+	Pattern     string `json:"pattern"`
+	Replacement string `json:"replacement"`
+	MatchMode   string `json:"match_mode,omitempty"`
+}
+
 // CustomNode is a hand-added external node that is merged into a user's
 // subscription. It is defined either by a standard share link (vless://,
 // vmess://, ss://, trojan://, hysteria2://, tuic://, anytls://, socks5://) or
@@ -303,19 +314,26 @@ type SchemaMigration struct {
 // behaviour explicit; ExcludedUserIDs records per-user exceptions without
 // collapsing that default into a snapshot of the current account list.
 type CustomNode struct {
-	ID              uint     `gorm:"primaryKey" json:"id"`
-	AllUsers        bool     `gorm:"not null;default:false" json:"all_users"`
-	UserIDs         []uint   `gorm:"serializer:json" json:"user_ids"`
-	ExcludedUserIDs []uint   `gorm:"serializer:json" json:"excluded_user_ids"`
-	Name            string   `gorm:"size:128" json:"name"`
-	Group           string   `gorm:"size:64;index" json:"group"` // optional admin grouping (e.g. airport name)
-	Link            string   `gorm:"size:1024" json:"link"`      // share link (optional)
-	Protocol        string   `gorm:"size:32" json:"protocol"`    // structured node protocol, e.g. snell
-	Address         string   `gorm:"size:255" json:"address"`    // structured node host
-	Port            int      `json:"port"`
-	Params          JSONText `gorm:"type:text" json:"params"` // protocol-specific JSON (psk, version, obfs...)
-	Enabled         bool     `gorm:"index" json:"enabled"`
-	SortOrder       int      `json:"sort_order"`
+	ID              uint   `gorm:"primaryKey" json:"id"`
+	AllUsers        bool   `gorm:"not null;default:false" json:"all_users"`
+	UserIDs         []uint `gorm:"serializer:json" json:"user_ids"`
+	ExcludedUserIDs []uint `gorm:"serializer:json" json:"excluded_user_ids"`
+	Name            string `gorm:"size:128" json:"name"`
+	// SourceName is the name returned by the remote subscription before local
+	// name-rewrite rules are applied. Manual nodes leave it empty.
+	SourceName string   `gorm:"size:1024" json:"source_name,omitempty"`
+	Group      string   `gorm:"size:64;index" json:"group"` // optional admin grouping (e.g. airport name)
+	Link       string   `gorm:"size:1024" json:"link"`      // share link (optional)
+	Protocol   string   `gorm:"size:32" json:"protocol"`    // structured node protocol, e.g. snell
+	Address    string   `gorm:"size:255" json:"address"`    // structured node host
+	Port       int      `json:"port"`
+	Params     JSONText `gorm:"type:text" json:"params"` // protocol-specific JSON (psk, version, obfs...)
+	Enabled    bool     `gorm:"index" json:"enabled"`
+	SortOrder  int      `json:"sort_order"`
+	// HiddenBySubscriptionRule keeps a filtered subscription node in storage so
+	// removing the filter restores its stable row and per-user assignments.
+	// Manual nodes never set this field.
+	HiddenBySubscriptionRule bool `gorm:"index;not null;default:false" json:"-"`
 	// SubscriptionID/SubscriptionKey are set only for nodes managed by a saved
 	// remote subscription. Manual nodes keep both fields empty. The key is stable
 	// within one subscription and lets refreshes update rows without losing their
@@ -330,21 +348,22 @@ type CustomNode struct {
 // CustomNode rows are reconciled on a schedule. Failed refreshes only update
 // the status fields; they never remove the last known-good node set.
 type CustomNodeSubscription struct {
-	ID                    uint       `gorm:"primaryKey" json:"id"`
-	Name                  string     `gorm:"size:128;not null" json:"name"`
-	URL                   string     `gorm:"size:2048;not null" json:"url"`
-	Group                 string     `gorm:"size:64;index" json:"group"`
-	Enabled               bool       `gorm:"index;not null;default:true" json:"enabled"`
-	AutoUpdate            bool       `gorm:"index;not null;default:true" json:"auto_update"`
-	UpdateIntervalMinutes int        `gorm:"not null;default:60" json:"update_interval_minutes"`
-	BaseSortOrder         int        `json:"base_sort_order"`
-	LastSyncAt            *time.Time `json:"last_sync_at"`
-	LastSuccessAt         *time.Time `json:"last_success_at"`
-	LastError             string     `gorm:"type:text" json:"last_error"`
-	SourceType            string     `gorm:"size:32" json:"source_type"`
-	NodeCount             int        `json:"node_count"`
-	CreatedAt             time.Time  `json:"created_at"`
-	UpdatedAt             time.Time  `json:"updated_at"`
+	ID                    uint              `gorm:"primaryKey" json:"id"`
+	Name                  string            `gorm:"size:128;not null" json:"name"`
+	URL                   string            `gorm:"size:2048;not null" json:"url"`
+	Group                 string            `gorm:"size:64;index" json:"group"`
+	Enabled               bool              `gorm:"index;not null;default:true" json:"enabled"`
+	AutoUpdate            bool              `gorm:"index;not null;default:true" json:"auto_update"`
+	UpdateIntervalMinutes int               `gorm:"not null;default:60" json:"update_interval_minutes"`
+	BaseSortOrder         int               `json:"base_sort_order"`
+	NameRewriteRules      []NameRewriteRule `gorm:"serializer:json;type:text" json:"name_rewrite_rules"`
+	LastSyncAt            *time.Time        `json:"last_sync_at"`
+	LastSuccessAt         *time.Time        `json:"last_success_at"`
+	LastError             string            `gorm:"type:text" json:"last_error"`
+	SourceType            string            `gorm:"size:32" json:"source_type"`
+	NodeCount             int               `json:"node_count"`
+	CreatedAt             time.Time         `json:"created_at"`
+	UpdatedAt             time.Time         `json:"updated_at"`
 }
 
 // AllModels lists every entity for AutoMigrate.

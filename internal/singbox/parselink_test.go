@@ -63,7 +63,7 @@ func TestParseShareLinkRoundTrip(t *testing.T) {
 			name: "hysteria2",
 			node: ClientNode{
 				Name: "Hy2", Server: "hy.example.com", ServerPort: 443, Type: "hysteria2",
-				Settings: InboundSettings{TLS: TLSSettings{Enabled: true, ServerName: "hy.example.com", ALPN: []string{"h3"}}, ObfsPassword: "obfspw", UpMbps: 50, DownMbps: 100},
+				Settings: InboundSettings{TLS: TLSSettings{Enabled: true, ServerName: "hy.example.com", ALPN: []string{"h3"}}, ObfsType: "gecko", ObfsPassword: "obfspw", GeckoMinPacketSize: 512, GeckoMaxPacketSize: 1200, UpMbps: 50, DownMbps: 100},
 				User:     ProxyUser{Password: "hypw"},
 			},
 		},
@@ -127,6 +127,12 @@ func TestParseShareLinkRoundTrip(t *testing.T) {
 			// shadowsocks: the credential round-trips through SSServerPSK.
 			if tc.node.Type == "shadowsocks" && got.Settings.SSServerPSK != tc.node.Settings.SSServerPSK {
 				t.Errorf("ss psk = %q, want %q", got.Settings.SSServerPSK, tc.node.Settings.SSServerPSK)
+			}
+			if tc.node.Type == "hysteria2" {
+				if got.Settings.ObfsType != tc.node.Settings.ObfsType || got.Settings.ObfsPassword != tc.node.Settings.ObfsPassword ||
+					got.Settings.GeckoMinPacketSize != tc.node.Settings.GeckoMinPacketSize || got.Settings.GeckoMaxPacketSize != tc.node.Settings.GeckoMaxPacketSize {
+					t.Errorf("hysteria2 obfs = %#v, want %#v", got.Settings, tc.node.Settings)
+				}
 			}
 			if tc.node.Settings.TLS.Reality.Enabled && got.Settings.TLS.Reality.PublicKey != tc.node.Settings.TLS.Reality.PublicKey {
 				t.Errorf("reality pbk = %q, want %q", got.Settings.TLS.Reality.PublicKey, tc.node.Settings.TLS.Reality.PublicKey)

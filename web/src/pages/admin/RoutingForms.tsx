@@ -54,6 +54,9 @@ export function OutboundForm({
   const type: OutboundType = Form.useWatch('type', form) ?? 'shadowsocks'
   const tlsMode = Form.useWatch('tls_mode', form) ?? 'none'
   const transportType = Form.useWatch('transport_type', form) ?? 'tcp'
+  const snellVersion = Form.useWatch('snell_version', form) ?? 4
+  const snellObfsMode = Form.useWatch('snell_obfs_mode', form) ?? 'none'
+  const hysteriaObfsType = Form.useWatch('obfs_type', form) ?? ''
 
   useEffect(() => {
     if (!open) return
@@ -86,8 +89,16 @@ export function OutboundForm({
         vmess_security: inner.vmess_security ?? 'auto',
         vmess_alter_id: inner.vmess_alter_id ?? 0,
         congestion_control: inner.congestion_control ?? 'cubic',
+        obfs_type: inner.obfs_type ?? (inner.obfs_password ? 'salamander' : ''),
         obfs_password: inner.obfs_password,
-        snell_version: inner.snell_version ?? 5,
+        gecko_min_packet_size: inner.gecko_min_packet_size,
+        gecko_max_packet_size: inner.gecko_max_packet_size,
+        snell_version: inner.snell_version === 6 ? 6 : 4,
+        snell_reuse: !!inner.snell_reuse,
+        snell_network: inner.snell_network ?? 'tcp',
+        snell_obfs_mode: inner.snell_obfs_mode ?? 'none',
+        snell_obfs_host: inner.snell_obfs_host ?? '',
+        snell_mode: inner.snell_mode ?? '',
         transport_type: inner.transport?.type === 'ws' || inner.transport?.type === 'httpupgrade' ? inner.transport.type : 'tcp',
         ws_path: inner.transport?.path,
         ws_host: inner.transport?.headers?.Host,
@@ -107,7 +118,15 @@ export function OutboundForm({
         vmess_security: 'auto',
         vmess_alter_id: 0,
         congestion_control: 'cubic',
-        snell_version: 5,
+        snell_version: 4,
+        obfs_type: '',
+        gecko_min_packet_size: undefined,
+        gecko_max_packet_size: undefined,
+        snell_reuse: false,
+        snell_network: 'tcp',
+        snell_obfs_mode: 'none',
+        snell_obfs_host: '',
+        snell_mode: '',
         transport_type: 'tcp',
       })
     }
@@ -126,8 +145,26 @@ export function OutboundForm({
       inner.vmess_alter_id = v.vmess_alter_id ?? 0
     }
     if (type === 'tuic') inner.congestion_control = v.congestion_control || 'cubic'
-    if (type === 'hysteria2' && v.obfs_password) inner.obfs_password = v.obfs_password
-    if (type === 'snell') inner.snell_version = v.snell_version || 5
+    if (type === 'hysteria2') {
+      inner.obfs_type = v.obfs_type === 'salamander' || v.obfs_type === 'gecko' ? v.obfs_type : ''
+      inner.obfs_password = inner.obfs_type ? (v.obfs_password || '') : ''
+      inner.gecko_min_packet_size = inner.obfs_type === 'gecko' ? (v.gecko_min_packet_size || 0) : 0
+      inner.gecko_max_packet_size = inner.obfs_type === 'gecko' ? (v.gecko_max_packet_size || 0) : 0
+    }
+    if (type === 'snell') {
+      inner.snell_version = v.snell_version || 4
+      inner.snell_reuse = !!v.snell_reuse
+      inner.snell_network = v.snell_network || 'tcp'
+      if (v.snell_version === 4) {
+        inner.snell_obfs_mode = v.snell_obfs_mode || 'none'
+        inner.snell_obfs_host = String(v.snell_obfs_host || '').trim()
+        inner.snell_mode = ''
+      } else {
+        inner.snell_obfs_mode = 'none'
+        inner.snell_obfs_host = ''
+        inner.snell_mode = v.snell_mode || ''
+      }
+    }
     if (TRANSPORT_OUT.has(type) && (v.transport_type === 'ws' || v.transport_type === 'httpupgrade')) {
       inner.transport = {
         type: v.transport_type,
@@ -296,7 +333,7 @@ export function OutboundForm({
         {type === 'vmess' && (
           <>
             <Form.Item name="vmess_security" label="客户端加密" rules={[{ required: true }]}>
-              <Select options={['auto', 'aes-128-gcm', 'chacha20-poly1305'].map((m) => ({ value: m, label: m }))} />
+              <Select options={['auto', 'none', 'zero', 'aes-128-gcm', 'chacha20-poly1305', 'aes-128-cfb'].map((m) => ({ value: m, label: m }))} />
             </Form.Item>
             <Form.Item name="vmess_alter_id" label="Alter ID" rules={[{ required: true }]}>
               <InputNumber min={0} precision={0} style={{ width: '100%' }} />
@@ -311,24 +348,81 @@ export function OutboundForm({
         )}
 
         {type === 'hysteria2' && (
-          <Form.Item name="obfs_password" label="混淆密码（salamander，可选）" extra="留空表示不启用混淆">
-            <Input.Password placeholder="与服务器一致的 salamander 混淆密码" />
-          </Form.Item>
+          <>
+            <Form.Item name="obfs_type" label="混淆类型">
+              <Select options={[{ value: '', label: '无' }, { value: 'salamander', label: 'salamander' }, { value: 'gecko', label: 'gecko' }]} />
+            </Form.Item>
+            <Form.Item name="obfs_password" label="混淆密码" extra="留空表示不启用混淆">
+              <Input.Password placeholder="与服务器一致的混淆密码" />
+            </Form.Item>
+            {hysteriaObfsType === 'gecko' && (
+              <Space style={{ display: 'flex' }} align="baseline">
+                <Form.Item name="gecko_min_packet_size" label="最小包大小" style={{ flex: 1 }}><InputNumber min={512} precision={0} style={{ width: '100%' }} /></Form.Item>
+                <Form.Item name="gecko_max_packet_size" label="最大包大小" style={{ flex: 1 }}><InputNumber min={512} precision={0} style={{ width: '100%' }} /></Form.Item>
+              </Space>
+            )}
+          </>
         )}
 
         {type === 'snell' && (
           <>
             <Form.Item name="snell_version" label="Snell 版本" rules={[{ required: true }]}>
-              <Select options={[{ value: 5, label: 'v5' }, { value: 6, label: 'v6' }]} />
+              <Select options={[{ value: 4, label: 'v4' }, { value: 6, label: 'v6' }]} />
             </Form.Item>
-            <Form.Item label="密码 / PSK">
+            <Form.Item
+              label="服务器 PSK"
+            >
               <Space.Compact style={{ width: '100%' }}>
-                <Form.Item name="password" noStyle rules={[{ required: true, message: '必填' }]}>
+                <Form.Item
+                  name="password"
+                  noStyle
+                  dependencies={['snell_version']}
+                  rules={[{ required: true, message: '必填' }, ({ getFieldValue }) => ({
+                    validator(_, value) {
+                      const bytes = value ? new TextEncoder().encode(String(value)).length : 0
+                      if (getFieldValue('snell_version') === 6 && bytes > 0 && (bytes < 12 || bytes > 255)) {
+                        return Promise.reject(new Error('Snell v6 的 PSK 长度必须在 12-255 字节之间'))
+                      }
+                      return Promise.resolve()
+                    },
+                  })]}
+                >
                   <Input placeholder="对方提供的 PSK" />
                 </Form.Item>
                 <Button onClick={() => form.setFieldValue('password', randomHex(16))}>随机</Button>
               </Space.Compact>
             </Form.Item>
+            <Space align="baseline" style={{ display: 'flex' }}>
+              <Form.Item name="snell_network" label="network" style={{ flex: 1 }}>
+                <Select options={[
+                  { value: 'tcp', label: 'TCP' },
+                  { value: 'udp', label: 'UDP' },
+                ]} />
+              </Form.Item>
+              <Form.Item name="snell_reuse" label="reuse" valuePropName="checked">
+                <Switch />
+              </Form.Item>
+            </Space>
+            {snellVersion === 4 ? (
+              <>
+                <Form.Item name="snell_obfs_mode" label="obfs_mode">
+                  <Select options={[{ value: 'none', label: 'none' }, { value: 'http', label: 'http' }, { value: 'tls', label: 'tls' }]} />
+                </Form.Item>
+                {(snellObfsMode === 'http' || snellObfsMode === 'tls') && (
+                  <Form.Item name="snell_obfs_host" label="obfs_host">
+                    <Input placeholder="默认 bing.com" />
+                  </Form.Item>
+                )}
+              </>
+            ) : (
+              <Form.Item name="snell_mode" label="mode">
+                <Select options={[
+                  { value: '', label: 'default' },
+                  { value: 'unshaped', label: 'unshaped' },
+                  { value: 'unsafe-raw', label: 'unsafe-raw' },
+                ]} />
+              </Form.Item>
+            )}
           </>
         )}
 

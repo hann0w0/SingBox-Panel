@@ -49,6 +49,12 @@ var versionRe = regexp.MustCompile(`^[0-9][0-9A-Za-z.\-]*$`)
 // (script | apt | dnf) and channel (stable | beta). It only ever invokes the
 // official installer/repositories documented by upstream.
 func InstallSingbox(ctx context.Context, channel, version, method string) (string, error) {
+	if channel == "" {
+		channel = protocol.ChannelBeta
+	}
+	if channel != protocol.ChannelStable && channel != protocol.ChannelBeta {
+		return "", fmt.Errorf("unknown sing-box channel %q", channel)
+	}
 	if version != "" && !versionRe.MatchString(version) {
 		return "", fmt.Errorf("invalid version %q", version)
 	}

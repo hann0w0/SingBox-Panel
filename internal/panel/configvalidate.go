@@ -120,6 +120,13 @@ func (a *App) validateOutbound(db *gorm.DB, serverID, excludeID uint, tag, typ s
 		if st.Password == "" && st.Settings.SnellPSK == "" {
 			return fmt.Errorf("snell PSK 必填")
 		}
+		// The panel stores the outbound PSK in the top-level password field for
+		// compatibility with all other password-based outbounds. Mirror it into
+		// the protocol settings only for validation so v6 checks the effective
+		// credential without changing the stored shape.
+		if st.Settings.SnellPSK == "" {
+			st.Settings.SnellPSK = st.Password
+		}
 	case "tuic":
 		if st.UUID == "" || st.Password == "" {
 			return fmt.Errorf("tuic UUID 和密码必填")
@@ -133,7 +140,7 @@ func (a *App) validateOutbound(db *gorm.DB, serverID, excludeID uint, tag, typ s
 			return fmt.Errorf("socks 用户名和密码必须同时填写或同时留空")
 		}
 	}
-	if err := st.Settings.Validate(typ); err != nil {
+	if err := st.Settings.ValidateClientOutbound(typ); err != nil {
 		return err
 	}
 	return nil

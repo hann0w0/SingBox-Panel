@@ -411,7 +411,7 @@ export default function Servers() {
         <div style={{ fontSize: 13, color: 'rgba(0,0,0,0.45)', marginBottom: 12 }}>
           向所有<b>在线</b>节点下发官方 sing-box 安装/升级指令。点击开始后窗口即关闭，更新在后台进行，完成后节点列表会自动刷新。
         </div>
-        <Form form={singboxForm} layout="vertical" initialValues={{ channel: 'stable', method: 'script' }}>
+        <Form form={singboxForm} layout="vertical" initialValues={{ channel: 'beta', method: 'script' }}>
           <Form.Item name="channel" label="版本渠道">
             <Radio.Group>
               <Radio.Button value="stable">稳定版</Radio.Button>
@@ -428,7 +428,7 @@ export default function Servers() {
             />
           </Form.Item>
           <Form.Item name="version" label="指定版本" extra="留空则安装所选渠道的最新版（仅脚本方式支持指定版本）">
-            <Input placeholder="如 1.13.14，可留空" />
+            <Input placeholder="如 1.14.0-beta.17，可留空" />
           </Form.Item>
         </Form>
       </Modal>

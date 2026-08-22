@@ -32,6 +32,7 @@ import {
   RightOutlined,
   SaveOutlined,
   UndoOutlined,
+  UpOutlined,
 } from '@ant-design/icons'
 import {
   batchDeleteCustomNodes,
@@ -49,7 +50,7 @@ import {
   updateCustomNode,
   updateUserAccess,
 } from '../../api'
-import type { CustomNode, CustomNodeSubscription } from '../../api'
+import type { CustomNode, CustomNodeSubscription, NameRewriteRule } from '../../api'
 import type { Inbound, Server } from '../../types'
 import { RegionFlag, regionCodeFromFlag, removeRegionFlag } from '../../components/RegionFlag'
 
@@ -546,11 +547,13 @@ export function CustomNodesPanel({ nodes, onNodesChange }: { nodes: CustomNode[]
   const [nodeForm] = Form.useForm()
   const nodeProtocol = Form.useWatch('protocol', nodeForm)
   const nodeTransport = Form.useWatch('transport', nodeForm)
+  const nodeObfsType = Form.useWatch('obfs', nodeForm)
+  const nodeSnellObfsMode = Form.useWatch('snell_obfs_mode', nodeForm)
   const nodeTLSMode = Form.useWatch('tls_mode', nodeForm)
   const nodeSnellVersion = Form.useWatch('snell_version', nodeForm)
   const nodeLinkSource = Form.useWatch('link', nodeForm)
   const [selectedNodeIDs, setSelectedNodeIDs] = useState<number[]>([])
-  const [selectedGroups, setSelectedGroups] = useState<string[]>([])
+  const [selectedGroup, setSelectedGroup] = useState<string>()
   const [nodeSearch, setNodeSearch] = useState('')
   const [detailNode, setDetailNode] = useState<CustomNode | null>(null)
   const [groupMoveOpen, setGroupMoveOpen] = useState(false)
@@ -563,6 +566,7 @@ export function CustomNodesPanel({ nodes, onNodesChange }: { nodes: CustomNode[]
   const [subscriptionForm] = Form.useForm()
   const [subscriptionSaving, setSubscriptionSaving] = useState(false)
   const [syncingSubscriptionID, setSyncingSubscriptionID] = useState<number | null>(null)
+  const subscriptionRules = Form.useWatch('name_rewrite_rules', subscriptionForm) as NameRewriteRule[] | undefined
   // Inline group quick-edit on the group column (Popover).
   const [quickGroup, setQuickGroup] = useState<CustomNode | null>(null)
   const [quickGroupValue, setQuickGroupValue] = useState('')
@@ -608,7 +612,7 @@ export function CustomNodesPanel({ nodes, onNodesChange }: { nodes: CustomNode[]
   const openSubscriptionCreate = () => {
     setEditingSubscription(null)
     subscriptionForm.resetFields()
-    subscriptionForm.setFieldsValue({ enabled: true, auto_update: true, group: '' })
+    subscriptionForm.setFieldsValue({ enabled: true, auto_update: true, group: '', name_rewrite_rules: [] })
     setSubscriptionOpen(true)
   }
 
@@ -621,6 +625,12 @@ export function CustomNodesPanel({ nodes, onNodesChange }: { nodes: CustomNode[]
       group: subscription.group || '',
       enabled: subscription.enabled,
       auto_update: subscription.auto_update,
+      name_rewrite_rules: (subscription.name_rewrite_rules || []).map((rule) => ({
+        action: rule.action === 'replace_text' ? 'rename' : (rule.action || 'rename'),
+        pattern: (rule.action || 'rename') === 'rename' && rule.match_mode === 'regexp' && !rule.pattern.startsWith('re:') ? `re:${rule.pattern}` : rule.pattern,
+        replacement: rule.replacement || '',
+        match_mode: rule.match_mode,
+      })),
     })
     setSubscriptionOpen(true)
   }
@@ -637,6 +647,16 @@ export function CustomNodesPanel({ nodes, onNodesChange }: { nodes: CustomNode[]
         auto_update: values.auto_update !== false,
         update_interval_minutes: editingSubscription?.update_interval_minutes ?? 60,
         base_sort_order: editingSubscription?.base_sort_order ?? 0,
+        name_rewrite_rules: (values.name_rewrite_rules || []).map((rule: NameRewriteRule) => {
+          const action = rule.action === 'replace_text' ? 'rename' : (rule.action || 'rename')
+          const pattern = String(rule.pattern ?? '')
+          return {
+            action,
+            pattern,
+            replacement: action === 'rename' ? String(rule.replacement ?? '') : '',
+            match_mode: action === 'rename' ? (pattern.startsWith('re:') ? 'regexp' : 'text') : undefined,
+          }
+        }),
       }
       if (editingSubscription) {
         await updateCustomNodeSubscription(editingSubscription.id, body)
@@ -646,7 +666,7 @@ export function CustomNodesPanel({ nodes, onNodesChange }: { nodes: CustomNode[]
         if (result.sync_error) {
           message.warning(`订阅已保存，首次同步失败：${result.sync_error}`)
         } else {
-          message.success(`订阅已保存并同步 ${result.sync.total} 个节点`)
+          message.success(`订阅已保存并同步 ${result.sync.total} 个节点${result.sync.filtered ? `，过滤 ${result.sync.filtered} 个` : ''}`)
         }
       }
       setSubscriptionOpen(false)
@@ -663,7 +683,7 @@ export function CustomNodesPanel({ nodes, onNodesChange }: { nodes: CustomNode[]
     setSyncingSubscriptionID(subscription.id)
     try {
       const result = await syncCustomNodeSubscription(subscription.id)
-      message.success(`同步完成：新增 ${result.sync.created}，更新 ${result.sync.updated}，删除 ${result.sync.deleted}`)
+      message.success(`同步完成：新增 ${result.sync.created}，更新 ${result.sync.updated}，删除 ${result.sync.deleted}${result.sync.filtered ? `，过滤 ${result.sync.filtered}` : ''}`)
       loadSubscriptions()
       onNodesChange()
     } catch (e) {
@@ -720,11 +740,14 @@ export function CustomNodesPanel({ nodes, onNodesChange }: { nodes: CustomNode[]
       ss_plugin: p.ss_plugin,
       obfs: p.obfs,
       obfs_password: p.obfs_password,
+      gecko_min_packet_size: p.gecko_min_packet_size,
+      gecko_max_packet_size: p.gecko_max_packet_size,
       up_mbps: p.up_mbps,
       down_mbps: p.down_mbps,
       psk: p.psk,
       snell_version: p.version ?? 5,
       snell_obfs_mode: p.obfs_mode ?? 'none',
+      snell_obfs_host: p.obfs_host,
       snell_mode: p.mode === 'default' ? '' : (p.mode ?? ''),
       username: p.username,
       all_users: n.all_users,
@@ -781,11 +804,14 @@ export function CustomNodesPanel({ nodes, onNodesChange }: { nodes: CustomNode[]
           ss_plugin: v.ss_plugin,
           obfs: v.obfs,
           obfs_password: v.obfs_password,
+          gecko_min_packet_size: v.gecko_min_packet_size,
+          gecko_max_packet_size: v.gecko_max_packet_size,
           up_mbps: v.up_mbps,
           down_mbps: v.down_mbps,
           psk: v.psk,
           version: v.snell_version,
           obfs_mode: v.snell_obfs_mode,
+          obfs_host: v.snell_obfs_host,
           mode: v.snell_mode,
           username: v.username,
         },
@@ -912,16 +938,15 @@ export function CustomNodesPanel({ nodes, onNodesChange }: { nodes: CustomNode[]
   }, [groupOptions, nodes])
 
   const filteredNodes = useMemo(() => {
-    const selected = new Set(selectedGroups)
     const query = nodeSearch.trim().toLocaleLowerCase()
     return nodes.filter((node) => {
       const group = (node.group || '').trim()
-      const groupMatches = selected.size === 0 || (group ? selected.has(group) : selected.has('__none__'))
+      const groupMatches = !selectedGroup || (group ? group === selectedGroup : selectedGroup === '__none__')
       if (!groupMatches || !query) return groupMatches
       return [node.name, removeRegionFlag(node.name), node.address, node.detail?.address, node.protocol]
         .some((value) => typeof value === 'string' && value.toLocaleLowerCase().includes(query))
     })
-  }, [nodeSearch, nodes, selectedGroups])
+  }, [nodeSearch, nodes, selectedGroup])
 
   const detailParams = useMemo(() => {
     if (!detailNode) return []
@@ -1052,7 +1077,7 @@ export function CustomNodesPanel({ nodes, onNodesChange }: { nodes: CustomNode[]
   const mobileNodeList = filteredNodes.length === 0 ? (
     <Empty
       image={Empty.PRESENTED_IMAGE_SIMPLE}
-      description={nodeSearch.trim() ? '没有匹配的节点' : selectedGroups.length > 0 ? '当前分组筛选下没有节点' : '暂无节点。'}
+      description={nodeSearch.trim() ? '没有匹配的节点' : selectedGroup ? '当前分组筛选下没有节点' : '暂无节点。'}
     />
   ) : (
     <div className={`mobile-admin-list mobile-node-list${filteredNodes.length > MAX_VISIBLE_MOBILE_NODES ? ' is-scrollable' : ''}`}>
@@ -1168,14 +1193,12 @@ export function CustomNodesPanel({ nodes, onNodesChange }: { nodes: CustomNode[]
         <div className="custom-node-filter-bar">
           <span className="custom-node-filter-label">分组筛选</span>
           <Select
-            mode="multiple"
             allowClear
             showSearch
-            maxTagCount="responsive"
-            value={selectedGroups}
-            onChange={setSelectedGroups}
+            value={selectedGroup}
+            onChange={setSelectedGroup}
             options={groupFilterOptions}
-            placeholder="全部分组（可搜索、多选）"
+            placeholder="全部分组（可搜索）"
             optionFilterProp="label"
             className="custom-node-group-filter"
           />
@@ -1210,7 +1233,7 @@ export function CustomNodesPanel({ nodes, onNodesChange }: { nodes: CustomNode[]
               setDetailNode(node)
             },
           })}
-          locale={{ emptyText: nodeSearch.trim() ? '没有匹配的节点' : selectedGroups.length > 0 ? '当前分组筛选下没有节点' : '暂无节点。可粘贴朋友分享的链接（vless://、ss://、trojan:// 等），合并进订阅输出。' }}
+          locale={{ emptyText: nodeSearch.trim() ? '没有匹配的节点' : selectedGroup ? '当前分组筛选下没有节点' : '暂无节点。可粘贴朋友分享的链接（vless://、ss://、trojan:// 等），合并进订阅输出。' }}
         />}
       </Card>
 
@@ -1221,6 +1244,7 @@ export function CustomNodesPanel({ nodes, onNodesChange }: { nodes: CustomNode[]
         onCancel={() => setSubscriptionOpen(false)}
         okText={editingSubscription ? '保存' : '保存并同步'}
         confirmLoading={subscriptionSaving}
+        width={760}
         destroyOnClose
       >
         <Form form={subscriptionForm} layout="vertical">
@@ -1237,6 +1261,66 @@ export function CustomNodesPanel({ nodes, onNodesChange }: { nodes: CustomNode[]
               allowClear
               filterOption={(input, option) => (option?.value ?? '').toLowerCase().includes(input.toLowerCase())}
             />
+          </Form.Item>
+          <Form.Item label="订阅处理规则" extra="节点重命名默认按普通文本匹配；需要正则时在参数前加 re:，支持 Go/RE2 和 $1 捕获组。去除协议、保留节点和去除节点均支持用逗号分隔多个参数。保留节点和去除节点按列表顺序执行，后面的规则可以覆盖前面的结果；过滤不会删除数据库记录。">
+            <Form.List name="name_rewrite_rules">
+              {(fields, { add, remove, move }) => (
+                <div>
+                  {fields.length > 0 ? (
+                    <div className="name-rewrite-rule-header">
+                      <span>顺序</span>
+                      <span>规则操作</span>
+                      <span>参数</span>
+                      <span>替换为</span>
+                      <span>操作</span>
+                    </div>
+                  ) : null}
+                  {fields.map((field, index) => {
+                    const action = subscriptionRules?.[field.name]?.action || 'rename'
+                    return <div className="name-rewrite-rule-row" key={field.key}>
+                      <span className="name-rewrite-rule-order">{index + 1}</span>
+                      <Form.Item {...field} name={[field.name, 'action']} className="name-rewrite-rule-action">
+                        <Select
+                          options={[
+                            { value: 'rename', label: '节点重命名' },
+                            { value: 'exclude_protocol', label: '去除协议' },
+                            { value: 'include_node', label: '保留节点' },
+                            { value: 'exclude_node', label: '去除节点' },
+                          ]}
+                        />
+                      </Form.Item>
+                      <Form.Item
+                        {...field}
+                        name={[field.name, 'pattern']}
+                        rules={[{ required: true, whitespace: true, message: action === 'exclude_protocol' ? '请输入协议' : '请输入匹配内容' }]}
+                        className="name-rewrite-rule-pattern"
+                      >
+                        <Input
+                          placeholder={action === 'exclude_protocol' ? '协议，可多个：anytls,tuic' : action === 'include_node' ? '节点名称或地区，可多个：新加坡,HK' : action === 'exclude_node' ? '节点名称或地区，可多个：测试,US' : '名称文本，正则使用 re: 前缀'}
+                          maxLength={256}
+                          spellCheck={false}
+                        />
+                      </Form.Item>
+                      {action === 'rename' ? (
+                        <Form.Item {...field} name={[field.name, 'replacement']} className="name-rewrite-rule-replacement">
+                          <Input placeholder="替换为，例如：狮城" maxLength={512} spellCheck={false} />
+                        </Form.Item>
+                      ) : (
+                        <span className="name-rewrite-rule-no-replacement">无需填写</span>
+                      )}
+                      <div className="name-rewrite-rule-actions">
+                        <Button type="text" size="small" icon={<UpOutlined />} title="上移" aria-label="上移规则" disabled={index === 0} onClick={() => move(index, index - 1)} />
+                        <Button type="text" size="small" icon={<DownOutlined />} title="下移" aria-label="下移规则" disabled={index === fields.length - 1} onClick={() => move(index, index + 1)} />
+                        <Button type="text" size="small" danger icon={<DeleteOutlined />} title="删除" aria-label="删除规则" onClick={() => remove(field.name)} />
+                      </div>
+                    </div>
+                  })}
+                  <Button type="dashed" size="small" onClick={() => add({ action: 'rename', pattern: '', replacement: '', match_mode: 'text' })} disabled={fields.length >= 50} block>
+                    新增规则{fields.length >= 50 ? '（已达 50 条上限）' : ''}
+                  </Button>
+                </div>
+              )}
+            </Form.List>
           </Form.Item>
           <div className="subscription-switch-row">
             <Form.Item name="auto_update" label="自动更新" valuePropName="checked">
@@ -1521,12 +1605,19 @@ export function CustomNodesPanel({ nodes, onNodesChange }: { nodes: CustomNode[]
                       options={[
                         { value: '', label: '无' },
                         { value: 'salamander', label: 'salamander' },
+                        ...(nodeProtocol === 'hysteria2' ? [{ value: 'gecko', label: 'gecko' }] : []),
                       ]}
                     />
                   </Form.Item>
                   <Form.Item name="obfs_password" label="混淆密码">
-                    <Input.Password placeholder="salamander 混淆密码" />
+                    <Input.Password placeholder={`${nodeObfsType || 'salamander'} 混淆密码`} />
                   </Form.Item>
+                  {nodeProtocol === 'hysteria2' && nodeObfsType === 'gecko' && (
+                    <Space style={{ display: 'flex' }} align="baseline">
+                      <Form.Item name="gecko_min_packet_size" label="最小包大小" style={{ flex: 1 }}><InputNumber min={512} precision={0} style={{ width: '100%' }} /></Form.Item>
+                      <Form.Item name="gecko_max_packet_size" label="最大包大小" style={{ flex: 1 }}><InputNumber min={512} precision={0} style={{ width: '100%' }} /></Form.Item>
+                    </Space>
+                  )}
                   <Space size={16}>
                     <Form.Item name="up_mbps" label="上行 Mbps">
                       <InputNumber min={1} style={{ width: 110 }} placeholder="0" />
@@ -1575,9 +1666,16 @@ export function CustomNodesPanel({ nodes, onNodesChange }: { nodes: CustomNode[]
                         />
                       </Form.Item>
                     ) : (
-                      <Form.Item name="snell_obfs_mode" label="混淆（v5）">
-                        <Select style={{ width: 120 }} options={[{ value: 'none', label: '无' }, { value: 'http', label: 'http' }]} />
-                      </Form.Item>
+                      <>
+                        <Form.Item name="snell_obfs_mode" label="混淆（v5）">
+                          <Select style={{ width: 120 }} options={[{ value: 'none', label: '无' }, { value: 'http', label: 'http' }, { value: 'tls', label: 'tls' }]} />
+                        </Form.Item>
+                        {(nodeSnellObfsMode === 'http' || nodeSnellObfsMode === 'tls') && (
+                          <Form.Item name="snell_obfs_host" label="obfs_host">
+                            <Input placeholder="默认 bing.com" />
+                          </Form.Item>
+                        )}
+                      </>
                     )}
                   </Space>
                 </>

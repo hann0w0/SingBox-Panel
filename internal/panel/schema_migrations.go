@@ -155,6 +155,28 @@ var applicationMigrations = []schemaMigration{
 			return tx.AutoMigrate(&model.CustomNodeSubscription{}, &model.CustomNode{})
 		},
 	},
+	{
+		version: 12,
+		name:    "subscription node name rewrite rules",
+		up: func(tx *gorm.DB) error {
+			if err := tx.AutoMigrate(&model.CustomNodeSubscription{}, &model.CustomNode{}); err != nil {
+				return err
+			}
+			// Existing managed nodes predate SourceName. Their current display
+			// name is the only trustworthy source value available at migration
+			// time; seed it once so later rule edits are deterministic.
+			return tx.Model(&model.CustomNode{}).
+				Where("subscription_id IS NOT NULL AND (source_name = '' OR source_name IS NULL)").
+				UpdateColumn("source_name", gorm.Expr("name")).Error
+		},
+	},
+	{
+		version: 13,
+		name:    "subscription protocol filtering",
+		up: func(tx *gorm.DB) error {
+			return tx.AutoMigrate(&model.CustomNode{})
+		},
+	},
 }
 
 // runSchemaMigrations applies every pending migration in order. If any

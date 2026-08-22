@@ -154,14 +154,32 @@ func BuildClientOutbound(n ClientNode) (json.RawMessage, error) {
 	case "shadowsocks":
 		base["method"] = n.Settings.Method
 		base["password"] = SSClientPassword(n.Settings, n.User.Password)
+		if plugin, opts := ShadowsocksPluginFields(n.Settings.SSPlugin); plugin != "" {
+			base["plugin"] = plugin
+			if opts != "" {
+				base["plugin_opts"] = opts
+			}
+		}
 		// sing-box's shadowsocks outbound has no packet_encoding field either.
 	case "hysteria2":
 		base["password"] = n.User.Password
 		if tls != nil {
 			base["tls"] = tls
 		}
-		if n.Settings.ObfsPassword != "" {
-			base["obfs"] = map[string]any{"type": "salamander", "password": n.Settings.ObfsPassword}
+		if n.Settings.ObfsPassword != "" && (n.Settings.ObfsType == "" || n.Settings.ObfsType == "salamander" || n.Settings.ObfsType == "gecko") {
+			obfs := map[string]any{"type": n.Settings.ObfsType, "password": n.Settings.ObfsPassword}
+			if obfs["type"] == "" {
+				obfs["type"] = "salamander"
+			}
+			if n.Settings.ObfsType == "gecko" {
+				if n.Settings.GeckoMinPacketSize > 0 {
+					obfs["min_packet_size"] = n.Settings.GeckoMinPacketSize
+				}
+				if n.Settings.GeckoMaxPacketSize > 0 {
+					obfs["max_packet_size"] = n.Settings.GeckoMaxPacketSize
+				}
+			}
+			base["obfs"] = obfs
 		}
 		if n.Settings.UpMbps > 0 {
 			base["up_mbps"] = n.Settings.UpMbps
@@ -206,7 +224,22 @@ func BuildClientOutbound(n ClientNode) (json.RawMessage, error) {
 	case "snell":
 		base["psk"] = SnellClientPSK(n.Settings, n.User.Password)
 		if n.Settings.SnellVersion > 0 {
-			base["version"] = n.Settings.SnellVersion
+			base["version"] = SnellOutboundVersion(n.Settings.SnellVersion)
+		}
+		if n.Settings.SnellReuse {
+			base["reuse"] = true
+		}
+		if n.Settings.SnellNetwork != "" {
+			base["network"] = n.Settings.SnellNetwork
+		}
+		if SnellOutboundVersion(n.Settings.SnellVersion) == 4 && n.Settings.SnellObfsMode != "" && n.Settings.SnellObfsMode != "none" {
+			base["obfs_mode"] = n.Settings.SnellObfsMode
+		}
+		if SnellOutboundVersion(n.Settings.SnellVersion) == 4 && n.Settings.SnellObfsHost != "" {
+			base["obfs_host"] = n.Settings.SnellObfsHost
+		}
+		if n.Settings.SnellVersion == 6 && n.Settings.SnellMode != "" && n.Settings.SnellMode != "default" {
+			base["mode"] = n.Settings.SnellMode
 		}
 	case "socks":
 		user := n.User.Username
@@ -289,7 +322,7 @@ func BuildShareLink(n ClientNode) (string, error) {
 			if h := n.Settings.Transport.Headers["Host"]; h != "" {
 				q.Set("host", h)
 			}
-			if n.Settings.Transport.MaxEarlyData > 0 {
+			if networkOf(n.Settings.Transport) == "ws" && n.Settings.Transport.MaxEarlyData > 0 {
 				q.Set("maxEarlyData", strconv.Itoa(n.Settings.Transport.MaxEarlyData))
 				if n.Settings.Transport.EarlyDataHeader != "" {
 					q.Set("earlyDataHeaderName", n.Settings.Transport.EarlyDataHeader)
@@ -372,7 +405,7 @@ func BuildShareLink(n ClientNode) (string, error) {
 			if h := n.Settings.Transport.Headers["Host"]; h != "" {
 				q.Set("host", h)
 			}
-			if n.Settings.Transport.MaxEarlyData > 0 {
+			if networkOf(n.Settings.Transport) == "ws" && n.Settings.Transport.MaxEarlyData > 0 {
 				q.Set("maxEarlyData", strconv.Itoa(n.Settings.Transport.MaxEarlyData))
 				if n.Settings.Transport.EarlyDataHeader != "" {
 					q.Set("earlyDataHeaderName", n.Settings.Transport.EarlyDataHeader)
@@ -427,8 +460,20 @@ func BuildShareLink(n ClientNode) (string, error) {
 		q := url.Values{}
 		q.Set("sni", clientSNI(t, host))
 		if n.Settings.ObfsPassword != "" {
-			q.Set("obfs", "salamander")
+			obfsType := n.Settings.ObfsType
+			if obfsType == "" {
+				obfsType = "salamander"
+			}
+			q.Set("obfs", obfsType)
 			q.Set("obfs-password", n.Settings.ObfsPassword)
+			if obfsType == "gecko" {
+				if n.Settings.GeckoMinPacketSize > 0 {
+					q.Set("obfs-min-packet-size", strconv.Itoa(n.Settings.GeckoMinPacketSize))
+				}
+				if n.Settings.GeckoMaxPacketSize > 0 {
+					q.Set("obfs-max-packet-size", strconv.Itoa(n.Settings.GeckoMaxPacketSize))
+				}
+			}
 		}
 		if n.Settings.UpMbps > 0 {
 			q.Set("up", strconv.Itoa(n.Settings.UpMbps))

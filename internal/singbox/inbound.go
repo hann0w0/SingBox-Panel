@@ -56,10 +56,13 @@ func pemLines(pem string) []string {
 	return strings.Split(pem, "\n")
 }
 
-type wsTransport struct {
-	Type    string            `json:"type"` // "ws"
-	Path    string            `json:"path,omitempty"`
-	Headers map[string]string `json:"headers,omitempty"`
+type v2rayTransport struct {
+	Type            string         `json:"type"`
+	Host            string         `json:"host,omitempty"`
+	Path            string         `json:"path,omitempty"`
+	Headers         map[string]any `json:"headers,omitempty"`
+	MaxEarlyData    int            `json:"max_early_data,omitempty"`
+	EarlyDataHeader string         `json:"early_data_header_name,omitempty"`
 }
 
 func orDefaultInt(v, def int) int {
@@ -105,12 +108,56 @@ func buildTLS(t TLSSettings) *tlsInbound {
 	return out
 }
 
-// buildTransport renders the ws transport clause, or nil for tcp.
-func buildTransport(t TransportSettings) *wsTransport {
+func transportHost(t TransportSettings) string {
+	for key, values := range t.HeaderValuesMap() {
+		if strings.EqualFold(key, "host") {
+			if len(values) > 0 {
+				return values[0]
+			}
+		}
+	}
+	return ""
+}
+
+func transportHeaders(t TransportSettings, omitHost bool) map[string]any {
+	values := t.HeaderValuesMap()
+	if len(values) == 0 {
+		return nil
+	}
+	out := make(map[string]any, len(values))
+	for key, headerValues := range values {
+		if !omitHost || !strings.EqualFold(key, "host") {
+			if len(headerValues) == 1 {
+				out[key] = headerValues[0]
+			} else if len(headerValues) > 1 {
+				out[key] = headerValues
+			}
+		}
+	}
+	if len(out) == 0 {
+		return nil
+	}
+	return out
+}
+
+// buildTransport renders a WebSocket or HTTPUpgrade transport, or nil for TCP.
+func buildTransport(t TransportSettings) *v2rayTransport {
 	if t.normalized() == nil {
 		return nil
 	}
-	return &wsTransport{Type: "ws", Path: t.Path, Headers: t.Headers}
+	typ := strings.ToLower(t.Type)
+	out := &v2rayTransport{Type: typ, Path: t.Path}
+	if typ == "ws" {
+		out.Headers = transportHeaders(t, false)
+		out.MaxEarlyData = t.MaxEarlyData
+		out.EarlyDataHeader = t.EarlyDataHeader
+	} else if typ == "httpupgrade" {
+		out.Host = transportHost(t)
+		out.Headers = transportHeaders(t, true)
+	} else {
+		out.Headers = transportHeaders(t, false)
+	}
+	return out
 }
 
 // BuildInbound renders a single inbound object as official config JSON.
@@ -219,11 +266,22 @@ func BuildInbound(in InboundInput) (json.RawMessage, error) {
 		if in.Settings.IgnoreClientBandwidth {
 			m["ignore_client_bandwidth"] = true
 		}
-		// Salamander obfs: honor the explicit obfs_type; legacy rows that only
-		// carry obfs_password keep working as salamander.
-		if in.Settings.ObfsPassword != "" &&
-			(in.Settings.ObfsType == "" || in.Settings.ObfsType == "salamander") {
-			m["obfs"] = map[string]any{"type": "salamander", "password": in.Settings.ObfsPassword}
+		// Keep legacy rows with only obfs_password as salamander. Gecko also
+		// carries its optional packet-size bounds in the same object.
+		if in.Settings.ObfsPassword != "" && (in.Settings.ObfsType == "" || in.Settings.ObfsType == "salamander" || in.Settings.ObfsType == "gecko") {
+			obfs := map[string]any{"type": in.Settings.ObfsType, "password": in.Settings.ObfsPassword}
+			if obfs["type"] == "" {
+				obfs["type"] = "salamander"
+			}
+			if in.Settings.ObfsType == "gecko" {
+				if in.Settings.GeckoMinPacketSize > 0 {
+					obfs["min_packet_size"] = in.Settings.GeckoMinPacketSize
+				}
+				if in.Settings.GeckoMaxPacketSize > 0 {
+					obfs["max_packet_size"] = in.Settings.GeckoMaxPacketSize
+				}
+			}
+			m["obfs"] = obfs
 		}
 		// NOTE: hysteria2 is QUIC and has no v2ray transport field. Emitting
 		// "transport" here makes `sing-box check` fail with an unknown-field
@@ -298,14 +356,8 @@ func BuildInbound(in InboundInput) (json.RawMessage, error) {
 	case "snell": // requires a sing-box 1.14 beta binary on the node
 		m["version"] = in.Settings.SnellVersion
 		m["psk"] = in.Settings.SnellPSK
-		// Single-credential Snell is just the PSK — no users[] / userkey at all.
-		if !in.Settings.SingleUser {
-			users := make([]map[string]any, 0, len(eff))
-			for _, u := range eff {
-				users = append(users, map[string]any{"name": u.Name, "userkey": u.Password})
-			}
-			m["users"] = users
-		}
+		// Snell is intentionally fixed to one PSK in this panel. Do not emit
+		// users[] even when an old row still contains a multi-user flag.
 		if in.Settings.SnellVersion == 5 && in.Settings.SnellObfsMode != "" && in.Settings.SnellObfsMode != "none" {
 			m["obfs_mode"] = in.Settings.SnellObfsMode
 		}

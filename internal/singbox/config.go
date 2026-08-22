@@ -47,8 +47,8 @@ type experimentalOut struct {
 	ClashAPI map[string]any `json:"clash_api"`
 }
 
-// BuildServerConfig renders a complete official sing-box config.json (1.13
-// stable schema). The output is validated on the VPS by `sing-box check`
+// BuildServerConfig renders a complete official sing-box config.json using the
+// project's sing-box 1.14 beta baseline. The output is validated on the VPS by `sing-box check`
 // before being applied.
 func BuildServerConfig(in ServerConfigInput) ([]byte, error) {
 	inbounds := make([]json.RawMessage, 0, len(in.Inbounds))

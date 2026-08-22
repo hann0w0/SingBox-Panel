@@ -345,6 +345,7 @@ export interface CustomNodeSubscription {
   auto_update: boolean
   update_interval_minutes: number
   base_sort_order: number
+  name_rewrite_rules: NameRewriteRule[]
   last_sync_at?: string | null
   last_success_at?: string | null
   last_error: string
@@ -352,6 +353,13 @@ export interface CustomNodeSubscription {
   node_count: number
   created_at: string
   updated_at: string
+}
+
+export interface NameRewriteRule {
+  action?: 'rename' | 'replace_text' | 'exclude_protocol' | 'include_node' | 'exclude_node'
+  pattern: string
+  replacement: string
+  match_mode?: 'text' | 'regexp'
 }
 
 export interface CustomNodeSubscriptionBody {
@@ -362,6 +370,7 @@ export interface CustomNodeSubscriptionBody {
   auto_update?: boolean
   update_interval_minutes?: number
   base_sort_order?: number
+  name_rewrite_rules?: NameRewriteRule[]
 }
 
 export interface CustomNodeSubscriptionSync {
@@ -370,6 +379,7 @@ export interface CustomNodeSubscriptionSync {
   deleted: number
   total: number
   skipped: number
+  filtered: number
 }
 
 export const listCustomNodeSubscriptions = () =>

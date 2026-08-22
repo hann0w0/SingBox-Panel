@@ -168,7 +168,7 @@ func (a *App) gatherNodes(user *model.User) []node {
 	// Custom external nodes carry their own credentials (share link or the
 	// structured protocol fields), so no per-user derivation happens here.
 	var customs []model.CustomNode
-	a.db.Where("enabled = ?", true).Order("sort_order, id").Find(&customs)
+	a.db.Where("enabled = ? AND hidden_by_subscription_rule = ?", true, false).Order("sort_order, id").Find(&customs)
 	for i := range customs {
 		c := &customs[i]
 		if !c.HasUser(user.ID) {
@@ -205,48 +205,53 @@ func (a *App) customNodeToNode(c *model.CustomNode) (node, bool) {
 	}
 
 	var p struct {
-		UUID                 string            `json:"uuid"`
-		Password             string            `json:"password"`
-		Username             string            `json:"username"`
-		Method               string            `json:"method"`
-		SSPlugin             string            `json:"ss_plugin"`
-		Plugin               string            `json:"plugin"`
-		SSPluginOpts         map[string]any    `json:"ss_plugin_opts"`
-		Flow                 string            `json:"flow"`
-		PacketEncoding       string            `json:"packet_encoding"`
-		VMessSecurity        string            `json:"security"`
-		VMessAlterID         int               `json:"alter_id"`
-		TLS                  string            `json:"tls"` // none | tls | reality
-		SNI                  string            `json:"sni"`
-		PBK                  string            `json:"pbk"`
-		SID                  string            `json:"sid"`
-		Fingerprint          string            `json:"fingerprint"`
-		Insecure             bool              `json:"insecure"`
-		SkipCertVerify       bool              `json:"skip_cert_verify"`
-		Transport            string            `json:"transport"` // tcp | ws | httpupgrade
-		Network              string            `json:"network"`
-		Path                 string            `json:"path"`
-		Host                 string            `json:"host"`
-		Headers              map[string]string `json:"headers"`
-		MaxEarlyData         int               `json:"max_early_data"`
-		EarlyDataHeaderName  string            `json:"early_data_header_name"`
-		ALPN                 string            `json:"alpn"`
-		Congestion           string            `json:"congestion_control"`
-		CongestionController string            `json:"congestion_controller"`
-		UDPRelayMode         string            `json:"udp_relay_mode"`
-		UDP                  *bool             `json:"udp"`
-		UDPOverStream        bool              `json:"udp_over_stream"`
-		Obfs                 string            `json:"obfs"`
-		ObfsType             string            `json:"obfs_type"`
-		ObfsPassword         string            `json:"obfs_password"`
-		UpMbps               int               `json:"up_mbps"`
-		DownMbps             int               `json:"down_mbps"`
-		ZeroRTTHandshake     bool              `json:"zero_rtt_handshake"`
-		Heartbeat            string            `json:"heartbeat"`
-		PSK                  string            `json:"psk"`
-		Version              int               `json:"version"`
-		ObfsMode             string            `json:"obfs_mode"`
-		Mode                 string            `json:"mode"`
+		UUID                  string         `json:"uuid"`
+		Password              string         `json:"password"`
+		Username              string         `json:"username"`
+		Method                string         `json:"method"`
+		SSPlugin              string         `json:"ss_plugin"`
+		Plugin                string         `json:"plugin"`
+		SSPluginOpts          map[string]any `json:"ss_plugin_opts"`
+		Flow                  string         `json:"flow"`
+		PacketEncoding        string         `json:"packet_encoding"`
+		VMessSecurity         string         `json:"security"`
+		VMessAlterID          int            `json:"alter_id"`
+		TLS                   string         `json:"tls"` // none | tls | reality
+		SNI                   string         `json:"sni"`
+		PBK                   string         `json:"pbk"`
+		SID                   string         `json:"sid"`
+		Fingerprint           string         `json:"fingerprint"`
+		Insecure              bool           `json:"insecure"`
+		SkipCertVerify        bool           `json:"skip_cert_verify"`
+		Transport             string         `json:"transport"` // tcp | ws | httpupgrade
+		Network               string         `json:"network"`
+		Path                  string         `json:"path"`
+		Host                  string         `json:"host"`
+		Headers               map[string]any `json:"headers"`
+		MaxEarlyData          int            `json:"max_early_data"`
+		EarlyDataHeaderName   string         `json:"early_data_header_name"`
+		ALPN                  string         `json:"alpn"`
+		Congestion            string         `json:"congestion_control"`
+		CongestionController  string         `json:"congestion_controller"`
+		UDPRelayMode          string         `json:"udp_relay_mode"`
+		UDP                   *bool          `json:"udp"`
+		UDPOverStream         bool           `json:"udp_over_stream"`
+		Obfs                  string         `json:"obfs"`
+		ObfsType              string         `json:"obfs_type"`
+		ObfsPassword          string         `json:"obfs_password"`
+		GeckoMinPacketSize    int            `json:"gecko_min_packet_size"`
+		GeckoMaxPacketSize    int            `json:"gecko_max_packet_size"`
+		UpMbps                int            `json:"up_mbps"`
+		DownMbps              int            `json:"down_mbps"`
+		IgnoreClientBandwidth bool           `json:"ignore_client_bandwidth"`
+		ZeroRTTHandshake      bool           `json:"zero_rtt_handshake"`
+		Heartbeat             string         `json:"heartbeat"`
+		PSK                   string         `json:"psk"`
+		Reuse                 bool           `json:"reuse"`
+		Version               int            `json:"version"`
+		ObfsMode              string         `json:"obfs_mode"`
+		ObfsHost              string         `json:"obfs_host"`
+		Mode                  string         `json:"mode"`
 	}
 	if len(c.Params) > 0 {
 		if err := json.Unmarshal(c.Params, &p); err != nil {
@@ -320,19 +325,12 @@ func (a *App) customNodeToNode(c *model.CustomNode) (node, bool) {
 			st.Transport.MaxEarlyData = p.MaxEarlyData
 			st.Transport.EarlyDataHeader = p.EarlyDataHeaderName
 			if len(p.Headers) > 0 {
-				st.Transport.Headers = make(map[string]string, len(p.Headers)+1)
 				for key, value := range p.Headers {
-					st.Transport.Headers[key] = value
-					if strings.EqualFold(key, "Host") {
-						st.Transport.Headers["Host"] = value
-					}
+					st.Transport.SetHeaderValues(key, headerValues(value))
 				}
 			}
 			if host := strings.TrimSpace(p.Host); host != "" {
-				if st.Transport.Headers == nil {
-					st.Transport.Headers = map[string]string{}
-				}
-				st.Transport.Headers["Host"] = host
+				st.Transport.SetHeaderValues("Host", []string{host})
 			}
 		}
 	}
@@ -394,8 +392,11 @@ func (a *App) customNodeToNode(c *model.CustomNode) (node, bool) {
 		if st.ObfsPassword == "" && protocol == "hysteria" {
 			st.ObfsPassword = p.Obfs
 		}
+		st.GeckoMinPacketSize = p.GeckoMinPacketSize
+		st.GeckoMaxPacketSize = p.GeckoMaxPacketSize
 		st.UpMbps = p.UpMbps
 		st.DownMbps = p.DownMbps
+		st.IgnoreClientBandwidth = p.IgnoreClientBandwidth
 		buildTLS()
 	case "snell":
 		if p.Version == 0 {
@@ -403,10 +404,13 @@ func (a *App) customNodeToNode(c *model.CustomNode) (node, bool) {
 		}
 		st.SnellVersion = p.Version
 		st.SnellPSK = p.PSK
+		st.SnellReuse = p.Reuse
+		st.SnellNetwork = strings.ToLower(strings.TrimSpace(p.Network))
 		st.SnellObfsMode = p.ObfsMode
 		if st.SnellObfsMode == "" {
 			st.SnellObfsMode = p.Obfs
 		}
+		st.SnellObfsHost = strings.TrimSpace(p.ObfsHost)
 		st.SnellMode = p.Mode
 	case "socks", "mixed":
 		st.Username = p.Username
@@ -424,6 +428,23 @@ func (a *App) customNodeToNode(c *model.CustomNode) (node, bool) {
 		user:     u,
 		udp:      p.UDP,
 	}, true
+}
+
+func headerValues(value any) []string {
+	switch values := value.(type) {
+	case []any:
+		out := make([]string, 0, len(values))
+		for _, item := range values {
+			out = append(out, fmt.Sprint(item))
+		}
+		return out
+	case []string:
+		return values
+	case string:
+		return []string{values}
+	default:
+		return []string{fmt.Sprint(value)}
+	}
 }
 
 // mergeSSPluginOptions keeps Clash's split plugin/plugin-opts representation
@@ -883,8 +904,18 @@ func clashProxy(n node, seen map[string]int) map[string]any {
 			base["alpn"] = st.TLS.ALPN
 		}
 		if st.ObfsPassword != "" {
-			base["obfs"] = "salamander"
+			obfsType := st.ObfsType
+			if obfsType == "" {
+				obfsType = "salamander"
+			}
+			base["obfs"] = obfsType
 			base["obfs-password"] = st.ObfsPassword
+			if obfsType == "gecko" {
+				base["obfs-opts"] = map[string]any{
+					"min-packet-size": st.GeckoMinPacketSize,
+					"max-packet-size": st.GeckoMaxPacketSize,
+				}
+			}
 		}
 		if st.UpMbps > 0 {
 			base["up"] = fmt.Sprintf("%d Mbps", st.UpMbps)
@@ -1108,7 +1139,11 @@ func nodeParams(n node) map[string]string {
 		p["密码"] = u.Password
 		p["SNI"] = sni
 		if st.ObfsPassword != "" {
-			p["Obfs"] = "salamander"
+			obfsType := st.ObfsType
+			if obfsType == "" {
+				obfsType = "salamander"
+			}
+			p["Obfs"] = obfsType
 			p["Obfs密码"] = st.ObfsPassword
 		}
 	case "tuic":
@@ -1272,8 +1307,10 @@ func surgeProxy(n node, name string) string {
 		if st.DownMbps > 0 {
 			line += fmt.Sprintf(", download-bandwidth=%d", st.DownMbps)
 		}
-		// Surge takes the Salamander obfs password in its own field.
-		if st.ObfsPassword != "" {
+		// Surge's Hysteria2 syntax has a dedicated Salamander field. Preserve
+		// that field only for Salamander; Gecko is emitted by sing-box/Clash
+		// formats and must not be mislabeled as Salamander here.
+		if st.ObfsPassword != "" && (st.ObfsType == "" || st.ObfsType == "salamander") {
 			line += ", salamander-password=" + st.ObfsPassword
 		}
 		if st.TLS.ClientInsecure() {

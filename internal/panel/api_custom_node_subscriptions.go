@@ -1,6 +1,7 @@
 package panel
 
 import (
+	"encoding/json"
 	"errors"
 	"net/http"
 	"strings"
@@ -12,13 +13,14 @@ import (
 )
 
 type customNodeSubscriptionReq struct {
-	Name                  string `json:"name"`
-	URL                   string `json:"url"`
-	Group                 string `json:"group"`
-	Enabled               *bool  `json:"enabled"`
-	AutoUpdate            *bool  `json:"auto_update"`
-	UpdateIntervalMinutes int    `json:"update_interval_minutes"`
-	BaseSortOrder         int    `json:"base_sort_order"`
+	Name                  string                  `json:"name"`
+	URL                   string                  `json:"url"`
+	Group                 string                  `json:"group"`
+	Enabled               *bool                   `json:"enabled"`
+	AutoUpdate            *bool                   `json:"auto_update"`
+	UpdateIntervalMinutes int                     `json:"update_interval_minutes"`
+	BaseSortOrder         int                     `json:"base_sort_order"`
+	NameRewriteRules      []model.NameRewriteRule `json:"name_rewrite_rules"`
 }
 
 func (a *App) listCustomNodeSubscriptions(c *gin.Context) {
@@ -27,12 +29,19 @@ func (a *App) listCustomNodeSubscriptions(c *gin.Context) {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
+	for i := range rows {
+		rows[i].NameRewriteRules = nonNilNameRewriteRules(rows[i].NameRewriteRules)
+	}
 	c.JSON(http.StatusOK, gin.H{"subscriptions": rows})
 }
 
 func (a *App) createCustomNodeSubscription(c *gin.Context) {
 	var req customNodeSubscriptionReq
 	if !bindJSON(c, &req) {
+		return
+	}
+	if _, err := compileNameRewriteRules(req.NameRewriteRules); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
 	url, err := validateCustomNodeSubscriptionURL(req.URL)
@@ -52,10 +61,11 @@ func (a *App) createCustomNodeSubscription(c *gin.Context) {
 	if req.Enabled != nil {
 		enabled = *req.Enabled
 	}
+	normalizedRules := nonNilNameRewriteRules(req.NameRewriteRules)
 	row := model.CustomNodeSubscription{
 		Name: name, URL: url, Group: trimRunes(strings.TrimSpace(req.Group), 64),
 		Enabled: enabled, AutoUpdate: autoUpdate, UpdateIntervalMinutes: normalizeCustomNodeSubscriptionInterval(req.UpdateIntervalMinutes),
-		BaseSortOrder: req.BaseSortOrder,
+		BaseSortOrder: req.BaseSortOrder, NameRewriteRules: normalizedRules,
 	}
 	if err := a.db.Create(&row).Error; err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
@@ -64,10 +74,12 @@ func (a *App) createCustomNodeSubscription(c *gin.Context) {
 	result, err := a.subscriptionManager().sync(c.Request.Context(), row.ID)
 	if err != nil {
 		a.db.First(&row, row.ID)
+		row.NameRewriteRules = nonNilNameRewriteRules(row.NameRewriteRules)
 		c.JSON(http.StatusOK, gin.H{"subscription": row, "sync": result, "sync_error": err.Error()})
 		return
 	}
 	a.db.First(&row, row.ID)
+	row.NameRewriteRules = nonNilNameRewriteRules(row.NameRewriteRules)
 	c.JSON(http.StatusOK, gin.H{"subscription": row, "sync": result})
 }
 
@@ -79,6 +91,15 @@ func (a *App) updateCustomNodeSubscription(c *gin.Context) {
 	var req customNodeSubscriptionReq
 	if !bindJSON(c, &req) {
 		return
+	}
+	var compiledRules []compiledNameRewriteRule
+	if req.NameRewriteRules != nil {
+		var err error
+		compiledRules, err = compileNameRewriteRules(req.NameRewriteRules)
+		if err != nil {
+			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+			return
+		}
 	}
 	url, err := validateCustomNodeSubscriptionURL(req.URL)
 	if err != nil {
@@ -112,8 +133,24 @@ func (a *App) updateCustomNodeSubscription(c *gin.Context) {
 			"update_interval_minutes": normalizeCustomNodeSubscriptionInterval(req.UpdateIntervalMinutes),
 			"base_sort_order":         baseSortOrder,
 		}
+		if req.NameRewriteRules != nil {
+			rulesJSON, err := json.Marshal(nonNilNameRewriteRules(req.NameRewriteRules))
+			if err != nil {
+				return err
+			}
+			updates["name_rewrite_rules"] = string(rulesJSON)
+		}
 		if err := tx.Model(&row).Updates(updates).Error; err != nil {
 			return err
+		}
+		if req.NameRewriteRules != nil {
+			visible, err := applyManagedCustomNodeRules(tx, id, compiledRules)
+			if err != nil {
+				return err
+			}
+			if err := tx.Model(&model.CustomNodeSubscription{}).Where("id = ?", id).Update("node_count", visible).Error; err != nil {
+				return err
+			}
 		}
 		// Apply source-level presentation changes immediately, including a base
 		// sort offset, without waiting for a remote fetch.
@@ -140,6 +177,7 @@ func (a *App) updateCustomNodeSubscription(c *gin.Context) {
 		return
 	}
 	a.db.First(&row, id)
+	row.NameRewriteRules = nonNilNameRewriteRules(row.NameRewriteRules)
 	c.JSON(http.StatusOK, gin.H{"subscription": row})
 }
 
@@ -187,5 +225,6 @@ func (a *App) syncCustomNodeSubscription(c *gin.Context) {
 	}
 	var row model.CustomNodeSubscription
 	a.db.First(&row, id)
+	row.NameRewriteRules = nonNilNameRewriteRules(row.NameRewriteRules)
 	c.JSON(http.StatusOK, gin.H{"subscription": row, "sync": result})
 }

@@ -390,7 +390,9 @@ func parseClashProxy(m map[string]any) (ImportedNode, error) {
 		cn.Settings.Transport.Type = network
 		if transport != nil {
 			cn.Settings.Transport.Path = getString(transport, "path")
-			cn.Settings.Transport.Headers = stringMap(yamlMap(getAny(transport, "headers")))
+			for key, values := range stringValuesMap(yamlMap(getAny(transport, "headers"))) {
+				cn.Settings.Transport.SetHeaderValues(key, values)
+			}
 			cn.Settings.Transport.MaxEarlyData = getInt(transport, "max-early-data", "max_early_data")
 			cn.Settings.Transport.EarlyDataHeader = getString(transport, "early-data-header-name", "early_data_header_name")
 		}
@@ -449,6 +451,15 @@ func parseClashProxy(m map[string]any) (ImportedNode, error) {
 		}
 		cn.Settings.ObfsType = getString(m, "obfs")
 		cn.Settings.ObfsPassword = getString(m, "obfs-password", "obfs_password", "salamander-password")
+		cn.Settings.GeckoMinPacketSize = getInt(m, "min-packet-size", "min_packet_size")
+		cn.Settings.GeckoMaxPacketSize = getInt(m, "max-packet-size", "max_packet_size")
+		if obfsOpts := yamlMap(getAny(m, "obfs-opts", "obfs_opts")); obfsOpts != nil {
+			cn.Settings.GeckoMinPacketSize = getInt(obfsOpts, "min-packet-size", "min_packet_size")
+			cn.Settings.GeckoMaxPacketSize = getInt(obfsOpts, "max-packet-size", "max_packet_size")
+			if cn.Settings.ObfsPassword == "" {
+				cn.Settings.ObfsPassword = getString(obfsOpts, "password", "obfs-password", "obfs_password")
+			}
+		}
 		if cn.Settings.ObfsType == "" && cn.Settings.ObfsPassword != "" {
 			cn.Settings.ObfsType = "salamander"
 		}
@@ -490,18 +501,34 @@ func parseClashProxy(m map[string]any) (ImportedNode, error) {
 		if cn.Settings.SnellPSK == "" {
 			return ImportedNode{}, fmt.Errorf("Snell 缺少 psk")
 		}
+		// Snell is fixed to one PSK in this panel; ignore legacy userkey values.
+		cn.Settings.SnellReuse = getBool(m, "reuse")
+		cn.Settings.SnellNetwork = strings.ToLower(strings.TrimSpace(getString(m, "network")))
+		if cn.Settings.SnellNetwork != "" && cn.Settings.SnellNetwork != "tcp" && cn.Settings.SnellNetwork != "udp" {
+			return ImportedNode{}, fmt.Errorf("Snell network 必须是 tcp 或 udp")
+		}
 		cn.Settings.SnellVersion = getInt(m, "version")
 		if cn.Settings.SnellVersion == 0 {
 			cn.Settings.SnellVersion = 5
 		}
-		if cn.Settings.SnellVersion != 5 && cn.Settings.SnellVersion != 6 {
-			return ImportedNode{}, fmt.Errorf("Snell 版本必须是 5 或 6")
+		if cn.Settings.SnellVersion != 4 && cn.Settings.SnellVersion != 5 && cn.Settings.SnellVersion != 6 {
+			return ImportedNode{}, fmt.Errorf("Snell 版本必须是 4、5 或 6")
 		}
 		obfs := yamlMap(getAny(m, "obfs-opts", "obfs_opts"))
 		if obfs != nil {
 			cn.Settings.SnellObfsMode = getString(obfs, "mode")
+			cn.Settings.SnellObfsHost = getString(obfs, "host")
 		} else {
-			cn.Settings.SnellObfsMode = getString(m, "obfs")
+			cn.Settings.SnellObfsMode = getString(m, "obfs", "obfs_mode")
+		}
+		if cn.Settings.SnellObfsHost == "" {
+			cn.Settings.SnellObfsHost = getString(m, "obfs-host", "obfs_host")
+		}
+		cn.Settings.SnellMode = getString(m, "mode")
+		validateSettings := cn.Settings
+		validateSettings.SnellVersion = SnellOutboundVersion(validateSettings.SnellVersion)
+		if err := validateSettings.ValidateClientOutbound("snell"); err != nil {
+			return ImportedNode{}, fmt.Errorf("Snell 参数无效: %w", err)
 		}
 	default:
 		return ImportedNode{}, fmt.Errorf("暂不支持协议 %q", typ)
@@ -513,7 +540,7 @@ func parseClashProxy(m map[string]any) (ImportedNode, error) {
 		node.Params["packet_encoding"] = cn.Settings.PacketEncoding
 	}
 	if len(cn.Settings.Transport.Headers) > 0 {
-		node.Params["headers"] = cn.Settings.Transport.Headers
+		node.Params["headers"] = cn.Settings.Transport.HeaderObject()
 	}
 	if pluginOpts := yamlMap(getAny(m, "plugin-opts", "plugin_opts")); len(pluginOpts) > 0 {
 		node.Params["ss_plugin_opts"] = pluginOpts
@@ -768,7 +795,7 @@ func clientParams(cn ClientNode) map[string]any {
 			p["host"] = h
 		}
 		if len(st.Transport.Headers) > 0 {
-			p["headers"] = st.Transport.Headers
+			p["headers"] = st.Transport.HeaderObject()
 		}
 		if st.Transport.MaxEarlyData > 0 {
 			p["max_early_data"] = st.Transport.MaxEarlyData
@@ -782,6 +809,12 @@ func clientParams(cn ClientNode) map[string]any {
 	}
 	if st.ObfsPassword != "" {
 		p["obfs_password"] = st.ObfsPassword
+	}
+	if st.GeckoMinPacketSize != 0 {
+		p["gecko_min_packet_size"] = st.GeckoMinPacketSize
+	}
+	if st.GeckoMaxPacketSize != 0 {
+		p["gecko_max_packet_size"] = st.GeckoMaxPacketSize
 	}
 	if st.UpMbps != 0 {
 		p["up_mbps"] = st.UpMbps
@@ -807,11 +840,20 @@ func clientParams(cn ClientNode) map[string]any {
 	if st.SnellPSK != "" {
 		p["psk"] = st.SnellPSK
 	}
+	if st.SnellReuse {
+		p["reuse"] = true
+	}
+	if st.SnellNetwork != "" {
+		p["network"] = st.SnellNetwork
+	}
 	if st.SnellVersion != 0 {
 		p["version"] = st.SnellVersion
 	}
 	if st.SnellObfsMode != "" {
 		p["obfs_mode"] = st.SnellObfsMode
+	}
+	if st.SnellObfsHost != "" {
+		p["obfs_host"] = st.SnellObfsHost
 	}
 	if st.SnellMode != "" {
 		p["mode"] = st.SnellMode
@@ -992,13 +1034,22 @@ func yamlList(v any) []any {
 	}
 }
 
-func stringMap(m map[string]any) map[string]string {
+func stringValuesMap(m map[string]any) map[string][]string {
 	if len(m) == 0 {
 		return nil
 	}
-	out := make(map[string]string, len(m))
+	out := make(map[string][]string, len(m))
 	for k, v := range m {
-		out[k] = strings.TrimSpace(fmt.Sprint(v))
+		switch values := v.(type) {
+		case []any:
+			for _, value := range values {
+				out[k] = append(out[k], strings.TrimSpace(fmt.Sprint(value)))
+			}
+		case []string:
+			out[k] = append([]string(nil), values...)
+		default:
+			out[k] = []string{strings.TrimSpace(fmt.Sprint(v))}
+		}
 	}
 	return out
 }

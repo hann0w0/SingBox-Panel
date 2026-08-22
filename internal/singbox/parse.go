@@ -145,6 +145,9 @@ func parseTLS(t map[string]any) TLSSettings {
 		KeyPath:         mStr(t, "key_path"),
 		Insecure:        mBool(t, "insecure"),
 	}
+	if utls := mMap(t, "utls"); utls != nil {
+		out.Fingerprint = mStr(utls, "fingerprint")
+	}
 	// Inline PEM material is emitted as an array of lines (see buildTLS/pemLines)
 	// but may also appear as a single string. Recover either form, otherwise a
 	// switch to managed config would regenerate TLS with no certificate and fail
@@ -190,12 +193,35 @@ func parseTransport(t map[string]any) TransportSettings {
 		return TransportSettings{}
 	}
 	out := TransportSettings{Type: mStr(t, "type"), Path: mStr(t, "path")}
+	if out.Type == "ws" {
+		out.MaxEarlyData = mInt(t, "max_early_data")
+		out.EarlyDataHeader = mStr(t, "early_data_header_name")
+		if out.EarlyDataHeader == "" {
+			// Accept the panel's historical field name as well as sing-box's
+			// official wire name so older raw configs round-trip losslessly.
+			out.EarlyDataHeader = mStr(t, "early_data_header")
+		}
+	}
 	if h := mMap(t, "headers"); h != nil {
-		out.Headers = map[string]string{}
 		for k, v := range h {
 			if s, ok := v.(string); ok {
-				out.Headers[k] = s
+				out.SetHeaderValues(k, []string{s})
+				continue
 			}
+			if values, ok := v.([]any); ok {
+				stringsValues := make([]string, 0, len(values))
+				for _, value := range values {
+					if s, ok := value.(string); ok {
+						stringsValues = append(stringsValues, s)
+					}
+				}
+				out.SetHeaderValues(k, stringsValues)
+			}
+		}
+	}
+	if out.Type == "httpupgrade" {
+		if host := mStr(t, "host"); host != "" {
+			out.SetHeaderValues("Host", []string{host})
 		}
 	}
 	return out
@@ -257,8 +283,12 @@ func parseInbound(m map[string]any) (ParsedInbound, bool) {
 		}
 		s.UpMbps = mInt(m, "up_mbps")
 		s.DownMbps = mInt(m, "down_mbps")
+		s.IgnoreClientBandwidth = mBool(m, "ignore_client_bandwidth")
 		if o := mMap(m, "obfs"); o != nil {
+			s.ObfsType = mStr(o, "type")
 			s.ObfsPassword = mStr(o, "password")
+			s.GeckoMinPacketSize = mInt(o, "min_packet_size")
+			s.GeckoMaxPacketSize = mInt(o, "max_packet_size")
 		}
 	case "tuic":
 		if u != nil {
@@ -274,9 +304,9 @@ func parseInbound(m map[string]any) (ParsedInbound, bool) {
 		s.SnellPSK = mStr(m, "psk")
 		s.SnellObfsMode = mStr(m, "obfs_mode")
 		s.SnellMode = mStr(m, "mode")
-		if u != nil {
-			s.Password = mStr(u, "userkey")
-		}
+		// The panel manages Snell as one shared PSK, regardless of legacy
+		// users[].userkey entries in an imported config.
+		s.SingleUser = true
 	case "socks":
 		if u != nil {
 			s.Username = mStr(u, "username")
@@ -306,7 +336,7 @@ func parseOutbound(m map[string]any) (ParsedOutbound, bool) {
 		return ParsedOutbound{}, false
 	}
 	switch typ {
-	case "vless", "vmess", "trojan", "shadowsocks", "hysteria2", "tuic", "socks":
+	case "vless", "vmess", "trojan", "shadowsocks", "hysteria2", "tuic", "anytls", "snell", "socks":
 	default:
 		return ParsedOutbound{}, false
 	}
@@ -325,6 +355,7 @@ func parseOutbound(m map[string]any) (ParsedOutbound, bool) {
 		s.Method = mStr(m, "method")
 		// The landing credential is carried verbatim in the outbound password.
 		s.SSServerPSK = out.Password
+		s.SSPlugin = JoinShadowsocksPluginFields(mStr(m, "plugin"), mStr(m, "plugin_opts"))
 	case "vless":
 		s.Flow = mStr(m, "flow")
 	case "vmess":
@@ -332,14 +363,28 @@ func parseOutbound(m map[string]any) (ParsedOutbound, bool) {
 		s.VMessAlterID = mInt(m, "alter_id")
 	case "tuic":
 		s.CongestionControl = mStr(m, "congestion_control")
+		s.TUICUDPRelayMode = mStr(m, "udp_relay_mode")
 		s.ZeroRTTHandshake = mBool(m, "zero_rtt_handshake")
 		s.Heartbeat = mStr(m, "heartbeat")
 	case "hysteria2":
 		s.UpMbps = mInt(m, "up_mbps")
 		s.DownMbps = mInt(m, "down_mbps")
 		if obfs := mMap(m, "obfs"); obfs != nil {
+			s.ObfsType = mStr(obfs, "type")
 			s.ObfsPassword = mStr(obfs, "password")
+			s.GeckoMinPacketSize = mInt(obfs, "min_packet_size")
+			s.GeckoMaxPacketSize = mInt(obfs, "max_packet_size")
 		}
+	case "snell":
+		out.Password = mStr(m, "psk")
+		s.SnellVersion = mInt(m, "version")
+		s.SnellPSK = mStr(m, "psk")
+		s.SnellReuse = mBool(m, "reuse")
+		s.SnellNetwork = strings.ToLower(mStr(m, "network"))
+		s.SnellObfsMode = mStr(m, "obfs_mode")
+		s.SnellObfsHost = mStr(m, "obfs_host")
+		s.SnellMode = mStr(m, "mode")
+		s.SingleUser = true
 	case "socks":
 		s.Username = out.Username
 		s.Password = out.Password

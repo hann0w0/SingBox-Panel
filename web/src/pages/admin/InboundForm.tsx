@@ -35,7 +35,7 @@ const UUID_TYPES = new Set<InboundType>(['vless', 'vmess', 'tuic'])
 const PW_TYPES = new Set<InboundType>(['trojan', 'hysteria2', 'anytls', 'tuic'])
 const MULTI_USER_TYPES = new Set<InboundType>(['shadowsocks', 'mixed', 'vless', 'anytls', 'vmess', 'tuic', 'trojan', 'hysteria2'])
 
-const VMESS_SECURITIES = ['auto', 'aes-128-gcm', 'chacha20-poly1305']
+const VMESS_SECURITIES = ['auto', 'none', 'zero', 'aes-128-gcm', 'chacha20-poly1305', 'aes-128-cfb']
 
 type FormVals = Record<string, any>
 
@@ -107,7 +107,6 @@ function toForm(ib: Inbound | null): FormVals {
     auth_timeout: s.auth_timeout ?? '3s',
     zero_rtt_handshake: s.zero_rtt_handshake ?? false,
     heartbeat: s.heartbeat ?? '10s',
-    udp_relay_mode: s.tuic_udp_relay_mode ?? '',
     trojan_fallback_server: s.trojan_fallback?.server,
     trojan_fallback_port: s.trojan_fallback?.server_port,
     snell_version: s.snell_version ?? 5,
@@ -116,6 +115,8 @@ function toForm(ib: Inbound | null): FormVals {
     snell_mode: s.snell_mode === 'default' ? '' : (s.snell_mode ?? ''),
     obfs_type: s.obfs_type ?? '',
     ignore_client_bandwidth: s.ignore_client_bandwidth ?? false,
+    gecko_min_packet_size: s.gecko_min_packet_size ?? undefined,
+    gecko_max_packet_size: s.gecko_max_packet_size ?? undefined,
     tls_mode,
     tls_alpn: tls.alpn?.join(', '),
     reality_handshake_server: tls.reality?.handshake_server ?? 'www.microsoft.com',
@@ -161,8 +162,10 @@ function assembleSettings(base: InboundSettings, v: FormVals, type: InboundType)
   if (HAS_BANDWIDTH.has(type)) {
     s.up_mbps = v.up_mbps || 0
     s.down_mbps = v.down_mbps || 0
-    s.obfs_type = v.obfs_type === 'salamander' ? 'salamander' : ''
-    s.obfs_password = v.obfs_type === 'salamander' ? (v.obfs_password || '') : ''
+    s.obfs_type = v.obfs_type === 'salamander' || v.obfs_type === 'gecko' ? v.obfs_type : ''
+    s.obfs_password = s.obfs_type ? (v.obfs_password || '') : ''
+    s.gecko_min_packet_size = s.obfs_type === 'gecko' ? (v.gecko_min_packet_size || 0) : 0
+    s.gecko_max_packet_size = s.obfs_type === 'gecko' ? (v.gecko_max_packet_size || 0) : 0
     s.ignore_client_bandwidth = !!v.ignore_client_bandwidth
   }
   if (type === 'tuic') {
@@ -171,7 +174,7 @@ function assembleSettings(base: InboundSettings, v: FormVals, type: InboundType)
     s.zero_rtt_handshake = !!v.zero_rtt_handshake
     s.heartbeat = v.heartbeat || '10s'
     // Client relay mode: native | quic (legacy TUIC v4 values are rejected).
-    s.tuic_udp_relay_mode = v.udp_relay_mode === 'quic' ? 'quic' : v.udp_relay_mode === 'native' ? 'native' : ''
+    delete s.tuic_udp_relay_mode
   }
   if (type === 'anytls') {
     // AnyTLS always relays UDP over the TLS stream; the flag only controls
@@ -414,7 +417,7 @@ export default function InboundForm({
           </Form.Item>
         )}
         {!multiUser && PW_TYPES.has(type) && (
-          <Form.Item label={type === 'snell' ? 'userkey' : '密码'}>
+          <Form.Item label="密码">
             <Space.Compact style={{ width: '100%' }}>
               <Form.Item name="password" noStyle>
                 <Input placeholder="留空自动生成" />
@@ -552,12 +555,28 @@ export default function InboundForm({
               <Select options={[
                 { value: '', label: '无' },
                 { value: 'salamander', label: 'salamander' },
+                { value: 'gecko', label: 'gecko' },
               ]} />
             </Form.Item>
             {obfsType === 'salamander' && (
               <Form.Item name="obfs_password" label="混淆密码">
                 <Input.Password placeholder="salamander 混淆密码" />
               </Form.Item>
+            )}
+            {obfsType === 'gecko' && (
+              <>
+                <Form.Item name="obfs_password" label="混淆密码" rules={[{ required: true, message: '请填写 gecko 混淆密码' }]}>
+                  <Input.Password placeholder="gecko 混淆密码" />
+                </Form.Item>
+                <Space style={{ display: 'flex' }} align="baseline">
+                  <Form.Item name="gecko_min_packet_size" label="最小包大小" style={{ flex: 1 }}>
+                    <InputNumber min={512} precision={0} style={{ width: '100%' }} placeholder="默认" />
+                  </Form.Item>
+                  <Form.Item name="gecko_max_packet_size" label="最大包大小" style={{ flex: 1 }}>
+                    <InputNumber min={512} precision={0} style={{ width: '100%' }} placeholder="默认" />
+                  </Form.Item>
+                </Space>
+              </>
             )}
           </>
         )}
@@ -589,20 +608,6 @@ export default function InboundForm({
             >
               <Switch />
             </Form.Item>
-            <Form.Item
-              name="udp_relay_mode"
-              label="UDP 中继模式"
-              extra="native = UDP 走 QUIC 数据报（默认）；quic = 走 QUIC 流。留空表示不指定"
-            >
-              <Select
-                allowClear
-                options={[
-                  { value: '', label: '不指定（默认 native）' },
-                  { value: 'native', label: 'native' },
-                  { value: 'quic', label: 'quic' },
-                ]}
-              />
-            </Form.Item>
           </>
         )}
         {type === 'snell' && (
@@ -623,7 +628,7 @@ export default function InboundForm({
               </Form.Item>
             ) : (
               <Form.Item name="snell_obfs_mode" label="混淆">
-                <Select options={[{ value: 'none', label: '无' }, { value: 'http', label: 'http' }]} />
+                <Select options={[{ value: 'none', label: '无' }, { value: 'http', label: 'http' }, { value: 'tls', label: 'tls' }]} />
               </Form.Item>
             )}
             <Form.Item label="PSK">

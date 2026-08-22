@@ -29,11 +29,12 @@ type customNodeSubscriptionManager struct {
 }
 
 type customNodeSubscriptionSyncResult struct {
-	Created int `json:"created"`
-	Updated int `json:"updated"`
-	Deleted int `json:"deleted"`
-	Total   int `json:"total"`
-	Skipped int `json:"skipped"`
+	Created  int `json:"created"`
+	Updated  int `json:"updated"`
+	Deleted  int `json:"deleted"`
+	Total    int `json:"total"`
+	Skipped  int `json:"skipped"`
+	Filtered int `json:"filtered"`
 }
 
 func newCustomNodeSubscriptionManager(db *gorm.DB) *customNodeSubscriptionManager {
@@ -154,6 +155,10 @@ func (m *customNodeSubscriptionManager) sync(ctx context.Context, id uint) (cust
 		}
 		return err
 	}
+	compiledRules, err := compileNameRewriteRules(source.NameRewriteRules)
+	if err != nil {
+		return customNodeSubscriptionSyncResult{}, markFailure(err)
+	}
 
 	u, ok := singleRemoteSubscriptionURL(source.URL)
 	if !ok {
@@ -174,6 +179,7 @@ func (m *customNodeSubscriptionManager) sync(ctx context.Context, id uint) (cust
 	desired := make(map[string]model.CustomNode, len(parsed.Nodes))
 	order := make([]string, 0, len(parsed.Nodes))
 	occurrences := make(map[string]int, len(parsed.Nodes))
+	visibleCount := 0
 	for i := range parsed.Nodes {
 		baseKey, keyErr := customNodeSubscriptionBaseKey(parsed.Nodes[i])
 		if keyErr != nil {
@@ -181,7 +187,7 @@ func (m *customNodeSubscriptionManager) sync(ctx context.Context, id uint) (cust
 		}
 		occurrence := occurrences[baseKey]
 		occurrences[baseKey] = occurrence + 1
-		row, key, buildErr := subscriptionCustomNode(source, parsed.Nodes[i], i, occurrence)
+		row, key, buildErr := subscriptionCustomNode(source, parsed.Nodes[i], i, occurrence, compiledRules)
 		if buildErr != nil {
 			return customNodeSubscriptionSyncResult{}, markFailure(buildErr)
 		}
@@ -192,12 +198,17 @@ func (m *customNodeSubscriptionManager) sync(ctx context.Context, id uint) (cust
 		}
 		desired[key] = row
 		order = append(order, key)
+		if !row.HiddenBySubscriptionRule {
+			visibleCount++
+		}
 	}
 	if len(desired) == 0 {
 		return customNodeSubscriptionSyncResult{}, markFailure(errors.New("订阅节点均无法保存，已保留上次同步结果"))
 	}
 
-	result := customNodeSubscriptionSyncResult{Total: len(desired), Skipped: len(parsed.Skipped)}
+	result := customNodeSubscriptionSyncResult{
+		Total: visibleCount, Skipped: len(parsed.Skipped), Filtered: len(desired) - visibleCount,
+	}
 	err = m.db.Transaction(func(tx *gorm.DB) error {
 		var existing []model.CustomNode
 		if err := tx.Where("subscription_id = ?", source.ID).Find(&existing).Error; err != nil {
@@ -211,9 +222,10 @@ func (m *customNodeSubscriptionManager) sync(ctx context.Context, id uint) (cust
 			want := desired[key]
 			if current := byKey[key]; current != nil {
 				updates := map[string]any{
-					"name": want.Name, "group": want.Group, "link": want.Link,
+					"name": want.Name, "source_name": want.SourceName, "group": want.Group, "link": want.Link,
 					"protocol": want.Protocol, "address": want.Address, "port": want.Port,
 					"params": want.Params, "enabled": want.Enabled, "sort_order": want.SortOrder,
+					"hidden_by_subscription_rule": want.HiddenBySubscriptionRule,
 				}
 				if err := tx.Model(current).Updates(updates).Error; err != nil {
 					return err
@@ -238,7 +250,7 @@ func (m *customNodeSubscriptionManager) sync(ctx context.Context, id uint) (cust
 			"last_success_at": &now,
 			"last_error":      "",
 			"source_type":     parsed.SourceType,
-			"node_count":      len(desired),
+			"node_count":      visibleCount,
 		}).Error
 	})
 	if err != nil {
@@ -247,7 +259,7 @@ func (m *customNodeSubscriptionManager) sync(ctx context.Context, id uint) (cust
 	return result, nil
 }
 
-func subscriptionCustomNode(source model.CustomNodeSubscription, item singbox.ImportedNode, index, occurrence int) (model.CustomNode, string, error) {
+func subscriptionCustomNode(source model.CustomNodeSubscription, item singbox.ImportedNode, index, occurrence int, rules []compiledNameRewriteRule) (model.CustomNode, string, error) {
 	params, err := json.Marshal(item.Params)
 	if err != nil {
 		return model.CustomNode{}, "", fmt.Errorf("节点 %q 参数无法保存: %w", item.Name, err)
@@ -256,8 +268,10 @@ func subscriptionCustomNode(source model.CustomNodeSubscription, item singbox.Im
 	if len(link) > 1024 {
 		link = ""
 	}
+	sourceName := normalizeSubscriptionSourceName(item.Name)
+	name := rewriteSubscriptionNodeName(sourceName, rules)
 	validation := customNodeReq{
-		Name: item.Name, Link: link, Protocol: item.Protocol,
+		Name: name, Link: link, Protocol: item.Protocol,
 		Address: item.Address, Port: item.Port, Params: params,
 	}
 	if _, err := validateCustomNode(&validation); err != nil {
@@ -269,10 +283,11 @@ func subscriptionCustomNode(source model.CustomNodeSubscription, item singbox.Im
 	}
 	return model.CustomNode{
 		AllUsers: false, UserIDs: []uint{}, ExcludedUserIDs: []uint{},
-		Name: trimRunes(strings.TrimSpace(item.Name), 128), Group: source.Group,
+		Name: name, SourceName: sourceName, Group: source.Group,
 		Link: validation.Link, Protocol: validation.Protocol, Address: validation.Address,
 		Port: validation.Port, Params: model.JSONText(params), Enabled: source.Enabled,
-		SortOrder: source.BaseSortOrder + index, SubscriptionID: &source.ID, SubscriptionKey: key,
+		HiddenBySubscriptionRule: subscriptionNodeHidden(sourceName, name, validation.Protocol, rules),
+		SortOrder:                source.BaseSortOrder + index, SubscriptionID: &source.ID, SubscriptionKey: key,
 	}, key, nil
 }
 

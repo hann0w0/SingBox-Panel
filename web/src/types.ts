@@ -124,7 +124,7 @@ export interface TLSSettings {
 export interface TransportSettings {
   type?: string // '' (tcp) | ws | httpupgrade
   path?: string
-  headers?: Record<string, string>
+  headers?: Record<string, string | string[]>
   max_early_data?: number
   early_data_header?: string
 }
@@ -145,6 +145,8 @@ export interface InboundSettings {
   down_mbps?: number
   obfs_type?: string
   obfs_password?: string
+  gecko_min_packet_size?: number
+  gecko_max_packet_size?: number
   ignore_client_bandwidth?: boolean
   congestion_control?: string
   auth_timeout?: string
@@ -155,7 +157,10 @@ export interface InboundSettings {
   trojan_fallback?: FallbackSettings
   snell_version?: number
   snell_psk?: string
+  snell_reuse?: boolean
+  snell_network?: string
   snell_obfs_mode?: string
+  snell_obfs_host?: string
   snell_mode?: string
   // single-credential mode
   single_user?: boolean

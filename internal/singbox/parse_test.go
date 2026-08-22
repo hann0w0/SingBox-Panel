@@ -97,7 +97,7 @@ func TestNaiveHasNoClientOutbound(t *testing.T) {
 // same numbers or the tunnel is rate-mismatched.
 func TestHysteriaBandwidthMatchesServerDefault(t *testing.T) {
 	st := InboundSettings{SingleUser: true, Password: "a",
-		TLS: TLSSettings{Enabled: true, ServerName: "h"}}
+		TLS: TLSSettings{Enabled: true, ServerName: "h", CertificatePath: "cert.pem", KeyPath: "key.pem"}}
 
 	raw, err := BuildInbound(InboundInput{Tag: "hy", Type: "hysteria", ListenPort: 443, Settings: st})
 	if err != nil {
@@ -169,6 +169,88 @@ func TestParseManagedProtocolParameters(t *testing.T) {
 	trojan := got.Inbounds[2].Settings
 	if trojan.TrojanFallback == nil || trojan.TrojanFallback.ServerPort != 8080 || len(trojan.TLS.ALPN) != 2 {
 		t.Fatalf("Trojan parameters = %+v", trojan)
+	}
+}
+
+func TestParseOutboundKeepsAnyTLSAndSnellParameters(t *testing.T) {
+	raw := []byte(`{
+      "outbounds":[
+        {"type":"anytls","tag":"any","server":"any.example.com","server_port":8443,"password":"any-secret",
+          "tls":{"enabled":true,"server_name":"any.example.com","insecure":true,
+            "utls":{"enabled":true,"fingerprint":"firefox"}},
+          "transport":{"type":"ws","path":"/any","max_early_data":2048,"early_data_header_name":"Sec-WebSocket-Protocol"}},
+	        {"type":"snell","tag":"snell","server":"snell.example.com","server_port":443,"psk":"snell-secret",
+	          "userkey":"snell-user","reuse":true,"network":"udp","version":4,"obfs_mode":"http","obfs_host":"cdn.example.com"},
+        {"type":"vless","tag":"vless","server":"vless.example.com","server_port":443,"uuid":"uuid-value",
+          "tls":{"enabled":true,"server_name":"vless.example.com","utls":{"enabled":true,"fingerprint":"safari"}},
+          "transport":{"type":"ws","path":"/vless","max_early_data":1024,"early_data_header_name":"Sec-WebSocket-Protocol"}}
+      ]
+    }`)
+	got, err := ParseServerConfig(raw)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got.Outbounds) != 3 {
+		t.Fatalf("outbounds = %d, want 3: skipped=%v", len(got.Outbounds), got.Skipped)
+	}
+	anyTLS := got.Outbounds[0]
+	if anyTLS.Type != "anytls" || anyTLS.Password != "any-secret" ||
+		anyTLS.Settings.TLS.Fingerprint != "firefox" ||
+		anyTLS.Settings.Transport.MaxEarlyData != 2048 ||
+		anyTLS.Settings.Transport.EarlyDataHeader != "Sec-WebSocket-Protocol" {
+		t.Fatalf("AnyTLS parameters were not imported: %+v", anyTLS)
+	}
+	snell := got.Outbounds[1]
+	if snell.Password != "snell-secret" || !snell.Settings.SingleUser ||
+		snell.Settings.SnellPSK != "snell-secret" || snell.Settings.SnellVersion != 4 ||
+		!snell.Settings.SnellReuse ||
+		snell.Settings.SnellNetwork != "udp" || snell.Settings.SnellObfsMode != "http" ||
+		snell.Settings.SnellObfsHost != "cdn.example.com" {
+		t.Fatalf("Snell parameters were not imported: %+v", snell)
+	}
+
+	vless := got.Outbounds[2]
+	if vless.Settings.TLS.Fingerprint != "safari" || vless.Settings.Transport.MaxEarlyData != 1024 {
+		t.Fatalf("VLESS client parameters were not imported: %+v", vless)
+	}
+
+	// The imported settings must survive the managed outbound renderer too.
+	rendered, err := BuildClientOutbound(ClientNode{
+		Name: "vless", Server: vless.Server, ServerPort: vless.ServerPort, Type: vless.Type,
+		Settings: vless.Settings, User: ProxyUser{UUID: vless.UUID},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var renderedMap map[string]any
+	if err := json.Unmarshal(rendered, &renderedMap); err != nil {
+		t.Fatal(err)
+	}
+	tls, _ := renderedMap["tls"].(map[string]any)
+	utls, _ := tls["utls"].(map[string]any)
+	if utls["fingerprint"] != "safari" {
+		t.Fatalf("rendered uTLS fingerprint = %v", utls["fingerprint"])
+	}
+	transport, _ := renderedMap["transport"].(map[string]any)
+	if transport["max_early_data"] != float64(1024) || transport["early_data_header_name"] != "Sec-WebSocket-Protocol" {
+		t.Fatalf("rendered transport parameters = %#v", transport)
+	}
+
+	rendered, err = BuildClientOutbound(ClientNode{
+		Name: "snell", Server: snell.Server, ServerPort: snell.ServerPort, Type: snell.Type,
+		Settings: snell.Settings,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(rendered), `"psk":"snell-secret"`) ||
+		strings.Contains(string(rendered), `userkey`) ||
+		!strings.Contains(string(rendered), `"reuse":true`) ||
+		!strings.Contains(string(rendered), `"network":"udp"`) ||
+		!strings.Contains(string(rendered), `"version":4`) ||
+		!strings.Contains(string(rendered), `"obfs_mode":"http"`) ||
+		!strings.Contains(string(rendered), `"obfs_host":"cdn.example.com"`) {
+		t.Fatalf("rendered Snell outbound lost imported settings: %s", rendered)
 	}
 }
 
@@ -273,5 +355,34 @@ func TestParseRecoversInlineTLSCertificate(t *testing.T) {
 	}
 	if !strings.Contains(string(rebuilt), "MIIBfakeCertBody") || !strings.Contains(string(rebuilt), "MIIBfakeKeyBody") {
 		t.Fatalf("regenerated inbound dropped inline TLS material: %s", rebuilt)
+	}
+}
+
+func TestParseOutboundKeepsBetaPluginAndTUICFields(t *testing.T) {
+	raw := []byte(`{
+      "inbounds":[{"type":"hysteria2","tag":"hy","listen_port":443,
+        "tls":{"enabled":true,"certificate_path":"cert.pem","key_path":"key.pem"},
+        "ignore_client_bandwidth":true}],
+      "outbounds":[
+        {"type":"shadowsocks","tag":"ss","server":"ss.example.com","server_port":443,
+          "method":"aes-256-gcm","password":"secret","plugin":"obfs-local","plugin_opts":"obfs=http;obfs-host=cdn.example.com"},
+        {"type":"tuic","tag":"tuic","server":"tuic.example.com","server_port":443,
+          "uuid":"u","password":"p","udp_relay_mode":"quic"}
+      ]}`)
+	got, err := ParseServerConfig(raw)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got.Inbounds) != 1 || !got.Inbounds[0].Settings.IgnoreClientBandwidth {
+		t.Fatalf("Hysteria2 inbound fields were not imported: %+v", got.Inbounds)
+	}
+	if len(got.Outbounds) != 2 {
+		t.Fatalf("outbounds = %d, want 2: %v", len(got.Outbounds), got.Skipped)
+	}
+	if got.Outbounds[0].Settings.SSPlugin != "obfs-local;obfs=http;obfs-host=cdn.example.com" {
+		t.Fatalf("SS plugin = %q", got.Outbounds[0].Settings.SSPlugin)
+	}
+	if got.Outbounds[1].Settings.TUICUDPRelayMode != "quic" {
+		t.Fatalf("TUIC udp_relay_mode = %q", got.Outbounds[1].Settings.TUICUDPRelayMode)
 	}
 }

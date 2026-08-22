@@ -1,9 +1,9 @@
-// Package singbox generates official sing-box (>= 1.13 stable) server configs
+// Package singbox generates official sing-box 1.14 beta server configs
 // and client subscription artifacts. It is dependency-free (stdlib only) and
 // decoupled from the panel's persistence types; the panel adapts its models to
 // the input types here.
 //
-// The generated config strictly follows the official 1.13 schema:
+// The generated config follows the official 1.14 beta schema:
 //   - no removed special outbounds (block/dns) — DNS hijack via route action
 //   - no removed inbound sniff/domain_strategy fields — sniff via route action
 //   - new-format DNS servers ({"type":"local"|"udp"|"tls"|...})
@@ -14,6 +14,7 @@ package singbox
 import (
 	"crypto/sha256"
 	"encoding/base64"
+	"encoding/json"
 	"fmt"
 	"strings"
 	"time"
@@ -33,12 +34,127 @@ type TransportSettings struct {
 	Type    string            `json:"type,omitempty"` // "" (tcp) | "ws" | "httpupgrade"
 	Path    string            `json:"path,omitempty"`
 	Headers map[string]string `json:"headers,omitempty"`
+	// HeaderValues keeps repeated HTTP header values lossless. Headers remains
+	// the compatibility view used by the panel's existing Host field and API.
+	// JSON accepts both "Header": "value" and "Header": ["value", "value"].
+	HeaderValues map[string][]string `json:"-"`
 
 	// WS early data (0-RTT). When MaxEarlyData > 0 the server and generated
 	// clients agree on a max_early_data byte budget and the header name that
 	// carries the base64-encoded early payload.
 	MaxEarlyData    int    `json:"max_early_data,omitempty"`
 	EarlyDataHeader string `json:"early_data_header,omitempty"`
+}
+
+// MarshalJSON preserves the official sing-box HTTPHeader shape while keeping
+// the historical single-value Headers field usable by older panel data.
+func (t TransportSettings) MarshalJSON() ([]byte, error) {
+	type transportJSON struct {
+		Type            string         `json:"type,omitempty"`
+		Path            string         `json:"path,omitempty"`
+		Headers         map[string]any `json:"headers,omitempty"`
+		MaxEarlyData    int            `json:"max_early_data,omitempty"`
+		EarlyDataHeader string         `json:"early_data_header,omitempty"`
+	}
+	values := make(map[string][]string, len(t.Headers)+len(t.HeaderValues))
+	for key, value := range t.HeaderValues {
+		values[key] = append([]string(nil), value...)
+	}
+	for key, value := range t.Headers {
+		if _, exists := values[key]; !exists {
+			values[key] = []string{value}
+		}
+	}
+	headers := make(map[string]any, len(values))
+	for key, values := range values {
+		if len(values) == 1 {
+			headers[key] = values[0]
+		} else if len(values) > 1 {
+			headers[key] = values
+		}
+	}
+	return json.Marshal(transportJSON{
+		Type: t.Type, Path: t.Path, Headers: headers,
+		MaxEarlyData: t.MaxEarlyData, EarlyDataHeader: t.EarlyDataHeader,
+	})
+}
+
+// UnmarshalJSON accepts both the old single-string header form and sing-box's
+// repeated-value array form.
+func (t *TransportSettings) UnmarshalJSON(data []byte) error {
+	type transportJSON struct {
+		Type            string                     `json:"type,omitempty"`
+		Path            string                     `json:"path,omitempty"`
+		Headers         map[string]json.RawMessage `json:"headers,omitempty"`
+		MaxEarlyData    int                        `json:"max_early_data,omitempty"`
+		EarlyDataHeader string                     `json:"early_data_header,omitempty"`
+	}
+	var raw transportJSON
+	if err := json.Unmarshal(data, &raw); err != nil {
+		return err
+	}
+	*t = TransportSettings{
+		Type: raw.Type, Path: raw.Path, MaxEarlyData: raw.MaxEarlyData,
+		EarlyDataHeader: raw.EarlyDataHeader,
+	}
+	for key, value := range raw.Headers {
+		var single string
+		if err := json.Unmarshal(value, &single); err == nil {
+			t.SetHeaderValues(key, []string{single})
+			continue
+		}
+		var multiple []string
+		if err := json.Unmarshal(value, &multiple); err != nil {
+			return fmt.Errorf("headers[%q]: expected string or string array: %w", key, err)
+		}
+		t.SetHeaderValues(key, multiple)
+	}
+	return nil
+}
+
+// SetHeaderValues updates both the lossless values and the legacy first-value
+// view. Empty values are retained because an explicit empty HTTP header can be
+// meaningful to a provider.
+func (t *TransportSettings) SetHeaderValues(key string, values []string) {
+	if t.HeaderValues == nil {
+		t.HeaderValues = make(map[string][]string)
+	}
+	t.HeaderValues[key] = append([]string(nil), values...)
+	if t.Headers == nil {
+		t.Headers = make(map[string]string)
+	}
+	if len(values) > 0 {
+		t.Headers[key] = values[0]
+	}
+}
+
+// HeaderValuesMap returns a merged lossless view, including legacy Headers.
+func (t TransportSettings) HeaderValuesMap() map[string][]string {
+	values := make(map[string][]string, len(t.Headers)+len(t.HeaderValues))
+	for key, value := range t.HeaderValues {
+		values[key] = append([]string(nil), value...)
+	}
+	for key, value := range t.Headers {
+		if _, exists := values[key]; !exists {
+			values[key] = []string{value}
+		}
+	}
+	return values
+}
+
+// HeaderObject returns the JSON-compatible HTTPHeader form: one value is a
+// string, repeated values are an array.
+func (t TransportSettings) HeaderObject() map[string]any {
+	values := t.HeaderValuesMap()
+	out := make(map[string]any, len(values))
+	for key, list := range values {
+		if len(list) == 1 {
+			out[key] = list[0]
+		} else if len(list) > 1 {
+			out[key] = list
+		}
+	}
+	return out
 }
 
 // FallbackSettings is the official sing-box server target shape used by the
@@ -97,8 +213,8 @@ type InboundSettings struct {
 	// shadowsocks
 	Method      string `json:"method,omitempty"`        // e.g. 2022-blake3-aes-128-gcm
 	SSServerPSK string `json:"ss_server_psk,omitempty"` // top-level server PSK (base64), generated on create
-	// SSPlugin mirrors a SIP002 ss://?plugin=… value (obfs-local / v2ray-plugin)
-	// into share links and Clash output. sing-box has no equivalent.
+	// SSPlugin mirrors a SIP002 ss://?plugin=… value. The leading plugin name and
+	// semicolon-separated options are emitted as sing-box plugin/plugin_opts.
 	SSPlugin string `json:"ss_plugin,omitempty"`
 
 	// vless
@@ -106,7 +222,7 @@ type InboundSettings struct {
 
 	// vmess. Security is a client-side option; AlterID is emitted on both the
 	// inbound user and generated clients so every subscription stays aligned.
-	VMessSecurity string `json:"vmess_security,omitempty"` // auto | aes-128-gcm | chacha20-poly1305
+	VMessSecurity string `json:"vmess_security,omitempty"` // auto | none | zero | aes-128-gcm | chacha20-poly1305 | aes-128-cfb
 	VMessAlterID  int    `json:"vmess_alter_id,omitempty"` // 0 recommended; 1 enables legacy authentication
 
 	// PacketEncoding is the VLESS UDP wire encoding carried into share links for
@@ -115,10 +231,12 @@ type InboundSettings struct {
 	PacketEncoding string `json:"packet_encoding,omitempty"` // "" | "xudp"
 
 	// hysteria2
-	UpMbps       int    `json:"up_mbps,omitempty"`
-	DownMbps     int    `json:"down_mbps,omitempty"`
-	ObfsType     string `json:"obfs_type,omitempty"`     // "" | salamander
-	ObfsPassword string `json:"obfs_password,omitempty"` // salamander; empty = no obfs
+	UpMbps             int    `json:"up_mbps,omitempty"`
+	DownMbps           int    `json:"down_mbps,omitempty"`
+	ObfsType           string `json:"obfs_type,omitempty"`     // "" | salamander | gecko
+	ObfsPassword       string `json:"obfs_password,omitempty"` // salamander/gecko; empty = no obfs
+	GeckoMinPacketSize int    `json:"gecko_min_packet_size,omitempty"`
+	GeckoMaxPacketSize int    `json:"gecko_max_packet_size,omitempty"`
 	// IgnoreClientBandwidth tells the server to ignore client-reported
 	// bandwidth (server always uses up_mbps/down_mbps).
 	IgnoreClientBandwidth bool `json:"ignore_client_bandwidth,omitempty"`
@@ -138,9 +256,12 @@ type InboundSettings struct {
 	TrojanFallback *FallbackSettings `json:"trojan_fallback,omitempty"`
 
 	// snell (requires a sing-box 1.14 beta binary on the node)
-	SnellVersion  int    `json:"snell_version,omitempty"`   // 5 | 6
-	SnellPSK      string `json:"snell_psk,omitempty"`       // server pre-shared key, generated
-	SnellObfsMode string `json:"snell_obfs_mode,omitempty"` // v5: none | http
+	SnellVersion  int    `json:"snell_version,omitempty"`   // inbound: 5 | 6; sing-box outbound: 4 | 6
+	SnellPSK      string `json:"snell_psk,omitempty"`       // server pre-shared key
+	SnellReuse    bool   `json:"snell_reuse,omitempty"`     // outbound reuse
+	SnellNetwork  string `json:"snell_network,omitempty"`   // outbound: tcp | udp; empty = sing-box default tcp
+	SnellObfsMode string `json:"snell_obfs_mode,omitempty"` // inbound v5 / outbound v4: none | http | tls
+	SnellObfsHost string `json:"snell_obfs_host,omitempty"` // outbound v4 HTTP/TLS obfs Host
 	SnellMode     string `json:"snell_mode,omitempty"`      // v6: default | unshaped | unsafe-raw
 
 	// shadowtls (no TLS object; relays to a real handshake server)
@@ -172,9 +293,9 @@ type InboundSettings struct {
 
 // SupportsMultiUser reports whether the official inbound wire format used by
 // this panel can safely assign one credential per panel user. Snell is kept in
-// fixed-PSK mode despite its newer schema exposing users[]: real-world clients
-// commonly authenticate only with the top-level PSK, and enabling userkey
-// previously broke existing nodes. Legacy Shadowsocks ciphers also have only a
+// fixed-PSK mode despite its newer schema exposing users[]: clients authenticate
+// with the top-level PSK, and the panel does not provision per-user Snell keys.
+// Legacy Shadowsocks ciphers also have only a
 // shared password; Shadowsocks 2022 is the multi-user variant.
 func SupportsMultiUser(typ string, s InboundSettings) bool {
 	switch typ {
@@ -255,13 +376,114 @@ func HysteriaBandwidth(s InboundSettings) (up, down int) {
 	return up, down
 }
 
-// SnellClientPSK returns the credential a Snell client authenticates with:
-// the inbound's PSK in single-credential mode, otherwise the user's userkey.
+// SnellClientPSK returns the shared server PSK required by a Snell client
+// outbound. This panel deliberately does not support Snell multi-user keys.
 func SnellClientPSK(s InboundSettings, userPassword string) string {
-	if s.SingleUser {
+	if s.SnellPSK != "" {
 		return s.SnellPSK
 	}
 	return userPassword
+}
+
+// SnellOutboundVersion normalizes the legacy panel value 5 to the sing-box
+// outbound value 4. New outbound settings are validated as 4 or 6 only.
+func SnellOutboundVersion(version int) int {
+	if version == 5 {
+		return 4
+	}
+	return version
+}
+
+// ShadowsocksPluginFields converts a SIP002 plugin value into the two fields
+// used by sing-box. Clash commonly calls simple-obfs "obfs"; sing-box uses the
+// implementation name "obfs-local".
+func ShadowsocksPluginFields(value string) (plugin, opts string) {
+	parts := strings.Split(strings.TrimSpace(value), ";")
+	if len(parts) == 0 {
+		return "", ""
+	}
+	plugin = strings.TrimSpace(parts[0])
+	if plugin == "obfs" {
+		plugin = "obfs-local"
+	}
+	if len(parts) > 1 {
+		clean := make([]string, 0, len(parts)-1)
+		for _, part := range parts[1:] {
+			if part = strings.TrimSpace(part); part != "" {
+				clean = append(clean, part)
+			}
+		}
+		opts = strings.Join(clean, ";")
+	}
+	return plugin, opts
+}
+
+// JoinShadowsocksPluginFields stores sing-box's split plugin fields in the
+// panel's SIP002-compatible representation.
+func JoinShadowsocksPluginFields(plugin, opts string) string {
+	plugin = strings.TrimSpace(plugin)
+	opts = strings.Trim(strings.TrimSpace(opts), ";")
+	if plugin == "" {
+		return ""
+	}
+	if opts == "" {
+		return plugin
+	}
+	return plugin + ";" + opts
+}
+
+// ValidateClientOutbound validates settings used by a managed sing-box
+// outbound. Snell inbound versions are 5/6, but its outbound schema accepts
+// only 4/6; a Snell v5 server is dialed with outbound version 4.
+func (s InboundSettings) ValidateClientOutbound(typ string) error {
+	if typ != "snell" {
+		if err := s.validateProtocol(typ); err != nil {
+			return err
+		}
+		if s.TLS.Reality.Enabled && strings.TrimSpace(s.TLS.Reality.PublicKey) == "" {
+			return fmt.Errorf("%s: REALITY public key is required", typ)
+		}
+		return nil
+	}
+	if s.SnellVersion != 4 && s.SnellVersion != 6 {
+		return fmt.Errorf("snell outbound: version must be 4 or 6")
+	}
+	if s.SnellNetwork != "" && s.SnellNetwork != "tcp" && s.SnellNetwork != "udp" {
+		return fmt.Errorf("snell outbound: network must be tcp or udp")
+	}
+	psk := s.SnellPSK
+	if psk == "" {
+		psk = s.Password
+	}
+	if psk == "" {
+		return fmt.Errorf("snell outbound: psk is required")
+	}
+	if s.SnellVersion == 4 {
+		if s.SnellObfsMode != "" && s.SnellObfsMode != "none" && s.SnellObfsMode != "http" && s.SnellObfsMode != "tls" {
+			return fmt.Errorf("snell outbound: unsupported v4 obfs_mode %q", s.SnellObfsMode)
+		}
+		if s.SnellObfsHost != "" && s.SnellObfsMode != "http" && s.SnellObfsMode != "tls" {
+			return fmt.Errorf("snell outbound: obfs_host requires obfs_mode=http or tls")
+		}
+		if s.SnellMode != "" && s.SnellMode != "default" {
+			return fmt.Errorf("snell outbound: mode is only supported by version 6")
+		}
+	} else {
+		if s.SnellObfsMode != "" && s.SnellObfsMode != "none" {
+			return fmt.Errorf("snell outbound: obfs_mode is only supported by version 4")
+		}
+		if s.SnellObfsHost != "" {
+			return fmt.Errorf("snell outbound: obfs_host is only supported by version 4")
+		}
+	}
+	if s.SnellVersion == 6 && (len(psk) < 12 || len(psk) > 255) {
+		return fmt.Errorf("snell outbound: PSK length must be 12-255 bytes")
+	}
+	if s.SnellVersion == 6 && s.SnellMode != "" && s.SnellMode != "default" &&
+		s.SnellMode != "unshaped" && s.SnellMode != "unsafe-raw" {
+		return fmt.Errorf("snell: unsupported v6 mode %q", s.SnellMode)
+	}
+	return nil
 }
 
 // SSClientPassword returns the client-side shadowsocks password. Single-user
@@ -311,17 +533,18 @@ func (t TransportSettings) normalized() *TransportSettings {
 	return &t
 }
 
-// Validate performs light sanity checks so obviously-broken settings are
-// rejected before they reach the agent's `sing-box check`.
-func (s InboundSettings) Validate(typ string) error {
+func (s InboundSettings) validateProtocol(typ string) error {
 	switch typ {
 	case "shadowsocks":
 		if s.Method == "" {
 			return fmt.Errorf("shadowsocks: method is required")
 		}
+		if plugin, _ := ShadowsocksPluginFields(s.SSPlugin); plugin != "" && plugin != "obfs-local" && plugin != "v2ray-plugin" {
+			return fmt.Errorf("shadowsocks: unsupported plugin %q", plugin)
+		}
 	case "vmess":
 		switch s.VMessSecurityValue() {
-		case "auto", "aes-128-gcm", "chacha20-poly1305":
+		case "auto", "none", "zero", "aes-128-gcm", "chacha20-poly1305", "aes-128-cfb":
 		default:
 			return fmt.Errorf("vmess: unsupported security %q", s.VMessSecurity)
 		}
@@ -340,6 +563,24 @@ func (s InboundSettings) Validate(typ string) error {
 		if s.SnellVersion != 5 && s.SnellVersion != 6 {
 			return fmt.Errorf("snell: version must be 5 or 6")
 		}
+		if s.SnellPSK == "" {
+			return fmt.Errorf("snell: psk is required")
+		}
+		if s.SnellVersion == 5 {
+			if s.SnellObfsMode != "" && s.SnellObfsMode != "none" && s.SnellObfsMode != "http" && s.SnellObfsMode != "tls" {
+				return fmt.Errorf("snell: unsupported v5 obfs_mode %q", s.SnellObfsMode)
+			}
+			if s.SnellMode != "" && s.SnellMode != "default" {
+				return fmt.Errorf("snell: mode is only supported by version 6")
+			}
+		} else {
+			if s.SnellObfsMode != "" && s.SnellObfsMode != "none" {
+				return fmt.Errorf("snell: obfs_mode is only supported by version 5")
+			}
+			if len(s.SnellPSK) < 12 || len(s.SnellPSK) > 255 {
+				return fmt.Errorf("snell: v6 PSK length must be 12-255 bytes")
+			}
+		}
 		if s.SnellVersion == 6 && s.SnellMode != "" && s.SnellMode != "default" &&
 			s.SnellMode != "unshaped" && s.SnellMode != "unsafe-raw" {
 			return fmt.Errorf("snell: unsupported v6 mode %q", s.SnellMode)
@@ -349,8 +590,20 @@ func (s InboundSettings) Validate(typ string) error {
 			return fmt.Errorf("socks: username and password must both be set or both be empty")
 		}
 	}
-	if typ == "hysteria2" && s.ObfsType != "" && s.ObfsType != "salamander" {
+	if typ == "hysteria2" && s.ObfsType != "" && s.ObfsType != "salamander" && s.ObfsType != "gecko" {
 		return fmt.Errorf("hysteria2: unsupported obfs type %q", s.ObfsType)
+	}
+	if typ == "hysteria2" && s.ObfsType == "gecko" && s.ObfsPassword == "" {
+		return fmt.Errorf("hysteria2: gecko obfs password is required")
+	}
+	if typ == "hysteria2" && s.ObfsType == "gecko" && ((s.GeckoMinPacketSize > 0 && s.GeckoMinPacketSize < 512) || (s.GeckoMaxPacketSize > 0 && s.GeckoMaxPacketSize < 512)) {
+		return fmt.Errorf("hysteria2: gecko packet sizes must be at least 512")
+	}
+	if typ == "hysteria2" && s.ObfsType == "gecko" && s.GeckoMinPacketSize > 0 && s.GeckoMaxPacketSize > 0 && s.GeckoMinPacketSize > s.GeckoMaxPacketSize {
+		return fmt.Errorf("hysteria2: gecko min packet size must not exceed max packet size")
+	}
+	if typ == "hysteria2" && s.IgnoreClientBandwidth && (s.UpMbps > 0 || s.DownMbps > 0) {
+		return fmt.Errorf("hysteria2: ignore_client_bandwidth conflicts with up_mbps/down_mbps")
 	}
 	if typ == "tuic" {
 		switch s.CongestionControl {
@@ -392,8 +645,68 @@ func (s InboundSettings) Validate(typ string) error {
 	// VLESS flow=xtls-rprx-vision requires a real TLS/REALITY connection; with
 	// plain TCP the client aborts at runtime ("not a valid supported TLS
 	// connection"), even though `check` passes. Reject the impossible combo.
-	if typ == "vless" && s.Flow != "" && !s.TLS.Enabled && s.TLS.ACMEDomain == "" && !s.TLS.Reality.Enabled {
-		return fmt.Errorf("vless: flow %q requires TLS or REALITY", s.Flow)
+	if typ == "vless" && s.Flow != "" {
+		if s.Flow != "xtls-rprx-vision" {
+			return fmt.Errorf("vless: unsupported flow %q", s.Flow)
+		}
+		if !s.TLS.Enabled && s.TLS.ACMEDomain == "" && !s.TLS.Reality.Enabled {
+			return fmt.Errorf("vless: flow %q requires TLS or REALITY", s.Flow)
+		}
 	}
 	return nil
+}
+
+func (t TLSSettings) validateInbound() error {
+	if !t.tlsEnabled() {
+		return nil
+	}
+	hasInlineCert := strings.TrimSpace(t.Certificate) != "" || strings.TrimSpace(t.Key) != ""
+	hasPathCert := strings.TrimSpace(t.CertificatePath) != "" || strings.TrimSpace(t.KeyPath) != ""
+	modes := 0
+	for _, enabled := range []bool{t.Reality.Enabled, t.ACMEDomain != "", hasInlineCert, hasPathCert} {
+		if enabled {
+			modes++
+		}
+	}
+	if modes > 1 {
+		return fmt.Errorf("TLS: choose exactly one of certificate, certificate path, ACME, or REALITY")
+	}
+	if t.Reality.Enabled {
+		if strings.TrimSpace(t.Reality.HandshakeServer) == "" {
+			return fmt.Errorf("TLS REALITY: handshake server is required")
+		}
+		if t.Reality.HandshakeServerPort < 0 || t.Reality.HandshakeServerPort > 65535 {
+			return fmt.Errorf("TLS REALITY: handshake server port must be between 1 and 65535")
+		}
+		if strings.TrimSpace(t.Reality.PrivateKey) == "" {
+			return fmt.Errorf("TLS REALITY: private key is required")
+		}
+		return nil
+	}
+	if t.ACMEDomain != "" {
+		return nil
+	}
+	if hasInlineCert {
+		if strings.TrimSpace(t.Certificate) == "" || strings.TrimSpace(t.Key) == "" {
+			return fmt.Errorf("TLS: inline certificate and key must both be set")
+		}
+		return nil
+	}
+	if hasPathCert {
+		if strings.TrimSpace(t.CertificatePath) == "" || strings.TrimSpace(t.KeyPath) == "" {
+			return fmt.Errorf("TLS: certificate_path and key_path must both be set")
+		}
+		return nil
+	}
+	return fmt.Errorf("TLS: certificate, certificate path, ACME, or REALITY configuration is required")
+}
+
+// Validate rejects invalid server-side settings before they reach the agent's
+// `sing-box check`. Client outbounds use ValidateClientOutbound because their
+// TLS object does not carry server certificate material.
+func (s InboundSettings) Validate(typ string) error {
+	if err := s.validateProtocol(typ); err != nil {
+		return err
+	}
+	return s.TLS.validateInbound()
 }

@@ -342,7 +342,7 @@ func (a *App) installSingbox(c *gin.Context) {
 		return
 	}
 	if req.Channel == "" {
-		req.Channel = protocol.ChannelStable
+		req.Channel = protocol.ChannelBeta
 	}
 	if req.Method == "" {
 		req.Method = protocol.MethodScript

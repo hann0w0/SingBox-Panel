@@ -310,8 +310,13 @@ func parseHysteria2(uri string) (ClientNode, error) {
 	if insecureFromQuery(q) {
 		cn.Settings.TLS.Insecure = true
 	}
-	if q.Get("obfs") == "salamander" {
+	if obfsType := strings.ToLower(strings.TrimSpace(q.Get("obfs"))); obfsType == "salamander" || obfsType == "gecko" {
+		cn.Settings.ObfsType = obfsType
 		cn.Settings.ObfsPassword = q.Get("obfs-password")
+		if obfsType == "gecko" {
+			cn.Settings.GeckoMinPacketSize = atoiSafe(firstQueryValue(q, "obfs-min-packet-size", "min_packet_size"))
+			cn.Settings.GeckoMaxPacketSize = atoiSafe(firstQueryValue(q, "obfs-max-packet-size", "max_packet_size"))
+		}
 	}
 	if v := q.Get("up"); v != "" {
 		cn.Settings.UpMbps = atoiSafe(v)
@@ -323,6 +328,15 @@ func parseHysteria2(uri string) (ClientNode, error) {
 		cn.Settings.TLS.ALPN = strings.Split(a, ",")
 	}
 	return cn, nil
+}
+
+func firstQueryValue(q url.Values, keys ...string) string {
+	for _, key := range keys {
+		if value := q.Get(key); value != "" {
+			return value
+		}
+	}
+	return ""
 }
 
 func parseHysteria(uri string) (ClientNode, error) {

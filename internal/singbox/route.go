@@ -5,7 +5,7 @@ import "encoding/json"
 // OutboundInput describes one outbound (a landing/forward target or direct).
 type OutboundInput struct {
 	Tag  string
-	Type string // direct | vless | vmess | trojan | shadowsocks | hysteria2 | tuic | socks
+	Type string // direct | vless | vmess | trojan | shadowsocks | hysteria2 | tuic | anytls | snell | socks
 
 	// Proxy-type fields (reuses the client-outbound builder).
 	Server     string
@@ -61,6 +61,12 @@ func buildOutbound(o OutboundInput) (json.RawMessage, error) {
 			"type": "shadowsocks", "tag": o.Tag,
 			"server": o.Server, "server_port": o.ServerPort,
 			"method": o.Settings.Method, "password": pw,
+		}
+		if plugin, opts := ShadowsocksPluginFields(o.Settings.SSPlugin); plugin != "" {
+			m["plugin"] = plugin
+			if opts != "" {
+				m["plugin_opts"] = opts
+			}
 		}
 		return json.Marshal(m)
 	}

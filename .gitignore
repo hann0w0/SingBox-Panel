@@ -1,0 +1,25 @@
+# build output
+/dist/
+/web/dist/
+/agent
+/panel
+/singbox-panel
+
+# runtime data
+/data/
+*.db
+*.db-journal
+
+# node
+/web/node_modules/
+
+# local config with secrets
+/deploy/panel.yaml
+
+# os
+.DS_Store
+
+# ide / AI metadata
+.claude/
+.workbuddy/
+.codex-build/

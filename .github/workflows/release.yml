@@ -1,0 +1,167 @@
+name: Release binaries
+
+# 打 v* 标签时自动构建面板二进制与 Agent 包，并附加到 GitHub Release。
+
+on:
+  push:
+    tags: ['v*']
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    name: Build release assets
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write  # 允许上传 Release Assets
+      id-token: write
+      attestations: write
+    env:
+      RELEASE_TAG: ${{ github.ref_name }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+
+      - name: Validate release tag
+        run: |
+          printf '%s\n' "$RELEASE_TAG" | grep -Eq '^v[0-9]+\.[0-9]+\.[0-9]+([.-][0-9A-Za-z][0-9A-Za-z.-]*)?$' || {
+            echo "Invalid release tag" >&2
+            exit 1
+          }
+
+      - name: Setup Node.js
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
+        with:
+          node-version: '24'
+          cache: 'npm'
+          cache-dependency-path: web/package-lock.json
+
+      - name: Setup Go
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7
+        with:
+          go-version: '1.26.6'
+          cache: true
+
+      # 发版前先跑测试：标签一旦推上去就无法收回，构建失败好过发出坏包。
+      - name: Test backend
+        run: |
+          go test ./...
+          go vet ./...
+
+      - name: Build frontend
+        working-directory: web
+        run: |
+          npm ci
+          npm test
+          npm run typecheck
+          npm run build
+
+      - name: Build panel binaries (amd64 + arm64)
+        env:
+          VERSION: ${{ env.RELEASE_TAG }}
+          CGO_ENABLED: 0
+        run: |
+          mkdir -p dist/panel dist/agents
+
+          echo "==> panel linux/amd64 (${VERSION})"
+          GOOS=linux GOARCH=amd64 go build \
+            -ldflags "-s -w -X main.version=${VERSION}" \
+            -o dist/panel/singbox-panel-linux-amd64 \
+            ./cmd/panel
+
+          echo "==> panel linux/arm64 (${VERSION})"
+          GOOS=linux GOARCH=arm64 go build \
+            -ldflags "-s -w -X main.version=${VERSION}" \
+            -o dist/panel/singbox-panel-linux-arm64 \
+            ./cmd/panel
+
+          AGENT_VER="$(cat cmd/agent/VERSION 2>/dev/null || echo "v1.0.0")"
+          echo "${AGENT_VER}" > dist/agents/VERSION
+          echo "==> agent linux/amd64 (${AGENT_VER})"
+          GOOS=linux GOARCH=amd64 go build \
+            -trimpath -buildvcs=false \
+            -ldflags "-s -w -X main.version=${AGENT_VER}" \
+            -o dist/agents/singbox-panel-agent-linux-amd64 \
+            ./cmd/agent
+
+          echo "==> agent linux/arm64 (${AGENT_VER})"
+          GOOS=linux GOARCH=arm64 go build \
+            -trimpath -buildvcs=false \
+            -ldflags "-s -w -X main.version=${AGENT_VER}" \
+            -o dist/agents/singbox-panel-agent-linux-arm64 \
+            ./cmd/agent
+
+      # 打包必须全部先于校验和计算，否则漏进 checksums.txt 的产物在安装时
+      # 会静默跳过校验。
+      - name: Package tarballs
+        run: |
+          cp install.sh dist/install.sh
+          tar -czf "dist/singbox-panel-agents-${RELEASE_TAG}.tar.gz" \
+            -C dist/agents .
+          tar -czf "dist/singbox-panel-web-${RELEASE_TAG}.tar.gz" \
+            -C web/dist .
+
+      - name: Compute checksums
+        run: |
+          cd dist
+          sha256sum \
+            panel/singbox-panel-linux-amd64 \
+            panel/singbox-panel-linux-arm64 \
+            install.sh \
+            "singbox-panel-agents-${RELEASE_TAG}.tar.gz" \
+            "singbox-panel-web-${RELEASE_TAG}.tar.gz" \
+            | sed 's#panel/##' > checksums.txt
+          cat checksums.txt
+
+      - name: Attest release assets
+        uses: actions/attest-build-provenance@977bb373ede98d70efdf65b84cb5f73e068dcc2a # v3
+        with:
+          subject-path: |
+            dist/panel/singbox-panel-linux-amd64
+            dist/panel/singbox-panel-linux-arm64
+            dist/install.sh
+            dist/singbox-panel-agents-${{ env.RELEASE_TAG }}.tar.gz
+            dist/singbox-panel-web-${{ env.RELEASE_TAG }}.tar.gz
+            dist/checksums.txt
+
+      - name: Create / update GitHub Release and upload assets
+        uses: softprops/action-gh-release@3d0d9888cb7fd7b750713d6e236d1fcb99157228 # v3
+        with:
+          tag_name: ${{ env.RELEASE_TAG }}
+          name: "SingBox Panel ${{ env.RELEASE_TAG }}"
+          draft: false
+          prerelease: ${{ contains(github.ref_name, 'beta') || contains(github.ref_name, 'alpha') || contains(github.ref_name, 'rc') }}
+          generate_release_notes: true
+          body: |
+            ## Installation
+
+            ### One-line installer (recommended)
+            ```bash
+            curl -fsSL https://github.com/hann0w0/SingBox-Panel/releases/latest/download/install.sh | sudo bash
+            ```
+            The installer uses the native binary + systemd deployment. Subsequent runs preserve the
+            domain, port, administrator credentials, database, and `jwt_secret`.
+
+            Install with non-interactive settings:
+            ```bash
+            curl -fsSL https://github.com/hann0w0/SingBox-Panel/releases/latest/download/install.sh | sudo bash -s -- \
+              --base-url panel.example.com --non-interactive
+            ```
+
+            ### Binary
+            Download `singbox-panel-linux-{amd64|arm64}` for the target architecture and follow the
+            [deployment guide](https://github.com/hann0w0/SingBox-Panel/blob/main/README.md). SHA-256
+            checksums are in `checksums.txt` and are enforced by the installer. Release artifacts include
+            GitHub Artifact Attestation; verify them with
+            `gh attestation verify <file> --repo hann0w0/SingBox-Panel`.
+
+          files: |
+            dist/panel/singbox-panel-linux-amd64
+            dist/panel/singbox-panel-linux-arm64
+            dist/singbox-panel-agents-${{ env.RELEASE_TAG }}.tar.gz
+            dist/singbox-panel-web-${{ env.RELEASE_TAG }}.tar.gz
+            dist/checksums.txt
+            dist/install.sh

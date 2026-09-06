@@ -1012,11 +1012,17 @@ func extractUpdateArchive(archivePath, destination string) error {
 // unless the restarted panel passes /api/ready.
 func launchSwap(stagedBin, stagedWebDir, stagedAgentsDir, stageDir, webDir, agentsDir, readyURL, lockPath, dbPath, rollbackDB string) error {
 	script := buildSwapScript(panelBinaryPath(), stagedBin, stagedWebDir, stagedAgentsDir, stageDir, webDir, agentsDir, readyURL, lockPath, dbPath, rollbackDB)
+	// Pass a file rather than shell source through systemd: ExecStart expands
+	// dollar expressions before sh can assign the script's local variables.
+	scriptPath := filepath.Join(stageDir, "swap.sh")
+	if err := os.WriteFile(scriptPath, []byte(script), 0o600); err != nil {
+		return fmt.Errorf("write update helper: %w", err)
+	}
 
 	cmd := exec.Command("systemd-run",
 		"--collect",
 		"--unit", fmt.Sprintf("singbox-panel-selfupdate-%d", time.Now().UnixNano()),
-		"/bin/sh", "-c", script,
+		"/bin/sh", scriptPath,
 	)
 	out, err := cmd.CombinedOutput()
 	if err != nil {

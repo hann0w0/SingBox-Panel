@@ -40,6 +40,31 @@ func TestValidReleaseTag(t *testing.T) {
 	}
 }
 
+func TestLaunchSwapPassesScriptFileToSystemd(t *testing.T) {
+	root := t.TempDir()
+	argsPath := filepath.Join(root, "args")
+	writeExecutable(t, filepath.Join(root, "systemd-run"), "#!/bin/sh\nprintf '%s\\n' \"$@\" > "+shellQuote(argsPath)+"\n")
+	t.Setenv("PATH", root+":"+os.Getenv("PATH"))
+	if err := launchSwap("new-bin", "new-web", "new-agents", root, "web", "agents", "http://127.0.0.1/ready", "lock", "db", "rollback-db"); err != nil {
+		t.Fatal(err)
+	}
+	args, err := os.ReadFile(argsPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	scriptPath := filepath.Join(root, "swap.sh")
+	if !strings.HasSuffix(string(args), "/bin/sh\n"+scriptPath+"\n") || strings.Contains(string(args), "$OPERATION") {
+		t.Fatalf("shell source exposed to systemd expansion: %s", args)
+	}
+	script, err := os.ReadFile(scriptPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(script), "OPERATION=${STAGE##*/}") {
+		t.Fatal("operation identity expression missing from script file")
+	}
+}
+
 func TestSameVersion(t *testing.T) {
 	cases := []struct {
 		a, b string

@@ -425,6 +425,9 @@ export const syncCustomNodeSubscription = (id: number) =>
 export interface MaintenanceInfo {
   current_version: string
   update_supported: boolean
+  reinstall_supported?: boolean
+  instance_id?: string
+  update_operation?: { id: string; status: 'running' | 'succeeded' | 'rolled_back' | 'failed' }
   update_reason?: string
   latest_version?: string
   has_update?: boolean
@@ -437,11 +440,11 @@ export const getMaintenanceInfo = (signal?: AbortSignal, refresh = false) =>
     signal,
     params: refresh ? { refresh: 1 } : undefined,
   }).then((r) => r.data)
-export const selfUpdate = (version?: string) =>
+export const selfUpdate = (version?: string, force = false) =>
   http
-    .post<{ ok: boolean; updated: boolean; message: string; version?: string }>(
+    .post<{ ok: boolean; updated: boolean; message: string; version?: string; operation_id?: string }>(
       '/api/admin/maintenance/update',
-      version ? { version } : {},
+      { ...(version ? { version } : {}), force },
     )
     .then((r) => r.data)
 

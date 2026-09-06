@@ -22,7 +22,7 @@ export function ImportPreviewModal({
       width={720}
       destroyOnClose
     >
-      <div style={{ fontSize: 13, color: 'rgba(0, 0, 0, 0.45)', marginBottom: 12 }}>
+      <div style={{ fontSize: 13, color: 'var(--console-muted)', marginBottom: 12 }}>
         已识别当前运行配置。导入后完整原始配置将同步保存至面板。
       </div>
       {summary && (
@@ -101,11 +101,11 @@ export function ConfigEditorModal({
 }) {
   return (
     <Modal title="编辑服务器配置" open={open} onCancel={onCancel} onOk={onSave} okText="校验并下发" confirmLoading={saving} width={780} destroyOnClose>
-      <div style={{ fontSize: 13, color: 'rgba(0, 0, 0, 0.45)', marginBottom: 12 }}>
+      <div style={{ fontSize: 13, color: 'var(--console-muted)', marginBottom: 12 }}>
         直接编辑该服务器运行的核心配置。下发后会自动同步；能够无损转换时将直接进入面板管理。
       </div>
       {loading ? (
-        <div style={{ padding: 24, textAlign: 'center', color: '#94a3b8' }}>读取中…</div>
+        <div style={{ padding: 24, textAlign: 'center', color: 'var(--console-faint)' }}>读取中…</div>
       ) : (
         <Input.TextArea
           value={text}
@@ -129,7 +129,7 @@ export function InstallSingboxModal({
 }) {
   return (
     <Modal title="安装 / 升级 Sing-box" open={open} onOk={onConfirm} onCancel={onCancel} destroyOnClose>
-      <div style={{ fontSize: 13, color: 'rgba(0, 0, 0, 0.45)', marginBottom: 12 }}>
+      <div style={{ fontSize: 13, color: 'var(--console-muted)', marginBottom: 12 }}>
         安装官方最新 beta 版 sing-box；已安装时再次执行即升级到目标版本。
       </div>
       <Form form={form} layout="vertical" initialValues={{ channel: 'beta', method: 'script' }}>
@@ -157,7 +157,7 @@ export function NodeFormatsExportModal({
 }) {
   return (
     <Modal title="导出节点配置" open={open} onCancel={onCancel} footer={null} width={860} destroyOnClose>
-      {loading ? <div style={{ padding: 48, textAlign: 'center', color: '#bbb' }}>加载中…</div> : data ? <NodeFormatsModalContent data={data} /> : null}
+      {loading ? <div style={{ padding: 48, textAlign: 'center', color: 'var(--console-faint)' }}>加载中…</div> : data ? <NodeFormatsModalContent data={data} /> : null}
     </Modal>
   )
 }

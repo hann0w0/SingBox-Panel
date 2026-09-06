@@ -792,7 +792,7 @@ func (a *App) uploadOneDriveBackup(archivePath string) error {
 
 // POST /api/admin/maintenance/onedrive/sync — create and upload one data-only archive.
 func (a *App) syncOneDriveBackup(c *gin.Context) {
-	if !a.selfUpdating.TryLock() {
+	if !a.tryMaintenanceLock() {
 		c.JSON(http.StatusConflict, gin.H{"error": "已有维护任务正在进行"})
 		return
 	}
@@ -962,7 +962,7 @@ func (a *App) restoreOneDriveBackup(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "备份 ID 为空"})
 		return
 	}
-	if !a.selfUpdating.TryLock() {
+	if !a.tryMaintenanceLock() {
 		c.JSON(http.StatusConflict, gin.H{"error": "已有维护任务正在进行"})
 		return
 	}
@@ -1051,7 +1051,7 @@ func (a *App) runOneDriveBackupScheduler(ctx context.Context) {
 					continue
 				}
 			}
-			if !a.selfUpdating.TryLock() {
+			if !a.tryMaintenanceLock() {
 				continue
 			}
 			if !a.oneDriveSyncMu.TryLock() {

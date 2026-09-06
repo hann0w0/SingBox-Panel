@@ -642,7 +642,7 @@ func (a *App) writeLinks(c *gin.Context, nodes []node) {
 func (a *App) writeSingbox(c *gin.Context, nodes []node) {
 	var outbounds []json.RawMessage
 	var tags []string
-	seen := map[string]int{}
+	seen := map[string]int{"auto": 1, "proxy": 1, "direct": 1}
 	for _, n := range nodes {
 		cn := n.clientNode()
 		cn.Name = uniqueName(seen, cn.Name)
@@ -1057,11 +1057,18 @@ func clashProxy(n node, seen map[string]int) map[string]any {
 }
 
 func uniqueName(seen map[string]int, name string) string {
-	seen[name]++
-	if n := seen[name]; n > 1 {
-		return fmt.Sprintf("%s-%d", name, n)
+	if seen[name] == 0 {
+		seen[name] = 1
+		return name
 	}
-	return name
+	for n := seen[name] + 1; ; n++ {
+		candidate := fmt.Sprintf("%s-%d", name, n)
+		if seen[candidate] == 0 {
+			seen[name] = n
+			seen[candidate] = 1
+			return candidate
+		}
+	}
 }
 
 func firstOf(s []string) string {

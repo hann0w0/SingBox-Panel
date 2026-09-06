@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
-import { Alert, Button, Card, Col, Divider, List, Modal, Popconfirm, Row, Space, Statistic, Tag, Typography, Upload, message } from 'antd'
+import { Alert, Button, Card, Col, Divider, List, Modal, Popconfirm, Row, Space, Statistic, Tag, Typography, Upload, message, theme } from 'antd'
 import type { UploadFile } from 'antd'
 import { CloudDownloadOutlined, CloudOutlined, DeleteOutlined, DownloadOutlined, InboxOutlined, LinkOutlined, ReloadOutlined, RocketOutlined, UploadOutlined } from '@ant-design/icons'
 import {
@@ -22,8 +22,10 @@ import {
 } from '../../../api'
 import { formatDuration } from '../../../util'
 import { useAuth } from '../../../store'
+import { updateFailureMessage, updateRestartCompleted } from '../../../maintenanceUpdate'
 
 export default function Settings() {
+  const { token } = theme.useToken()
   const [info, setInfo] = useState<MaintenanceInfo | null>(null)
   const [loading, setLoading] = useState(false)
   const [updating, setUpdating] = useState(false)
@@ -298,14 +300,15 @@ export default function Settings() {
     })
   }
 
-  const doUpdate = () => {
-    const target = info?.latest_version
+  const doUpdate = (force = false) => {
+    const target = force ? info?.current_version : info?.latest_version
+    if (!target) return
     Modal.confirm({
-      title: '更新面板',
+      title: force ? '重新安装当前版本' : '更新面板',
       content: (
         <div>
           <p>
-            将从 {info?.current_version} 更新到 <b>{target}</b>。
+            {force ? <>将从 GitHub 重新下载并安装 <b>{target}</b>，用于同步该版本重新发布的构建。</> : <>将从 {info?.current_version} 更新到 <b>{target}</b>。</>}
           </p>
           <p style={{ color: '#a61d24', marginBottom: 0 }}>
             面板会校验并一起切换后端、前端和 Agent 包，失败时自动回滚，期间约中断数秒。
@@ -313,20 +316,22 @@ export default function Settings() {
           </p>
         </div>
       ),
-      okText: '开始更新',
+      okText: force ? '重新安装' : '开始更新',
       cancelText: '取消',
       onOk: async () => {
         setUpdating(true)
         try {
-          const r = await selfUpdate(target)
+          const before = await getMaintenanceInfo()
+          if (force && !before.instance_id) throw new Error('当前面板尚不支持确认同版本重装，请先更新面板')
+          const r = await selfUpdate(target, force)
           if (!r.updated) {
             message.info(r.message)
             setUpdating(false)
             return
           }
           message.success(r.message)
-          // The panel restarts; poll /info until the version flips, then reload.
-          waitForRestart(target)
+          if (force && !r.operation_id) throw new Error('无法确认重装结果，请稍后刷新页面检查状态')
+          waitForRestart(target, before, r.operation_id)
         } catch (e) {
           message.error(errMsg(e))
           setUpdating(false)
@@ -335,9 +340,9 @@ export default function Settings() {
     })
   }
 
-  // After a self-update the backend restarts. Poll until it answers with the
-  // new version (or times out), keeping the button spinner honest.
-  const waitForRestart = (target?: string) => {
+  // A same-version reinstall is complete only after a different panel process
+  // is serving the target version. Its brief downtime may fall between polls.
+  const waitForRestart = (target: string, before: MaintenanceInfo, operationID?: string) => {
     if (restartTimer.current) clearTimeout(restartTimer.current)
     restartTimer.current = null
     restartAbort.current?.abort()
@@ -352,19 +357,28 @@ export default function Settings() {
         tries += 1
         const controller = new AbortController()
         restartAbort.current = controller
+        const requestTimeout = setTimeout(() => controller.abort(), 5000)
         let complete = false
         try {
           const fresh = await getMaintenanceInfo(controller.signal)
           if (generation !== restartGeneration.current) return
-          if (!target || fresh.current_version.replace(/^v/, '') === target.replace(/^v/, '')) {
+          const failure = updateFailureMessage(fresh, operationID)
+          if (failure) {
+            complete = true
+            setInfo(fresh)
+            setUpdating(false)
+            message.error(failure)
+          } else if (updateRestartCompleted(before, fresh, target, operationID)) {
             complete = true
             setInfo(fresh)
             setUpdating(false)
             message.success('面板已更新并重启完成')
+            location.reload()
           }
         } catch {
           // still restarting; schedule another attempt after this one finishes
         } finally {
+          clearTimeout(requestTimeout)
           if (restartAbort.current === controller) restartAbort.current = null
         }
         if (generation !== restartGeneration.current || complete) return
@@ -413,23 +427,40 @@ export default function Settings() {
                   valueStyle={{ fontSize: 22 }}
                 />
               </Col>
-              <Col xs={24}>
+              <Col xs={24} className="settings-version-actions" style={{ display: 'flex', alignItems: 'center', flexWrap: 'wrap', gap: 8 }}>
                 {!info.update_supported ? (
                   <Alert
+                    style={{ width: '100%' }}
                     type="info"
                     showIcon
                     message="此部署不支持面板内更新"
                     description={info.update_reason}
                   />
                 ) : info.has_update ? (
-                  <Button type="primary" icon={<RocketOutlined />} loading={updating} onClick={doUpdate}>
+                  <Button type="primary" icon={<RocketOutlined />} loading={updating} onClick={() => doUpdate()}>
                     更新到 {info.latest_version}
                   </Button>
                 ) : info.latest_version ? (
-                  <Tag color="success" style={{ fontSize: 13, padding: '4px 10px' }}>已是最新版本</Tag>
+                  <Tag
+                    className="settings-version-status"
+                    style={{
+                      display: 'inline-flex',
+                      alignItems: 'center',
+                      height: token.controlHeight,
+                      borderRadius: token.borderRadius,
+                      fontSize: token.fontSize,
+                      paddingInline: token.paddingSM,
+                      marginInlineEnd: 0,
+                    }}
+                  >版本号一致</Tag>
                 ) : info.latest_error ? (
-                  <span style={{ color: '#8c8c8c' }}>{info.latest_error}</span>
+                  <span style={{ color: 'var(--console-muted)' }}>{info.latest_error}</span>
                 ) : null}
+                {info.update_supported && info.reinstall_supported && (
+                  <Button icon={<ReloadOutlined />} loading={updating} onClick={() => doUpdate(true)}>
+                    重新安装当前版本
+                  </Button>
+                )}
               </Col>
             </Row>
           )}
@@ -438,7 +469,7 @@ export default function Settings() {
 
       <Col xs={24} lg={12}>
         <Card title="数据备份" style={{ height: '100%' }} loading={cloudLoading && !cloud}>
-          <p style={{ color: '#595959', minHeight: 66 }}>
+          <p style={{ color: 'var(--console-muted)', minHeight: 66 }}>
             导出包含全部数据（节点、用户、订阅 token、被控 Agent 密钥）与会话密钥（jwt_secret）的备份。
             在新服务器上恢复此备份并让原域名指向新机，被控 Agent 会自动重连、用户登录也不会失效，无需重装。
           </p>
@@ -557,7 +588,7 @@ export default function Settings() {
 
       <Col xs={24} lg={12}>
         <Card title="恢复备份" style={{ height: '100%' }}>
-          <p style={{ color: '#595959', minHeight: 66 }}>
+          <p style={{ color: 'var(--console-muted)', minHeight: 66 }}>
             上传此前下载的备份文件（.tar.gz），覆盖当前数据并重启面板。常用于迁移到新服务器或回滚。
             恢复前会自动把现有数据库另存为 <code>.pre-restore</code> 以便回滚。
           </p>
@@ -576,7 +607,7 @@ export default function Settings() {
                 <InboxOutlined />
               </p>
               <p className="ant-upload-text">点击或拖拽备份文件到此处</p>
-              <p className="ant-upload-hint" style={{ color: '#8c8c8c' }}>
+              <p className="ant-upload-hint" style={{ color: 'var(--console-muted)' }}>
                 仅支持本面板导出的 singbox-panel-backup-*.tar.gz
               </p>
             </Upload.Dragger>

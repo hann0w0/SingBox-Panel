@@ -371,8 +371,8 @@ export default function Traffic() {
                 { title: '端口', dataIndex: 'port', width: 80 },
                 { title: '标签', dataIndex: 'tag', width: 180, ellipsis: true },
                 { title: '协议', dataIndex: 'type', width: 100, render: (value: string) => <ProtocolTag type={value} /> },
-                { title: '出站 ↓', dataIndex: 'download', width: 130, render: (_: number, record) => <span style={{ color: '#4096ff' }}>{formatBytes(record.download)}</span> },
-                { title: '入站 ↑', dataIndex: 'upload', width: 130, render: (_: number, record) => <span style={{ color: '#36cfc9' }}>{formatBytes(record.upload)}</span> },
+                { title: '出站 ↓', dataIndex: 'download', width: 130, render: (_: number, record) => <span style={{ color: 'var(--console-download)' }}>{formatBytes(record.download)}</span> },
+                { title: '入站 ↑', dataIndex: 'upload', width: 130, render: (_: number, record) => <span style={{ color: 'var(--console-upload)' }}>{formatBytes(record.upload)}</span> },
                 { title: '全部', width: 120, render: (_: unknown, record) => <span style={{ fontWeight: 600 }}>{formatBytes(record.upload + record.download)}</span> },
               ]}
             />

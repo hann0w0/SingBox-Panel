@@ -8,19 +8,12 @@ import { copyToClipboard } from '../../util'
 import { useAuth } from '../../store'
 import { CONTINENT_ORDER, continentOf, type Continent } from '../../continents'
 import regionData from '../../assets/regions.json'
-import { RegionFlag } from '../../components/RegionFlag'
 import { VirtualList } from '../../components/VirtualList'
 import { RequestState } from '../../components/RequestState'
 
 type RegionInfo = { geo: string; coord: [number, number]; label: string }
 const REGIONS = regionData as unknown as Record<string, RegionInfo>
 const userNodeKey = (node: UserNode) => `${node.type}:${node.name}:${node.server}:${node.port}`
-
-const SUB_STYLES = {
-  clash: { background: '#16a34a', borderColor: '#16a34a' },
-  shadowrocket: { background: '#7c3aed', borderColor: '#7c3aed' },
-  surge: { background: '#0ea5e9', borderColor: '#0ea5e9' },
-}
 
 const TYPE_COLORS: Record<string, string> = {
   vless: 'blue', vmess: 'purple', trojan: 'geekblue', shadowsocks: 'green',
@@ -31,7 +24,7 @@ const TYPE_COLORS: Record<string, string> = {
 const LOGO_VERSION = '20260727-3'
 function ClientLogo({ src, monochrome = false }: { src: string; monochrome?: boolean }) {
   return (
-    <img src={`${src}?v=${LOGO_VERSION}`} alt="" style={{ width: '1.4em', height: '1.4em', objectFit: 'contain', verticalAlign: '-0.28em', filter: monochrome ? 'brightness(0) invert(1)' : undefined }} />
+    <img src={`${src}?v=${LOGO_VERSION}`} alt="" style={{ width: '1.6em', height: '1.6em', objectFit: 'contain', verticalAlign: '-0.28em', filter: monochrome ? 'brightness(0.35) grayscale(1)' : 'grayscale(1)' }} />
   )
 }
 
@@ -168,16 +161,15 @@ export default function Dashboard() {
       }}
       role="button"
       tabIndex={0}
-      style={{ cursor: 'pointer', padding: '10px 2px' }}
+      className="dashboard-node-row"
     >
       <List.Item.Meta
-        avatar={<RegionFlag code={n.region} size={24} />}
         title={<span style={{ fontWeight: 600 }}>{n.name}</span>}
         description={
           <Space size={[4, 4]} wrap>
             <Tag color={TYPE_COLORS[n.type]}>{n.type}</Tag>
-            {labelOf(n.region || '') && <span style={{ color: '#8c8c8c', fontSize: 12 }}>{labelOf(n.region || '')}</span>}
-            <span style={{ fontFamily: 'monospace', fontSize: 12, color: '#6b7280' }}>{n.server}:{n.port}</span>
+            {labelOf(n.region || '') && <span style={{ color: 'var(--console-muted)', fontSize: 12 }}>{labelOf(n.region || '')}</span>}
+            <span style={{ fontFamily: 'monospace', fontSize: 12, color: 'var(--console-muted)' }}>{n.server}:{n.port}</span>
           </Space>
         }
       />
@@ -186,19 +178,21 @@ export default function Dashboard() {
 
   return (
     <RequestState loading={loading} error={loadError} hasData onRetry={load}>
+      <header className="dashboard-intro">
+        <h1>我的订阅</h1>
+        <p>管理订阅链接，查看可用节点。</p>
+      </header>
       <Space direction="vertical" size="large" style={{ width: '100%' }}>
       <Card title="订阅链接">
-        <div style={{ color: '#888', marginBottom: 12 }}>点击按钮复制对应客户端的订阅链接</div>
-        <Space wrap>
-          <Button type="primary" icon={<ClientLogo src="/logos/clashmeta.png" />} style={SUB_STYLES.clash} onClick={() => copySub('clash', 'ClashMeta')}>ClashMeta</Button>
-          <Button type="primary" icon={<ClientLogo src="/logos/shadowrocket.png" monochrome />} style={SUB_STYLES.shadowrocket} onClick={() => copySub('shadowrocket', 'Shadowrocket')}>Shadowrocket</Button>
-          <Button type="primary" icon={<ClientLogo src="/logos/surge.png" monochrome />} style={SUB_STYLES.surge} onClick={() => copySub('surge', 'Surge')}>Surge</Button>
-        </Space>
-        <div style={{ marginTop: 20 }}>
-          <Space>
+        <p className="subscription-hint">选择客户端，复制对应的订阅链接</p>
+        <div className="client-subscriptions">
+          <Button className="client-subscription-button" icon={<ClientLogo src="/logos/surge.png" monochrome />} onClick={() => copySub('surge', 'Surge')}>Surge</Button>
+          <Button className="client-subscription-button" icon={<ClientLogo src="/logos/clashmeta.png" />} onClick={() => copySub('clash', 'ClashMeta')}>ClashMeta</Button>
+          <Button className="client-subscription-button" icon={<ClientLogo src="/logos/shadowrocket.png" monochrome />} onClick={() => copySub('shadowrocket', 'Shadowrocket')}>Shadowrocket</Button>
+        </div>
+        <div className="subscription-actions">
             <Button onClick={doReset}>重置订阅链接</Button>
             <Button onClick={() => setPwdOpen(true)}>修改密码</Button>
-          </Space>
         </div>
       </Card>
 
@@ -235,7 +229,7 @@ export default function Dashboard() {
                 <div style={{ display: 'inline-block', padding: 12, background: '#fff', borderRadius: 8, border: '1px solid #eee' }}>
                   <QRCodeSVG value={selectedNode.link} size={196} />
                 </div>
-                <div style={{ marginTop: 8, color: '#999' }}>扫码导入（{selectedNode.type}）</div>
+                <div style={{ marginTop: 8, color: 'var(--console-muted)' }}>扫码导入（{selectedNode.type}）</div>
               </div>
             ) : (
               <Alert type="info" showIcon message={`${selectedNode.type} 没有通用的分享链接格式`} description="请用下面的参数在客户端手动添加，或直接使用上方的订阅链接导入。" />

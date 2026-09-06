@@ -55,6 +55,7 @@ import { RegionFlag, regionCodeFromFlag, removeRegionFlag } from '../../../compo
 import { VirtualList } from '../../../components/VirtualList'
 import { SHADOWSOCKS_METHODS } from '../../../util'
 import { RequestState } from '../../../components/RequestState'
+import { buildCustomNodeParams } from '../../../customNodeForm'
 
 // ======================= 节点分配 =======================
 
@@ -1114,38 +1115,7 @@ export function CustomNodesPanel({ nodes, loading, error, onNodesChange }: {
         protocol: v.protocol,
         address: typeof v.address === 'string' ? v.address.trim() : '',
         port: v.port,
-        params: {
-          uuid: v.uuid,
-          password: v.password,
-          method: v.method,
-          flow: v.flow,
-          tls: v.tls_mode,
-          sni: v.sni,
-          pbk: v.pbk,
-          sid: v.sid,
-          fingerprint: v.fingerprint,
-          insecure: v.insecure,
-          transport: v.transport,
-          path: v.path,
-          host: v.host,
-          alpn: v.alpn,
-          congestion_control: v.congestion_control,
-          udp_relay_mode: v.udp_relay_mode,
-          udp_over_stream: !!v.udp_over_stream,
-          ss_plugin: v.ss_plugin,
-          obfs: v.obfs,
-          obfs_password: v.obfs_password,
-          gecko_min_packet_size: v.gecko_min_packet_size,
-          gecko_max_packet_size: v.gecko_max_packet_size,
-          up_mbps: v.up_mbps,
-          down_mbps: v.down_mbps,
-          psk: v.psk,
-          version: v.snell_version,
-          obfs_mode: v.snell_obfs_mode,
-          obfs_host: v.snell_obfs_host,
-          mode: v.snell_mode,
-          username: v.username,
-        },
+        params: buildCustomNodeParams(editingNode, v),
         })
       }
       if (editingNode) await updateCustomNode(editingNode.id, body)
@@ -1296,7 +1266,7 @@ export function CustomNodesPanel({ nodes, loading, error, onNodesChange }: {
           {v && v.trim() ? (
             <Tag color="geekblue" style={{ cursor: 'pointer' }} title="点击修改分组">{v.trim()}</Tag>
           ) : (
-            <Tag style={{ cursor: 'pointer', color: '#999' }} title="点击设置分组">未分组 ▾</Tag>
+            <Tag style={{ cursor: 'pointer', color: 'var(--console-muted)' }} title="点击设置分组">未分组 ▾</Tag>
           )}
         </Popover>
       </span>

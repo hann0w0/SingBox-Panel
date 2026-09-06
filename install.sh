@@ -731,6 +731,43 @@ EOF
   chmod 600 "$PANEL_CONFIG" || return 1
 }
 
+# Explicit endpoint overrides must be persisted without replacing unrelated
+# database, JWT, static asset or administrator settings in an existing config.
+update_panel_endpoint_config() {
+  local config_temp=""
+  config_temp="$(mktemp "$INSTALL_REAL/panel.yaml.XXXXXX")" || return 1
+  if ! SB_INSTALL_CHANGE_PORT="$PORT_PROVIDED" \
+    SB_INSTALL_CHANGE_ORIGIN="$BASE_URL_PROVIDED" \
+    SB_INSTALL_LISTEN="$(yaml_double_quote "127.0.0.1:${PANEL_PORT}")" \
+    SB_INSTALL_ORIGIN="$(yaml_double_quote "$BASE_URL")" \
+    awk '
+      BEGIN {
+        change_port = ENVIRON["SB_INSTALL_CHANGE_PORT"] == "1"
+        change_origin = ENVIRON["SB_INSTALL_CHANGE_ORIGIN"] == "1"
+      }
+      /^listen[[:space:]]*:/ && change_port {
+        if (!port_written++) print "listen: " ENVIRON["SB_INSTALL_LISTEN"]
+        next
+      }
+      /^base_url[[:space:]]*:/ && change_origin {
+        if (!origin_written++) print "base_url: " ENVIRON["SB_INSTALL_ORIGIN"]
+        next
+      }
+      { print }
+      END {
+        if (change_port && !port_written) print "listen: " ENVIRON["SB_INSTALL_LISTEN"]
+        if (change_origin && !origin_written) print "base_url: " ENVIRON["SB_INSTALL_ORIGIN"]
+      }
+    ' "$PANEL_CONFIG" > "$config_temp"; then
+    rm -f -- "$config_temp"
+    return 1
+  fi
+  chown root:root "$config_temp" && chmod 600 "$config_temp" && mv -f -- "$config_temp" "$PANEL_CONFIG" || {
+    rm -f -- "$config_temp"
+    return 1
+  }
+}
+
 prepare_binary_permissions() {
   install -d -m 700 -o root -g root "$INSTALL_REAL/data" "$INSTALL_REAL/.update" || return 1
   chown -R root:root "$INSTALL_REAL/data" "$INSTALL_REAL/.update" || return 1
@@ -901,6 +938,13 @@ install_binary_panel() {
     fi
     CONFIG_WRITTEN=1
     info "Wrote $PANEL_CONFIG"
+  elif [[ "$PORT_PROVIDED" -eq 1 || "$BASE_URL_PROVIDED" -eq 1 ]]; then
+    if ! update_panel_endpoint_config; then
+      cp -p -- "$rollback_dir/config" "$PANEL_CONFIG" || true
+      die "failed to update the panel port or domain in $PANEL_CONFIG"
+    fi
+    CONFIG_WRITTEN=1
+    info "Updated the requested port/domain in $PANEL_CONFIG; other settings were preserved"
   else
     info "Keeping the existing $PANEL_CONFIG (pass --configure to rewrite it)"
   fi

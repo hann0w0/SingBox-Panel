@@ -560,7 +560,7 @@ export default function Servers() {
         okText="开始更新"
         destroyOnClose
       >
-        <div style={{ fontSize: 13, color: 'rgba(0,0,0,0.45)', marginBottom: 12 }}>
+        <div style={{ fontSize: 13, color: 'var(--console-muted)', marginBottom: 12 }}>
           向所有<b>在线</b>节点下发官方 sing-box 安装/升级指令。点击开始后窗口即关闭，更新在后台进行，完成后节点列表会自动刷新。
         </div>
         <Form form={singboxForm} layout="vertical" initialValues={{ channel: 'beta', method: 'script' }}>

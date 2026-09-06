@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { Button, Drawer, Grid, Layout, Menu } from 'antd'
 import {
   AreaChartOutlined,
@@ -13,6 +13,7 @@ import {
 } from '@ant-design/icons'
 import { Outlet, useLocation, useNavigate } from 'react-router-dom'
 import { useAuth } from '../store'
+import ThemeSelector from './ThemeSelector'
 
 const { Header, Sider, Content } = Layout
 
@@ -24,39 +25,37 @@ function Brand() {
     <button
       type="button"
       onClick={() => nav(targetPath)}
-      style={{
-        padding: 0,
-        border: 0,
-        background: 'transparent',
-        color: 'inherit',
-        fontFamily: 'inherit',
-        fontWeight: 700,
-        fontSize: 18,
-        letterSpacing: 0.5,
-        whiteSpace: 'nowrap',
-        cursor: 'pointer',
-        userSelect: 'none',
-      }}
+      className="console-brand"
       title="返回概览界面"
       aria-label="返回概览界面"
     >
-      SingBox<span style={{ color: '#3a5bff' }}> Panel</span>
+      SingBox<span> Panel</span>
     </button>
   )
 }
 
-function UserMenu({ compact }: { compact?: boolean }) {
+function UserMenu({ compact, showTheme = false }: { compact?: boolean; showTheme?: boolean }) {
   const { user, logout } = useAuth()
   const nav = useNavigate()
+  const username = user?.email || '用户'
+  const roleLabel = user?.role === 'admin' ? '管理员' : '用户'
+  const initial = Array.from(username.trim())[0]?.toUpperCase() || 'U'
   return (
-    <div style={{ display: 'flex', alignItems: 'center', gap: 8, whiteSpace: 'nowrap' }}>
-      {!compact && (
-        <span style={{ fontWeight: 600, maxWidth: 160, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-          {user?.email}
-        </span>
-      )}
+    <div className={`console-account${compact ? ' is-compact' : ''}`} role="group" aria-label={`当前账号：${username}，${roleLabel}`}>
+      <div className="console-account-identity" title={`${username} · ${roleLabel}`}>
+        <span className="console-account-avatar" aria-hidden="true">{initial}</span>
+        {!compact && (
+          <div className="console-account-details">
+            <span className="console-account-name">{username}</span>
+            <span className="console-account-role">{roleLabel}</span>
+          </div>
+        )}
+      </div>
+      {showTheme && <ThemeSelector scope="user" variant="account" compact={compact} />}
+      <span className="console-account-divider" aria-hidden="true" />
       <Button
-        size="small"
+        type="text"
+        className="console-logout"
         icon={<LogoutOutlined />}
         title="退出登录"
         aria-label="退出登录"
@@ -65,10 +64,32 @@ function UserMenu({ compact }: { compact?: boolean }) {
           nav('/login')
         }}
       >
-        {compact ? '' : '登出'}
+        {compact ? '' : '退出'}
       </Button>
     </div>
   )
+}
+
+function RouteContent() {
+  const { pathname } = useLocation()
+  const ref = useRef<HTMLDivElement>(null)
+
+  useEffect(() => {
+    const media = window.matchMedia('(prefers-reduced-motion: reduce)')
+    if (media.matches || !ref.current?.animate) return
+    const animation = ref.current.animate(
+      [{ opacity: 0, transform: 'translateY(8px)' }, { opacity: 1, transform: 'translateY(0)' }],
+      { duration: 240, easing: 'cubic-bezier(0.2, 0.7, 0.2, 1)' },
+    )
+    const stop = () => { if (media.matches) animation.cancel() }
+    media.addEventListener('change', stop)
+    return () => {
+      animation.cancel()
+      media.removeEventListener('change', stop)
+    }
+  }, [pathname])
+
+  return <div className="console-route" ref={ref}><Outlet /></div>
 }
 
 const ADMIN_ITEMS = [
@@ -92,14 +113,14 @@ export default function AppLayout() {
   // ---- regular user: single-page layout, no sidebar ----
   if (user?.role !== 'admin') {
     return (
-      <Layout style={{ minHeight: '100vh' }}>
-        <Header style={{ background: '#fff', display: 'flex', justifyContent: 'space-between', alignItems: 'center', paddingInline: isMobile ? 16 : 24 }}>
+      <Layout className="console-shell console-user-shell">
+        <Header className="console-header console-user-header">
           <Brand />
-          <UserMenu compact={isMobile} />
+          <UserMenu compact={isMobile} showTheme />
         </Header>
-        <Content style={{ padding: isMobile ? 12 : 24 }}>
-          <div style={{ maxWidth: 960, margin: '0 auto' }}>
-            <Outlet />
+        <Content className="console-content">
+          <div className="console-user-content">
+            <RouteContent />
           </div>
         </Content>
       </Layout>
@@ -108,9 +129,11 @@ export default function AppLayout() {
 
   // ---- admin ----
   const selected = ADMIN_ITEMS.find((i) => loc.pathname.startsWith(i.key))?.key ?? loc.pathname
+  const pageTitle = ADMIN_ITEMS.find((i) => i.key === selected)?.label || '控制台'
   const menu = (
     <Menu
       theme="light"
+      className="console-nav"
       mode="inline"
       selectedKeys={[selected]}
       items={ADMIN_ITEMS}
@@ -124,49 +147,54 @@ export default function AppLayout() {
 
   if (isMobile) {
     return (
-      <Layout style={{ minHeight: '100vh' }}>
-        <Header style={{ background: '#fff', display: 'flex', alignItems: 'center', gap: 12, paddingInline: 16 }}>
+      <Layout className="console-shell console-mobile-shell">
+        <Header className="console-header console-mobile-header">
           <Button type="text" icon={<MenuOutlined />} onClick={() => setDrawerOpen(true)} title="打开导航菜单" aria-label="打开导航菜单" />
-          <div style={{ flex: 1 }}>
+          <div className="console-mobile-brand">
             <Brand />
           </div>
           <UserMenu compact />
         </Header>
         <Drawer
           placement="left"
+          rootClassName="console-nav-drawer"
           open={drawerOpen}
           onClose={() => setDrawerOpen(false)}
-          width={230}
+          width={248}
           title={<Brand />}
-          styles={{ body: { padding: 0 } }}
+          styles={{ body: { padding: '12px 10px', display: 'flex', flexDirection: 'column' } }}
         >
           {menu}
+          <div className="console-sidebar-footer"><ThemeSelector /></div>
         </Drawer>
-        <Content style={{ padding: 12 }}>
-          <Outlet />
+        <Content className="console-content">
+          {selected !== '/dashboard' && <h1 className="console-mobile-title">{pageTitle}</h1>}
+          <RouteContent />
         </Content>
       </Layout>
     )
   }
 
   return (
-    <Layout style={{ minHeight: '100vh' }}>
+    <Layout className="console-shell">
       <Sider
         theme="light"
-        width={220}
-        style={{ position: 'sticky', top: 0, height: '100vh', overflow: 'auto', borderInlineEnd: '1px solid #eef0f4' }}
+        width={232}
+        className="console-sidebar"
       >
-        <div style={{ padding: '16px 20px' }}>
+        <div className="console-sidebar-brand">
           <Brand />
         </div>
         {menu}
+        <div className="console-sidebar-footer"><ThemeSelector /></div>
       </Sider>
-      <Layout>
-        <Header style={{ background: '#fff', display: 'flex', justifyContent: 'flex-end', alignItems: 'center', paddingInline: 24 }}>
+      <Layout className="console-main">
+        <Header className="console-header">
+          <div className="console-location"><span>管理控制台</span><span aria-hidden="true">/</span><h1>{pageTitle}</h1></div>
           <UserMenu />
         </Header>
-        <Content style={{ margin: 24 }}>
-          <Outlet />
+        <Content className="console-content">
+          <RouteContent />
         </Content>
       </Layout>
     </Layout>

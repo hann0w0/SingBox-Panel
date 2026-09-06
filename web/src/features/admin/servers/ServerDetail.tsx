@@ -459,7 +459,7 @@ export default function ServerDetail() {
       icon: null,
       content: (
         <div>
-          <div style={{ fontSize: 13, color: 'rgba(0, 0, 0, 0.45)', marginBottom: 12 }}>
+          <div style={{ fontSize: 13, color: 'var(--console-muted)', marginBottom: 12 }}>
             以 root 在该服务器上执行。首次执行为安装，已安装时重复执行即为升级。
           </div>
           <div style={{ position: 'relative' }}>
@@ -826,7 +826,7 @@ export default function ServerDetail() {
           </Button>
         }
       >
-        <div style={{ fontSize: 13, color: 'rgba(0, 0, 0, 0.45)', marginBottom: 12 }}>
+        <div style={{ fontSize: 13, color: 'var(--console-muted)', marginBottom: 12 }}>
           配置节点接收客户端连接的入站协议。生成的节点信息将自动提供给订阅与客户端使用。
         </div>
         <Table
@@ -875,7 +875,7 @@ export default function ServerDetail() {
           </Button>
         }
       >
-        <div style={{ fontSize: 13, color: 'rgba(0, 0, 0, 0.45)', marginBottom: 12 }}>
+        <div style={{ fontSize: 13, color: 'var(--console-muted)', marginBottom: 12 }}>
           配置流量路由的目标出站。direct 为内置直连出站，无需重复添加；在「规则」中可将指定流量指向对应出站。
         </div>
         <Table
@@ -900,7 +900,7 @@ export default function ServerDetail() {
                       {isTesting
                         ? <span style={{ color: '#4096ff' }}>测试中…</span>
                         : !t
-                          ? <span style={{ color: '#bbb' }}>未测试</span>
+                          ? <span style={{ color: 'var(--console-faint)' }}>未测试</span>
                           : t.ok
                             ? <Tag color="green">通 · {t.latency_ms}ms</Tag>
                             : <Tag color="red" title={t.error}>不通</Tag>}
@@ -951,7 +951,7 @@ export default function ServerDetail() {
           </Space>
         }
       >
-        <div style={{ fontSize: 13, color: 'rgba(0, 0, 0, 0.45)', marginBottom: 12 }}>
+        <div style={{ fontSize: 13, color: 'var(--console-muted)', marginBottom: 12 }}>
           按条件匹配入站流量并路由至指定出站。规则从上至下依次顺序匹配，未命中的流量走兜底出站。
         </div>
 
@@ -1004,7 +1004,7 @@ export default function ServerDetail() {
                   onPointerUp={finishRulePointerDrag}
                   onPointerCancel={cancelRulePointerDrag}
                 >
-                  <MenuOutlined style={{ color: '#94a3b8', fontSize: 14, cursor: 'grab' }} />
+                  <MenuOutlined style={{ color: 'var(--console-faint)', fontSize: 14, cursor: 'grab' }} />
                 </button>
               ),
             },
@@ -1065,7 +1065,7 @@ export default function ServerDetail() {
                       </Tag>
                     ) : null}
                     {!m.rule_set?.length && !m.inbound?.length && !m.domain?.length && !m.domain_suffix?.length && !m.domain_keyword?.length && !m.ip_cidr?.length && !m.source_ip_cidr?.length && !m.port?.length && !m.protocol?.length && !m.network && (
-                      <Tag style={{ background: '#f5f5f5', color: '#595959', borderColor: '#d9d9d9' }}>
+                      <Tag style={{ background: '#f5f5f5', color: 'var(--console-muted)', borderColor: '#d9d9d9' }}>
                         匹配全部流量
                       </Tag>
                     )}
@@ -1107,7 +1107,7 @@ export default function ServerDetail() {
             return (
               <Table.Summary.Row style={{ background: '#fafafa' }}>
                 <Table.Summary.Cell index={0} align="center">
-                  <span style={{ color: '#d9d9d9' }}>-</span>
+                  <span style={{ color: 'var(--console-faint)' }}>-</span>
                 </Table.Summary.Cell>
                 <Table.Summary.Cell index={1}>
                   <Tag color="purple" style={{ margin: 0, fontWeight: 600 }}>

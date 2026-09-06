@@ -1,0 +1,200 @@
+.login-page {
+  display: grid;
+  grid-template-columns: minmax(0, 3fr) minmax(0, 2fr);
+  min-height: 100vh;
+  min-height: 100dvh;
+  background: #fff;
+  color: #302f2d;
+  -webkit-font-smoothing: antialiased;
+}
+
+.login-brand {
+  position: relative;
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  padding: 80px 32px;
+  overflow: hidden;
+  background: #050505;
+  container-type: inline-size;
+}
+
+.login-wordmark {
+  display: flex;
+  width: 100%;
+  flex-direction: column;
+  align-items: flex-end;
+  font-family: Arial, Helvetica, sans-serif;
+  font-size: min(17vw, 24vh);
+  font-size: min(25cqw, 24dvh);
+  font-weight: 800;
+  line-height: 0.94;
+  letter-spacing: -0.075em;
+  user-select: none;
+}
+
+.login-wordmark span {
+  padding-right: 0.055em;
+  animation: login-wordmark-fade 8s ease-in-out infinite;
+}
+
+.login-wordmark span:nth-child(1) {
+  color: #dededb;
+}
+
+.login-wordmark span:nth-child(2) {
+  color: #a4a4a1;
+  animation-delay: 1s;
+}
+
+.login-wordmark span:nth-child(3) {
+  color: #666663;
+  animation-delay: 2s;
+}
+
+@keyframes login-wordmark-fade {
+  0%,
+  100% {
+    opacity: 1;
+  }
+
+  50% {
+    opacity: 0.18;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .login-wordmark span {
+    animation: none;
+  }
+}
+
+.login-brand-footer {
+  position: absolute;
+  right: 36px;
+  bottom: 32px;
+  color: #858582;
+  font-size: 9px;
+  letter-spacing: 0.12em;
+}
+
+.login-content {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  justify-content: center;
+  padding: 32px clamp(20px, 2vw, 32px);
+  border-left: 1px solid #e9e7e4;
+}
+
+.login-stack {
+  width: 100%;
+  max-width: 408px;
+}
+
+.login-card {
+  padding: 34px 30px 30px;
+  border: 1px solid #e7e5e2;
+  border-radius: 12px;
+  background: #fff;
+  box-shadow: 0 8px 20px rgb(35 32 27 / 7%), 0 2px 4px rgb(35 32 27 / 2%);
+}
+
+.login-card-header {
+  margin-bottom: 26px;
+  text-align: center;
+}
+
+.login-card-header h1 {
+  margin: 0;
+  color: #302f2d;
+  font-size: 25px;
+  font-weight: 650;
+  line-height: 1.4;
+  letter-spacing: -0.7px;
+}
+
+.login-card .ant-form-item {
+  margin-bottom: 22px;
+}
+
+.login-card .ant-form-item-label > label {
+  font-weight: 500;
+}
+
+.login-card .ant-input-lg,
+.login-card .ant-input-affix-wrapper-lg {
+  font-size: 14px;
+}
+
+.login-card button.ant-input-password-icon {
+  display: inline-flex;
+  width: 28px;
+  height: 24px;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  border: 0;
+  border-radius: 4px;
+  background: transparent;
+  color: #817d77;
+  font-size: 16px;
+  cursor: pointer;
+}
+
+.login-card button.ant-input-password-icon:hover {
+  color: #302f2d;
+}
+
+.login-card button.ant-input-password-icon:focus-visible {
+  outline: 2px solid #817d77;
+  outline-offset: 1px;
+}
+
+.login-card .login-submit {
+  margin-top: 6px;
+  font-size: 14px;
+  font-weight: 600;
+  box-shadow: none;
+}
+
+@media (min-width: 1800px) {
+  .login-stack {
+    max-width: 428px;
+  }
+
+  .login-card {
+    padding: 38px 32px 34px;
+  }
+}
+
+@media (max-width: 900px) {
+  .login-page {
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-rows: 1fr;
+  }
+
+  .login-brand {
+    display: none;
+  }
+
+  .login-content {
+    padding: 24px 20px;
+    border-left: 0;
+  }
+
+  .login-card {
+    padding: 24px;
+  }
+
+  .login-card-header,
+  .login-card .ant-form-item {
+    margin-bottom: 18px;
+  }
+
+  .login-card .ant-input-lg,
+  .login-card .ant-input-affix-wrapper-lg,
+  .login-card .ant-input-affix-wrapper-lg > input.ant-input {
+    font-size: 16px;
+  }
+}

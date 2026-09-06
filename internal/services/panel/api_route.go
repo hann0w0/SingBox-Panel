@@ -147,6 +147,11 @@ func (a *App) updateOutbound(c *gin.Context) {
 			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 			return
 		}
+		if err := tx.Model(&model.RuleSet{}).Where("server_id = ? AND download_detour = ?", sid, oldTag).Update("download_detour", ob.Tag).Error; err != nil {
+			tx.Rollback()
+			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+			return
+		}
 	}
 	if err := tx.Save(&ob).Error; err != nil {
 		tx.Rollback()
@@ -189,8 +194,13 @@ func (a *App) deleteOutbound(c *gin.Context) {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
-	if ruleCount > 0 || finalCount > 0 {
-		c.JSON(http.StatusConflict, gin.H{"error": "该出站仍被分流规则或 final 引用，请先修改引用"})
+	var ruleSetCount int64
+	if err := a.db.Model(&model.RuleSet{}).Where("server_id = ? AND download_detour = ?", sid, ob.Tag).Count(&ruleSetCount).Error; err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+	if ruleCount > 0 || finalCount > 0 || ruleSetCount > 0 {
+		c.JSON(http.StatusConflict, gin.H{"error": "该出站仍被分流规则、final 或规则集下载引用，请先修改引用"})
 		return
 	}
 	if err := a.db.Delete(&ob).Error; err != nil {
@@ -539,6 +549,20 @@ func normalizeRuleSetReq(req *ruleSetReq) error {
 	return nil
 }
 
+func (a *App) validateRuleSetDetour(serverID uint, detour string) error {
+	if detour == "" || detour == "direct" {
+		return nil
+	}
+	var count int64
+	if err := a.db.Model(&model.Outbound{}).Where("server_id = ? AND tag = ?", serverID, detour).Count(&count).Error; err != nil {
+		return err
+	}
+	if count == 0 {
+		return fmt.Errorf("规则集下载出站 %q 不存在", detour)
+	}
+	return nil
+}
+
 func (a *App) createRuleSet(c *gin.Context) {
 	id, ok := uintParam(c, "id")
 	if !ok {
@@ -554,6 +578,10 @@ func (a *App) createRuleSet(c *gin.Context) {
 		return
 	}
 	if err := normalizeRuleSetReq(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+	if err := a.validateRuleSetDetour(id, req.DownloadDetour); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
@@ -602,6 +630,10 @@ func (a *App) updateRuleSet(c *gin.Context) {
 		return
 	}
 	if err := normalizeRuleSetReq(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+	if err := a.validateRuleSetDetour(sid, req.DownloadDetour); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}

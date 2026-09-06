@@ -639,10 +639,17 @@ func TestBuildInboundSocksAuthenticationModes(t *testing.T) {
 	}{
 		{name: "no authentication", settings: InboundSettings{SingleUser: true}},
 		{name: "username and password", settings: InboundSettings{SingleUser: true, Username: "alice", Password: "secret"}, wantUser: true},
+		{name: "legacy flag retains shared login", settings: InboundSettings{MultiUser: true, Username: "alice", Password: "secret"}, wantUser: true},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			raw, err := BuildInbound(InboundInput{Tag: "socks-in", Type: "socks", ListenPort: 1080, Settings: tc.settings})
+			if tc.settings.UseMultiUser("socks") {
+				t.Fatal("SOCKS must not enable per-panel-user credentials")
+			}
+			raw, err := BuildInbound(InboundInput{
+				Tag: "socks-in", Type: "socks", ListenPort: 1080, Settings: tc.settings,
+				Users: []ProxyUser{{Username: "panel-user", Password: "panel-password"}},
+			})
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -666,6 +673,16 @@ func TestBuildInboundSocksAuthenticationModes(t *testing.T) {
 				t.Fatalf("authenticated SOCKS user = %v", user)
 			}
 		})
+	}
+}
+
+func TestLegacySOCKSMustNotSilentlyBecomeUnauthenticated(t *testing.T) {
+	_, err := BuildInbound(InboundInput{
+		Tag: "socks", Type: "socks", ListenPort: 1080,
+		Settings: InboundSettings{MultiUser: true},
+	})
+	if err == nil {
+		t.Fatal("unmigrated multi-user SOCKS must fail instead of opening the proxy")
 	}
 }
 

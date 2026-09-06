@@ -81,12 +81,46 @@ var (
 	panelReleaseURL   = "https://api.github.com/repos/" + githubRepo + "/releases/latest"
 )
 
-func (a *App) tryMaintenanceRequest(c *gin.Context) (func(), bool) {
+const panelUpdateLockLifetime = 30 * time.Minute
+
+// tryMaintenanceLock also covers the detached helper's verification window in
+// a newly restarted panel, whose in-memory mutex starts out unlocked.
+func (a *App) tryMaintenanceLock() bool {
 	if !a.selfUpdating.TryLock() {
+		return false
+	}
+	if installDir := installDirFromDSN(a.cfg.Database.DSN); installDir != "" {
+		info, err := os.Stat(filepath.Join(installDir, updateSubdir, ".active"))
+		if (err == nil && time.Since(info.ModTime()) <= panelUpdateLockLifetime) ||
+			(err != nil && !errors.Is(err, os.ErrNotExist)) {
+			a.selfUpdating.Unlock()
+			return false
+		}
+	}
+	return true
+}
+
+func (a *App) tryMaintenanceRequest(c *gin.Context) (func(), bool) {
+	if !a.tryMaintenanceLock() {
 		c.JSON(http.StatusConflict, gin.H{"error": "已有维护任务正在进行"})
 		return func() {}, false
 	}
 	return a.selfUpdating.Unlock, true
+}
+
+// A detached helper can fail before stopping its parent panel (for example,
+// while copying the old executable). The helper owns .active until it has
+// finished all rollback/status writes; only its removal releases this mutex.
+func (a *App) releaseMaintenanceAfterDetachedUpdate(lockPath string) {
+	ticker := time.NewTicker(250 * time.Millisecond)
+	defer ticker.Stop()
+	for {
+		if _, err := os.Stat(lockPath); errors.Is(err, os.ErrNotExist) {
+			a.selfUpdating.Unlock()
+			return
+		}
+		<-ticker.C
+	}
 }
 
 // latestPanelRelease returns the newest release tag from GitHub. Automatic
@@ -150,13 +184,20 @@ func (a *App) maintenanceInfo(c *gin.Context) {
 		driver = "sqlite"
 	}
 	resp := gin.H{
-		"current_version":  a.version,
-		"update_supported": supported,
-		"db_driver":        driver,
-		"uptime_seconds":   int64(time.Since(a.startedAt).Seconds()),
+		"current_version":     a.version,
+		"update_supported":    supported,
+		"reinstall_supported": supported,
+		"instance_id":         a.startedAt.UTC().Format(time.RFC3339Nano),
+		"db_driver":           driver,
+		"uptime_seconds":      int64(time.Since(a.startedAt).Seconds()),
 	}
 	if !supported {
 		resp["update_reason"] = reason
+	}
+	if installDir := installDirFromDSN(a.cfg.Database.DSN); installDir != "" {
+		if operation, err := readPanelUpdateOperation(filepath.Join(installDir, updateSubdir, "result.json")); err == nil {
+			resp["update_operation"] = operation
+		}
 	}
 	// The latest-release lookup is best-effort: a rate-limited or offline API
 	// must not blank out the version card.
@@ -175,6 +216,45 @@ func sameVersion(a, b string) bool {
 	return strings.TrimPrefix(a, "v") == strings.TrimPrefix(b, "v")
 }
 
+type panelUpdateOperation struct {
+	ID     string `json:"id"`
+	Status string `json:"status"`
+}
+
+func readPanelUpdateOperation(path string) (panelUpdateOperation, error) {
+	var operation panelUpdateOperation
+	f, err := os.Open(path)
+	if err != nil {
+		return operation, err
+	}
+	defer f.Close()
+	if err := json.NewDecoder(io.LimitReader(f, 4096)).Decode(&operation); err != nil {
+		return operation, err
+	}
+	if operation.ID == "" {
+		return operation, errors.New("update operation has no ID")
+	}
+	switch operation.Status {
+	case "running", "succeeded", "rolled_back", "failed":
+		return operation, nil
+	default:
+		return operation, errors.New("invalid update operation status")
+	}
+}
+
+func writePanelUpdateOperation(path string, operation panelUpdateOperation) error {
+	raw, err := json.Marshal(operation)
+	if err != nil {
+		return err
+	}
+	temp := path + ".new"
+	defer os.Remove(temp)
+	if err := os.WriteFile(temp, raw, 0o600); err != nil {
+		return err
+	}
+	return os.Rename(temp, path)
+}
+
 // GET /api/admin/maintenance/backup — stream a .tar.gz containing a consistent
 // SQLite snapshot plus the resolved jwt_secret. Restoring this on another host
 // and pointing the same domain at it lets every agent reconnect automatically:
@@ -185,7 +265,7 @@ func (a *App) downloadBackup(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "仅 SQLite 部署支持一键备份"})
 		return
 	}
-	if !a.selfUpdating.TryLock() {
+	if !a.tryMaintenanceLock() {
 		c.JSON(http.StatusConflict, gin.H{"error": "已有维护任务正在进行"})
 		return
 	}
@@ -419,7 +499,7 @@ func backupManifest(version, baseURL string) string {
 // verify its checksum, then hand a swap+restart script to a transient
 // systemd-run unit so it survives our own restart and escapes the sandbox.
 func (a *App) selfUpdate(c *gin.Context) {
-	if ok := a.selfUpdating.TryLock(); !ok {
+	if ok := a.tryMaintenanceLock(); !ok {
 		c.JSON(http.StatusConflict, gin.H{"error": "已有更新任务正在进行"})
 		return
 	}
@@ -438,6 +518,7 @@ func (a *App) selfUpdate(c *gin.Context) {
 
 	var body struct {
 		Version string `json:"version"`
+		Force   bool   `json:"force"`
 	}
 	if !bindOptionalJSON(c, &body) {
 		return
@@ -457,7 +538,7 @@ func (a *App) selfUpdate(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "非法的版本号：" + target})
 		return
 	}
-	if sameVersion(target, a.version) {
+	if sameVersion(target, a.version) && !body.Force {
 		c.JSON(http.StatusOK, gin.H{"ok": true, "message": "已是目标版本 " + target + "，无需更新", "updated": false})
 		return
 	}
@@ -485,7 +566,7 @@ func (a *App) selfUpdate(c *gin.Context) {
 	}
 	updateLockPath := filepath.Join(updateRoot, ".active")
 	if info, statErr := os.Stat(updateLockPath); statErr == nil {
-		if time.Since(info.ModTime()) <= 30*time.Minute {
+		if time.Since(info.ModTime()) <= panelUpdateLockLifetime {
 			c.JSON(http.StatusConflict, gin.H{"error": "已有更新任务仍在运行或等待验证"})
 			return
 		}
@@ -573,13 +654,8 @@ func (a *App) selfUpdate(c *gin.Context) {
 		c.JSON(http.StatusBadGateway, gin.H{"error": "Release 前端或 Agent 包内容不完整"})
 		return
 	}
-	quotedRollbackDB := strings.ReplaceAll(rollbackDB, "'", "''")
-	if err := a.db.Exec("VACUUM INTO '" + quotedRollbackDB + "'").Error; err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "创建更新前数据库快照失败：" + err.Error()})
-		return
-	}
-	if err := os.Chmod(rollbackDB, 0o600); err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "保护数据库回滚快照失败：" + err.Error()})
+	if dbPath == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "仅文件型 SQLite 部署支持面板内更新"})
 		return
 	}
 	webDir, err := managedUpdatePath(a.cfg.WebDir, installDir)
@@ -604,7 +680,15 @@ func (a *App) selfUpdate(c *gin.Context) {
 
 	// Detach one transactional binary+web+Agent swap. The helper retains every
 	// old component and restores all of them if startup/readiness fails.
+	operation := panelUpdateOperation{ID: filepath.Base(stageDir), Status: "running"}
+	operationPath := filepath.Join(updateRoot, "result.json")
+	if err := writePanelUpdateOperation(operationPath, operation); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "保存更新状态失败：" + err.Error()})
+		return
+	}
 	if err := launchSwap(stagedBin, stagedWebDir, stagedAgentsDir, stageDir, webDir, agentsDir, readyURL, updateLockPath, dbPath, rollbackDB); err != nil {
+		operation.Status = "failed"
+		_ = writePanelUpdateOperation(operationPath, operation)
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "启动更新任务失败：" + err.Error()})
 		return
 	}
@@ -614,12 +698,14 @@ func (a *App) selfUpdate(c *gin.Context) {
 	// this process. Keep the in-process maintenance gate locked until that happens;
 	// otherwise a restore or second update can start in the hand-off window.
 	releaseMaintenanceLock = false
+	go a.releaseMaintenanceAfterDetachedUpdate(updateLockPath)
 
 	c.JSON(http.StatusOK, gin.H{
-		"ok":      true,
-		"updated": true,
-		"message": "已开始完整更新到 " + target + "，后端、前端和 Agent 包将一起切换并自动验证。",
-		"version": target,
+		"ok":           true,
+		"updated":      true,
+		"message":      "已开始完整更新到 " + target + "，后端、前端和 Agent 包将一起切换并自动验证。",
+		"version":      target,
+		"operation_id": operation.ID,
 	})
 }
 
@@ -941,6 +1027,7 @@ func launchSwap(stagedBin, stagedWebDir, stagedAgentsDir, stageDir, webDir, agen
 
 func buildSwapScript(liveBin, stagedBin, stagedWebDir, stagedAgentsDir, stageDir, webDir, agentsDir, readyURL, lockPath, dbPath, rollbackDB string) string {
 	return fmt.Sprintf(`set -u
+umask 077
 sleep 2
 STAGE=%[1]s
 ROLLBACK="$STAGE/rollback"
@@ -955,12 +1042,30 @@ READY=%[9]s
 LOCK=%[10]s
 DB=%[11]s
 ROLLBACK_DB=%[12]s
+RESULT="$STAGE/../result.json"
+OPERATION=${STAGE##*/}
+RESULT_RECORDED=0
 WEB_MOVED=0
 AGENTS_MOVED=0
 NEW_WEB_INSTALLED=0
 NEW_AGENTS_INSTALLED=0
+SNAPSHOT_READY=0
 ROLLBACK_FAILED=0
-trap 'rm -f -- "$LOCK"' EXIT
+
+report_result() {
+  printf '{"id":"%%s","status":"%%s"}\n' "$OPERATION" "$1" > "$RESULT.new" &&
+    chmod 0600 "$RESULT.new" && mv -f -- "$RESULT.new" "$RESULT" || return 1
+  RESULT_RECORDED=1
+}
+
+finish_update() {
+  result=$?
+  trap - EXIT
+  if [ "$RESULT_RECORDED" -eq 0 ]; then report_result failed || true; fi
+  rm -f -- "$LOCK"
+  exit "$result"
+}
+trap finish_update EXIT
 
 rollback_update() {
   ROLLBACK_FAILED=0
@@ -990,16 +1095,19 @@ rollback_update() {
   else
     ROLLBACK_FAILED=1
   fi
-  rm -f -- "$DB-wal" "$DB-shm" "$DB.rollback-new" || ROLLBACK_FAILED=1
-  if [ -f "$ROLLBACK_DB" ]; then
+  if [ "$SNAPSHOT_READY" -eq 1 ]; then
+    rm -f -- "$DB-wal" "$DB-shm" "$DB-journal" "$DB.rollback-new" || ROLLBACK_FAILED=1
     if cp -p -- "$ROLLBACK_DB" "$DB.rollback-new"; then
       chmod 0600 "$DB.rollback-new" && mv -f "$DB.rollback-new" "$DB" || ROLLBACK_FAILED=1
     else
       rm -f -- "$DB.rollback-new"
       ROLLBACK_FAILED=1
     fi
-  else
-    ROLLBACK_FAILED=1
+    for suffix in -wal -journal; do
+      if [ -f "$ROLLBACK_DB$suffix" ]; then
+        cp -p -- "$ROLLBACK_DB$suffix" "$DB$suffix" && chmod 0600 "$DB$suffix" || ROLLBACK_FAILED=1
+      fi
+    done
   fi
   if [ "$ROLLBACK_FAILED" -eq 0 ]; then
     systemctl restart "$SERVICE" >/dev/null 2>&1 || ROLLBACK_FAILED=1
@@ -1013,6 +1121,16 @@ rollback_update() {
 
 perform_update() {
   systemctl stop "$SERVICE" || return 1
+  # No API or Agent writer remains after stop. Preserve WAL/rollback journals
+  # as well: committed writes need not have been checkpointed into the DB yet.
+  # SHM is only an index and SQLite rebuilds it from WAL on the next open.
+  cp -p -- "$DB" "$ROLLBACK_DB" && chmod 0600 "$ROLLBACK_DB" || return 1
+  for suffix in -wal -journal; do
+    if [ -f "$DB$suffix" ]; then
+      cp -p -- "$DB$suffix" "$ROLLBACK_DB$suffix" && chmod 0600 "$ROLLBACK_DB$suffix" || return 1
+    fi
+  done
+  SNAPSHOT_READY=1
   if [ -e "$WEB" ]; then mv "$WEB" "$ROLLBACK/web" || return 1; WEB_MOVED=1; fi
   if [ -e "$AGENTS" ]; then mv "$AGENTS" "$ROLLBACK/agents" || return 1; AGENTS_MOVED=1; fi
   mkdir -p "$(dirname "$WEB")" "$(dirname "$AGENTS")" || return 1
@@ -1028,7 +1146,7 @@ perform_update() {
 mkdir -p "$ROLLBACK"
 cp -p "$BIN" "$ROLLBACK/panel" || exit 1
 if ! perform_update; then
-  if rollback_update; then rm -rf -- "$STAGE"; fi
+  if rollback_update; then report_result rolled_back && rm -rf -- "$STAGE"; fi
   exit 1
 fi
 
@@ -1036,10 +1154,12 @@ i=0
 while [ "$i" -lt 30 ]; do
   if systemctl is-active --quiet "$SERVICE"; then
     if command -v curl >/dev/null 2>&1 && curl -fsS --max-time 3 "$READY" >/dev/null 2>&1; then
+      report_result succeeded || exit 1
       rm -rf -- "$STAGE"
       exit 0
     fi
     if command -v wget >/dev/null 2>&1 && wget -qO- -T 3 "$READY" >/dev/null 2>&1; then
+      report_result succeeded || exit 1
       rm -rf -- "$STAGE"
       exit 0
     fi
@@ -1047,7 +1167,7 @@ while [ "$i" -lt 30 ]; do
   i=$((i + 1))
   sleep 2
 done
-if rollback_update; then rm -rf -- "$STAGE"; fi
+if rollback_update; then report_result rolled_back && rm -rf -- "$STAGE"; fi
 exit 1`,
 		shellQuote(stageDir), shellQuote(liveBin), shellQuote(webDir), shellQuote(agentsDir),
 		shellQuote(stagedBin), shellQuote(stagedWebDir), shellQuote(stagedAgentsDir),

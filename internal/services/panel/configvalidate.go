@@ -360,19 +360,30 @@ func preserveInboundSecrets(old, next *singbox.InboundSettings) {
 	if next.ShadowTLSPassword == "" {
 		next.ShadowTLSPassword = old.ShadowTLSPassword
 	}
-	if next.TLS.Reality.PrivateKey == "" {
-		next.TLS.Reality.PrivateKey = old.TLS.Reality.PrivateKey
+	if next.TLS.Reality.Enabled && old.TLS.Reality.Enabled {
+		if next.TLS.Reality.PrivateKey == "" {
+			next.TLS.Reality.PrivateKey = old.TLS.Reality.PrivateKey
+		}
+		if next.TLS.Reality.PublicKey == "" {
+			next.TLS.Reality.PublicKey = old.TLS.Reality.PublicKey
+		}
+		if len(next.TLS.Reality.ShortID) == 0 {
+			next.TLS.Reality.ShortID = old.TLS.Reality.ShortID
+		}
 	}
-	if next.TLS.Reality.PublicKey == "" {
-		next.TLS.Reality.PublicKey = old.TLS.Reality.PublicKey
-	}
-	if len(next.TLS.Reality.ShortID) == 0 {
-		next.TLS.Reality.ShortID = old.TLS.Reality.ShortID
-	}
-	if next.TLS.Certificate == "" {
-		next.TLS.Certificate = old.TLS.Certificate
-	}
-	if next.TLS.Key == "" {
-		next.TLS.Key = old.TLS.Key
+	// Omitted inline PEM means "keep" only while staying in the same certificate
+	// mode. Restoring it after a switch to REALITY, ACME or paths creates mutually
+	// exclusive TLS sources and prevents the new settings from being saved.
+	inlineMode := (next.TLS.Enabled || next.TLS.SelfSigned) &&
+		!next.TLS.Reality.Enabled && next.TLS.ACMEDomain == "" &&
+		next.TLS.CertificatePath == "" && next.TLS.KeyPath == "" &&
+		next.TLS.SelfSigned == old.TLS.SelfSigned
+	if inlineMode {
+		if next.TLS.Certificate == "" {
+			next.TLS.Certificate = old.TLS.Certificate
+		}
+		if next.TLS.Key == "" {
+			next.TLS.Key = old.TLS.Key
+		}
 	}
 }

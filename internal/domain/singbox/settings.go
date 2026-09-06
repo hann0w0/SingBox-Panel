@@ -295,11 +295,11 @@ type InboundSettings struct {
 // this panel can safely assign one credential per panel user. Snell is kept in
 // fixed-PSK mode despite its newer schema exposing users[]: clients authenticate
 // with the top-level PSK, and the panel does not provision per-user Snell keys.
-// Legacy Shadowsocks ciphers also have only a
-// shared password; Shadowsocks 2022 is the multi-user variant.
+// SOCKS and legacy Shadowsocks ciphers also use shared credentials in the panel;
+// Shadowsocks 2022 is the multi-user variant.
 func SupportsMultiUser(typ string, s InboundSettings) bool {
 	switch typ {
-	case "vless", "vmess", "trojan", "hysteria2", "tuic", "anytls", "socks":
+	case "vless", "vmess", "trojan", "hysteria2", "tuic", "anytls":
 		return true
 	case "shadowsocks":
 		return IsSS2022(s.Method)
@@ -586,6 +586,9 @@ func (s InboundSettings) validateProtocol(typ string) error {
 			return fmt.Errorf("snell: unsupported v6 mode %q", s.SnellMode)
 		}
 	case "socks":
+		if s.MultiUser && (s.Username == "" || s.Password == "") {
+			return fmt.Errorf("socks: legacy multi-user settings must be migrated to shared credentials")
+		}
 		if (s.Username == "") != (s.Password == "") {
 			return fmt.Errorf("socks: username and password must both be set or both be empty")
 		}

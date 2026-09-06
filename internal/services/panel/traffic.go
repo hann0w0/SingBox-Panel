@@ -86,7 +86,7 @@ func recordServerTraffic(db *gorm.DB, serverID uint, snapshot *protocol.TrafficS
 		var server model.Server
 		if err := tx.Select(
 			"id", "traffic_available", "traffic_upload", "traffic_download",
-			"traffic_remote_upload", "traffic_remote_download",
+			"traffic_remote_upload", "traffic_remote_download", "traffic_updated_at",
 		).First(&server, serverID).Error; err != nil {
 			return err
 		}
@@ -95,7 +95,9 @@ func recordServerTraffic(db *gorm.DB, serverID uint, snapshot *protocol.TrafficS
 		// traffic from before the feature was enabled being counted as new usage.
 		uploadDelta := uint64(0)
 		downloadDelta := uint64(0)
-		if server.TrafficAvailable {
+		// Availability can briefly become false when the local API times out.
+		// The last successful sample still provides a valid accounting baseline.
+		if server.TrafficAvailable || server.TrafficUpdatedAt != nil {
 			uploadDelta = trafficDelta(snapshot.UploadTotal, server.TrafficRemoteUpload)
 			downloadDelta = trafficDelta(snapshot.DownloadTotal, server.TrafficRemoteDownload)
 		}

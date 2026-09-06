@@ -43,11 +43,11 @@ export function NodeFormatsModalContent({ data }: { data: NodeFormats }) {
   const items = data.items || []
   return (
     <div style={{ paddingTop: 4 }}>
-      <div style={{ fontSize: 13, color: 'rgba(0, 0, 0, 0.45)', marginBottom: 12 }}>
+      <div style={{ fontSize: 13, color: 'var(--console-muted)', marginBottom: 12 }}>
         点击“详情”查看节点参数；多用户协议请使用具体用户的订阅。
       </div>
       {!items.length ? (
-        <div style={{ padding: '36px 0', textAlign: 'center', color: '#94a3b8' }}>暂无可导出的单凭证入站</div>
+        <div style={{ padding: '36px 0', textAlign: 'center', color: 'var(--console-faint)' }}>暂无可导出的单凭证入站</div>
       ) : (
         <List
           size="small"

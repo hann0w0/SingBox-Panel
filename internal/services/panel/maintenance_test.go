@@ -13,7 +13,6 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
-	"runtime"
 	"strings"
 	"testing"
 	"time"
@@ -132,6 +131,12 @@ func TestMaintenanceInfoReportsDriverAndUptime(t *testing.T) {
 	if got := w.Header().Get("Cache-Control"); got != "no-store" {
 		t.Errorf("Cache-Control = %q, want no-store", got)
 	}
+	if got["instance_id"] != a.startedAt.UTC().Format(time.RFC3339Nano) {
+		t.Errorf("maintenance response does not identify this running process")
+	}
+	if got["reinstall_supported"] != got["update_supported"] {
+		t.Errorf("same-version reinstall support differs from update support")
+	}
 }
 
 func TestInstallDirFromDSN(t *testing.T) {
@@ -177,7 +182,7 @@ func TestSwapScriptSyntaxAndRollbackGuards(t *testing.T) {
 		`cp -p -- "$ROLLBACK_DB" "$DB.rollback-new"`,
 		`ROLLBACK_FAILED=1`,
 		`rollback failed; recovery files remain in $STAGE`,
-		`if rollback_update; then rm -rf -- "$STAGE"; fi`,
+		`if rollback_update; then report_result rolled_back && rm -rf -- "$STAGE"; fi`,
 	} {
 		if !strings.Contains(script, required) {
 			t.Fatalf("swap script missing rollback guard %q", required)
@@ -291,9 +296,6 @@ func TestExtractUpdateArchiveValidBundle(t *testing.T) {
 }
 
 func TestSwapScriptRestoresAllComponentsAndDatabaseMode(t *testing.T) {
-	if runtime.GOOS != "linux" {
-		t.Skip("the production swap script targets Linux coreutils and systemd")
-	}
 	root := t.TempDir()
 	stage := filepath.Join(root, "stage")
 	liveBin := filepath.Join(root, "panel")
@@ -317,8 +319,8 @@ func TestSwapScriptRestoresAllComponentsAndDatabaseMode(t *testing.T) {
 		filepath.Join(agentsDir, "agent"):    "old-agent",
 		filepath.Join(stagedWeb, "asset"):    "new-web",
 		filepath.Join(stagedAgents, "agent"): "new-agent",
-		dbPath:                               "migrated-database",
-		rollbackDB:                           "old-database",
+		dbPath:                               "old-database",
+		rollbackDB:                           "too-early-snapshot",
 		lockPath:                             "locked",
 	} {
 		if err := os.WriteFile(path, []byte(content), 0o600); err != nil {
@@ -330,7 +332,27 @@ func TestSwapScriptRestoresAllComponentsAndDatabaseMode(t *testing.T) {
 	if err := os.Mkdir(fakeBin, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	writeExecutable(t, filepath.Join(fakeBin, "systemctl"), "#!/bin/sh\nif [ \"$1\" = is-active ]; then exit 1; fi\nexit 0\n")
+	// A final acknowledged write lands as the old service shuts down. The new
+	// service then changes both the main database and WAL before failing health.
+	writeExecutable(t, filepath.Join(fakeBin, "systemctl"), "#!/bin/sh\n"+
+		"DB="+shellQuote(dbPath)+"\nSTATE="+shellQuote(filepath.Join(root, "service-state"))+"\n"+
+		`case "$1" in
+  is-active) exit 1 ;;
+  stop)
+    if [ ! -e "$STATE" ]; then
+      printf 'old-database-with-last-write' > "$DB"
+      printf 'committed-wal' > "$DB-wal"
+      printf 'stopped' > "$STATE"
+    fi ;;
+  restart)
+    if [ "$(cat "$STATE")" = stopped ]; then
+      printf 'migrated-database' > "$DB"
+      printf 'migrated-wal' > "$DB-wal"
+      printf 'restarted' > "$STATE"
+    fi ;;
+esac
+exit 0
+`)
 	writeExecutable(t, filepath.Join(fakeBin, "sleep"), "#!/bin/sh\nexit 0\n")
 	writeExecutable(t, filepath.Join(fakeBin, "curl"), "#!/bin/sh\nexit 1\n")
 	writeExecutable(t, filepath.Join(fakeBin, "wget"), "#!/bin/sh\nexit 1\n")
@@ -345,7 +367,8 @@ func TestSwapScriptRestoresAllComponentsAndDatabaseMode(t *testing.T) {
 		liveBin:                           "old-binary",
 		filepath.Join(webDir, "asset"):    "old-web",
 		filepath.Join(agentsDir, "agent"): "old-agent",
-		dbPath:                            "old-database",
+		dbPath:                            "old-database-with-last-write",
+		dbPath + "-wal":                   "committed-wal",
 	} {
 		got, err := os.ReadFile(path)
 		if err != nil {
@@ -367,6 +390,188 @@ func TestSwapScriptRestoresAllComponentsAndDatabaseMode(t *testing.T) {
 	}
 	if _, err := os.Stat(lockPath); !os.IsNotExist(err) {
 		t.Fatalf("swap lock was not removed: %v", err)
+	}
+	operation, err := readPanelUpdateOperation(filepath.Join(root, "result.json"))
+	if err != nil || operation.ID != filepath.Base(stage) || operation.Status != "rolled_back" {
+		t.Fatalf("same-version rollback must be distinguishable from success: status=%s err=%v", operation.Status, err)
+	}
+}
+
+func TestMaintenanceGateSurvivesRestartAndAllowsRetryAfterHelper(t *testing.T) {
+	root := t.TempDir()
+	updateRoot := filepath.Join(root, updateSubdir)
+	if err := os.Mkdir(updateRoot, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	lockPath := filepath.Join(updateRoot, ".active")
+	if err := os.WriteFile(lockPath, []byte("active"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	cfg := config.Default()
+	cfg.Database.DSN = filepath.Join(root, "data", "panel.db")
+	app := &App{cfg: cfg}
+	router := gin.New()
+	router.GET("/backup", app.downloadBackup)
+	router.POST("/restore", app.restoreBackup)
+	router.POST("/update", app.selfUpdate)
+	router.POST("/cloud/sync", app.syncOneDriveBackup)
+	router.POST("/cloud/:id/restore", app.restoreOneDriveBackup)
+	router.POST("/cloud/auth", app.startOneDriveAuth)
+	for _, path := range []string{"/backup", "/restore", "/update", "/cloud/sync", "/cloud/one/restore", "/cloud/auth"} {
+		method := http.MethodPost
+		if path == "/backup" {
+			method = http.MethodGet
+		}
+		rec := httptest.NewRecorder()
+		router.ServeHTTP(rec, httptest.NewRequest(method, path, nil))
+		if rec.Code != http.StatusConflict {
+			t.Fatalf("new process accepted maintenance %s while helper is active: %d", path, rec.Code)
+		}
+	}
+	// The scheduler uses the same gate, without an HTTP request.
+	if app.tryMaintenanceLock() {
+		app.selfUpdating.Unlock()
+		t.Fatal("background maintenance bypassed the detached update")
+	}
+	if err := os.Remove(lockPath); err != nil {
+		t.Fatal(err)
+	}
+	if !app.tryMaintenanceLock() {
+		t.Fatal("maintenance stayed locked after helper finished")
+	}
+	app.selfUpdating.Unlock()
+
+	// Preserve the existing recovery policy for abandoned old update markers.
+	if err := os.WriteFile(lockPath, []byte("abandoned"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	expired := time.Now().Add(-panelUpdateLockLifetime - time.Minute)
+	if err := os.Chtimes(lockPath, expired, expired); err != nil {
+		t.Fatal(err)
+	}
+	if !app.tryMaintenanceLock() {
+		t.Fatal("expired marker prevented a recovery attempt")
+	}
+	app.selfUpdating.Unlock()
+}
+
+func TestDetachedUpdateReleasesOriginalProcessLockOnlyAfterHelperFinishes(t *testing.T) {
+	lockPath := filepath.Join(t.TempDir(), ".active")
+	if err := os.WriteFile(lockPath, []byte("active"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	app := &App{}
+	app.selfUpdating.Lock()
+	finished := make(chan struct{})
+	go func() {
+		app.releaseMaintenanceAfterDetachedUpdate(lockPath)
+		close(finished)
+	}()
+	select {
+	case <-finished:
+		t.Fatal("parent maintenance gate released before helper completion")
+	case <-time.After(300 * time.Millisecond):
+	}
+	if app.selfUpdating.TryLock() {
+		app.selfUpdating.Unlock()
+		t.Fatal("another maintenance operation could enter during the swap")
+	}
+	if err := os.Remove(lockPath); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case <-finished:
+	case <-time.After(2 * time.Second):
+		t.Fatal("surviving parent process did not release maintenance after failed helper")
+	}
+	if !app.selfUpdating.TryLock() {
+		t.Fatal("retry could not acquire the original process maintenance gate")
+	}
+	app.selfUpdating.Unlock()
+}
+
+func TestSwapScriptEarlyFailurePartialSnapshotAndSuccessOutcomes(t *testing.T) {
+	realCP, err := exec.LookPath("cp")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, outcome := range []string{"before-stop", "partial-snapshot", "success"} {
+		t.Run(outcome, func(t *testing.T) {
+			root := t.TempDir()
+			stage := filepath.Join(root, "stage")
+			liveBin, stagedBin := filepath.Join(root, "panel"), filepath.Join(stage, "panel.new")
+			webDir, agentsDir := filepath.Join(root, "web"), filepath.Join(root, "agents")
+			stagedWeb, stagedAgents := filepath.Join(stage, "web.new"), filepath.Join(stage, "agents.new")
+			dbPath := filepath.Join(root, "data", "panel.db")
+			rollbackDB, lockPath := filepath.Join(stage, "database.rollback"), filepath.Join(root, ".active")
+			fakeBin := filepath.Join(root, "fake-bin")
+			for _, dir := range []string{stage, webDir, agentsDir, stagedWeb, stagedAgents, filepath.Dir(dbPath), fakeBin} {
+				if err := os.MkdirAll(dir, 0o755); err != nil {
+					t.Fatal(err)
+				}
+			}
+			for path, content := range map[string]string{
+				liveBin: "old-binary", stagedBin: "new-binary", dbPath: "old-database", dbPath + "-wal": "old-wal", lockPath: "active",
+				filepath.Join(webDir, "asset"): "old-web", filepath.Join(agentsDir, "agent"): "old-agent",
+				filepath.Join(stagedWeb, "asset"): "new-web", filepath.Join(stagedAgents, "agent"): "new-agent",
+			} {
+				if err := os.WriteFile(path, []byte(content), 0o600); err != nil {
+					t.Fatal(err)
+				}
+			}
+			cpLog, serviceLog := filepath.Join(root, "copies"), filepath.Join(root, "service-actions")
+			failDestination := ""
+			if outcome == "before-stop" {
+				failDestination = filepath.Join(stage, "rollback", "panel")
+			} else if outcome == "partial-snapshot" {
+				failDestination = rollbackDB + "-wal"
+			}
+			writeExecutable(t, filepath.Join(fakeBin, "cp"), "#!/bin/sh\n"+
+				"for destination; do :; done\nprintf '%s\\n' \"$destination\" >> "+shellQuote(cpLog)+"\n"+
+				"[ \"$destination\" != "+shellQuote(failDestination)+" ] || exit 1\nexec "+shellQuote(realCP)+" \"$@\"\n")
+			writeExecutable(t, filepath.Join(fakeBin, "systemctl"), "#!/bin/sh\n"+
+				"printf '%s\\n' \"$1\" >> "+shellQuote(serviceLog)+"\nexit 0\n")
+			for _, command := range []string{"sleep", "curl", "wget"} {
+				writeExecutable(t, filepath.Join(fakeBin, command), "#!/bin/sh\nexit 0\n")
+			}
+			script := buildSwapScript(liveBin, stagedBin, stagedWeb, stagedAgents, stage, webDir, agentsDir,
+				"http://127.0.0.1/ready", lockPath, dbPath, rollbackDB)
+			cmd := exec.Command("/bin/sh", "-c", script)
+			cmd.Env = append(os.Environ(), "PATH="+fakeBin+":/usr/local/bin:/usr/bin:/bin")
+			output, runErr := cmd.CombinedOutput()
+			if (runErr == nil) != (outcome == "success") {
+				t.Fatalf("unexpected helper outcome: %v: %s", runErr, output)
+			}
+			operation, err := readPanelUpdateOperation(filepath.Join(root, "result.json"))
+			wantStatus := map[string]string{"before-stop": "failed", "partial-snapshot": "rolled_back", "success": "succeeded"}[outcome]
+			if err != nil || operation.Status != wantStatus || operation.ID != "stage" {
+				t.Fatalf("helper result=%+v error=%v, want %s", operation, err, wantStatus)
+			}
+			if _, err := os.Stat(lockPath); !os.IsNotExist(err) {
+				t.Fatalf("helper left active lock behind: %v", err)
+			}
+			if outcome == "before-stop" {
+				if _, err := os.Stat(serviceLog); !os.IsNotExist(err) {
+					t.Fatal("failed binary backup should leave the running service untouched")
+				}
+			}
+			if outcome == "partial-snapshot" {
+				copies, err := os.ReadFile(cpLog)
+				if err != nil || strings.Contains(string(copies), dbPath+".rollback-new") {
+					t.Fatal("partial database snapshot was used for rollback")
+				}
+			}
+			wantBinary := "old-binary"
+			if outcome == "success" {
+				wantBinary = "new-binary"
+			}
+			for path, want := range map[string]string{liveBin: wantBinary, dbPath: "old-database", dbPath + "-wal": "old-wal"} {
+				got, err := os.ReadFile(path)
+				if err != nil || string(got) != want {
+					t.Fatalf("unexpected live file after %s: path=%s err=%v", outcome, path, err)
+				}
+			}
+		})
 	}
 }
 

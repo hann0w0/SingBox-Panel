@@ -19,7 +19,7 @@ export default function ServerAccessPicker({ servers, value = [], onChange }: Se
   }
 
   if (!servers.length) {
-    return <div style={{ fontSize: 13, color: 'rgba(0, 0, 0, 0.45)', padding: '12px 0' }}>暂无可用节点</div>
+    return <div style={{ fontSize: 13, color: 'var(--console-muted)', padding: '12px 0' }}>暂无可用节点</div>
   }
 
   return (
@@ -95,7 +95,7 @@ export default function ServerAccessPicker({ servers, value = [], onChange }: Se
               ) : isIndeterminate ? (
                 <Tag color="orange" style={{ margin: 0, fontSize: 11, borderRadius: 10, padding: '0 8px', border: 'none', flexShrink: 0 }}>部分授权 ({selectedIbKeys.length}/{ibs.length})</Tag>
               ) : (
-                <Tag style={{ margin: 0, fontSize: 11, color: '#9ca3af', borderRadius: 10, padding: '0 8px', border: 'none', background: '#f3f4f6', flexShrink: 0 }}>未授权</Tag>
+                <Tag style={{ margin: 0, fontSize: 11, color: 'var(--console-faint)', borderRadius: 10, padding: '0 8px', border: 'none', background: '#f3f4f6', flexShrink: 0 }}>未授权</Tag>
               )}
             </div>
 
@@ -126,9 +126,9 @@ export default function ServerAccessPicker({ servers, value = [], onChange }: Se
                         display: 'inline-flex',
                         alignItems: 'center',
                         gap: 5,
-                        background: ibChecked ? '#eff6ff' : '#f8fafc',
-                        color: ibChecked ? '#2563eb' : '#475569',
-                        border: ibChecked ? '1px solid #bfdbfe' : '1px solid #e2e8f0',
+                        background: ibChecked ? 'var(--console-selected)' : 'var(--console-surface)',
+                        color: ibChecked ? 'var(--console-ink)' : 'var(--console-muted)',
+                        border: ibChecked ? '1px solid var(--console-border-hover)' : '1px solid var(--console-border)',
                         fontWeight: ibChecked ? 500 : 400,
                       }}
                       title={ib.tag}

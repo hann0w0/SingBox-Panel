@@ -204,7 +204,7 @@ export default function Settings() {
       content: (
         <div>
           <p>服务器将直接从 OneDrive 读取 <b>{name}</b>，覆盖当前节点、用户、订阅和被控 Agent 数据。</p>
-          <p style={{ color: '#a61d24', marginBottom: 0 }}>
+          <p style={{ color: 'var(--console-error-text)', marginBottom: 0 }}>
             恢复前会自动保留当前数据库快照，恢复完成后面板会重启。请确认备份来源可信。
           </p>
         </div>
@@ -261,7 +261,7 @@ export default function Settings() {
           <p>
             将用 <b>{restoreFile?.name}</b> 覆盖当前所有数据（节点、用户、订阅、被控 Agent 密钥）。
           </p>
-          <p style={{ color: '#a61d24', marginBottom: 0 }}>
+          <p style={{ color: 'var(--console-error-text)', marginBottom: 0 }}>
             覆盖前会自动把现有数据库另存为 .pre-restore 备份以便回滚。
             恢复后面板会重启，你需要重新登录。此操作不可撤销。
           </p>
@@ -310,7 +310,7 @@ export default function Settings() {
           <p>
             {force ? <>将从 GitHub 重新下载并安装 <b>{target}</b>，用于同步该版本重新发布的构建。</> : <>将从 {info?.current_version} 更新到 <b>{target}</b>。</>}
           </p>
-          <p style={{ color: '#a61d24', marginBottom: 0 }}>
+          <p style={{ color: 'var(--console-error-text)', marginBottom: 0 }}>
             面板会校验并一起切换后端、前端和 Agent 包，失败时自动回滚，期间约中断数秒。
             数据、域名、端口、被控 Agent 均不受影响。
           </p>
@@ -414,7 +414,7 @@ export default function Settings() {
                 <Statistic
                   title="最新版本"
                   value={info.latest_version || '—'}
-                  valueStyle={{ fontSize: 22, color: info.has_update ? '#d46b08' : undefined }}
+                  valueStyle={{ fontSize: 22, color: info.has_update ? 'var(--console-warning-text)' : undefined }}
                 />
               </Col>
               <Col xs={12} sm={8} md={6}>

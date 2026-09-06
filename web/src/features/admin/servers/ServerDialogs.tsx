@@ -75,9 +75,9 @@ export function ImportPreviewModal({
               ]}
             />
           </div>
-          <div style={{ color: '#555' }}>默认出站 final：<Tag>{summary.final}</Tag></div>
+          <div style={{ color: 'var(--console-muted)' }}>默认出站 final：<Tag>{summary.final}</Tag></div>
           {!!summary.skipped?.length && (
-            <div style={{ color: '#d46b08' }}>
+            <div style={{ color: 'var(--console-warning-text)' }}>
               以下内容不会转换成结构化表单，但会保存在完整原始配置中：
               <ul style={{ margin: '4px 0 0 18px' }}>{summary.skipped.map((item) => <li key={item}>{item}</li>)}</ul>
             </div>

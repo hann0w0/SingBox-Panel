@@ -1391,7 +1391,7 @@ export function CustomNodesPanel({ nodes, loading, error, onNodesChange }: {
               title: '最近同步',
               width: 180,
               render: (_: unknown, subscription: CustomNodeSubscription) => (
-                <span title={subscription.last_error || undefined} style={{ color: subscription.last_error ? '#cf1322' : undefined }}>
+                <span title={subscription.last_error || undefined} style={{ color: subscription.last_error ? 'var(--console-error-text)' : undefined }}>
                   {subscription.last_sync_at ? new Date(subscription.last_sync_at).toLocaleString() : '尚未同步'}
                 </span>
               ),

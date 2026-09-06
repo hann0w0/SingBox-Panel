@@ -1,9 +1,22 @@
-import { createContext, useContext, useEffect, useMemo, useState, type ReactNode } from 'react'
-import { parseConsoleTheme, parseUserConsoleTheme, type ConsoleThemeId } from './theme'
+import { createContext, useContext, useEffect, useMemo, useState, useSyncExternalStore, type ReactNode } from 'react'
+import { parseConsoleTheme, parseUserConsoleTheme, type ConsoleThemeId, type ConsoleThemePreference } from './theme'
 
 export const THEME_STORAGE_KEY = 'singbox-panel-theme'
 export const USER_THEME_STORAGE_KEY = 'singbox-panel-user-theme'
 export type ThemeScope = 'admin' | 'user'
+
+const SYSTEM_DARK_QUERY = '(prefers-color-scheme: dark)'
+
+function getSystemTheme(): ConsoleThemeId {
+  return typeof window !== 'undefined' && window.matchMedia?.(SYSTEM_DARK_QUERY).matches ? 'dark' : 'blue'
+}
+
+function subscribeToSystemTheme(onChange: () => void) {
+  if (typeof window === 'undefined' || !window.matchMedia) return () => {}
+  const media = window.matchMedia(SYSTEM_DARK_QUERY)
+  media.addEventListener('change', onChange)
+  return () => media.removeEventListener('change', onChange)
+}
 
 function preferenceConfig(scope: ThemeScope) {
   return scope === 'admin'
@@ -11,21 +24,23 @@ function preferenceConfig(scope: ThemeScope) {
     : { key: USER_THEME_STORAGE_KEY, parse: parseUserConsoleTheme }
 }
 
-function readPreference(scope: ThemeScope): ConsoleThemeId {
+function readPreference(scope: ThemeScope): ConsoleThemePreference {
   const { key, parse } = preferenceConfig(scope)
   try { return parse(window.localStorage.getItem(key)) }
   catch { return parse(null) }
 }
 
 const ThemePreferenceContext = createContext<{
-  adminThemeId: ConsoleThemeId
-  userThemeId: ConsoleThemeId
-  setTheme: (scope: ThemeScope, id: ConsoleThemeId) => void
+  adminThemeId: ConsoleThemePreference
+  userThemeId: ConsoleThemePreference
+  systemThemeId: ConsoleThemeId
+  setTheme: (scope: ThemeScope, id: ConsoleThemePreference) => void
 } | null>(null)
 
 export function ThemePreferenceProvider({ children }: { children: ReactNode }) {
   const [adminThemeId, setAdminThemeId] = useState(() => readPreference('admin'))
   const [userThemeId, setUserThemeId] = useState(() => readPreference('user'))
+  const systemThemeId = useSyncExternalStore(subscribeToSystemTheme, getSystemTheme, () => 'blue' as const)
 
   useEffect(() => {
     const sync = (event: StorageEvent) => {
@@ -43,7 +58,8 @@ export function ThemePreferenceProvider({ children }: { children: ReactNode }) {
   const value = useMemo(() => ({
     adminThemeId,
     userThemeId,
-    setTheme: (scope: ThemeScope, id: ConsoleThemeId) => {
+    systemThemeId,
+    setTheme: (scope: ThemeScope, id: ConsoleThemePreference) => {
       const { key, parse } = preferenceConfig(scope)
       const next = parse(id)
       if (scope === 'admin') setAdminThemeId(next)
@@ -51,7 +67,7 @@ export function ThemePreferenceProvider({ children }: { children: ReactNode }) {
       try { window.localStorage.setItem(key, next) }
       catch { /* The current page can still switch when browser storage is unavailable. */ }
     },
-  }), [adminThemeId, userThemeId])
+  }), [adminThemeId, userThemeId, systemThemeId])
 
   return <ThemePreferenceContext.Provider value={value}>{children}</ThemePreferenceContext.Provider>
 }
@@ -59,8 +75,10 @@ export function ThemePreferenceProvider({ children }: { children: ReactNode }) {
 export function useThemePreference(scope: ThemeScope = 'admin') {
   const value = useContext(ThemePreferenceContext)
   if (!value) throw new Error('ThemePreferenceProvider is missing')
+  const themeId = scope === 'admin' ? value.adminThemeId : value.userThemeId
   return {
-    themeId: scope === 'admin' ? value.adminThemeId : value.userThemeId,
-    setTheme: (id: ConsoleThemeId) => value.setTheme(scope, id),
+    themeId,
+    resolvedThemeId: themeId === 'auto' ? value.systemThemeId : themeId,
+    setTheme: (id: ConsoleThemePreference) => value.setTheme(scope, id),
   }
 }

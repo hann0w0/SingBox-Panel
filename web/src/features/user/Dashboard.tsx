@@ -21,10 +21,14 @@ const TYPE_COLORS: Record<string, string> = {
   snell: 'gold', socks: 'default', mixed: 'volcano',
 }
 
-const LOGO_VERSION = '20260727-3'
-function ClientLogo({ src, monochrome = false }: { src: string; monochrome?: boolean }) {
+const LOGO_VERSION = '20260906-2'
+type ClientLogoKind = 'surge' | 'clashmeta' | 'shadowrocket'
+
+function ClientLogo({ src, kind }: { src: string; kind: ClientLogoKind }) {
   return (
-    <img src={`${src}?v=${LOGO_VERSION}`} alt="" style={{ width: '1.6em', height: '1.6em', objectFit: 'contain', verticalAlign: '-0.28em', filter: monochrome ? 'brightness(0.35) grayscale(1)' : 'grayscale(1)' }} />
+    <span className={`client-logo client-logo-${kind}`} aria-hidden="true">
+      <img src={`${src}?v=${LOGO_VERSION}`} alt="" />
+    </span>
   )
 }
 
@@ -186,9 +190,9 @@ export default function Dashboard() {
       <Card title="订阅链接">
         <p className="subscription-hint">选择客户端，复制对应的订阅链接</p>
         <div className="client-subscriptions">
-          <Button className="client-subscription-button" icon={<ClientLogo src="/logos/surge.png" monochrome />} onClick={() => copySub('surge', 'Surge')}>Surge</Button>
-          <Button className="client-subscription-button" icon={<ClientLogo src="/logos/clashmeta.png" />} onClick={() => copySub('clash', 'ClashMeta')}>ClashMeta</Button>
-          <Button className="client-subscription-button" icon={<ClientLogo src="/logos/shadowrocket.png" monochrome />} onClick={() => copySub('shadowrocket', 'Shadowrocket')}>Shadowrocket</Button>
+          <Button className="client-subscription-button" icon={<ClientLogo src="/logos/surge.png" kind="surge" />} onClick={() => copySub('surge', 'Surge')}>Surge</Button>
+          <Button className="client-subscription-button" icon={<ClientLogo src="/logos/clashmeta.png" kind="clashmeta" />} onClick={() => copySub('clash', 'ClashMeta')}>ClashMeta</Button>
+          <Button className="client-subscription-button" icon={<ClientLogo src="/logos/shadowrocket.png" kind="shadowrocket" />} onClick={() => copySub('shadowrocket', 'Shadowrocket')}>Shadowrocket</Button>
         </div>
         <div className="subscription-actions">
             <Button onClick={doReset}>重置订阅链接</Button>

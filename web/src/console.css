@@ -1,16 +1,42 @@
 :root {
-  --console-ink: #252422;
-  --console-muted: #59554f;
-  --console-faint: #69645d;
-  --console-border: #e6e2db;
-  --console-surface: #f8f7f4;
-  --console-selected: #eeece6;
-  --console-primary: #353432;
-  --console-success: #42644b;
-  --console-warning: #91611f;
-  --console-error: #a3423d;
-  --console-download: #484e43;
-  --console-upload: #876238;
+  color-scheme: light;
+  --console-ink: #1f1f1f;
+  --console-muted: #595959;
+  --console-faint: #666666;
+  --console-border: #f0f0f0;
+  --console-border-strong: #d9d9d9;
+  --console-border-hover: #d9d9d9;
+  --console-layout: #f5f5f5;
+  --console-container: #ffffff;
+  --console-elevated: #ffffff;
+  --console-surface: #fafafa;
+  --console-chrome: #ffffff;
+  --console-chrome-tint: #ffffff;
+  --console-selected: #f0f5ff;
+  --console-selected-border: #dee8ff;
+  --console-selected-text: #3a5bff;
+  --console-primary: #3a5bff;
+  --console-on-primary: #ffffff;
+  --console-brand: #3a5bff;
+  --console-link: #1677ff;
+  --console-hover: #f5f5f5;
+  --console-focus: #3a5bff;
+  --console-success: #52c41a;
+  --console-warning: #faad14;
+  --console-error: #ff4d4f;
+  --console-warning-text: #ad6800;
+  --console-error-text: #a61d24;
+  --console-download: #4096ff;
+  --console-upload: #36cfc9;
+  --console-shadow: 0 0 0;
+}
+
+:root[data-console-theme='dark'] {
+  color-scheme: dark;
+}
+
+:root[data-console-theme] body {
+  background: var(--console-layout);
 }
 
 .console-app {
@@ -48,7 +74,7 @@
   padding: 0;
   border: 0;
   background: transparent;
-  color: #1f1f1f;
+  color: var(--console-ink);
   font-family: inherit;
   font-size: 18px;
   font-weight: 700;
@@ -116,7 +142,7 @@
   gap: 20px;
   padding: 0 32px;
   border-bottom: 1px solid var(--console-border);
-  background: #fff;
+  background: var(--console-chrome);
   line-height: 1.4;
 }
 
@@ -144,33 +170,14 @@
   min-width: 0;
   flex-shrink: 0;
   align-items: center;
-  gap: 12px;
-  padding: 6px 6px 6px 10px;
-  border: 1px solid var(--console-border);
-  border-radius: 14px;
-  background: var(--console-surface);
+  gap: 10px;
 }
 
 .console-account-identity {
   display: flex;
   min-width: 0;
   align-items: center;
-  gap: 10px;
-}
-
-.console-account-avatar {
-  display: flex;
-  width: 32px;
-  height: 32px;
-  flex-shrink: 0;
-  align-items: center;
-  justify-content: center;
-  border: 1px solid var(--console-selected-border);
-  border-radius: 50%;
-  background: var(--console-selected);
-  color: var(--console-selected-text);
-  font-size: 13px;
-  font-weight: 650;
+  padding-inline: 2px 4px;
 }
 
 .console-account-details {
@@ -193,14 +200,27 @@
 
 .console-account-role {
   color: var(--console-muted);
-  font-size: 10px;
+  font-size: 11px;
   line-height: 1.3;
+}
+
+.console-account-actions {
+  display: flex;
+  height: 42px;
+  flex-shrink: 0;
+  align-items: center;
+  gap: 2px;
+  padding: 3px;
+  border: 1px solid var(--console-border);
+  border-radius: 12px;
+  background: var(--console-surface);
 }
 
 .console-account-divider {
   width: 1px;
-  height: 24px;
+  height: 20px;
   flex-shrink: 0;
+  margin-inline: 2px;
   background: var(--console-border);
 }
 
@@ -209,7 +229,7 @@
   flex-shrink: 0;
   padding-inline: 10px;
   border: 0;
-  border-radius: 9px;
+  border-radius: 8px;
   color: var(--console-muted);
   font-size: 12px;
 }
@@ -221,20 +241,35 @@
 
 .console-account.is-compact {
   gap: 6px;
-  padding: 4px 4px 4px 6px;
-  border-radius: 12px;
 }
 
-.console-account.is-compact .console-account-avatar {
-  width: 28px;
-  height: 28px;
+.console-account.is-compact .console-account-identity {
+  padding-inline: 4px 2px;
+}
+
+.console-account.is-compact .console-account-name {
+  max-width: clamp(56px, 16vw, 92px);
   font-size: 12px;
 }
 
+.console-account.is-compact .console-account-actions {
+  height: 38px;
+  gap: 0;
+  padding: 2px;
+  border-radius: 10px;
+}
+
+.console-account.is-compact .console-account-divider {
+  height: 18px;
+  margin-inline: 0;
+}
+
 .console-account.is-compact .console-logout {
-  width: 34px;
+  width: 32px;
+  height: 32px;
   padding: 0;
-  font-size: 15px;
+  color: var(--console-ink);
+  font-size: 14px;
 }
 
 .console-shell .console-content {
@@ -345,6 +380,35 @@
   font-weight: 600;
 }
 
+.console-app .client-logo {
+  display: inline-flex;
+  width: 32px;
+  height: 32px;
+  flex: 0 0 32px;
+  align-items: center;
+  justify-content: center;
+}
+
+.console-app .client-logo img {
+  display: block;
+  object-fit: contain;
+}
+
+.console-app .client-logo-surge img {
+  width: 29px;
+  height: 29px;
+}
+
+.console-app .client-logo-clashmeta img {
+  width: 30px;
+  height: 30px;
+}
+
+.console-app .client-logo-shadowrocket img {
+  width: 32px;
+  height: 32px;
+}
+
 .console-app .subscription-actions {
   display: flex;
   flex-wrap: wrap;
@@ -363,33 +427,6 @@
   color: var(--console-muted);
 }
 
-/* Keep distinct semantic colors; lightly tint them toward the active theme.
-   Classic retains Ant Design's original v1.0 tag palette. */
-:root:not([data-console-theme='blue']) .console-app .ant-tag:is(
-  .ant-tag-blue, .ant-tag-geekblue, .ant-tag-purple, .ant-tag-magenta,
-  .ant-tag-cyan, .ant-tag-green, .ant-tag-success, .ant-tag-orange,
-  .ant-tag-gold, .ant-tag-warning, .ant-tag-red, .ant-tag-volcano, .ant-tag-error
-) {
-  --console-tag-ink: color-mix(in srgb, var(--console-tag-color) 90%, var(--console-primary));
-  color: var(--console-tag-ink);
-  border-color: color-mix(in srgb, var(--console-tag-ink) 32%, white);
-  background: color-mix(in srgb, var(--console-tag-ink) 7%, white);
-}
-
-.console-app .ant-tag-blue { --console-tag-color: #0958d9; }
-.console-app .ant-tag-geekblue { --console-tag-color: #2f54eb; }
-.console-app .ant-tag-purple { --console-tag-color: #722ed1; }
-.console-app .ant-tag-magenta { --console-tag-color: #c41d7f; }
-.console-app .ant-tag-cyan { --console-tag-color: #007b83; }
-.console-app .ant-tag-green,
-.console-app .ant-tag-success { --console-tag-color: #237d23; }
-.console-app .ant-tag-orange { --console-tag-color: #ad4e00; }
-.console-app .ant-tag-gold,
-.console-app .ant-tag-warning { --console-tag-color: #9c6508; }
-.console-app .ant-tag-red,
-.console-app .ant-tag-error { --console-tag-color: #cf1322; }
-.console-app .ant-tag-volcano { --console-tag-color: #d4380d; }
-
 :root[data-console-theme='blue'] .console-app {
   -webkit-font-smoothing: auto;
 }
@@ -400,6 +437,33 @@
 
 :root[data-console-theme='blue'] .console-app .ant-statistic-content-prefix {
   color: var(--console-ink);
+}
+
+/* Pastel label text stays readable against the browser-like gray surfaces. */
+:root[data-console-theme='dark'] .ant-tag:where(
+  .ant-tag-blue, .ant-tag-geekblue, .ant-tag-processing,
+  .ant-tag-purple, .ant-tag-magenta, .ant-tag-cyan,
+  .ant-tag-green, .ant-tag-success, .ant-tag-lime,
+  .ant-tag-orange, .ant-tag-gold, .ant-tag-warning,
+  .ant-tag-red, .ant-tag-error, .ant-tag-volcano
+) {
+  color: var(--console-tag-ink);
+  background: color-mix(in srgb, var(--console-tag-ink) 10%, var(--console-container));
+  border-color: color-mix(in srgb, var(--console-tag-ink) 30%, var(--console-border));
+}
+
+.ant-tag-blue, .ant-tag-geekblue, .ant-tag-processing { --console-tag-ink: var(--console-link); }
+.ant-tag-green, .ant-tag-success { --console-tag-ink: var(--console-success); }
+.ant-tag-red, .ant-tag-error { --console-tag-ink: var(--console-error); }
+.ant-tag-gold, .ant-tag-warning { --console-tag-ink: var(--console-warning); }
+.ant-tag-cyan { --console-tag-ink: var(--console-upload); }
+.ant-tag-purple { --console-tag-ink: #d0b4f1; }
+.ant-tag-magenta { --console-tag-ink: #edb6d2; }
+.ant-tag-orange, .ant-tag-volcano { --console-tag-ink: #efbd8b; }
+.ant-tag-lime { --console-tag-ink: #c6d7a0; }
+
+:root[data-console-theme='dark'] .ant-tag.ant-tag-borderless {
+  border-color: transparent;
 }
 
 .console-nav-drawer .ant-drawer-content,
@@ -442,9 +506,17 @@
   height: 34px;
   flex-shrink: 0;
   gap: 6px;
-  padding-inline: 9px;
-  border-radius: 9px;
-  background: var(--console-chrome);
+  padding-inline: 10px;
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+  box-shadow: none;
+}
+
+.console-theme-account.ant-btn:not(:disabled):hover {
+  border: 0;
+  background: var(--console-hover);
+  color: var(--console-ink);
 }
 
 .console-theme-account .console-theme-name {
@@ -455,17 +527,17 @@
 
 .console-theme-account.is-compact.ant-btn {
   width: 32px;
+  height: 32px;
   padding: 0;
   justify-content: center;
 }
 
-.console-theme-dot {
-  display: inline-block;
+.console-theme-icon {
+  display: inline-flex;
   width: 16px;
-  height: 16px;
   flex-shrink: 0;
-  border: 1px solid rgb(0 0 0 / 8%);
-  border-radius: 50%;
+  color: var(--console-selected-text);
+  font-size: 16px;
 }
 
 .console-theme-dropdown { width: 232px; max-width: calc(100vw - 24px); }
@@ -478,15 +550,91 @@
   color: var(--console-ink);
 }
 
-.console-theme-swatches { display: flex; }
-.console-theme-swatches i {
-  width: 16px;
-  height: 16px;
-  border: 2px solid #fff;
-  border-radius: 50%;
-}
-.console-theme-swatches i + i { margin-left: -4px; }
 .console-theme-check { margin-left: auto; color: var(--console-primary); }
+
+:root[data-console-theme='dark'] .ant-switch-checked .ant-switch-inner {
+  color: var(--console-on-primary);
+}
+
+/* Custom log syntax and status colors complement Ant Design's dark palette. */
+:root[data-console-theme='dark'] :is(.access-modal-footer > span.dirty, .logs-live-status.is-connecting, .logs-context-duration) {
+  color: var(--console-warning);
+}
+
+:root[data-console-theme='dark'] :is(.mobile-card-error, .logs-token-danger) {
+  color: var(--console-error);
+}
+
+:root[data-console-theme='dark'] :is(.logs-live-status.is-connected, .logs-token-route) {
+  color: var(--console-success);
+}
+
+:root[data-console-theme='dark'] .logs-token-endpoint {
+  color: var(--console-link);
+}
+
+:root[data-console-theme='dark'] .logs-token-label {
+  color: #c5a3ff;
+}
+
+:root[data-console-theme='dark'] .logs-line.is-even {
+  background: rgb(255 255 255 / 2%);
+}
+
+:root[data-console-theme='dark'] .logs-line.logs-line-warn {
+  background: color-mix(in srgb, var(--console-warning) 8%, var(--console-container));
+  box-shadow: inset 2px 0 0 var(--console-warning);
+}
+
+:root[data-console-theme='dark'] .logs-line.logs-line-error {
+  background: color-mix(in srgb, var(--console-error) 8%, var(--console-container));
+  box-shadow: inset 2px 0 0 var(--console-error);
+}
+
+:root[data-console-theme='dark'] .logs-line:hover {
+  background: var(--console-selected);
+}
+
+:root[data-console-theme='dark'] :is(.logs-level-trace, .logs-level-debug, .logs-user, .logs-component-neutral) {
+  border-color: #574775;
+  background: #30273e;
+  color: #c5a3ff;
+}
+
+:root[data-console-theme='dark'] :is(.logs-level-info, .logs-direction-inbound) {
+  background: var(--console-selected);
+  color: var(--console-selected-text);
+}
+
+:root[data-console-theme='dark'] .logs-level-warn {
+  background: #3a3022;
+  color: var(--console-warning);
+}
+
+:root[data-console-theme='dark'] .logs-level-error {
+  background: #40272e;
+  color: var(--console-error);
+}
+
+:root[data-console-theme='dark'] :is(.logs-direction-outbound, .logs-component-outbound) {
+  border-color: #36594a;
+  background: #22372e;
+  color: var(--console-success);
+}
+
+:root[data-console-theme='dark'] .logs-component:not(.logs-component-inbound):not(.logs-component-outbound):not(.logs-component-neutral) {
+  border-color: var(--console-border-strong);
+  color: var(--console-muted);
+}
+
+:root[data-console-theme='dark'] :is(.logs-direction-none, .logs-context-separator) {
+  color: var(--console-faint);
+}
+
+:root[data-console-theme='dark'] .logs-copy-button:hover {
+  background: var(--console-hover);
+  color: var(--console-ink);
+}
 
 @keyframes console-card-enter {
   from { opacity: 0; transform: translateY(6px); }

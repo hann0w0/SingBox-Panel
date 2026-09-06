@@ -39,33 +39,31 @@ function UserMenu({ compact, showTheme = false }: { compact?: boolean; showTheme
   const nav = useNavigate()
   const username = user?.email || '用户'
   const roleLabel = user?.role === 'admin' ? '管理员' : '用户'
-  const initial = Array.from(username.trim())[0]?.toUpperCase() || 'U'
   return (
     <div className={`console-account${compact ? ' is-compact' : ''}`} role="group" aria-label={`当前账号：${username}，${roleLabel}`}>
       <div className="console-account-identity" title={`${username} · ${roleLabel}`}>
-        <span className="console-account-avatar" aria-hidden="true">{initial}</span>
-        {!compact && (
-          <div className="console-account-details">
-            <span className="console-account-name">{username}</span>
-            <span className="console-account-role">{roleLabel}</span>
-          </div>
-        )}
+        <div className="console-account-details">
+          <span className="console-account-name">{username}</span>
+          {!compact && <span className="console-account-role">{roleLabel}</span>}
+        </div>
       </div>
-      {showTheme && <ThemeSelector scope="user" variant="account" compact={compact} />}
-      <span className="console-account-divider" aria-hidden="true" />
-      <Button
-        type="text"
-        className="console-logout"
-        icon={<LogoutOutlined />}
-        title="退出登录"
-        aria-label="退出登录"
-        onClick={() => {
-          logout()
-          nav('/login')
-        }}
-      >
-        {compact ? '' : '退出'}
-      </Button>
+      <div className="console-account-actions">
+        {showTheme && <ThemeSelector scope={user?.role === 'admin' ? 'admin' : 'user'} variant="account" compact={compact} />}
+        {showTheme && <span className="console-account-divider" aria-hidden="true" />}
+        <Button
+          type="text"
+          className="console-logout"
+          icon={<LogoutOutlined />}
+          title="退出登录"
+          aria-label="退出登录"
+          onClick={() => {
+            logout()
+            nav('/login')
+          }}
+        >
+          {compact ? '' : '退出'}
+        </Button>
+      </div>
     </div>
   )
 }
@@ -153,7 +151,7 @@ export default function AppLayout() {
           <div className="console-mobile-brand">
             <Brand />
           </div>
-          <UserMenu compact />
+          <UserMenu compact showTheme />
         </Header>
         <Drawer
           placement="left"
@@ -165,7 +163,6 @@ export default function AppLayout() {
           styles={{ body: { padding: '12px 10px', display: 'flex', flexDirection: 'column' } }}
         >
           {menu}
-          <div className="console-sidebar-footer"><ThemeSelector /></div>
         </Drawer>
         <Content className="console-content">
           {selected !== '/dashboard' && <h1 className="console-mobile-title">{pageTitle}</h1>}
@@ -186,12 +183,11 @@ export default function AppLayout() {
           <Brand />
         </div>
         {menu}
-        <div className="console-sidebar-footer"><ThemeSelector /></div>
       </Sider>
       <Layout className="console-main">
         <Header className="console-header">
           <div className="console-location"><span>管理控制台</span><span aria-hidden="true">/</span><h1>{pageTitle}</h1></div>
-          <UserMenu />
+          <UserMenu showTheme />
         </Header>
         <Content className="console-content">
           <RouteContent />

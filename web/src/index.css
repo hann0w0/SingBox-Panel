@@ -1,16 +1,18 @@
 html,
 body,
 #root {
-  height: 100%;
+  height: auto;
+  min-height: 100%;
 }
 
 body {
   margin: 0;
 }
 
-/* Prevent accidental horizontal page scrolling on small screens. */
+/* Keep the document as the only page scroller. overflow-x:hidden would also
+   turn overflow-y into auto and create a second scroller around sticky nav. */
 #root {
-  overflow-x: hidden;
+  overflow-x: clip;
 }
 
 /* Page action buttons: desktop row, phone 2-col grid with primary full-width. */
@@ -85,7 +87,7 @@ body {
   padding: 16px 18px 10px;
   border: 1px solid var(--console-border);
   border-radius: 10px;
-  background: #fff;
+  background: var(--console-container);
 }
 
 .traffic-panel-heading {
@@ -100,7 +102,7 @@ body {
 }
 
 .traffic-panel-heading > span {
-  color: #262626;
+  color: var(--console-ink);
   font-size: 13px;
   white-space: nowrap;
 }
@@ -179,12 +181,12 @@ body {
 }
 
 .traffic-point {
-  stroke: #fff;
+  stroke: var(--console-container);
   stroke-width: 2;
 }
 
 .traffic-tooltip-box {
-  fill: #fff;
+  fill: var(--console-elevated);
   filter: drop-shadow(0 3px 8px rgba(15, 23, 42, 0.16));
   stroke: var(--console-border);
 }
@@ -255,7 +257,7 @@ body {
   min-height: 120px;
   padding: 20px;
   border-radius: 8px;
-  background: #fafafa;
+  background: var(--console-surface);
 }
 
 .traffic-unavailable strong {
@@ -273,7 +275,7 @@ body {
   padding: 12px;
   cursor: pointer;
   transition: border-color 0.18s ease, box-shadow 0.18s ease, background-color 0.18s ease;
-  background: #fff;
+  background: var(--console-container);
   height: 100%;
 }
 
@@ -336,10 +338,10 @@ body {
 }
 
 .access-node-panel > .ant-tabs-card > .ant-tabs-content {
-  border: 1px solid #f0f0f0;
+  border: 1px solid var(--console-border);
   border-top: 0;
   border-radius: 0 0 8px 8px;
-  background: #fff;
+  background: var(--console-container);
 }
 
 .access-modal-group {
@@ -395,8 +397,8 @@ body {
   color: var(--console-muted);
   font-weight: 500;
   font-size: 12px;
-  background: #f5f5f5;
-  border: 1px dashed #d9d9d9;
+  background: var(--console-hover);
+  border: 1px dashed var(--console-border-strong);
   border-radius: 4px;
   padding: 0 6px;
   line-height: 20px;
@@ -474,7 +476,7 @@ body {
   justify-content: space-between;
   gap: 12px;
   padding-top: 14px;
-  border-top: 1px solid #f0f0f0;
+  border-top: 1px solid var(--console-border);
   margin-top: 14px;
 }
 
@@ -505,7 +507,7 @@ body {
   padding: 9px 10px;
   border: 1px solid var(--console-border);
   border-radius: 8px;
-  background: #fff;
+  background: var(--console-container);
   cursor: grab;
   transition: border-color 0.15s ease, box-shadow 0.15s ease, opacity 0.15s ease;
 }
@@ -731,7 +733,7 @@ body {
   font-size: 12px;
   border: 1px solid var(--console-border);
   border-radius: 4px;
-  background: #f7f8fa;
+  background: var(--console-surface);
 }
 
 .name-rewrite-rule-actions {
@@ -746,9 +748,9 @@ body {
   min-height: 32px;
   padding: 0 11px;
   color: var(--console-faint);
-  border: 1px dashed #d9dce1;
+  border: 1px dashed var(--console-border-strong);
   border-radius: 6px;
-  background: #fafafa;
+  background: var(--console-surface);
   font-size: 12px;
 }
 
@@ -781,7 +783,7 @@ body {
   padding: 12px;
   border: 1px solid var(--console-border);
   border-radius: 10px;
-  background: #fff;
+  background: var(--console-container);
 }
 
 .mobile-node-card {
@@ -857,7 +859,7 @@ body {
   justify-content: flex-end;
   gap: 2px;
   margin-top: 6px;
-  border-top: 1px solid #f2f3f5;
+  border-top: 1px solid var(--console-border);
   padding-top: 5px;
 }
 
@@ -1124,7 +1126,7 @@ body {
   width: 24px;
   height: 24px;
   border-radius: 50%;
-  color: #fff;
+  color: var(--console-on-primary);
   background: var(--console-primary);
   font-size: 13px;
   font-weight: 700;
@@ -1171,7 +1173,7 @@ body {
 
 .route-rule-card {
   border-color: var(--console-border);
-  background: #fff;
+  background: var(--console-container);
 }
 
 .route-rule-card > .ant-card-head {
@@ -1216,8 +1218,8 @@ body {
   padding: 9px 10px;
   border: 1px solid var(--console-border);
   border-radius: 6px;
-  background: #fff;
-  color: #262626;
+  background: var(--console-container);
+  color: var(--console-ink);
   font-size: 13px;
 }
 
@@ -1255,7 +1257,7 @@ body {
 
 .route-rule-enabled strong {
   display: block;
-  color: #262626;
+  color: var(--console-ink);
   font-size: 14px;
   line-height: 22px;
 }
@@ -1608,18 +1610,6 @@ pre {
 }
 
 @media (max-width: 767px) {
-  html,
-  body,
-  #root {
-    height: auto;
-    min-height: 100%;
-  }
-
-  #root {
-    overflow-x: clip;
-    overflow-y: visible;
-  }
-
   .users-top-card {
     height: 480px;
   }
@@ -1794,13 +1784,13 @@ pre {
   overflow: auto;
   border: 1px solid var(--console-border);
   border-radius: 9px;
-  background: linear-gradient(145deg, #ffffff 0%, var(--console-chrome-tint) 54%, var(--console-surface) 100%);
-  box-shadow: inset 0 1px 0 #fff, 0 4px 14px rgba(15, 23, 42, 0.06);
+  background: linear-gradient(145deg, var(--console-container) 0%, var(--console-chrome-tint) 54%, var(--console-surface) 100%);
+  box-shadow: inset 0 1px 0 var(--console-container), 0 4px 14px rgba(15, 23, 42, 0.06);
   color: var(--console-ink);
   font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace;
   font-size: 12px;
   line-height: 1.5;
-  scrollbar-color: #c7c0b5 var(--console-surface);
+  scrollbar-color: var(--console-border-hover) var(--console-surface);
   scrollbar-gutter: stable;
   overscroll-behavior: contain;
 }
@@ -1808,7 +1798,7 @@ pre {
 .logs-line {
   min-width: 100%;
   padding: 6px 10px;
-  border-bottom: 1px solid #eeebe5;
+  border-bottom: 1px solid var(--console-border);
   box-sizing: border-box;
   transition: background 0.12s ease;
 }
@@ -2096,9 +2086,9 @@ pre {
   align-items: center;
   justify-content: center;
   height: clamp(380px, calc(100dvh - 310px), 760px);
-  border: 1px solid #f0f0f0;
+  border: 1px solid var(--console-border);
   border-radius: 9px;
-  background: #fafafa;
+  background: var(--console-surface);
 }
 
 .logs-footer {

@@ -11,8 +11,8 @@ export default function Appearance() {
   const { pathname } = useLocation()
   const isLogin = pathname === '/login'
   const role = useAuth((state) => state.user?.role)
-  const { themeId } = useThemePreference(role === 'admin' ? 'admin' : 'user')
-  const palette = getConsolePalette(themeId)
+  const { resolvedThemeId } = useThemePreference(role === 'admin' ? 'admin' : 'user')
+  const palette = getConsolePalette(resolvedThemeId)
   const [reducedMotion, setReducedMotion] = useState(() => window.matchMedia('(prefers-reduced-motion: reduce)').matches)
 
   useEffect(() => {

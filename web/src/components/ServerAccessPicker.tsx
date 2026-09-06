@@ -68,8 +68,8 @@ export default function ServerAccessPicker({ servers, value = [], onChange }: Se
           <div
             key={s.id}
             style={{
-              background: '#ffffff',
-              border: '1px solid #e5e7eb',
+              background: 'var(--console-container)',
+              border: '1px solid var(--console-border)',
               borderRadius: 8,
               padding: '12px 14px',
               boxShadow: '0 1px 2px 0 rgba(0, 0, 0, 0.03)',
@@ -85,7 +85,7 @@ export default function ServerAccessPicker({ servers, value = [], onChange }: Se
                   indeterminate={isIndeterminate}
                   onChange={(e) => handleServerToggle(e.target.checked)}
                 />
-                <span style={{ fontWeight: 600, fontSize: 13, color: '#111827', wordBreak: 'break-all' }}>
+                <span style={{ fontWeight: 600, fontSize: 13, color: 'var(--console-ink)', wordBreak: 'break-all' }}>
                   {s.name} {s.region ? `· ${s.region}` : ''}
                 </span>
               </div>
@@ -95,7 +95,7 @@ export default function ServerAccessPicker({ servers, value = [], onChange }: Se
               ) : isIndeterminate ? (
                 <Tag color="orange" style={{ margin: 0, fontSize: 11, borderRadius: 10, padding: '0 8px', border: 'none', flexShrink: 0 }}>部分授权 ({selectedIbKeys.length}/{ibs.length})</Tag>
               ) : (
-                <Tag style={{ margin: 0, fontSize: 11, color: 'var(--console-faint)', borderRadius: 10, padding: '0 8px', border: 'none', background: '#f3f4f6', flexShrink: 0 }}>未授权</Tag>
+                <Tag style={{ margin: 0, fontSize: 11, color: 'var(--console-faint)', borderRadius: 10, padding: '0 8px', border: 'none', background: 'var(--console-surface)', flexShrink: 0 }}>未授权</Tag>
               )}
             </div>
 

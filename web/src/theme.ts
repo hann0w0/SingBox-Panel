@@ -1,74 +1,67 @@
-import type { ThemeConfig } from 'antd'
+import { theme, type ThemeConfig } from 'antd'
 
 export const loginTheme: ThemeConfig = {
   token: { colorPrimary: '#3a5bff', borderRadius: 8 },
 }
 
-const warmColors = {
-  ink: '#252422', muted: '#59554f', faint: '#69645d', placeholder: '#736e66',
-  primary: '#353432', link: '#55514b', brand: '#94652e',
-  border: '#e6e2db', borderStrong: '#dedbd5', borderHover: '#b8afa0',
-  layout: '#f5f4f1', surface: '#f8f7f4', chrome: '#fcfbf9', chromeTint: '#fcfbf9',
-  selected: '#eeece6', selectedBorder: '#e2ded5', selectedText: '#302f2d',
-  hover: '#f3f1ec', focus: '#777064',
-  success: '#42644b', warning: '#91611f', error: '#a3423d',
-  download: '#484e43', upload: '#876238',
-  shadow: '40 36 30',
+const dayColors = {
+  ink: '#1f1f1f', muted: '#595959', faint: '#666666', placeholder: '#737373',
+  primary: '#3a5bff', onPrimary: '#ffffff', link: '#1677ff', brand: '#3a5bff',
+  border: '#f0f0f0', borderStrong: '#d9d9d9', borderHover: '#d9d9d9',
+  layout: '#f5f5f5', container: '#ffffff', elevated: '#ffffff',
+  surface: '#fafafa', chrome: '#ffffff', chromeTint: '#ffffff', spotlight: '#1f1f1f',
+  selected: '#f0f5ff', selectedBorder: '#dee8ff', selectedText: '#3a5bff',
+  hover: '#f5f5f5', focus: '#3a5bff',
+  success: '#52c41a', warning: '#faad14', error: '#ff4d4f',
+  warningText: '#ad6800', errorText: '#a61d24',
+  download: '#4096ff', upload: '#36cfc9',
+  shadow: '0 0 0',
 }
 
-export type ConsoleThemeId = 'warm' | 'blue' | 'green'
+export type ConsoleThemeId = 'blue' | 'dark'
+export type ConsoleThemePreference = ConsoleThemeId | 'auto'
 export type ConsolePalette = {
   id: ConsoleThemeId
   name: string
-  colors: Record<keyof typeof warmColors, string>
+  colors: Record<keyof typeof dayColors, string>
 }
 
 export const consolePalettes: ConsolePalette[] = [
+  // Keep the existing ID so saved classic preferences become the day theme.
+  { id: 'blue', name: '日间', colors: dayColors },
   {
-    id: 'blue', name: '经典',
+    id: 'dark', name: '夜间',
     colors: {
-      ...warmColors,
-      // Match v1.0's white cards, neutral canvas and vivid status colors.
-      ink: '#1f1f1f', muted: '#595959', faint: '#666666', placeholder: '#737373',
-      primary: '#3a5bff', link: '#1677ff', brand: '#3a5bff',
-      border: '#f0f0f0', borderStrong: '#d9d9d9', borderHover: '#d9d9d9',
-      layout: '#f5f5f5', surface: '#fafafa', chrome: '#ffffff', chromeTint: '#ffffff',
-      selected: '#f0f5ff', selectedBorder: '#dee8ff', selectedText: '#3a5bff',
-      hover: '#f5f5f5', focus: '#3a5bff',
-      success: '#52c41a', warning: '#faad14', error: '#ff4d4f',
-      download: '#4096ff', upload: '#36cfc9', shadow: '0 0 0',
-    },
-  },
-  { id: 'warm', name: '暖灰', colors: warmColors },
-  {
-    id: 'green', name: '青绿',
-    colors: {
-      ...warmColors,
-      ink: '#20372e', muted: '#4f655a', faint: '#5d7065', placeholder: '#6c7c72',
-      primary: '#247668', link: '#236f62', brand: '#247668',
-      border: '#dfe9e3', borderStrong: '#d1e0d7', borderHover: '#91b8a6',
-      layout: '#f1f6f3', surface: '#f4f8f5', chrome: '#f9fcfa', chromeTint: '#f0f8f5',
-      selected: '#e3f0e9', selectedBorder: '#cce2d7', selectedText: '#236f62',
-      hover: '#edf5f0', focus: '#3c8b78',
-      download: '#247668', upload: '#527532', shadow: '33 71 54',
+      // Neutral surfaces sampled from the browser toolbar and address bar.
+      ink: '#f1f1f1', muted: '#c2c2c2', faint: '#aaaaaa', placeholder: '#979797',
+      primary: '#8ab4f8', onPrimary: '#1b1b1b', link: '#9fc6ff', brand: '#adcfff',
+      border: '#3b3b3b', borderStrong: '#515151', borderHover: '#747474',
+      layout: '#1b1b1b', container: '#262626', elevated: '#303030',
+      surface: '#2d2d2d', chrome: '#262626', chromeTint: '#262626', spotlight: '#454545',
+      selected: '#3a3f47', selectedBorder: '#505965', selectedText: '#c2dcff',
+      hover: '#363636', focus: '#a8c7fa',
+      success: '#9fd4ac', warning: '#edc985', error: '#f2aaa6',
+      warningText: '#edc985', errorText: '#f2aaa6',
+      download: '#9fc6ff', upload: '#8ed1c6', shadow: '0 0 0',
     },
   },
 ]
 
 export const DEFAULT_CONSOLE_THEME: ConsoleThemeId = 'blue'
-export const DEFAULT_USER_CONSOLE_THEME: ConsoleThemeId = 'warm'
-export const userConsolePalettes = consolePalettes.filter((p) => p.id === 'blue' || p.id === 'warm')
+export const DEFAULT_USER_CONSOLE_THEME: ConsoleThemeId = DEFAULT_CONSOLE_THEME
+export const userConsolePalettes = consolePalettes
 
-export function parseConsoleTheme(value: unknown): ConsoleThemeId {
+export function parseConsoleTheme(value: unknown): ConsoleThemePreference {
+  if (value === 'auto') return 'auto'
   return consolePalettes.find((p) => p.id === value)?.id ?? DEFAULT_CONSOLE_THEME
 }
 
-export function parseUserConsoleTheme(value: unknown): ConsoleThemeId {
-  return userConsolePalettes.find((p) => p.id === value)?.id ?? DEFAULT_USER_CONSOLE_THEME
+export function parseUserConsoleTheme(value: unknown): ConsoleThemePreference {
+  return parseConsoleTheme(value)
 }
 
 export function getConsolePalette(id: ConsoleThemeId): ConsolePalette {
-  return consolePalettes.find((p) => p.id === parseConsoleTheme(id))!
+  return consolePalettes.find((p) => p.id === id) ?? consolePalettes[0]
 }
 
 export function consoleCssVariables(palette: ConsolePalette): Record<string, string> {
@@ -79,8 +72,8 @@ export function consoleCssVariables(palette: ConsolePalette): Record<string, str
 
 export function getConsoleTheme(palette: ConsolePalette): ThemeConfig {
   const c = palette.colors
-  const isClassic = palette.id === 'blue'
   return {
+    algorithm: palette.id === 'dark' ? theme.darkAlgorithm : theme.defaultAlgorithm,
     token: {
       colorPrimary: c.primary, colorInfo: c.link,
       colorPrimaryBg: c.selected, colorPrimaryBgHover: c.selectedBorder,
@@ -90,7 +83,7 @@ export function getConsoleTheme(palette: ConsolePalette): ThemeConfig {
       colorLink: c.link, colorLinkHover: c.primary,
       colorText: c.ink, colorTextSecondary: c.muted, colorTextTertiary: c.faint,
       colorTextPlaceholder: c.placeholder,
-      colorBgLayout: c.layout, colorBgContainer: '#ffffff',
+      colorBgLayout: c.layout, colorBgContainer: c.container, colorBgElevated: c.elevated,
       colorBorder: c.borderStrong, colorBorderSecondary: c.border,
       colorFillAlter: c.surface, colorFillSecondary: c.selected,
       borderRadius: 8, borderRadiusLG: 12, controlHeight: 36, fontSize: 14,
@@ -99,26 +92,29 @@ export function getConsoleTheme(palette: ConsolePalette): ThemeConfig {
       motionDurationFast: '0.12s', motionDurationMid: '0.2s', motionDurationSlow: '0.28s',
     },
     components: {
-      Layout: { bodyBg: c.layout, headerBg: '#ffffff', lightSiderBg: c.chrome },
+      Layout: { bodyBg: c.layout, headerBg: c.chrome, lightSiderBg: c.chrome },
       Menu: {
-        itemBg: c.chrome, subMenuItemBg: c.chrome, itemColor: isClassic ? c.ink : c.muted,
+        itemBg: c.chrome, subMenuItemBg: c.chrome, itemColor: c.ink,
         itemHoverColor: c.selectedText, itemHoverBg: c.hover,
         itemSelectedBg: c.selected, itemSelectedColor: c.selectedText,
         itemHeight: 44, itemBorderRadius: 8,
       },
-      Button: { primaryShadow: 'none', defaultShadow: 'none', fontWeight: 500 },
+      Button: {
+        primaryShadow: 'none', defaultShadow: 'none', fontWeight: 500,
+        primaryColor: c.onPrimary, dangerColor: c.onPrimary,
+      },
       Card: { headerFontSize: 15, headerHeight: 54 },
       Table: {
-        headerBg: c.surface, headerColor: isClassic ? c.ink : c.muted, headerSplitColor: c.border,
+        headerBg: c.surface, headerColor: c.ink, headerSplitColor: c.border,
         rowHoverBg: c.surface, rowSelectedBg: c.selected, rowSelectedHoverBg: c.hover,
         borderColor: c.border,
       },
       Tabs: { inkBarColor: c.primary, itemSelectedColor: c.primary, itemHoverColor: c.link },
-      Segmented: { trackBg: c.selected, itemSelectedBg: '#ffffff', itemSelectedColor: c.selectedText },
+      Segmented: { trackBg: c.selected, itemSelectedBg: c.container, itemSelectedColor: c.selectedText },
       Select: { optionSelectedBg: c.selected, optionActiveBg: c.hover },
-      Progress: { defaultColor: c.success, remainingColor: isClassic ? '#f0f0f0' : c.selected },
+      Progress: { defaultColor: c.success, remainingColor: c.border },
       Statistic: { contentFontSize: 28, titleFontSize: 13 },
-      Tooltip: { colorBgSpotlight: c.ink },
+      Tooltip: { colorBgSpotlight: c.spotlight },
     },
   }
 }

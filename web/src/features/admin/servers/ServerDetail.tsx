@@ -465,13 +465,13 @@ export default function ServerDetail() {
           <div style={{ position: 'relative' }}>
             <pre
               style={{
-                background: '#f8fafc',
-                border: '1px solid #e2e8f0',
+                background: 'var(--console-surface)',
+                border: '1px solid var(--console-border)',
                 borderRadius: 6,
                 padding: '12px 14px',
                 fontSize: 12,
                 lineHeight: 1.75,
-                color: '#1e293b',
+                color: 'var(--console-ink)',
                 fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace',
                 whiteSpace: 'pre-wrap',
                 wordBreak: 'break-all',
@@ -898,7 +898,7 @@ export default function ServerDetail() {
                   <Space size={4} style={{ whiteSpace: 'nowrap' }}>
                     <span style={{ display: 'inline-flex', minWidth: 88 }}>
                       {isTesting
-                        ? <span style={{ color: '#4096ff' }}>测试中…</span>
+                        ? <span style={{ color: 'var(--console-link)' }}>测试中…</span>
                         : !t
                           ? <span style={{ color: 'var(--console-faint)' }}>未测试</span>
                           : t.ok
@@ -976,7 +976,7 @@ export default function ServerDetail() {
             onDrop: () => handleRuleDrop(index!),
             style: {
               cursor: 'grab',
-              outline: ruleDropIndex === index ? '2px solid #91caff' : undefined,
+              outline: ruleDropIndex === index ? '2px solid var(--console-focus)' : undefined,
               outlineOffset: -2,
             },
           })}
@@ -1015,57 +1015,57 @@ export default function ServerDetail() {
                 return (
                   <Space wrap size={[4, 4]}>
                     {m.rule_set?.map((tag) => (
-                      <Tag key={tag} style={{ background: '#f0f5ff', color: '#2f54eb', borderColor: '#adc6ff' }}>
+                      <Tag key={tag} color="geekblue">
                         规则集: {tag}
                       </Tag>
                     ))}
                     {m.inbound?.map((ib) => (
-                      <Tag key={ib} style={{ background: '#f6ffed', color: '#389e0d', borderColor: '#b7eb8f' }}>
+                      <Tag key={ib} color="green">
                         入站: {ib}
                       </Tag>
                     ))}
                     {m.domain?.map((domain) => (
-                      <Tag key={`domain-${domain}`} style={{ background: '#fff7e6', color: '#d46b08', borderColor: '#ffd591' }}>
+                      <Tag key={`domain-${domain}`} color="orange">
                         域名: {domain}
                       </Tag>
                     ))}
                     {m.domain_suffix?.map((ds) => (
-                      <Tag key={`suffix-${ds}`} style={{ background: '#fff7e6', color: '#d46b08', borderColor: '#ffd591' }}>
+                      <Tag key={`suffix-${ds}`} color="orange">
                         域名: {ds}
                       </Tag>
                     ))}
                     {m.domain_keyword?.map((keyword) => (
-                      <Tag key={`keyword-${keyword}`} style={{ background: '#fff7e6', color: '#d46b08', borderColor: '#ffd591' }}>
+                      <Tag key={`keyword-${keyword}`} color="orange">
                         关键词: {keyword}
                       </Tag>
                     ))}
                     {m.ip_cidr?.map((ip) => (
-                      <Tag key={`ip-${ip}`} style={{ background: '#fff0f6', color: '#c41d7f', borderColor: '#ffadd2' }}>
+                      <Tag key={`ip-${ip}`} color="magenta">
                         目标 IP: {ip}
                       </Tag>
                     ))}
                     {m.source_ip_cidr?.map((ip) => (
-                      <Tag key={`source-ip-${ip}`} style={{ background: '#fff0f6', color: '#c41d7f', borderColor: '#ffadd2' }}>
+                      <Tag key={`source-ip-${ip}`} color="magenta">
                         来源 IP: {ip}
                       </Tag>
                     ))}
                     {m.port?.map((port) => (
-                      <Tag key={`port-${port}`} style={{ background: '#e6fffb', color: '#08979c', borderColor: '#87e8de' }}>
+                      <Tag key={`port-${port}`} color="cyan">
                         端口: {port}
                       </Tag>
                     ))}
                     {m.protocol?.map((p) => (
-                      <Tag key={`protocol-${p}`} style={{ background: '#f9f0ff', color: '#722ed1', borderColor: '#d3ade6' }}>
+                      <Tag key={`protocol-${p}`} color="purple">
                         协议: {p}
                       </Tag>
                     ))}
                     {m.network ? (
-                      <Tag style={{ background: '#f0f5ff', color: '#2f54eb', borderColor: '#adc6ff' }}>
+                      <Tag color="geekblue">
                         网络: {m.network.toUpperCase()}
                       </Tag>
                     ) : null}
                     {!m.rule_set?.length && !m.inbound?.length && !m.domain?.length && !m.domain_suffix?.length && !m.domain_keyword?.length && !m.ip_cidr?.length && !m.source_ip_cidr?.length && !m.port?.length && !m.protocol?.length && !m.network && (
-                      <Tag style={{ background: '#f5f5f5', color: 'var(--console-muted)', borderColor: '#d9d9d9' }}>
+                      <Tag style={{ color: 'var(--console-muted)' }}>
                         匹配全部流量
                       </Tag>
                     )}
@@ -1105,7 +1105,7 @@ export default function ServerDetail() {
           summary={() => {
             const finalOut = (server.final_outbound || 'direct').toUpperCase()
             return (
-              <Table.Summary.Row style={{ background: '#fafafa' }}>
+              <Table.Summary.Row style={{ background: 'var(--console-surface)' }}>
                 <Table.Summary.Cell index={0} align="center">
                   <span style={{ color: 'var(--console-faint)' }}>-</span>
                 </Table.Summary.Cell>

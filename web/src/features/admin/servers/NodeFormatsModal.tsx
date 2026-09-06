@@ -62,7 +62,7 @@ export function NodeFormatsModalContent({ data }: { data: NodeFormats }) {
             ]
             return (
               <List.Item style={{ padding: '12px 16px', display: 'flex', flexWrap: 'wrap', gap: 12 }}>
-                <span style={{ fontWeight: 500, color: '#1e293b', wordBreak: 'break-all' }}>{displayTag}</span>
+                <span style={{ fontWeight: 500, color: 'var(--console-ink)', wordBreak: 'break-all' }}>{displayTag}</span>
                 <Space size={8} wrap>
                   <Button size="small" icon={<EyeOutlined />} onClick={() => setDetailItem(item)}>详情</Button>
                   {buttons.map((button) => button.value ? (

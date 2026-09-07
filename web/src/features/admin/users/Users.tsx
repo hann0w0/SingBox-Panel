@@ -24,6 +24,14 @@ export default function Users() {
   const [open, setOpen] = useState(false)
   const [editing, setEditing] = useState<User | null>(null)
   const [assignUser, setAssignUser] = useState<User | null>(null)
+  const [assignOpen, setAssignOpen] = useState(false)
+  const [assignOrigin, setAssignOrigin] = useState<{ x: number; y: number }>()
+  const openAssign = (user: User, button: HTMLElement) => {
+    const rect = button.getBoundingClientRect()
+    setAssignOrigin({ x: rect.left + rect.width / 2 + window.scrollX, y: rect.top + rect.height / 2 + window.scrollY })
+    setAssignUser(user)
+    setAssignOpen(true)
+  }
   const userLoadRef = useRef<{ generation: number; controller: AbortController | null }>({ generation: 0, controller: null })
   const nodeLoadRef = useRef<{ generation: number; controller: AbortController | null }>({ generation: 0, controller: null })
   const [form] = Form.useForm()
@@ -169,7 +177,7 @@ export default function Users() {
           </div>
           <div className="mobile-card-actions mobile-user-actions">
             <Button size="small" type="link" onClick={() => openEdit(user)}>编辑</Button>
-            <Button size="small" type="link" onClick={() => setAssignUser(user)}>分配</Button>
+            <Button size="small" type="link" onClick={(e) => openAssign(user, e.currentTarget)}>分配</Button>
             {user.role !== 'admin' ? (
               <Button size="small" type="link" danger onClick={() => removeUser(user)}>删除</Button>
             ) : null}
@@ -227,7 +235,7 @@ export default function Users() {
                   render: (_, u: User) => (
                     <Space size={8} wrap>
                       <Button size="small" type="link" style={{ padding: '0 4px' }} onClick={() => openEdit(u)}>编辑</Button>
-                      <Button size="small" type="link" style={{ padding: '0 4px' }} onClick={() => setAssignUser(u)}>分配节点</Button>
+                      <Button size="small" type="link" style={{ padding: '0 4px' }} onClick={(e) => openAssign(u, e.currentTarget)}>分配节点</Button>
                       {u.role !== 'admin' ? (
                         <Button
                           size="small"
@@ -255,8 +263,9 @@ export default function Users() {
         userId={assignUser?.id}
         userEmail={assignUser?.email}
         nodes={nodes}
-        open={!!assignUser}
-        onClose={() => setAssignUser(null)}
+        open={assignOpen}
+        mousePosition={assignOrigin}
+        onClose={() => setAssignOpen(false)}
         onSaved={() => {
           load()
           loadNodes()

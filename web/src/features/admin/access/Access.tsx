@@ -137,13 +137,14 @@ const AccessItem = memo(function AccessItem({ item, checked, disabled, onToggle 
 // AssignModal is a controlled dialog that edits one user's node assignment.
 // It is opened from a row in the users table (open + userId), so the admin no
 // longer has to first pick a user from a separate panel.
-export function AssignModal({ userId, userEmail, nodes, open, onClose, onSaved }: {
+export function AssignModal({ userId, userEmail, nodes, open, onClose, onSaved, mousePosition }: {
   userId?: number
   userEmail?: string
   nodes: CustomNode[]
   open: boolean
   onClose: () => void
   onSaved: () => void
+  mousePosition?: { x: number; y: number }
 }) {
   const screens = Grid.useBreakpoint()
   const isMobile = !screens.md
@@ -200,7 +201,9 @@ export function AssignModal({ userId, userEmail, nodes, open, onClose, onSaved }
   }, [open, retryKey])
 
   useEffect(() => {
-    if (!open || !userId) {
+    // Preserve content through the exit motion; reset only when opening again.
+    if (!open) return
+    {
       setLoadedServerIDs([])
       setLoadedServerWide(false)
       setLoadedInboundIDs([])
@@ -211,8 +214,8 @@ export function AssignModal({ userId, userEmail, nodes, open, onClose, onSaved }
       setNodeOrder([])
       setAccessLoaded(false)
       setAccessError(null)
-      return
     }
+    if (!userId) return
     const controller = new AbortController()
     setAccessLoading(true)
     setAccessError(null)
@@ -670,6 +673,8 @@ export function AssignModal({ userId, userEmail, nodes, open, onClose, onSaved }
   return (
     <Modal
       title={userEmail ? `节点分配 - ${userEmail}` : '节点分配'}
+      className="access-assign-modal"
+      mousePosition={mousePosition}
       open={open}
       onCancel={handleClose}
       footer={null}

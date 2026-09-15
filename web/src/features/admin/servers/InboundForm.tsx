@@ -25,7 +25,7 @@ const HAS_BANDWIDTH = new Set<InboundType>(['hysteria2'])
 // Which credential a single-user inbound presents.
 const UUID_TYPES = new Set<InboundType>(['vless', 'vmess', 'tuic'])
 const PW_TYPES = new Set<InboundType>(['trojan', 'hysteria2', 'anytls', 'tuic'])
-const MULTI_USER_TYPES = new Set<InboundType>(['shadowsocks', 'socks', 'vless', 'anytls', 'vmess', 'tuic', 'trojan', 'hysteria2'])
+const MULTI_USER_TYPES = new Set<InboundType>(['shadowsocks', 'vless', 'anytls', 'vmess', 'tuic', 'trojan', 'hysteria2'])
 
 const VMESS_SECURITIES = ['auto', 'none', 'zero', 'aes-128-gcm', 'chacha20-poly1305', 'aes-128-cfb']
 
@@ -47,7 +47,7 @@ function supportsMultiUser(type: InboundType, method?: string): boolean {
   return true
 }
 
-function toForm(ib: Inbound | null): FormVals {
+export function toForm(ib: Inbound | null): FormVals {
   if (!ib) {
     return {
       type: 'shadowsocks',
@@ -83,7 +83,7 @@ function toForm(ib: Inbound | null): FormVals {
     tag: ib.tag,
     listen_port: ib.listen_port,
     enabled: ib.enabled,
-    multi_user: s.multi_user ?? false,
+    multi_user: supportsMultiUser(ib.type, s.method) && !!s.multi_user,
     username: s.username ?? '',
     uuid: s.uuid ?? '',
     password: s.password ?? '',
@@ -121,7 +121,7 @@ function toForm(ib: Inbound | null): FormVals {
     acme_email: tls.acme_email,
     transport_type: s.transport?.type === 'ws' || s.transport?.type === 'httpupgrade' ? s.transport.type : 'tcp',
     ws_path: s.transport?.path,
-    ws_host: s.transport?.headers?.Host,
+    ws_host: transportHost(s.transport?.headers),
     max_early_data: s.transport?.max_early_data,
     early_data_header: s.transport?.early_data_header,
     tls_fingerprint: tls.fingerprint,
@@ -130,8 +130,13 @@ function toForm(ib: Inbound | null): FormVals {
     }
 }
 
+function transportHost(headers: Record<string, string | string[]> | undefined): string {
+  const value = Object.entries(headers ?? {}).find(([key]) => key.toLowerCase() === 'host')?.[1]
+  return Array.isArray(value) ? value[0] ?? '' : value ?? ''
+}
+
 // Build settings, preserving generated secrets from `base` (edit case).
-function assembleSettings(base: InboundSettings, v: FormVals, type: InboundType): InboundSettings {
+export function assembleSettings(base: InboundSettings, v: FormVals, type: InboundType): InboundSettings {
   const s: InboundSettings = JSON.parse(JSON.stringify(base || {}))
 
   // Multi-user is explicit and capability-gated. Snell and legacy
@@ -188,25 +193,22 @@ function assembleSettings(base: InboundSettings, v: FormVals, type: InboundType)
     s.snell_mode = v.snell_mode || ''
   }
   if (type === 'socks') {
-    if (s.multi_user) {
-      // Do not reuse a previously shared login as the internal lockout
-      // credential when switching to multi-user mode. The backend generates a
-      // private fallback that is never included in subscriptions.
-      if (!base.multi_user) {
-        s.username = ''
-        s.password = ''
-      }
-    } else {
-      s.username = typeof v.username === 'string' ? v.username.trim() : ''
-      s.password = typeof v.password === 'string' ? v.password.trim() : ''
-    }
+    s.username = typeof v.username === 'string' ? v.username.trim() : ''
+    s.password = typeof v.password === 'string' ? v.password : ''
   }
   // transport (ws/httpupgrade only for vless/vmess/trojan)
   if (WS_TYPES.has(type) && (v.transport_type === 'ws' || v.transport_type === 'httpupgrade')) {
+    const headers = { ...(s.transport?.headers ?? {}) }
+    const host = typeof v.ws_host === 'string' ? v.ws_host.trim() : ''
+    if (host !== transportHost(headers)) {
+      for (const key of Object.keys(headers)) if (key.toLowerCase() === 'host') delete headers[key]
+      if (host) headers.Host = host
+    }
     s.transport = {
+      ...s.transport,
       type: v.transport_type,
       path: v.ws_path || '',
-      headers: v.ws_host ? { Host: v.ws_host } : undefined,
+      headers: Object.keys(headers).length ? headers : undefined,
       max_early_data: v.max_early_data || 0,
       early_data_header: v.early_data_header || '',
     }
@@ -395,7 +397,7 @@ export default function InboundForm({
             type="info"
             showIcon
             style={{ marginBottom: 16 }}
-            message={type === 'snell' ? 'Snell 固定使用单凭证模式' : '当前加密方式只支持单凭证'}
+            message={type === 'socks' ? 'SOCKS5 使用固定账号密码；同时留空表示无需认证' : type === 'snell' ? 'Snell 固定使用单凭证模式' : '当前加密方式只支持单凭证'}
           />
         )}
 

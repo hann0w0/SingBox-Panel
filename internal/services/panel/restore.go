@@ -68,7 +68,7 @@ func (a *App) restoreBackup(c *gin.Context) {
 	}
 
 	// Serialize against self-update; both mutate files under the install dir.
-	if ok := a.selfUpdating.TryLock(); !ok {
+	if ok := a.tryMaintenanceLock(); !ok {
 		c.JSON(http.StatusConflict, gin.H{"error": "已有维护任务正在进行"})
 		return
 	}

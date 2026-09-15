@@ -13,9 +13,9 @@ import { formatBytes, formatDuration } from '../../../util'
 import { RequestState } from '../../../components/RequestState'
 
 function usageColor(pct: number): string {
-  if (pct >= 85) return '#ff4d4f'
-  if (pct >= 60) return '#faad14'
-  return '#52c41a'
+  if (pct >= 85) return 'var(--console-error)'
+  if (pct >= 60) return 'var(--console-warning)'
+  return 'var(--console-success)'
 }
 
 export default function Overview() {
@@ -64,18 +64,18 @@ export default function Overview() {
 
   const gauge = (title: string, pct: number, footer: React.ReactNode) => (
     <Card>
-      <div style={{ color: 'rgba(0,0,0,0.45)', marginBottom: 8 }}>{title}</div>
-      <div style={{ display: 'flex', alignItems: 'center', gap: 20 }}>
+      <div className="overview-caption">{title}</div>
+      <div className="overview-gauge">
         <Progress type="dashboard" percent={pct} size={120} strokeColor={usageColor(pct)} />
-        <div style={{ color: 'rgba(0,0,0,0.65)' }}>{footer}</div>
+        <div className="overview-caption">{footer}</div>
       </div>
     </Card>
   )
 
   const stat = (title: string, value: React.ReactNode, icon: React.ReactNode, extra?: React.ReactNode) => (
-    <Card style={{ height: '100%' }}>
+    <Card className="overview-stat" style={{ height: '100%' }}>
       <Statistic title={title} value={value as any} prefix={icon} />
-      <div style={{ marginTop: 6, fontSize: 12, color: 'rgba(0,0,0,0.45)', minHeight: 18, lineHeight: '18px' }}>
+      <div className="overview-note">
         {extra || '\u00A0'}
       </div>
     </Card>
@@ -83,7 +83,7 @@ export default function Overview() {
 
   return (
     <RequestState loading={loading} error={error} hasData={!!d} onRetry={() => setReloadKey((value) => value + 1)}>
-      <Row gutter={[16, 16]}>
+      <Row className="overview-grid" gutter={[16, 16]}>
       <Col xs={24} md={12}>
         {gauge('面板服务器 · CPU 占用', cpu, <span>实时占用 {cpu}%</span>)}
       </Col>
@@ -93,7 +93,7 @@ export default function Overview() {
           mem,
           <div>
             <div>{formatBytes(d?.mem_used ?? 0)}</div>
-            <div style={{ color: 'rgba(0,0,0,0.45)' }}>/ {formatBytes(d?.mem_total ?? 0)}</div>
+            <div style={{ color: 'var(--console-muted)' }}>/ {formatBytes(d?.mem_total ?? 0)}</div>
           </div>,
         )}
       </Col>
@@ -104,7 +104,7 @@ export default function Overview() {
           d ? `${d.servers_online} / ${d.servers_total}` : '—',
           <CloudServerOutlined />,
           d && d.servers_online < d.servers_total ? (
-            <span style={{ color: '#ff4d4f' }}>{d.servers_total - d.servers_online} 台离线</span>
+            <span style={{ color: 'var(--console-error)' }}>{d.servers_total - d.servers_online} 台离线</span>
           ) : (
             '全部在线'
           ),
@@ -128,7 +128,7 @@ export default function Overview() {
       <Col xs={24}>
         <Card
           title="节点状态"
-          extra={<span style={{ fontSize: 12, color: 'rgba(0,0,0,0.45)' }}>点击一行进入该节点</span>}
+          extra={<span style={{ fontSize: 12, color: 'var(--console-muted)' }}>点击一行进入该节点</span>}
         >
           <Table
             rowKey="id"
@@ -185,7 +185,7 @@ export default function Overview() {
                 title: '配置',
                 responsive: ['sm'],
                 render: (_, n: NodeBrief) => (
-                  <span style={{ color: 'rgba(0,0,0,0.65)' }}>
+                  <span style={{ color: 'var(--console-muted)' }}>
                     入 {n.inbounds} · 出 {n.outbounds} · 规则 {n.rules}
                   </span>
                 ),

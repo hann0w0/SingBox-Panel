@@ -108,8 +108,8 @@ var applicationMigrations = []schemaMigration{
 					return err
 				}
 				if old.UserID != nil {
-					ids := []uint{*old.UserID}
-					if err := tx.Model(&model.CustomNode{}).Where("id = ?", nodes[i].ID).Update("user_ids", ids).Error; err != nil {
+					nodes[i].UserIDs = []uint{*old.UserID}
+					if err := tx.Model(&nodes[i]).Select("UserIDs").Updates(&nodes[i]).Error; err != nil {
 						return err
 					}
 				}
@@ -129,10 +129,9 @@ var applicationMigrations = []schemaMigration{
 				return err
 			}
 			for i := range nodes {
-				if err := tx.Model(&model.CustomNode{}).Where("id = ?", nodes[i].ID).Updates(map[string]any{
-					"all_users":         len(nodes[i].UserIDs) == 0,
-					"excluded_user_ids": []uint{},
-				}).Error; err != nil {
+				nodes[i].AllUsers = len(nodes[i].UserIDs) == 0
+				nodes[i].ExcludedUserIDs = []uint{}
+				if err := tx.Model(&nodes[i]).Select("AllUsers", "ExcludedUserIDs").Updates(&nodes[i]).Error; err != nil {
 					return err
 				}
 			}
@@ -301,6 +300,11 @@ var applicationMigrations = []schemaMigration{
 			return tx.Model(&model.SchemaMigration{}).Where("version = ?", 17).
 				Update("name", "legacy server credential schema").Error
 		},
+	},
+	{
+		version: 21,
+		name:    "single-user SOCKS inbounds",
+		up:      migrateSOCKSSingleUserInbounds,
 	},
 }
 

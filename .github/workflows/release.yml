@@ -78,7 +78,8 @@ jobs:
             -o dist/panel/singbox-panel-linux-arm64 \
             ./cmd/panel
 
-          AGENT_VER="$(cat cmd/agent/VERSION 2>/dev/null || echo "v1.0.0")"
+          AGENT_VER="$(cat cmd/agent/VERSION)"
+          test "$AGENT_VER" = "$VERSION" || { echo 'Panel and Agent release versions must match' >&2; exit 1; }
           echo "${AGENT_VER}" > dist/agents/VERSION
           echo "==> agent linux/amd64 (${AGENT_VER})"
           GOOS=linux GOARCH=amd64 go build \

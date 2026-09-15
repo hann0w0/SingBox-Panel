@@ -19,7 +19,10 @@ type SingboxLatestReleases struct {
 	Beta   string `json:"beta"`
 }
 
+const singboxReleaseCacheTTL = time.Hour
+
 var (
+	sbReleaseURL       = "https://api.github.com/repos/SagerNet/sing-box/releases?per_page=15"
 	sbReleaseCache     SingboxLatestReleases
 	sbReleaseCacheTime time.Time
 	sbReleaseMutex     sync.RWMutex
@@ -27,7 +30,7 @@ var (
 
 // invalidateSingboxReleaseCache clears the cached latest versions so the next
 // read re-fetches from GitHub. Called after a sing-box install/upgrade to avoid
-// stale version comparisons for up to 24h.
+// stale version comparisons until the cache expires.
 func invalidateSingboxReleaseCache() {
 	sbReleaseMutex.Lock()
 	defer sbReleaseMutex.Unlock()
@@ -37,7 +40,7 @@ func invalidateSingboxReleaseCache() {
 
 func getLatestSingboxReleases() SingboxLatestReleases {
 	sbReleaseMutex.RLock()
-	if time.Since(sbReleaseCacheTime) < 24*time.Hour && (sbReleaseCache.Stable != "" || sbReleaseCache.Beta != "") {
+	if time.Since(sbReleaseCacheTime) < singboxReleaseCacheTTL && (sbReleaseCache.Stable != "" || sbReleaseCache.Beta != "") {
 		defer sbReleaseMutex.RUnlock()
 		return sbReleaseCache
 	}
@@ -46,12 +49,12 @@ func getLatestSingboxReleases() SingboxLatestReleases {
 	sbReleaseMutex.Lock()
 	defer sbReleaseMutex.Unlock()
 
-	if time.Since(sbReleaseCacheTime) < 24*time.Hour && (sbReleaseCache.Stable != "" || sbReleaseCache.Beta != "") {
+	if time.Since(sbReleaseCacheTime) < singboxReleaseCacheTTL && (sbReleaseCache.Stable != "" || sbReleaseCache.Beta != "") {
 		return sbReleaseCache
 	}
 
 	client := &http.Client{Timeout: 5 * time.Second}
-	req, err := http.NewRequest("GET", "https://api.github.com/repos/SagerNet/sing-box/releases?per_page=15", nil)
+	req, err := http.NewRequest("GET", sbReleaseURL, nil)
 	if err != nil {
 		return sbReleaseCache
 	}

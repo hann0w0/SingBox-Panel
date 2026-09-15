@@ -167,6 +167,8 @@ func (a *App) applyImport(srv *model.Server, p *singbox.ParsedConfig, raw []byte
 // applyImportUnlocked performs the database transaction while the caller owns
 // the server configuration lock.
 func (a *App) applyImportUnlocked(srv *model.Server, p *singbox.ParsedConfig, raw []byte) error {
+	a.userAccessMu.Lock()
+	defer a.userAccessMu.Unlock()
 	mode := importedConfigMode(p, raw)
 	return a.db.Transaction(func(tx *gorm.DB) error {
 		if err := syncImportedInbounds(tx, srv.ID, p.Inbounds); err != nil {
@@ -305,7 +307,15 @@ func syncImportedInbounds(tx *gorm.DB, serverID uint, parsed []singbox.ParsedInb
 	if err := deleteUserNodeOrderRefs(tx, userNodeTypeManaged, removedIDs); err != nil {
 		return err
 	}
-	return deleteRowsExcept(tx, serverID, keepIDs, &model.Inbound{})
+	if err := deleteRowsExcept(tx, serverID, keepIDs, &model.Inbound{}); err != nil {
+		return err
+	}
+	for _, inboundID := range removedIDs {
+		if err := removeInboundUserAssignments(tx, inboundID); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 func syncImportedOutbounds(tx *gorm.DB, serverID uint, parsed []singbox.ParsedOutbound) error {

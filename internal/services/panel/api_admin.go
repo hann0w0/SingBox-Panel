@@ -462,7 +462,7 @@ func (a *App) installSingbox(c *gin.Context) {
 		return
 	}
 	// Invalidate the release cache so the UI immediately reflects the new
-	// version instead of comparing against a stale "latest" for up to 24h.
+	// version instead of comparing against a stale "latest" until cache expiry.
 	invalidateSingboxReleaseCache()
 	// Once installed, push the panel's config ONLY if this server has protocols
 	// configured in the panel — never overwrite an existing config with an empty one.
@@ -1030,12 +1030,20 @@ func (a *App) updateInbound(c *gin.Context) {
 			return
 		}
 		preserveInboundSecrets(&oldSettings, &st)
-		if string(ib.Type) == "socks" && st.UseMultiUser(string(ib.Type)) && !oldSettings.UseMultiUser(string(ib.Type)) {
-			// The previous shared SOCKS login must not become the hidden fallback
-			// credential after switching modes, or revoked clients could reconnect
-			// whenever the active user list becomes empty.
-			st.Username = ""
-			st.Password = ""
+		if ib.Type == model.InboundSocks {
+			// Omitted credentials mean keep; explicitly clearing both fields means
+			// the administrator selected unauthenticated SOCKS.
+			var credentials struct {
+				Username *string `json:"username"`
+				Password *string `json:"password"`
+			}
+			_ = json.Unmarshal(req.Settings, &credentials)
+			if credentials.Username == nil {
+				st.Username = oldSettings.Username
+			}
+			if credentials.Password != nil {
+				st.Password = *credentials.Password
+			}
 		}
 		// Preserve previously-generated secrets when the new payload omits them.
 		if err := fillInboundSecrets(string(ib.Type), &st); err != nil {

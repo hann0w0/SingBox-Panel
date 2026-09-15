@@ -150,7 +150,7 @@ export const RuleSetsTab: React.FC<RuleSetsTabProps> = ({ serverId, ruleSets, ou
   return (
     <div>
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 }}>
-        <span style={{ fontSize: 13, color: '#666' }}>
+        <span style={{ fontSize: 13, color: 'var(--console-muted)' }}>
           配置规则集 (Rule Sets)，用于规则精确匹配域名或 IP 资源。
         </span>
         <Button type="primary" size="small" icon={<PlusOutlined />} disabled={rawMode} onClick={openCreateModal}>

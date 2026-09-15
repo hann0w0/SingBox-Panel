@@ -132,7 +132,7 @@ func TestExpiredUserIsRemovedButSnellStaysSingleCredential(t *testing.T) {
 	}
 }
 
-func TestMultiUserSOCKSWithNoActiveUsersStaysAuthenticated(t *testing.T) {
+func TestLegacyMultiUserSOCKSBecomesAuthenticatedSingleUser(t *testing.T) {
 	db := testDB(t)
 	server := model.Server{Name: "socks", AgentToken: "socks-token", ConfigMode: model.ConfigModeManaged}
 	if err := db.Create(&server).Error; err != nil {
@@ -141,6 +141,9 @@ func TestMultiUserSOCKSWithNoActiveUsersStaysAuthenticated(t *testing.T) {
 	settings := singbox.InboundSettings{MultiUser: true}
 	if err := fillInboundSecrets("socks", &settings); err != nil {
 		t.Fatal(err)
+	}
+	if settings.MultiUser || !settings.SingleUser {
+		t.Fatal("legacy SOCKS did not switch to shared credentials")
 	}
 	encoded, _ := json.Marshal(settings)
 	inbound := model.Inbound{
@@ -167,6 +170,6 @@ func TestMultiUserSOCKSWithNoActiveUsersStaysAuthenticated(t *testing.T) {
 	}
 	if len(config.Inbounds) != 1 || len(config.Inbounds[0].Users) != 1 ||
 		config.Inbounds[0].Users[0].Username == "" || config.Inbounds[0].Users[0].Password == "" {
-		t.Fatalf("multi-user SOCKS became unauthenticated: %s", raw)
+		t.Fatalf("legacy SOCKS became unauthenticated: %s", raw)
 	}
 }

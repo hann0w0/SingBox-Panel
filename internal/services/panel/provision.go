@@ -47,6 +47,9 @@ func genSSPSK(method string) string {
 //   - REALITY: generate the X25519 keypair + a short_id when absent
 //   - Shadowsocks: generate the server PSK when absent
 func fillInboundSecrets(typ string, s *singbox.InboundSettings) error {
+	if typ == "socks" {
+		normalizeLegacySOCKSSettings(s)
+	}
 	// Multi-user mode is explicit and capability-gated. Unsupported protocols
 	// (notably Snell and legacy Shadowsocks) are forced back to their stable
 	// top-level credential shape instead of emitting a users[] array clients may
@@ -99,13 +102,6 @@ func fillInboundSecrets(typ string, s *singbox.InboundSettings) error {
 		if s.SnellPSK == "" {
 			s.SnellPSK = randHex(16)
 		}
-	}
-	if typ == "socks" && s.UseMultiUser(typ) && (s.Username == "" || s.Password == "") {
-		// SOCKS with no users is an unauthenticated proxy. Keep a private fallback
-		// login in the stored settings so an inbound with zero active panel users
-		// remains locked instead of silently becoming open to the Internet.
-		s.Username = "__singbox_panel_disabled__"
-		s.Password = randHex(32)
 	}
 	if typ == "shadowtls" {
 		if s.ShadowTLSVersion == 0 {

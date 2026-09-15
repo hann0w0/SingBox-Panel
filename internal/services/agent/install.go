@@ -49,6 +49,16 @@ var versionRe = regexp.MustCompile(`^[0-9][0-9A-Za-z.\-]*$`)
 // (script | apt | dnf) and channel (stable | beta). It only ever invokes the
 // official installer/repositories documented by upstream.
 func InstallSingbox(ctx context.Context, channel, version, method string) (string, error) {
+	installer := singboxInstaller{run: run, detectVersion: DetectVersion}
+	return installer.install(ctx, channel, version, method)
+}
+
+type singboxInstaller struct {
+	run           func(context.Context, string, ...string) (string, error)
+	detectVersion func(context.Context) (bool, string)
+}
+
+func (i singboxInstaller) install(ctx context.Context, channel, version, method string) (string, error) {
 	if channel == "" {
 		channel = protocol.ChannelBeta
 	}
@@ -58,31 +68,76 @@ func InstallSingbox(ctx context.Context, channel, version, method string) (strin
 	if version != "" && !versionRe.MatchString(version) {
 		return "", fmt.Errorf("invalid version %q", version)
 	}
+	var output string
+	var err error
 	switch method {
 	case "apt":
-		return installAPT(ctx, channel)
+		output, err = i.installAPT(ctx, channel)
 	case "dnf":
-		return installDNF(ctx, channel)
+		output, err = i.installDNF(ctx, channel)
 	case "script", "":
-		return installScript(ctx, channel, version)
+		output, err = i.installScript(ctx, channel, version)
 	default:
 		return "", fmt.Errorf("unknown install method %q", method)
 	}
+	if err != nil {
+		return output, err
+	}
+	if err := ctx.Err(); err != nil {
+		return output, err
+	}
+	installed, actualVersion := i.detectVersion(ctx)
+	if err := ctx.Err(); err != nil {
+		return output, err
+	}
+	if !installed || !versionRe.MatchString(actualVersion) {
+		return output, fmt.Errorf("sing-box installation did not produce a working binary with a valid version")
+	}
+	if version != "" && actualVersion != version {
+		return output, fmt.Errorf("sing-box version mismatch: requested %s, installed %s", version, actualVersion)
+	}
+	return output, nil
 }
 
-func installScript(ctx context.Context, channel, version string) (string, error) {
-	var flags []string
+func (i singboxInstaller) installScript(ctx context.Context, channel, version string) (string, error) {
+	file, err := os.CreateTemp("", "singbox-install-*.sh")
+	if err != nil {
+		return "", fmt.Errorf("create installer file: %w", err)
+	}
+	path := file.Name()
+	defer os.Remove(path)
+	if err := file.Close(); err != nil {
+		return "", err
+	}
+	output, err := i.run(ctx, "curl", "-fsSL", "--output", path, "https://sing-box.app/install.sh")
+	if err != nil {
+		return output, fmt.Errorf("download sing-box installer: %w", err)
+	}
+	info, err := os.Stat(path)
+	if err != nil {
+		return output, fmt.Errorf("read sing-box installer: %w", err)
+	}
+	if info.Size() == 0 {
+		return output, fmt.Errorf("downloaded sing-box installer is empty")
+	}
+	args := []string{path}
 	if channel == protocol.ChannelBeta {
-		flags = append(flags, "--beta")
+		args = append(args, "--beta")
 	}
 	if version != "" {
-		flags = append(flags, "--version", version)
+		args = append(args, "--version", version)
 	}
-	script := "curl -fsSL https://sing-box.app/install.sh | sh"
-	if len(flags) > 0 {
-		script += " -s -- " + strings.Join(flags, " ")
+	installedOutput, err := i.run(ctx, "sh", args...)
+	if installedOutput != "" {
+		if output != "" {
+			output += "\n"
+		}
+		output += installedOutput
 	}
-	return runShell(ctx, script)
+	if err != nil {
+		return output, fmt.Errorf("run sing-box installer: %w", err)
+	}
+	return output, nil
 }
 
 func pkgName(channel string) string {
@@ -92,7 +147,7 @@ func pkgName(channel string) string {
 	return "sing-box"
 }
 
-func installAPT(ctx context.Context, channel string) (string, error) {
+func (i singboxInstaller) installAPT(ctx context.Context, channel string) (string, error) {
 	script := `set -e
 mkdir -p /etc/apt/keyrings
 curl -fsSL https://sing-box.app/gpg.key -o /etc/apt/keyrings/sagernet.asc
@@ -100,14 +155,14 @@ chmod a+r /etc/apt/keyrings/sagernet.asc
 printf '%s\n' 'Types: deb' 'URIs: https://deb.sagernet.org/' 'Suites: *' 'Components: *' 'Enabled: yes' 'Signed-By: /etc/apt/keyrings/sagernet.asc' > /etc/apt/sources.list.d/sagernet.sources
 apt-get update
 DEBIAN_FRONTEND=noninteractive apt-get install -y ` + pkgName(channel)
-	return runShell(ctx, script)
+	return i.run(ctx, "sh", "-c", script)
 }
 
-func installDNF(ctx context.Context, channel string) (string, error) {
+func (i singboxInstaller) installDNF(ctx context.Context, channel string) (string, error) {
 	script := `set -e
 dnf config-manager addrepo --from-repofile=https://sing-box.app/sing-box.repo 2>/dev/null || dnf config-manager --add-repo https://sing-box.app/sing-box.repo
 dnf install -y ` + pkgName(channel)
-	return runShell(ctx, script)
+	return i.run(ctx, "sh", "-c", script)
 }
 
 // DetectVersion reports whether the sing-box binary is present and its version.

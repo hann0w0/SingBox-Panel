@@ -1,6 +1,72 @@
 package panel
 
-import "testing"
+import (
+	"encoding/json"
+	"net/http"
+	"net/http/httptest"
+	"testing"
+	"time"
+)
+
+func TestSingboxReleaseCacheRefresh(t *testing.T) {
+	requests := 0
+	status := http.StatusOK
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		requests++
+		w.WriteHeader(status)
+		if status == http.StatusOK {
+			_ = json.NewEncoder(w).Encode([]githubRelease{
+				{TagName: "v1.15.0-alpha.4", Prerelease: true},
+				{TagName: "v1.14.1"},
+			})
+		}
+	}))
+	defer server.Close()
+
+	sbReleaseMutex.Lock()
+	previousURL, previousCache, previousTime := sbReleaseURL, sbReleaseCache, sbReleaseCacheTime
+	sbReleaseURL = server.URL
+	sbReleaseCache = SingboxLatestReleases{Stable: "1.14.0"}
+	sbReleaseCacheTime = time.Now().Add(-30 * time.Minute)
+	sbReleaseMutex.Unlock()
+	t.Cleanup(func() {
+		sbReleaseMutex.Lock()
+		defer sbReleaseMutex.Unlock()
+		sbReleaseURL, sbReleaseCache, sbReleaseCacheTime = previousURL, previousCache, previousTime
+	})
+
+	if got := getLatestSingboxReleases(); got.Stable != "1.14.0" || requests != 0 {
+		t.Fatalf("fresh cache should be reused: releases=%+v, requests=%d", got, requests)
+	}
+
+	// Reproduce a panel that cached 1.14.0 two hours before checking again.
+	sbReleaseMutex.Lock()
+	sbReleaseCacheTime = time.Now().Add(-2 * time.Hour)
+	sbReleaseMutex.Unlock()
+	releases := getLatestSingboxReleases()
+	if releases.Stable != "1.14.1" || releases.Beta != "1.15.0-alpha.4" || requests != 1 {
+		t.Fatalf("expired cache should fetch current releases: releases=%+v, requests=%d", releases, requests)
+	}
+	if hasUpdate, latest := checkSingboxUpdate("1.14.0", releases); !hasUpdate || latest != "1.14.1" {
+		t.Fatalf("missing stable update: hasUpdate=%v, latest=%q", hasUpdate, latest)
+	}
+	if got := getLatestSingboxReleases(); got != releases || requests != 1 {
+		t.Fatalf("refreshed cache should be reused: releases=%+v, requests=%d", got, requests)
+	}
+
+	// A temporary GitHub failure must preserve the last successful result.
+	status = http.StatusServiceUnavailable
+	sbReleaseMutex.Lock()
+	sbReleaseCacheTime = time.Now().Add(-2 * time.Hour)
+	expiredAt := sbReleaseCacheTime
+	sbReleaseMutex.Unlock()
+	if got := getLatestSingboxReleases(); got != releases || requests != 2 {
+		t.Fatalf("failed refresh should preserve cached releases: releases=%+v, requests=%d", got, requests)
+	}
+	if !sbReleaseCacheTime.Equal(expiredAt) {
+		t.Fatal("failed refresh must not renew cache expiry")
+	}
+}
 
 func TestCompareSemver(t *testing.T) {
 	tests := []struct {

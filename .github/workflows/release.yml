@@ -136,15 +136,13 @@ jobs:
           draft: false
           prerelease: ${{ contains(github.ref_name, 'beta') || contains(github.ref_name, 'alpha') || contains(github.ref_name, 'rc') }}
           body: |
-            # SingBox Panel ${{ env.RELEASE_TAG }}
-
-            ## 安装
+            ### 安装
 
             ```bash
             curl -fsSL https://github.com/hann0w0/SingBox-Panel/releases/download/${{ env.RELEASE_TAG }}/install.sh | sudo bash -s -- --version ${{ env.RELEASE_TAG }}
             ```
 
-            ## 卸载
+            ### 卸载
 
             ```bash
             curl -fsSL https://github.com/hann0w0/SingBox-Panel/releases/download/${{ env.RELEASE_TAG }}/install.sh | sudo bash -s -- --uninstall --yes

@@ -135,29 +135,22 @@ jobs:
           name: "SingBox Panel ${{ env.RELEASE_TAG }}"
           draft: false
           prerelease: ${{ contains(github.ref_name, 'beta') || contains(github.ref_name, 'alpha') || contains(github.ref_name, 'rc') }}
-          generate_release_notes: true
           body: |
-            ## Installation
+            # SingBox Panel ${{ env.RELEASE_TAG }}
 
-            ### One-line installer (recommended)
-            ```bash
-            curl -fsSL https://github.com/hann0w0/SingBox-Panel/releases/latest/download/install.sh | sudo bash
-            ```
-            The installer uses the native binary + systemd deployment. Subsequent runs preserve the
-            domain, port, administrator credentials, database, and `jwt_secret`.
+            ## 安装
 
-            Install with non-interactive settings:
             ```bash
-            curl -fsSL https://github.com/hann0w0/SingBox-Panel/releases/latest/download/install.sh | sudo bash -s -- \
-              --base-url panel.example.com --non-interactive
+            curl -fsSL https://github.com/hann0w0/SingBox-Panel/releases/download/${{ env.RELEASE_TAG }}/install.sh | sudo bash -s -- --version ${{ env.RELEASE_TAG }}
             ```
 
-            ### Binary
-            Download `singbox-panel-linux-{amd64|arm64}` for the target architecture and follow the
-            [deployment guide](https://github.com/hann0w0/SingBox-Panel/blob/main/README.md). SHA-256
-            checksums are in `checksums.txt` and are enforced by the installer. Release artifacts include
-            GitHub Artifact Attestation; verify them with
-            `gh attestation verify <file> --repo hann0w0/SingBox-Panel`.
+            ## 卸载
+
+            ```bash
+            curl -fsSL https://github.com/hann0w0/SingBox-Panel/releases/download/${{ env.RELEASE_TAG }}/install.sh | sudo bash -s -- --uninstall --yes
+            ```
+
+            卸载默认保留数据库与配置，重新安装即可恢复原有账号与设置；如需一并删除数据，在命令末尾加上 `--purge`。
 
           files: |
             dist/panel/singbox-panel-linux-amd64

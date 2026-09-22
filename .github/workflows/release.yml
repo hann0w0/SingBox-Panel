@@ -135,7 +135,7 @@ jobs:
           name: "SingBox Panel ${{ env.RELEASE_TAG }}"
           draft: false
           prerelease: ${{ contains(github.ref_name, 'beta') || contains(github.ref_name, 'alpha') || contains(github.ref_name, 'rc') }}
-          # 发布说明的唯一来源：只放安装与卸载命令，保持精简；变更细节记在 CHANGELOG.md。
+          # 发布说明的唯一来源：只放安装与卸载命令，保持精简。
           # 不要在此添加标题或变更列表，也不要启用 generate_release_notes（会自动追加提交历史）。
           body: |
             ### 安装

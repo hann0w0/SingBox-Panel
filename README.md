@@ -29,5 +29,3 @@ curl -fsSL https://github.com/hann0w0/SingBox-Panel/releases/latest/download/ins
 面板通过 HTTPS 提供管理界面，节点上的 Agent 主动以 WSS 连接面板，节点无需开放额外管理端口，也不提供任意 Shell 执行能力。Agent 以官方方式安装 sing-box，下发配置前执行 `sing-box check`，程序与配置更新采用校验、原子替换与失败回滚。
 
 面板支持两种配置模式：管理模式根据面板中的节点、协议与路由设置生成配置；原始配置模式保存并下发完整 JSON，适合面板暂未结构化支持的 sing-box 配置项。
-
-完整变更记录见 [CHANGELOG](CHANGELOG.md)。

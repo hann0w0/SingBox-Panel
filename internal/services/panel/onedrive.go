@@ -194,13 +194,20 @@ func (a *App) mutateOneDriveSettings(update func(*oneDriveSettings) error) error
 	return a.saveOneDriveSettings(settings)
 }
 
-func (a *App) oneDriveSecretKey() []byte {
+func (a *App) oneDriveSecretKey() ([]byte, error) {
+	if strings.TrimSpace(a.cfg.JWTSecret) == "" {
+		return nil, errors.New("OneDrive 加密需要已持久化的 jwt_secret")
+	}
 	key := sha256.Sum256([]byte("singbox-panel/onedrive/" + a.cfg.JWTSecret))
-	return key[:]
+	return key[:], nil
 }
 
 func (a *App) encryptOneDriveSecret(value string) (string, error) {
-	block, err := aes.NewCipher(a.oneDriveSecretKey())
+	key, err := a.oneDriveSecretKey()
+	if err != nil {
+		return "", err
+	}
+	block, err := aes.NewCipher(key)
 	if err != nil {
 		return "", fmt.Errorf("创建 OneDrive 加密器失败：%w", err)
 	}
@@ -225,7 +232,11 @@ func (a *App) decryptOneDriveSecret(value string) (string, error) {
 	if err != nil {
 		return "", errors.New("OneDrive 授权数据损坏")
 	}
-	block, err := aes.NewCipher(a.oneDriveSecretKey())
+	key, err := a.oneDriveSecretKey()
+	if err != nil {
+		return "", err
+	}
+	block, err := aes.NewCipher(key)
 	if err != nil {
 		return "", fmt.Errorf("创建 OneDrive 解密器失败：%w", err)
 	}
@@ -1028,6 +1039,16 @@ func (a *App) deleteOneDriveBackup(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"ok": true})
 }
 
+func oneDriveSyncDue(now time.Time, lastSyncAt *time.Time) bool {
+	if lastSyncAt == nil {
+		return true
+	}
+	elapsed := now.Sub(*lastSyncAt)
+	// A restored timestamp in the future, or an NTP clock rollback, must not
+	// suspend automatic backups indefinitely. Treat it as immediately due.
+	return elapsed < 0 || elapsed >= oneDriveSyncInterval
+}
+
 func (a *App) runOneDriveBackupScheduler(ctx context.Context) {
 	ticker := time.NewTicker(time.Minute)
 	defer ticker.Stop()
@@ -1042,7 +1063,7 @@ func (a *App) runOneDriveBackupScheduler(ctx context.Context) {
 			if err != nil || !settings.AutoSync || settings.RefreshToken == "" {
 				continue
 			}
-			if settings.LastSyncAt != nil && time.Since(*settings.LastSyncAt) < oneDriveSyncInterval {
+			if !oneDriveSyncDue(now, settings.LastSyncAt) {
 				continue
 			}
 			if settings.LastAttemptAt != nil && settings.FailedAttempts > 0 {

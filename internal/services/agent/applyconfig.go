@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"crypto/sha256"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -43,16 +44,10 @@ func preserveOriginal() error {
 // atomically installs it and restarts the service. On any failure it rolls back
 // both config.json and every other JSON file moved out of the active directory.
 // The command dispatcher serialises mutating operations before calling here.
-//
-// reload is accepted for wire compatibility but ignored: applying always
-// restarts, because SIGHUP reload does not reliably re-read the config.
-func ApplyConfig(ctx context.Context, configBytes []byte, reload bool) (string, error) {
-	_ = reload
-	if len(configBytes) == 0 {
-		return "", errors.New("config is empty")
-	}
-	if len(configBytes) > maxConfigSize {
-		return "", fmt.Errorf("config exceeds %d-byte limit", maxConfigSize)
+func ApplyConfig(ctx context.Context, configBytes []byte) (string, error) {
+	configBytes, err := prepareConfigBytes(configBytes)
+	if err != nil {
+		return "", err
 	}
 	bin, err := DetectVersionInstalled()
 	if err != nil {
@@ -145,7 +140,9 @@ func ApplyConfig(ctx context.Context, configBytes []byte, reload bool) (string, 
 		return "", fmt.Errorf("set config permissions: %w", err)
 	}
 
-	// 5) apply: restart if running, else enable+start.
+	// 5) apply: restart if running, otherwise start without changing whether the
+	// service is enabled at boot. Applying a config must not override an
+	// operator's deliberate `systemctl disable sing-box` choice.
 	//
 	// Always restart, never `systemctl reload`: sing-box's SIGHUP handling does
 	// not reliably re-read the config — the command exits 0 while the process
@@ -155,18 +152,10 @@ func ApplyConfig(ctx context.Context, configBytes []byte, reload bool) (string, 
 	if out, err := run(ctx, "systemctl", "daemon-reload"); err != nil {
 		applyErr = fmt.Errorf("systemctl daemon-reload: %w: %s", err, out)
 	}
-	if applyErr == nil && previousState.active {
-		if out, err := run(ctx, "systemctl", "restart", ServiceName); err != nil {
-			applyErr = fmt.Errorf("systemctl restart: %w: %s", err, out)
-		}
-	} else if applyErr == nil {
-		if out, err := run(ctx, "systemctl", "enable", ServiceName); err != nil {
-			applyErr = fmt.Errorf("systemctl enable: %w: %s", err, out)
-		}
-	}
-	if applyErr == nil && !previousState.active {
-		if out, err := run(ctx, "systemctl", "start", ServiceName); err != nil {
-			applyErr = fmt.Errorf("systemctl start: %w: %s", err, out)
+	if applyErr == nil {
+		action := configApplyServiceAction(previousState)
+		if out, err := run(ctx, "systemctl", action, ServiceName); err != nil {
+			applyErr = fmt.Errorf("systemctl %s: %w: %s", action, err, out)
 		}
 	}
 
@@ -184,12 +173,63 @@ func ApplyConfig(ctx context.Context, configBytes []byte, reload bool) (string, 
 	return "config applied and running sing-box verified", nil
 }
 
+// prepareConfigBytes produces the bytes ApplyConfig hashes, validates and
+// installs. Indentation happens here, ahead of all three, so they operate on one
+// byte-identical form; doing it later would hash bytes other than the ones that
+// reach the disk. Size is checked before and after formatting because indenting
+// only ever grows a config, so a payload just under the limit can still exceed it
+// and must be rejected before anything is written.
+func prepareConfigBytes(raw []byte) ([]byte, error) {
+	if len(raw) == 0 {
+		return nil, errors.New("config is empty")
+	}
+	if len(raw) > maxConfigSize {
+		return nil, fmt.Errorf("config exceeds %d-byte limit", maxConfigSize)
+	}
+	formatted := indentConfigJSON(raw)
+	if len(formatted) > maxConfigSize {
+		return nil, fmt.Errorf("indented config exceeds %d-byte limit (input %d bytes, formatted %d bytes)",
+			maxConfigSize, len(raw), len(formatted))
+	}
+	return formatted, nil
+}
+
+// indentConfigJSON renders a config as the multi-line JSON an operator expects to
+// read over SSH, and is the single definition of the bytes that get hashed,
+// validated and installed. json.Indent only reformats: key order, escaped strings
+// and number literals are copied verbatim, so a large integer id or an escaped
+// password survives exactly as the panel sent it (re-marshalling through any
+// would round-trip big integers through float64). Input that is not well-formed
+// JSON is returned unchanged: sing-box's own `check` stays the authority on
+// whether a config is valid.
+func indentConfigJSON(raw []byte) []byte {
+	var buf bytes.Buffer
+	// Trim first: json.Indent copies trailing whitespace verbatim, so an input that
+	// already ends in a newline would otherwise gain another one on every pass and
+	// the function would not be idempotent.
+	if err := json.Indent(&buf, bytes.TrimRight(raw, " \t\r\n"), "", "  "); err != nil {
+		return raw
+	}
+	// End the file with a newline so plain `cat`, sftp viewers and diffs treat it
+	// as a text file. This runs on the incoming bytes every time, so an unchanged
+	// config still compares byte-equal and no sing-box restart is triggered.
+	buf.WriteByte('\n')
+	return buf.Bytes()
+}
+
 // rollbackApply restores the previous config and every JSON file moved by this
 // apply. It deliberately uses an independent bounded context: the command
 // context is commonly cancelled precisely when rollback becomes necessary.
 type serviceState struct {
 	active  bool
 	enabled bool
+}
+
+func configApplyServiceAction(previous serviceState) string {
+	if previous.active {
+		return "restart"
+	}
+	return "start"
 }
 
 type serviceConfigEvidence struct {

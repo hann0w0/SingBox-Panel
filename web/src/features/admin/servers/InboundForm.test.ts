@@ -34,6 +34,27 @@ describe('inbound form round trip', () => {
     expect(assembleSettings(item.settings, { ...values, transport_type: 'tcp' }, item.type).transport).toBeUndefined()
   })
 
+
+  it('preserves imported inline PEM when saving the TLS path form', () => {
+    const item = {
+      ...inbound,
+      type: 'vless' as const,
+      settings: {
+        ...inbound.settings,
+        tls: {
+          enabled: true,
+          server_name: 'example.com',
+          certificate: '-----BEGIN CERTIFICATE-----\ninline\n-----END CERTIFICATE-----',
+          key: '-----BEGIN PRIVATE KEY-----\ninline\n-----END PRIVATE KEY-----',
+        },
+      },
+    }
+    const values = { ...toForm(item), tls_mode: 'tls' }
+    const saved = assembleSettings(item.settings, values, item.type)
+    expect(saved.tls?.certificate).toContain('BEGIN CERTIFICATE')
+    expect(saved.tls?.key).toContain('BEGIN PRIVATE KEY')
+  })
+
   it('always submits SOCKS as a fixed single account, including old multi-user rows', () => {
     const legacy = { ...inbound, type: 'socks' as const, settings: { multi_user: true, username: 'alice', password: 'example-password' } }
     expect(toForm(legacy).multi_user).toBe(false)

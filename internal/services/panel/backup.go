@@ -171,6 +171,9 @@ func calculateCredentialFingerprint(db *gorm.DB) (credentialFingerprint, error) 
 }
 
 func comparePanelVersions(left, right string) (int, error) {
+	if strings.TrimSpace(left) == strings.TrimSpace(right) {
+		return 0, nil
+	}
 	parse := func(value string) ([3]int, string, error) {
 		var parts [3]int
 		value = strings.TrimPrefix(strings.TrimSpace(value), "v")

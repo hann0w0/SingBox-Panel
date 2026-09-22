@@ -52,6 +52,13 @@ func TestOneDriveRefreshTokenIsEncryptedInSettings(t *testing.T) {
 	}
 }
 
+func TestOneDriveSecretRejectsEmptyJWTSecret(t *testing.T) {
+	a := &App{}
+	if _, err := a.encryptOneDriveSecret("refresh-token"); err == nil {
+		t.Fatal("empty JWT secret produced a deterministic OneDrive encryption key")
+	}
+}
+
 func TestOneDriveSecretCannotBeOpenedWithAnotherJWTSecret(t *testing.T) {
 	a := &App{cfg: config.PanelConfig{JWTSecret: "first-secret"}}
 	sealed, err := a.encryptOneDriveSecret("refresh-token")
@@ -562,6 +569,19 @@ func TestOneDriveExpiredDeviceSessionIsRemoved(t *testing.T) {
 	}
 	if len(a.oneDrivePending) != 0 {
 		t.Fatalf("expired sessions were not removed: %#v", a.oneDrivePending)
+	}
+}
+
+func TestOneDriveSyncDueHandlesFutureTimestamp(t *testing.T) {
+	now := time.Now()
+	future := now.Add(time.Hour)
+	recent := now.Add(-oneDriveSyncInterval / 2)
+	old := now.Add(-oneDriveSyncInterval)
+	if !oneDriveSyncDue(now, nil) || !oneDriveSyncDue(now, &future) || !oneDriveSyncDue(now, &old) {
+		t.Fatal("nil, future, and expired timestamps must be due")
+	}
+	if oneDriveSyncDue(now, &recent) {
+		t.Fatal("recent successful sync was incorrectly due")
 	}
 }
 

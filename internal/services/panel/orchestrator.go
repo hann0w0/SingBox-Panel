@@ -30,9 +30,11 @@ type Orchestrator struct {
 type ConfigApplyState string
 
 const (
-	ConfigApplied ConfigApplyState = "applied"
-	ConfigPending ConfigApplyState = "pending"
-	ConfigFailed  ConfigApplyState = "failed"
+	ConfigApplied       ConfigApplyState = "applied"
+	ConfigPending       ConfigApplyState = "pending"
+	ConfigFailed        ConfigApplyState = "failed"
+	asyncPushAttempts                    = 3
+	asyncPushRetryDelay                  = 2 * time.Second
 )
 
 // ConfigApplyResult separates persistence from delivery. Structured edits are
@@ -168,9 +170,7 @@ func (o *Orchestrator) ApplyDesiredConfig(ctx context.Context, serverID uint) Co
 	if err := o.db.Model(&model.Server{}).Where("id = ?", serverID).Update("config_initialized", true).Error; err != nil {
 		return ConfigApplyResult{ApplyState: ConfigFailed, ApplyError: "mark desired config initialized: " + err.Error()}
 	}
-	ctx, cancel := context.WithTimeout(ctx, 55*time.Second)
-	defer cancel()
-	err := o.PushConfig(ctx, serverID)
+	err := o.PushConfigWithTimeout(ctx, serverID, 55*time.Second)
 	if err == nil {
 		return ConfigApplyResult{ApplyState: ConfigApplied}
 	}
@@ -187,6 +187,17 @@ func (o *Orchestrator) PushConfig(ctx context.Context, serverID uint) error {
 	return o.pushConfigUnlocked(ctx, serverID)
 }
 
+// PushConfigWithTimeout starts the command timeout only after the per-server
+// configuration lock has been acquired. Waiting behind another apply must not
+// consume the entire delivery window before this operation can start.
+func (o *Orchestrator) PushConfigWithTimeout(ctx context.Context, serverID uint, timeout time.Duration) error {
+	unlock := o.lockServer(serverID)
+	defer unlock()
+	commandCtx, cancel := context.WithTimeout(ctx, timeout)
+	defer cancel()
+	return o.pushConfigUnlocked(commandCtx, serverID)
+}
+
 func (o *Orchestrator) pushConfigUnlocked(ctx context.Context, serverID uint) error {
 	var srv model.Server
 	if err := o.db.First(&srv, serverID).Error; err != nil {
@@ -196,10 +207,7 @@ func (o *Orchestrator) pushConfigUnlocked(ctx context.Context, serverID uint) er
 	if err != nil {
 		return err
 	}
-	_, err = o.hub.SendCommand(ctx, serverID, protocol.CmdApplyConfig, protocol.ApplyConfigCmd{
-		Config: raw,
-		Reload: true,
-	})
+	_, err = o.hub.SendCommand(ctx, serverID, protocol.CmdApplyConfig, protocol.ApplyConfigCmd{Config: raw})
 	return err
 }
 
@@ -227,9 +235,7 @@ func (o *Orchestrator) applyRawConfigUnlocked(ctx context.Context, serverID uint
 	}).Error; err != nil {
 		return protocol.CommandResultEvt{}, err
 	}
-	res, err := o.hub.SendCommand(ctx, serverID, protocol.CmdApplyConfig, protocol.ApplyConfigCmd{
-		Config: json.RawMessage(raw), Reload: true,
-	})
+	res, err := o.hub.SendCommand(ctx, serverID, protocol.CmdApplyConfig, protocol.ApplyConfigCmd{Config: json.RawMessage(raw)})
 	if err != nil {
 		if rollbackErr := o.db.Model(&model.Server{}).Where("id = ?", serverID).Updates(map[string]any{
 			"config_mode": old.ConfigMode,
@@ -284,11 +290,19 @@ func (o *Orchestrator) PushConfigAsync(serverID uint) {
 
 	go func() {
 		for {
-			ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
-			err := o.PushConfig(ctx, serverID)
-			cancel()
+			var err error
+			for attempt := 1; attempt <= asyncPushAttempts; attempt++ {
+				err = o.PushConfigWithTimeout(context.Background(), serverID, 60*time.Second)
+				if err == nil || errors.Is(err, ErrAgentOffline) {
+					break
+				}
+				log.Printf("orchestrator: push config to server %d failed (attempt %d/%d): %v", serverID, attempt, asyncPushAttempts, err)
+				if attempt < asyncPushAttempts {
+					time.Sleep(asyncPushRetryDelay)
+				}
+			}
 			if err != nil && !errors.Is(err, ErrAgentOffline) {
-				log.Printf("orchestrator: push config to server %d failed: %v", serverID, err)
+				log.Printf("orchestrator: push config to server %d exhausted retries: %v", serverID, err)
 			}
 
 			o.asyncMu.Lock()

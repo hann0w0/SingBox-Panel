@@ -273,6 +273,8 @@ export default function Logs() {
   const serverListAbortRef = useRef<AbortController | null>(null)
   const nextLogIDRef = useRef(1)
   const pendingLiveLinesRef = useRef<string[]>([])
+  const liveSequenceRef = useRef(0)
+  const liveEntriesRef = useRef<Array<{ sequence: number; entry: LogEntry }>>([])
   const liveFlushTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
 
   useEffect(() => {
@@ -313,6 +315,7 @@ export default function Logs() {
     loadAbortRef.current?.abort()
     const controller = new AbortController()
     const generation = ++loadGenerationRef.current
+    const liveSequenceAtStart = liveSequenceRef.current
     loadAbortRef.current = controller
     if (!quiet) setLoading(true)
     try {
@@ -322,7 +325,11 @@ export default function Logs() {
         .split('\n')
         .filter((raw) => raw.trim().length > 0)
         .map((raw) => ({ ...parseLogLine(raw), id: nextLogIDRef.current++ }))
-      setLogEntries(entries)
+      const arrivedDuringLoad = liveEntriesRef.current
+        .filter((item) => item.sequence > liveSequenceAtStart)
+        .map((item) => item.entry)
+      const merged = [...entries, ...arrivedDuringLoad]
+      setLogEntries(merged.length > MAX_LIVE_LINES ? merged.slice(merged.length - MAX_LIVE_LINES) : merged)
       setLastUpdatedAt(Date.now())
       scrollToLatest()
     } catch (e) {
@@ -341,6 +348,8 @@ export default function Logs() {
     if (liveFlushTimerRef.current) clearTimeout(liveFlushTimerRef.current)
     liveFlushTimerRef.current = null
     pendingLiveLinesRef.current = []
+    liveEntriesRef.current = []
+    liveSequenceRef.current = 0
   }, [])
 
   // SSE live log streaming: connect to the same SSE endpoint and filter for
@@ -359,6 +368,12 @@ export default function Logs() {
       const pending = pendingLiveLinesRef.current.splice(0)
       if (!pending.length) return
       const additions = pending.map((raw) => ({ ...parseLogLine(raw), id: nextLogIDRef.current++ }))
+      for (const entry of additions) {
+        liveEntriesRef.current.push({ sequence: ++liveSequenceRef.current, entry })
+      }
+      if (liveEntriesRef.current.length > MAX_LIVE_LINES) {
+        liveEntriesRef.current.splice(0, liveEntriesRef.current.length - MAX_LIVE_LINES)
+      }
       setLogEntries((current) => {
         const next = [...current, ...additions]
         return next.length > MAX_LIVE_LINES ? next.slice(next.length - MAX_LIVE_LINES) : next
@@ -425,6 +440,8 @@ export default function Logs() {
   useEffect(() => {
     setLive(false)
     pendingLiveLinesRef.current = []
+    liveEntriesRef.current = []
+    liveSequenceRef.current = 0
     if (liveFlushTimerRef.current) clearTimeout(liveFlushTimerRef.current)
     liveFlushTimerRef.current = null
     setLogEntries([])

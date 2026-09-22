@@ -32,6 +32,13 @@ func TestAgentInstallScriptSyntaxAndTransactionalRollback(t *testing.T) {
 		"restore_target \"$UNIT\"",
 		"TRANSACTION_STARTED=1",
 		"COMMITTED=1",
+		"READY_SHA=",
+		"NoNewPrivileges=true",
+		"ProtectHome=true",
+		"PrivateTmp=true",
+		"UMask=0077",
+		"--connect-timeout 10",
+		"--retry 3",
 	} {
 		if !strings.Contains(agentInstallScript, required) {
 			t.Fatalf("install script is missing transactional step %q", required)

@@ -33,6 +33,7 @@ type Hub struct {
 	conns map[uint]*agentConn
 	mu    sync.RWMutex
 	live  *liveHub
+	state *keyedMutex[uint]
 
 	// AfterRegister, if set, runs when an agent (re)registers — used to push the
 	// latest config so a reconnecting server converges automatically.
@@ -41,7 +42,7 @@ type Hub struct {
 
 // NewHub builds a Hub bound to a database.
 func NewHub(db *gorm.DB) *Hub {
-	return &Hub{db: db, conns: map[uint]*agentConn{}, live: newLiveHub()}
+	return &Hub{db: db, conns: map[uint]*agentConn{}, live: newLiveHub(), state: newKeyedMutex[uint]()}
 }
 
 // agentConn is one live agent WebSocket connection.
@@ -71,13 +72,16 @@ func (h *Hub) register(serverID uint, remoteIP string, conn *websocket.Conn) *ag
 		stopped:  make(chan struct{}),
 		pending:  map[string]chan protocol.CommandResultEvt{},
 	}
+	unlockState := h.state.lock(serverID)
 	h.mu.Lock()
-	if old := h.conns[serverID]; old != nil {
-		old.close()
-	}
+	old := h.conns[serverID]
 	h.conns[serverID] = ac
 	h.mu.Unlock()
 	touchServerSeen(h.db, serverID, true)
+	unlockState()
+	if old != nil {
+		old.close()
+	}
 	return ac
 }
 
@@ -97,16 +101,18 @@ func (h *Hub) isCurrentConnection(serverID uint, ac *agentConn) bool {
 }
 
 func (h *Hub) unregister(ac *agentConn) {
+	unlockState := h.state.lock(ac.serverID)
+	defer unlockState()
+	removed := false
 	h.mu.Lock()
 	if h.conns[ac.serverID] == ac {
 		delete(h.conns, ac.serverID)
-		// Keep the connection map decision and the persisted offline transition
-		// under the same lock. Otherwise a replacement could register and write
-		// online=true between unlock and this write, then be overwritten by the
-		// old connection's delayed offline update.
-		touchServerSeen(h.db, ac.serverID, false)
+		removed = true
 	}
 	h.mu.Unlock()
+	if removed {
+		touchServerSeen(h.db, ac.serverID, false)
+	}
 }
 
 // IsOnline reports whether a server's agent is connected.
@@ -131,20 +137,22 @@ func (h *Hub) Disconnect(serverID uint) {
 // DisconnectAndWait closes the current connection and waits until its read
 // pump has stopped. Deletion uses this before its final cleanup so an event
 // already being persisted cannot recreate an orphan traffic row afterward.
-func (h *Hub) DisconnectAndWait(ctx context.Context, serverID uint) {
+func (h *Hub) DisconnectAndWait(ctx context.Context, serverID uint) error {
 	h.mu.RLock()
 	ac := h.conns[serverID]
 	h.mu.RUnlock()
 	if ac == nil {
-		return
+		return nil
 	}
 	ac.close()
 	if ac.stopped == nil {
-		return
+		return nil
 	}
 	select {
 	case <-ac.stopped:
+		return nil
 	case <-ctx.Done():
+		return ctx.Err()
 	}
 }
 
@@ -267,7 +275,7 @@ func (ac *agentConn) readPump() {
 				return
 			}
 			registered = true
-			ac.hub.onRegister(ac.serverID, event)
+			ac.hub.onRegister(ac, event)
 			continue
 		}
 		if env.Type == protocol.EvtRegister {
@@ -279,7 +287,7 @@ func (ac *agentConn) readPump() {
 			ac.routeResult(env)
 			continue
 		}
-		ac.hub.handleEvent(ac.serverID, env)
+		ac.hub.handleEvent(ac, env)
 	}
 }
 
@@ -323,12 +331,18 @@ func (ac *agentConn) routeResult(env protocol.Envelope) {
 }
 
 // handleEvent persists a spontaneous agent event.
-func (h *Hub) handleEvent(serverID uint, env protocol.Envelope) {
+func (h *Hub) handleEvent(ac *agentConn, env protocol.Envelope) {
+	unlock := h.state.lock(ac.serverID)
+	defer unlock()
+	if !h.isCurrentConnection(ac.serverID, ac) {
+		return
+	}
+	serverID := ac.serverID
 	switch env.Type {
 	case protocol.EvtHeartbeat:
 		var e protocol.HeartbeatEvt
 		if env.Decode(&e) == nil {
-			h.onHeartbeat(serverID, e)
+			h.onHeartbeat(ac, e)
 		}
 	case protocol.EvtTraffic:
 		var e protocol.TrafficEvt
@@ -352,7 +366,13 @@ func (h *Hub) handleEvent(serverID uint, env protocol.Envelope) {
 	}
 }
 
-func (h *Hub) onRegister(serverID uint, e protocol.RegisterEvt) {
+func (h *Hub) onRegister(ac *agentConn, e protocol.RegisterEvt) {
+	unlock := h.state.lock(ac.serverID)
+	defer unlock()
+	if !h.isCurrentConnection(ac.serverID, ac) {
+		return
+	}
+	serverID := ac.serverID
 	now := time.Now()
 	updates := map[string]any{
 		"online":            true,
@@ -375,7 +395,11 @@ func (h *Hub) onRegister(serverID uint, e protocol.RegisterEvt) {
 	}
 }
 
-func (h *Hub) onHeartbeat(serverID uint, e protocol.HeartbeatEvt) {
+func (h *Hub) onHeartbeat(ac *agentConn, e protocol.HeartbeatEvt) {
+	if !h.isCurrentConnection(ac.serverID, ac) {
+		return
+	}
+	serverID := ac.serverID
 	now := time.Now()
 	updates := map[string]any{
 		"online":         true,

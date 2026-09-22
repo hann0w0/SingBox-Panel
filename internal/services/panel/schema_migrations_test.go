@@ -483,3 +483,159 @@ func TestUserNodeOrderMigrationAddsOrderTable(t *testing.T) {
 		t.Fatal("user node order table was not added")
 	}
 }
+
+func TestV8MigrationWithoutLegacyUserIDColumn(t *testing.T) {
+	db := testDB(t)
+	if db.Migrator().HasColumn(&model.CustomNode{}, "user_id") {
+		t.Fatal("current custom_nodes unexpectedly has legacy user_id")
+	}
+	if err := db.Create(&model.CustomNode{Name: "current", Link: "socks5://127.0.0.1:1080"}).Error; err != nil {
+		t.Fatal(err)
+	}
+	var migration schemaMigration
+	for _, candidate := range applicationMigrations {
+		if candidate.version == 8 {
+			migration = candidate
+			break
+		}
+	}
+	if err := migration.up(db); err != nil {
+		t.Fatalf("v8 migration without user_id failed: %v", err)
+	}
+}
+
+func TestMigrationReplaySafetyIsExplicit(t *testing.T) {
+	known := make(map[uint]bool, len(applicationMigrations))
+	for _, migration := range applicationMigrations {
+		known[migration.version] = true
+		if _, ok := migrationReplaySafe[migration.version]; !ok {
+			t.Fatalf("migration %d (%s) records no replay-safety decision", migration.version, migration.name)
+		}
+	}
+	for version := range migrationReplaySafe {
+		if !known[version] {
+			t.Fatalf("replay-safety table lists unknown migration %d", version)
+		}
+	}
+}
+
+// A dirty ledger on a database that commits DDL implicitly must not be a dead
+// end: the interrupted migration is cleared and replayed. The driver name picks
+// the policy while the connection stays SQLite, so no MySQL/Postgres server is
+// needed to exercise the decision.
+func TestImplicitCommitDatabaseReplaysInterruptedMigration(t *testing.T) {
+	databaseFile := filepath.Join(t.TempDir(), "replay.db")
+	db, err := gorm.Open(sqlite.Open(databaseFile), &gorm.Config{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := db.AutoMigrate(&model.SchemaMigration{}); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Create(&model.SchemaMigration{Version: 1, Name: "interrupted", Dirty: true}).Error; err != nil {
+		t.Fatal(err)
+	}
+	cfg := config.DatabaseConfig{Driver: "mysql", DSN: databaseFile}
+	if err := runSchemaMigrations(db, cfg); err != nil {
+		t.Fatalf("interrupted migration was not replayed: %v", err)
+	}
+	var rows []model.SchemaMigration
+	if err := db.Order("version").Find(&rows).Error; err != nil {
+		t.Fatal(err)
+	}
+	if len(rows) != len(applicationMigrations) {
+		t.Fatalf("expected %d applied migrations, got %d", len(applicationMigrations), len(rows))
+	}
+	if latest := applicationMigrations[len(applicationMigrations)-1].version; rows[len(rows)-1].Version != latest {
+		t.Fatalf("latest applied version = %d, want %d", rows[len(rows)-1].Version, latest)
+	}
+	for _, row := range rows {
+		if row.Dirty {
+			t.Fatalf("migration %d is still dirty after replay", row.Version)
+		}
+	}
+}
+
+func TestImplicitCommitDatabaseKeepsUnsafeInterruptedMigrationFatal(t *testing.T) {
+	databaseFile := filepath.Join(t.TempDir(), "unsafe.db")
+	db, err := gorm.Open(sqlite.Open(databaseFile), &gorm.Config{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := db.AutoMigrate(&model.SchemaMigration{}); err != nil {
+		t.Fatal(err)
+	}
+	// Version 9 rewrites every node's audience, so a retry would discard later
+	// administrator edits and must stay fatal.
+	if err := db.Create(&model.SchemaMigration{Version: 9, Name: "audience", Dirty: true}).Error; err != nil {
+		t.Fatal(err)
+	}
+	cfg := config.DatabaseConfig{Driver: "postgres", DSN: databaseFile}
+	if err := runSchemaMigrations(db, cfg); err == nil {
+		t.Fatal("a migration whose replay discards data must not be retried automatically")
+	}
+}
+
+// SQLite keeps its strict contract: the pre-migration snapshot is the recovery
+// point, so an interrupted migration stops startup instead of being replayed.
+func TestFileDatabaseDoesNotReplayInterruptedMigration(t *testing.T) {
+	databaseFile := filepath.Join(t.TempDir(), "strict.db")
+	db, err := gorm.Open(sqlite.Open(databaseFile), &gorm.Config{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := db.AutoMigrate(&model.SchemaMigration{}); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Create(&model.SchemaMigration{Version: 1, Name: "interrupted", Dirty: true}).Error; err != nil {
+		t.Fatal(err)
+	}
+	cfg := config.DatabaseConfig{Driver: "sqlite", DSN: databaseFile}
+	if err := runSchemaMigrations(db, cfg); err == nil {
+		t.Fatal("a file database must not silently replay an interrupted migration")
+	}
+}
+
+func TestInterruptedMigrationFollowedByAppliedMigrationIsRejected(t *testing.T) {
+	databaseFile := filepath.Join(t.TempDir(), "inconsistent.db")
+	db, err := gorm.Open(sqlite.Open(databaseFile), &gorm.Config{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := db.AutoMigrate(&model.SchemaMigration{}); err != nil {
+		t.Fatal(err)
+	}
+	rows := []model.SchemaMigration{
+		{Version: 1, Name: "interrupted", Dirty: true},
+		{Version: 2, Name: "applied", AppliedAt: time.Now()},
+	}
+	if err := db.Create(&rows).Error; err != nil {
+		t.Fatal(err)
+	}
+	cfg := config.DatabaseConfig{Driver: "mysql", DSN: databaseFile}
+	if err := runSchemaMigrations(db, cfg); err == nil {
+		t.Fatal("an interrupted migration followed by an applied one is inconsistent and must stop startup")
+	}
+}
+
+func TestMultipleInterruptedMigrationsAreRejected(t *testing.T) {
+	databaseFile := filepath.Join(t.TempDir(), "two-dirty.db")
+	db, err := gorm.Open(sqlite.Open(databaseFile), &gorm.Config{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := db.AutoMigrate(&model.SchemaMigration{}); err != nil {
+		t.Fatal(err)
+	}
+	rows := []model.SchemaMigration{
+		{Version: 1, Name: "one", Dirty: true},
+		{Version: 2, Name: "two", Dirty: true},
+	}
+	if err := db.Create(&rows).Error; err != nil {
+		t.Fatal(err)
+	}
+	cfg := config.DatabaseConfig{Driver: "mysql", DSN: databaseFile}
+	if err := runSchemaMigrations(db, cfg); err == nil {
+		t.Fatal("two interrupted migrations must stop startup")
+	}
+}

@@ -87,8 +87,7 @@ type InstallSingboxCmd struct {
 
 // ApplyConfigCmd delivers a full official config.json to write to /etc/sing-box.
 type ApplyConfigCmd struct {
-	Config json.RawMessage `json:"config"`           // full sing-box config.json
-	Reload bool            `json:"reload,omitempty"` // reload (SIGHUP) vs restart; default restart
+	Config json.RawMessage `json:"config"` // full sing-box config.json; Agent validates then restarts sing-box
 }
 
 // Service actions map 1:1 to `systemctl <action> sing-box`.

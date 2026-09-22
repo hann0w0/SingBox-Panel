@@ -4,10 +4,15 @@ import (
 	"context"
 	"errors"
 	"net"
+	"net/http"
+	"net/http/httptest"
 	"net/netip"
 	"reflect"
+	"strings"
 	"testing"
 	"time"
+
+	"github.com/gorilla/websocket"
 
 	"github.com/hann0w0/singbox-panel/internal/domain/protocol"
 )
@@ -81,17 +86,63 @@ func TestDialResolvedFamilyNeverFallsBackToIPv6WhenIPv4Exists(t *testing.T) {
 	}
 }
 
+func TestConnectOnceClosesWebSocketOnContextCancel(t *testing.T) {
+	connected := make(chan struct{})
+	upgrader := websocket.Upgrader{CheckOrigin: func(*http.Request) bool { return true }}
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		conn, err := upgrader.Upgrade(w, r, nil)
+		if err != nil {
+			return
+		}
+		defer conn.Close()
+		close(connected)
+		for {
+			if _, _, err := conn.ReadMessage(); err != nil {
+				return
+			}
+		}
+	}))
+	defer server.Close()
+
+	client := NewClient(server.URL, "token", false)
+	client.wsURL = "ws" + strings.TrimPrefix(server.URL, "http")
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	done := make(chan error, 1)
+	go func() {
+		_, err := client.connectOnce(ctx)
+		done <- err
+	}()
+
+	select {
+	case <-connected:
+	case <-time.After(2 * time.Second):
+		t.Fatal("client did not establish WebSocket")
+	}
+	cancel()
+
+	select {
+	case <-done:
+	case <-time.After(2 * time.Second):
+		t.Fatal("connectOnce did not stop promptly after context cancellation")
+	}
+}
+
 func TestOutboundEventsAreScopedToTheirWebSocketSession(t *testing.T) {
 	c := NewClient("https://panel.example.com", "token", false)
 
 	// Telemetry produced while disconnected is intentionally discarded.
-	c.SendEvent(protocol.EvtTraffic, protocol.TrafficEvt{})
+	if c.SendEvent(protocol.EvtTraffic, protocol.TrafficEvt{}) {
+		t.Fatal("offline telemetry reported as queued")
+	}
 	if len(c.send) != 0 {
 		t.Fatal("offline telemetry was queued for a future connection")
 	}
 
 	c.activeSession.Store(1)
-	c.SendEvent(protocol.EvtTraffic, protocol.TrafficEvt{})
+	if !c.SendEvent(protocol.EvtTraffic, protocol.TrafficEvt{}) {
+		t.Fatal("connected telemetry was not queued")
+	}
 	first := <-c.send
 	if first.session != 1 {
 		t.Fatalf("telemetry session = %d, want 1", first.session)

@@ -14,11 +14,23 @@ function splitValues(value: unknown): string[] {
   return value.split(/[\n,]/).map((item) => item.trim()).filter(Boolean)
 }
 
+export function transportHost(headers: TransportSettings['headers']): string | undefined {
+  const value = Object.entries(headers ?? {}).find(([key]) => key.toLowerCase() === 'host')?.[1]
+  if (Array.isArray(value)) return value[0]
+  return value
+}
+
 function setHostHeader(transport: TransportSettings, value: unknown) {
+  // An omitted form value means the compact form did not expose the existing
+  // header. Preserve it rather than treating the omission as an explicit clear.
+  if (value === undefined || value === null) return
+
+  const host = typeof value === 'string' ? value.trim() : ''
+  if (host === (transportHost(transport.headers) ?? '')) return
+
   const headers = { ...(transport.headers ?? {}) }
   const existingHost = Object.keys(headers).find((key) => key.toLowerCase() === 'host')
   if (existingHost) delete headers[existingHost]
-  const host = typeof value === 'string' ? value.trim() : ''
   if (host) headers.Host = host
   if (Object.keys(headers).length) transport.headers = headers
   else delete transport.headers

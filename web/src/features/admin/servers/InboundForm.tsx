@@ -246,8 +246,8 @@ export function assembleSettings(base: InboundSettings, v: FormVals, type: Inbou
         self_signed: true,
         server_name: v.tls_server_name,
         alpn,
-        certificate: s.tls?.certificate,
-        key: s.tls?.key,
+        certificate: !v.tls_cert_path && !v.tls_key_path ? s.tls?.certificate : undefined,
+        key: !v.tls_cert_path && !v.tls_key_path ? s.tls?.key : undefined,
         insecure: true,
       }
     } else if (mode === 'tls') {
@@ -258,6 +258,11 @@ export function assembleSettings(base: InboundSettings, v: FormVals, type: Inbou
         fingerprint: v.tls_fingerprint,
         certificate_path: v.tls_cert_path,
         key_path: v.tls_key_path,
+        // Preserve imported inline PEM even though this form exposes paths.
+        // Otherwise an ordinary edit turns a valid inline-TLS inbound into an
+        // invalid paths-only configuration.
+        certificate: !v.tls_cert_path && !v.tls_key_path ? s.tls?.certificate : undefined,
+        key: !v.tls_cert_path && !v.tls_key_path ? s.tls?.key : undefined,
         insecure: !!v.tls_insecure,
       }
     } else if (mode === 'acme') {

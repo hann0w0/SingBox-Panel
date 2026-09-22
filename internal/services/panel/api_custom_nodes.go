@@ -287,6 +287,14 @@ func (a *App) updateCustomNode(c *gin.Context) {
 	if !bindJSON(c, &req) {
 		return
 	}
+	if excluded := req.ExcludedUserIDs; rejectTooManyIDs(c, req.UserIDs, func() []uint {
+		if excluded != nil {
+			return *excluded
+		}
+		return nil
+	}()) {
+		return
+	}
 	if _, err := validateCustomNode(&req); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
@@ -430,6 +438,9 @@ func (a *App) batchDeleteCustomNodes(c *gin.Context) {
 		return
 	}
 	ids := normalizedIDs(req.IDs)
+	if rejectTooManyIDs(c, ids) {
+		return
+	}
 	if len(ids) == 0 {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "请选择要删除的节点"})
 		return
@@ -472,6 +483,9 @@ func (a *App) batchSetCustomNodeGroup(c *gin.Context) {
 		return
 	}
 	ids := normalizedIDs(req.IDs)
+	if rejectTooManyIDs(c, ids) {
+		return
+	}
 	if len(ids) == 0 {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "请选择要分组的节点"})
 		return

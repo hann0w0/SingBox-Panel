@@ -59,3 +59,12 @@ func TestResolveJWTSecretExplicitWins(t *testing.T) {
 		t.Errorf("secret file should not be created when JWT_SECRET is set")
 	}
 }
+
+func TestResolveJWTSecretRequiresExplicitSecretForNetworkDatabase(t *testing.T) {
+	for _, driver := range []string{"mysql", "postgres"} {
+		cfg := config.PanelConfig{Database: config.DatabaseConfig{Driver: driver, DSN: "example"}}
+		if _, err := ResolveJWTSecret(cfg); err == nil {
+			t.Fatalf("%s without jwt_secret was accepted", driver)
+		}
+	}
+}

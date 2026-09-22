@@ -183,6 +183,13 @@ type serverReq struct {
 	Remark  string `json:"remark"`
 }
 
+type serverUpdateReq struct {
+	Name    *string `json:"name"`
+	Address *string `json:"address"`
+	Region  *string `json:"region"`
+	Remark  *string `json:"remark"`
+}
+
 // latestAgentVersion is the agent build the panel currently serves. It reads
 // the VERSION file placed beside the served agent binaries, so upgrading the
 // panel alone no longer wrongly flags every node as having an agent update.
@@ -294,20 +301,32 @@ func (a *App) updateServer(c *gin.Context) {
 	}
 	unlockOperation := a.lockServerOperation(id)
 	defer unlockOperation()
-	var req serverReq
+	var req serverUpdateReq
 	if !bindJSON(c, &req) {
 		return
 	}
-	address, err := normalizeNodeAddress(req.Address)
-	if err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "节点连接地址格式无效: " + err.Error()})
-		return
+	updates := map[string]any{}
+	if req.Name != nil {
+		name := strings.TrimSpace(*req.Name)
+		if name == "" {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "name required"})
+			return
+		}
+		updates["name"] = name
 	}
-	updates := map[string]any{
-		"name":    req.Name,
-		"address": address,
-		"region":  req.Region,
-		"remark":  req.Remark,
+	if req.Address != nil {
+		address, err := normalizeNodeAddress(*req.Address)
+		if err != nil {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "节点连接地址格式无效: " + err.Error()})
+			return
+		}
+		updates["address"] = address
+	}
+	if req.Region != nil {
+		updates["region"] = *req.Region
+	}
+	if req.Remark != nil {
+		updates["remark"] = *req.Remark
 	}
 	if err := a.db.Model(&model.Server{}).Where("id = ?", id).Updates(updates).Error; err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
@@ -337,6 +356,15 @@ func (a *App) deleteServer(c *gin.Context) {
 	if err := a.db.First(&srv, id).Error; err != nil {
 		c.JSON(http.StatusNotFound, gin.H{"error": "server not found"})
 		return
+	}
+	if a.hub != nil {
+		disconnectCtx, cancelDisconnect := context.WithTimeout(context.Background(), 10*time.Second)
+		disconnectErr := a.hub.DisconnectAndWait(disconnectCtx, id)
+		cancelDisconnect()
+		if disconnectErr != nil {
+			c.JSON(http.StatusConflict, gin.H{"error": "节点连接仍在处理数据，请稍后重试删除"})
+			return
+		}
 	}
 
 	// Panel-only deletion: never send an Agent command here. In particular,
@@ -410,12 +438,6 @@ func (a *App) deleteServer(c *gin.Context) {
 		return
 	}
 	if a.hub != nil {
-		disconnectCtx, cancelDisconnect := context.WithTimeout(context.Background(), 10*time.Second)
-		a.hub.DisconnectAndWait(disconnectCtx, id)
-		cancelDisconnect()
-		// An event that entered its transaction immediately before the server row
-		// was deleted may finish after the first cascade cleanup. Once the read
-		// pump has stopped, remove any such late traffic row deterministically.
 		if err := a.db.Where("server_id = ?", id).Delete(&model.TrafficRecord{}).Error; err != nil {
 			log.Printf("delete server %d: final traffic cleanup failed: %v", id, err)
 		}
@@ -721,7 +743,12 @@ func (a *App) serverStatus(c *gin.Context) {
 	}
 	ctx, cancel := context.WithTimeout(c.Request.Context(), 15*time.Second)
 	defer cancel()
-	res, err := a.hub.SendCommand(ctx, id, protocol.CmdGetStatus, nil)
+	connection := a.hub.connection(id)
+	if connection == nil {
+		c.JSON(http.StatusBadGateway, gin.H{"error": ErrAgentOffline.Error()})
+		return
+	}
+	res, err := a.hub.sendCommandToConnection(ctx, connection, protocol.CmdGetStatus, nil)
 	if err != nil {
 		c.JSON(http.StatusBadGateway, gin.H{"error": err.Error()})
 		return
@@ -731,8 +758,20 @@ func (a *App) serverStatus(c *gin.Context) {
 		c.JSON(http.StatusBadGateway, gin.H{"error": "解析节点状态失败"})
 		return
 	}
-	persistServerStatus(a.db, id, status)
+	a.hub.persistServerStatus(connection, status)
 	c.JSON(http.StatusOK, gin.H{"status": status})
+}
+
+func (h *Hub) persistServerStatus(connection *agentConn, status protocol.StatusData) {
+	if connection == nil {
+		return
+	}
+	unlock := h.state.lock(connection.serverID)
+	defer unlock()
+	if !h.isCurrentConnection(connection.serverID, connection) {
+		return
+	}
+	persistServerStatus(h.db, connection.serverID, status)
 }
 
 // persistServerStatus stores a status snapshot explicitly requested by the
@@ -885,7 +924,7 @@ type inboundReq struct {
 	Tag        string          `json:"tag"`
 	ListenPort int             `json:"listen_port"`
 	Settings   json.RawMessage `json:"settings"`
-	Remark     string          `json:"remark"`
+	Remark     *string         `json:"remark"`
 	Enabled    *bool           `json:"enabled"`
 }
 
@@ -961,13 +1000,17 @@ func (a *App) createInbound(c *gin.Context) {
 	if req.Enabled != nil {
 		enabled = *req.Enabled
 	}
+	remark := ""
+	if req.Remark != nil {
+		remark = *req.Remark
+	}
 	ib := &model.Inbound{
 		ServerID:   id,
 		Type:       model.InboundType(req.Type),
 		Tag:        tag,
 		ListenPort: req.ListenPort,
 		Settings:   model.JSONText(raw),
-		Remark:     req.Remark,
+		Remark:     remark,
 		Enabled:    enabled,
 	}
 	if err := a.db.Create(ib).Error; err != nil {
@@ -1015,7 +1058,9 @@ func (a *App) updateInbound(c *gin.Context) {
 	oldTag := ib.Tag
 	ib.Tag = nextTag
 	ib.ListenPort = nextPort
-	ib.Remark = req.Remark
+	if req.Remark != nil {
+		ib.Remark = *req.Remark
+	}
 	if req.Enabled != nil {
 		ib.Enabled = *req.Enabled
 	}

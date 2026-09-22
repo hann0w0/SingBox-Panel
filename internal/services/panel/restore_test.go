@@ -591,3 +591,311 @@ func archiveWithDeclaredEntry(t *testing.T, name string, size int64) []byte {
 	}
 	return buf.Bytes()
 }
+
+func TestComparePanelVersionsAllowsMatchingDevelopmentBuild(t *testing.T) {
+	if comparison, err := comparePanelVersions("dev", "dev"); err != nil || comparison != 0 {
+		t.Fatalf("matching development versions: comparison=%d err=%v", comparison, err)
+	}
+	if _, err := comparePanelVersions("dev", "v1.0.1"); err == nil {
+		t.Fatal("different unparseable and semantic versions must not be silently ordered")
+	}
+}
+
+func TestRecoverPendingRestoreFinishesSecretPersistence(t *testing.T) {
+	t.Setenv("JWT_SECRET", "")
+	t.Setenv("SINGBOX_PANEL_JWT_SECRET", "")
+	dir := t.TempDir()
+	dbPath := filepath.Join(dir, "singbox-panel.db")
+	if err := os.WriteFile(dbPath, []byte("restored database bytes"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	targetHash, err := hashFile(dbPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	marker := pendingRestore{
+		Version: 1, TargetSHA256: targetHash, RollbackSHA256: strings.Repeat("0", 64),
+		JWTSecret: testRestoredJWTSecret, PreviousJWTSecret: testLiveJWTSecret,
+	}
+	raw, _ := json.Marshal(marker)
+	if err := writeFileAtomic(dbPath+restoreMarkerSuffix, raw, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	cfg := config.PanelConfig{Database: config.DatabaseConfig{Driver: "sqlite", DSN: dbPath}}
+	if err := RecoverPendingRestore(cfg, ""); err != nil {
+		t.Fatal(err)
+	}
+	secret, err := os.ReadFile(filepath.Join(dir, jwtSecretFile))
+	if err != nil || strings.TrimSpace(string(secret)) != testRestoredJWTSecret {
+		t.Fatalf("secret = %q err=%v", secret, err)
+	}
+	if _, err := os.Stat(dbPath + restoreMarkerSuffix); !os.IsNotExist(err) {
+		t.Fatalf("restore marker still exists: %v", err)
+	}
+}
+
+func TestRecoverPendingRestoreRejectsUnknownDatabaseState(t *testing.T) {
+	dir := t.TempDir()
+	dbPath := filepath.Join(dir, "singbox-panel.db")
+	if err := os.WriteFile(dbPath, []byte("unexpected bytes"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	marker := pendingRestore{
+		Version: 1, TargetSHA256: strings.Repeat("1", 64), RollbackSHA256: strings.Repeat("2", 64),
+		JWTSecret: testRestoredJWTSecret,
+	}
+	raw, _ := json.Marshal(marker)
+	if err := writeFileAtomic(dbPath+restoreMarkerSuffix, raw, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	cfg := config.PanelConfig{Database: config.DatabaseConfig{Driver: "sqlite", DSN: dbPath}}
+	if err := RecoverPendingRestore(cfg, ""); err == nil {
+		t.Fatal("unknown database state was silently accepted")
+	}
+}
+
+func TestRecoverPendingRestoreBeforeDatabaseSwitchKeepsCurrentSecret(t *testing.T) {
+	t.Setenv("JWT_SECRET", "")
+	t.Setenv("SINGBOX_PANEL_JWT_SECRET", "")
+	dir := t.TempDir()
+	dbPath := filepath.Join(dir, "singbox-panel.db")
+	if err := os.WriteFile(dbPath, []byte("live database bytes"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	liveHash, _ := hashFile(dbPath)
+	if err := os.WriteFile(filepath.Join(dir, jwtSecretFile), []byte(testLiveJWTSecret+"\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	marker := pendingRestore{
+		Version: 1, TargetSHA256: strings.Repeat("1", 64), LiveSHA256: liveHash,
+		RollbackSHA256: liveHash, JWTSecret: testRestoredJWTSecret, PreviousJWTSecret: testLiveJWTSecret,
+	}
+	raw, _ := json.Marshal(marker)
+	if err := writeFileAtomic(dbPath+restoreMarkerSuffix, raw, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	cfg := config.PanelConfig{Database: config.DatabaseConfig{Driver: "sqlite", DSN: dbPath}}
+	if err := RecoverPendingRestore(cfg, ""); err != nil {
+		t.Fatal(err)
+	}
+	secret, _ := os.ReadFile(filepath.Join(dir, jwtSecretFile))
+	if strings.TrimSpace(string(secret)) != testLiveJWTSecret {
+		t.Fatalf("pre-switch recovery changed secret: %q", secret)
+	}
+}
+
+func TestRecoverPendingRestoreRestoresMissingDatabaseFromSnapshot(t *testing.T) {
+	t.Setenv("JWT_SECRET", "")
+	t.Setenv("SINGBOX_PANEL_JWT_SECRET", "")
+	dir := t.TempDir()
+	dbPath := filepath.Join(dir, "singbox-panel.db")
+	snapshotPath := dbPath + ".pre-restore-20260101T000000.000000000Z"
+	if err := os.WriteFile(snapshotPath, []byte("snapshot database bytes"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	snapshotHash, err := hashFile(snapshotPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// The live database is gone. That does not prove the imported database never
+	// became live — the marker outlives a completed restore when removing it failed —
+	// so recovery treats it as the unknown state and puts the checksum-verified
+	// snapshot back instead of refusing to start.
+	marker := pendingRestore{
+		Version: 1, TargetSHA256: strings.Repeat("1", 64), LiveSHA256: strings.Repeat("2", 64),
+		RollbackPath: snapshotPath, RollbackSHA256: snapshotHash,
+		JWTSecret: testRestoredJWTSecret, PreviousJWTSecret: testLiveJWTSecret,
+	}
+	raw, _ := json.Marshal(marker)
+	if err := writeFileAtomic(dbPath+restoreMarkerSuffix, raw, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	cfg := config.PanelConfig{Database: config.DatabaseConfig{Driver: "sqlite", DSN: dbPath}}
+	if err := RecoverPendingRestore(cfg, ""); err != nil {
+		t.Fatalf("a recoverable state was refused: %v", err)
+	}
+	live, err := os.ReadFile(dbPath)
+	if err != nil || string(live) != "snapshot database bytes" {
+		t.Fatalf("live database = %q err=%v; want the snapshot contents", live, err)
+	}
+	// The database that is live again is the pre-restore one, so its signing key
+	// must come back too or encrypted settings stop decrypting.
+	secret, err := os.ReadFile(filepath.Join(dir, jwtSecretFile))
+	if err != nil || strings.TrimSpace(string(secret)) != testLiveJWTSecret {
+		t.Fatalf("secret = %q err=%v; want the pre-restore key", secret, err)
+	}
+	if _, err := os.Stat(dbPath + restoreMarkerSuffix); !os.IsNotExist(err) {
+		t.Fatalf("restore marker still exists: %v", err)
+	}
+}
+
+// pendingRestoreConfig writes a restore marker next to dbPath and returns the
+// configuration that points at it, so a rejection case only has to state what it
+// leaves on disk.
+func pendingRestoreConfig(t *testing.T, dbPath string, marker pendingRestore) config.PanelConfig {
+	t.Helper()
+	raw, err := json.Marshal(marker)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := writeFileAtomic(dbPath+restoreMarkerSuffix, raw, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	return config.PanelConfig{Database: config.DatabaseConfig{Driver: "sqlite", DSN: dbPath}}
+}
+
+func TestRecoverPendingRestoreRejectsMissingDatabaseWithoutSnapshot(t *testing.T) {
+	dir := t.TempDir()
+	dbPath := filepath.Join(dir, "singbox-panel.db")
+	// No live database and no snapshot recorded. Nothing may be invented, so the
+	// panel has to keep refusing to start and leave the marker for manual recovery.
+	cfg := pendingRestoreConfig(t, dbPath, pendingRestore{
+		Version: 1, TargetSHA256: strings.Repeat("1", 64), LiveSHA256: strings.Repeat("2", 64),
+		JWTSecret: testRestoredJWTSecret,
+	})
+	err := RecoverPendingRestore(cfg, "")
+	if err == nil {
+		t.Fatal("a missing database with no snapshot was silently accepted")
+	}
+	// The operator needs to know which database the panel was looking for, and the
+	// failure has to come from the recovery step rather than from reading the file:
+	// reporting the raw hash error is exactly the unfixed behaviour.
+	if !strings.Contains(err.Error(), dbPath) {
+		t.Fatalf("the error should name the database path: %v", err)
+	}
+	if strings.Contains(err.Error(), "hash database") {
+		t.Fatalf("a missing database was reported as a hash failure: %v", err)
+	}
+	if _, statErr := os.Stat(dbPath + restoreMarkerSuffix); statErr != nil {
+		t.Fatalf("marker was removed after a failed recovery: %v", statErr)
+	}
+	if _, statErr := os.Stat(dbPath); !os.IsNotExist(statErr) {
+		t.Fatalf("recovery invented a database file: %v", statErr)
+	}
+}
+
+func TestRecoverPendingRestoreRejectsSnapshotThatDoesNotMatch(t *testing.T) {
+	dir := t.TempDir()
+	dbPath := filepath.Join(dir, "singbox-panel.db")
+	snapshotPath := dbPath + ".pre-restore-20260101T000000.000000000Z"
+	if err := os.WriteFile(snapshotPath, []byte("a different snapshot"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	// The file beside the database is not the snapshot this restore recorded, so it
+	// must not become the live database. This checksum gate is what makes recovering
+	// over a missing database safe, so it needs its own coverage.
+	cfg := pendingRestoreConfig(t, dbPath, pendingRestore{
+		Version: 1, TargetSHA256: strings.Repeat("1", 64), LiveSHA256: strings.Repeat("2", 64),
+		RollbackPath: snapshotPath, RollbackSHA256: strings.Repeat("3", 64),
+		JWTSecret: testRestoredJWTSecret, PreviousJWTSecret: testLiveJWTSecret,
+	})
+	err := RecoverPendingRestore(cfg, "")
+	if err == nil {
+		t.Fatal("a snapshot that does not match the recorded checksum was installed")
+	}
+	if !strings.Contains(err.Error(), snapshotPath) {
+		t.Fatalf("the error should name the snapshot to restore by hand: %v", err)
+	}
+	if _, statErr := os.Stat(dbPath + restoreMarkerSuffix); statErr != nil {
+		t.Fatalf("marker was removed after a failed recovery: %v", statErr)
+	}
+	if _, statErr := os.Stat(dbPath); !os.IsNotExist(statErr) {
+		t.Fatalf("recovery invented a database file: %v", statErr)
+	}
+}
+
+func TestRecoverPendingRestoreRejectsUnreadableDatabase(t *testing.T) {
+	dir := t.TempDir()
+	dbPath := filepath.Join(dir, "singbox-panel.db")
+	// A directory at the database path fails with something other than "does not
+	// exist". Treating that as a missing database would copy a snapshot over
+	// whatever is really there, so it has to stay a hard error.
+	if err := os.Mkdir(dbPath, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	// The snapshot is valid, so an implementation that mistook "unreadable" for
+	// "missing" would really start restoring it: the rollback removes the WAL
+	// sidecars before copying the snapshot over the path. Keep those sidecars and
+	// the directory itself as sentinels, so reporting some error is not enough to
+	// pass — recovery must have refused before touching anything.
+	snapshotPath := dbPath + ".pre-restore-20260101T000000.000000000Z"
+	if err := os.WriteFile(snapshotPath, []byte("snapshot database bytes"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	snapshotHash, err := hashFile(snapshotPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var sidecars []string
+	for _, suffix := range []string{"-wal", "-shm"} {
+		sidecar := dbPath + suffix
+		if err := os.WriteFile(sidecar, []byte("sidecar"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		sidecars = append(sidecars, sidecar)
+	}
+	cfg := pendingRestoreConfig(t, dbPath, pendingRestore{
+		Version: 1, TargetSHA256: strings.Repeat("1", 64), LiveSHA256: strings.Repeat("2", 64),
+		RollbackPath: snapshotPath, RollbackSHA256: snapshotHash,
+		JWTSecret: testRestoredJWTSecret, PreviousJWTSecret: testLiveJWTSecret,
+	})
+	err = RecoverPendingRestore(cfg, "")
+	if err == nil {
+		t.Fatal("an unreadable database path was treated as a missing database")
+	}
+	info, statErr := os.Stat(dbPath)
+	if statErr != nil || !info.IsDir() {
+		t.Fatalf("the database path was replaced: %v", statErr)
+	}
+	for _, sidecar := range sidecars {
+		if _, statErr := os.Stat(sidecar); statErr != nil {
+			t.Fatalf("recovery touched %s instead of refusing the unreadable database: %v", sidecar, statErr)
+		}
+	}
+	if _, statErr := os.Stat(dbPath + restoreMarkerSuffix); statErr != nil {
+		t.Fatalf("marker was removed after a failed recovery: %v", statErr)
+	}
+}
+
+func TestRecoverPendingRestoreRefusesDanglingSymlinkDatabase(t *testing.T) {
+	dir := t.TempDir()
+	target := filepath.Join(t.TempDir(), "elsewhere.db")
+	dbPath := filepath.Join(dir, "singbox-panel.db")
+	// A database kept on another mount is reached through a symlink, and a mount
+	// that is not up yet leaves that symlink pointing at nothing. Recovering would
+	// replace the symlink with a plain file and silently fork the data once the
+	// mount returns, so recovery has to refuse and say why.
+	if err := os.Symlink(target, dbPath); err != nil {
+		t.Fatalf("symlink: %v", err)
+	}
+	snapshotPath := dbPath + ".pre-restore-20260101T000000.000000000Z"
+	if err := os.WriteFile(snapshotPath, []byte("snapshot database bytes"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	snapshotHash, err := hashFile(snapshotPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	cfg := pendingRestoreConfig(t, dbPath, pendingRestore{
+		Version: 1, TargetSHA256: strings.Repeat("1", 64), LiveSHA256: strings.Repeat("2", 64),
+		RollbackPath: snapshotPath, RollbackSHA256: snapshotHash,
+		JWTSecret: testRestoredJWTSecret, PreviousJWTSecret: testLiveJWTSecret,
+	})
+	err = RecoverPendingRestore(cfg, "")
+	if err == nil {
+		t.Fatal("a dangling symlink was recovered over")
+	}
+	if !strings.Contains(err.Error(), "symlink") {
+		t.Fatalf("the error should name the symlink as the cause: %v", err)
+	}
+	info, lstatErr := os.Lstat(dbPath)
+	if lstatErr != nil || info.Mode()&os.ModeSymlink == 0 {
+		t.Fatalf("the database symlink was replaced: mode=%v err=%v", info, lstatErr)
+	}
+	if _, statErr := os.Stat(target); !os.IsNotExist(statErr) {
+		t.Fatalf("the symlink target was written to: %v", statErr)
+	}
+	if _, statErr := os.Stat(dbPath + restoreMarkerSuffix); statErr != nil {
+		t.Fatalf("marker was removed after a failed recovery: %v", statErr)
+	}
+}

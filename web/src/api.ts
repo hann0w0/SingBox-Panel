@@ -61,6 +61,8 @@ export interface ConfigApplyResult {
 // ---- auth ----
 export const login = (username: string, password: string) =>
   http.post<{ token: string; user: User }>('/api/auth/login', { username, password }).then((r) => r.data)
+export const logoutSession = () =>
+  http.post<{ ok: boolean }>('/api/auth/logout', undefined, { timeout: 5000 }).then((r) => r.data)
 
 // ---- current user ----
 export const getMe = (signal?: AbortSignal) =>

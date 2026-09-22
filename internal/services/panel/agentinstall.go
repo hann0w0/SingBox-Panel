@@ -28,6 +28,9 @@ PREV=/usr/local/bin/singbox-panel-agent.prev
 CONFIG=/etc/singbox-panel-agent/agent.conf
 UNIT=/etc/systemd/system/singbox-panel-agent.service
 BACKUP_DIR=""; CONFIG_TMP=""; UNIT_TMP=""; RESTORE_TMP=""
+READY=/run/singbox-panel-agent.ready
+EXPECTED_READY=/run/singbox-panel-agent.expected-sha256
+CURL_ARGS="--fail --silent --show-error --location --connect-timeout 10 --max-time 300 --retry 3 --retry-delay 2 --retry-connrefused"
 TRANSACTION_STARTED=0; COMMITTED=0
 HAD_BIN=0; HAD_CONFIG=0; HAD_UNIT=0; WAS_ACTIVE=0; WAS_ENABLED=0
 
@@ -73,6 +76,7 @@ cleanup() {
   [ -z "$UNIT_TMP" ] || rm -f "$UNIT_TMP"
   [ -z "$RESTORE_TMP" ] || rm -f "$RESTORE_TMP"
   [ -z "$AUTH_CONFIG" ] || rm -f "$AUTH_CONFIG"
+  [ "$COMMITTED" = "1" ] || rm -f "$EXPECTED_READY"
   [ -z "$BACKUP_DIR" ] || rm -rf "$BACKUP_DIR"
   exit "$status"
 }
@@ -105,7 +109,7 @@ esac
 
 if [ -z "$TOKEN" ]; then
   [ -n "$CODE" ] || { echo "missing one-time registration code"; exit 1; }
-  TOKEN="$(curl -fsS -X POST --data-urlencode "code=$CODE" "$URL/api/agent/register")" || {
+  TOKEN="$(curl $CURL_ARGS -X POST --data-urlencode "code=$CODE" "$URL/api/agent/register")" || {
     echo "registration code exchange failed"; exit 1;
   }
 fi
@@ -130,8 +134,8 @@ esac
 
 echo "downloading singbox-panel-agent ($GOARCH) ..."
 TMP="$(mktemp /usr/local/bin/.singbox-panel-agent.XXXXXX)"
-curl -fsSL --config "$AUTH_CONFIG" "$URL/api/agent/download?arch=$GOARCH" -o "$TMP"
-EXPECTED="$(curl -fsSL --config "$AUTH_CONFIG" "$URL/api/agent/checksum?arch=$GOARCH" | tr -d '[:space:]')"
+curl $CURL_ARGS --config "$AUTH_CONFIG" "$URL/api/agent/download?arch=$GOARCH" -o "$TMP"
+EXPECTED="$(curl $CURL_ARGS --config "$AUTH_CONFIG" "$URL/api/agent/checksum?arch=$GOARCH" | tr -d '[:space:]')"
 case "$EXPECTED" in
   *[!0-9a-fA-F]*|'') echo "invalid Agent checksum"; exit 1 ;;
 esac
@@ -161,6 +165,8 @@ if systemctl is-active --quiet singbox-panel-agent; then WAS_ACTIVE=1; fi
 if systemctl is-enabled --quiet singbox-panel-agent; then WAS_ENABLED=1; fi
 TRANSACTION_STARTED=1
 
+printf '%s\n' "$ACTUAL" > "$EXPECTED_READY"
+chmod 644 "$EXPECTED_READY"
 mv -f "$TMP" "$BIN"
 TMP=""
 
@@ -184,6 +190,10 @@ ExecStart=/usr/local/bin/singbox-panel-agent --config /etc/singbox-panel-agent/a
 Restart=always
 RestartSec=5s
 LimitNOFILE=infinity
+UMask=0077
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectHome=true
 
 [Install]
 WantedBy=multi-user.target
@@ -194,13 +204,14 @@ UNIT_TMP=""
 
 systemctl daemon-reload
 systemctl enable singbox-panel-agent
-rm -f /run/singbox-panel-agent.ready
+rm -f "$READY"
 systemctl restart singbox-panel-agent
 i=0
 while [ "$i" -lt 30 ]; do
-  if systemctl is-active --quiet singbox-panel-agent && [ -s /run/singbox-panel-agent.ready ]; then
+  READY_SHA="$(sed -n '2p' "$READY" 2>/dev/null || true)"
+  if systemctl is-active --quiet singbox-panel-agent && [ "$READY_SHA" = "$ACTUAL" ]; then
     COMMITTED=1
-    rm -f "$PREV"
+    rm -f "$PREV" "$EXPECTED_READY"
     rm -rf "$BACKUP_DIR"
     BACKUP_DIR=""
     echo "singbox-panel-agent installed and connected."

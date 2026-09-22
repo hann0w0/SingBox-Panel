@@ -9,7 +9,7 @@ import {
 import { applyWithToast } from '../../../configApply'
 import type { Outbound, OutboundType, RouteRule, RuleMatch, RuleSet } from '../../../types'
 import { randomBase64, randomHex, randomUUID, SHADOWSOCKS_METHODS, ss2022KeyLen } from '../../../util'
-import { buildOutboundBody, TLS_REQUIRED_OUT, TRANSPORT_OUT } from '../../../outboundForm'
+import { buildOutboundBody, TLS_REQUIRED_OUT, TRANSPORT_OUT, transportHost } from '../../../outboundForm'
 
 const OUT_TYPES: { value: OutboundType; label: string }[] = [
   { value: 'shadowsocks', label: 'Shadowsocks' },
@@ -95,7 +95,7 @@ export function OutboundForm({
         snell_mode: inner.snell_mode ?? '',
         transport_type: inner.transport?.type === 'ws' || inner.transport?.type === 'httpupgrade' ? inner.transport.type : 'tcp',
         ws_path: inner.transport?.path,
-        ws_host: inner.transport?.headers?.Host,
+        ws_host: transportHost(inner.transport?.headers),
       })
     } else {
       form.setFieldsValue({

@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"strconv"
 	"time"
 
 	"github.com/gin-gonic/gin"
@@ -16,6 +17,7 @@ import (
 const (
 	trafficRetentionDays = 31
 	trafficStorageBucket = time.Minute // 1-minute buckets; display step aggregates as needed
+	maxTrafficQueryRows  = 100000
 )
 
 type trafficRangeConfig struct {
@@ -228,6 +230,93 @@ func sumTraffic(points []trafficPoint) (upload, download uint64) {
 	return upload, download
 }
 
+type aggregatedTrafficRecord struct {
+	InboundID      uint  `gorm:"column:inbound_id"`
+	BucketIndex    int64 `gorm:"column:bucket_index"`
+	Upload         uint64
+	Download       uint64
+	UploadRate     uint64
+	DownloadRate   uint64
+	TCPConnections int
+	UDPConnections int
+}
+
+func trafficBucketExpression(db *gorm.DB, stepSeconds int64) (string, error) {
+	step := strconv.FormatInt(stepSeconds, 10)
+	switch db.Dialector.Name() {
+	case "sqlite":
+		return "CAST(strftime('%s', bucket) AS INTEGER) / " + step, nil
+	case "mysql":
+		return "FLOOR(UNIX_TIMESTAMP(bucket) / " + step + ")", nil
+	case "postgres":
+		return "FLOOR(EXTRACT(EPOCH FROM bucket) / " + step + ")", nil
+	default:
+		return "", fmt.Errorf("unsupported database driver %q", db.Dialector.Name())
+	}
+}
+
+func aggregateTrafficRecords(db *gorm.DB, serverID uint, start, end time.Time, step time.Duration) ([]aggregatedTrafficRecord, error) {
+	stepSeconds := int64(step / time.Second)
+	if stepSeconds <= 0 {
+		return nil, fmt.Errorf("invalid traffic aggregation step")
+	}
+	bucketExpression, err := trafficBucketExpression(db, stepSeconds)
+	if err != nil {
+		return nil, err
+	}
+	selectExpression := "inbound_id, " + bucketExpression + " AS bucket_index, " +
+		"SUM(upload) AS upload, SUM(download) AS download, " +
+		"MAX(upload_rate) AS upload_rate, MAX(download_rate) AS download_rate, " +
+		"MAX(tcp_connections) AS tcp_connections, MAX(udp_connections) AS udp_connections"
+	var rows []aggregatedTrafficRecord
+	if err := db.Model(&model.TrafficRecord{}).
+		Select(selectExpression).
+		Where("server_id = ? AND bucket >= ? AND bucket < ?", serverID, start, end).
+		Group("inbound_id, " + bucketExpression).
+		Order("bucket_index, inbound_id").
+		Limit(maxTrafficQueryRows + 1).
+		Scan(&rows).Error; err != nil {
+		return nil, err
+	}
+	if len(rows) > maxTrafficQueryRows {
+		return nil, fmt.Errorf("traffic query produced too many aggregated rows")
+	}
+	return rows, nil
+}
+
+func buildAggregatedTrafficPoints(records []aggregatedTrafficRecord, start, end time.Time, step time.Duration) ([]trafficPoint, map[uint][]trafficPoint) {
+	total := buildTrafficPoints(nil, start, end, step)
+	byInbound := make(map[uint][]trafficPoint)
+	stepSeconds := int64(step / time.Second)
+	for _, record := range records {
+		bucket := time.Unix(record.BucketIndex*stepSeconds, 0).UTC()
+		if bucket.Before(start) || !bucket.Before(end) {
+			continue
+		}
+		index := int(bucket.Sub(start) / step)
+		if index < 0 || index >= len(total) {
+			continue
+		}
+		points := total
+		if record.InboundID != 0 {
+			points = byInbound[record.InboundID]
+			if points == nil {
+				points = buildTrafficPoints(nil, start, end, step)
+			}
+		}
+		points[index].Upload = record.Upload
+		points[index].Download = record.Download
+		points[index].UploadRate = record.UploadRate
+		points[index].DownloadRate = record.DownloadRate
+		points[index].TCPConnections = record.TCPConnections
+		points[index].UDPConnections = record.UDPConnections
+		if record.InboundID != 0 {
+			byInbound[record.InboundID] = points
+		}
+	}
+	return total, byInbound
+}
+
 func (a *App) serverTraffic(c *gin.Context) {
 	serverID, ok := uintParam(c, "id")
 	if !ok {
@@ -249,24 +338,12 @@ func (a *App) serverTraffic(c *gin.Context) {
 		return
 	}
 	start, end := trafficWindow(time.Now(), rangeConfig)
-	var records []model.TrafficRecord
-	if err := a.db.Where(
-		"server_id = ? AND bucket >= ? AND bucket < ?", serverID, start, end,
-	).Order("bucket").Find(&records).Error; err != nil {
+	records, err := aggregateTrafficRecords(a.db, serverID, start, end, rangeConfig.step)
+	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
-
-	totalRecords := make([]model.TrafficRecord, 0)
-	byInbound := make(map[uint][]model.TrafficRecord)
-	for _, record := range records {
-		if record.InboundID == 0 {
-			totalRecords = append(totalRecords, record)
-		} else {
-			byInbound[record.InboundID] = append(byInbound[record.InboundID], record)
-		}
-	}
-	totalPoints := buildTrafficPoints(totalRecords, start, end, rangeConfig.step)
+	totalPoints, byInbound := buildAggregatedTrafficPoints(records, start, end, rangeConfig.step)
 	totalUpload, totalDownload := sumTraffic(totalPoints)
 
 	var inbounds []model.Inbound
@@ -276,7 +353,10 @@ func (a *App) serverTraffic(c *gin.Context) {
 	}
 	ports := make([]trafficPortSeries, 0, len(inbounds))
 	for _, inbound := range inbounds {
-		points := buildTrafficPoints(byInbound[inbound.ID], start, end, rangeConfig.step)
+		points := byInbound[inbound.ID]
+		if points == nil {
+			points = buildTrafficPoints(nil, start, end, rangeConfig.step)
+		}
 		upload, download := sumTraffic(points)
 		ports = append(ports, trafficPortSeries{
 			InboundID: inbound.ID, Tag: inbound.Tag, Port: inbound.ListenPort, Type: string(inbound.Type),

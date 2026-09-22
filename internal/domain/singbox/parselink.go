@@ -65,6 +65,17 @@ func shareName(u *url.URL) string {
 	return strings.TrimSpace(u.Fragment)
 }
 
+func splitList(value string) []string {
+	parts := strings.Split(value, ",")
+	result := make([]string, 0, len(parts))
+	for _, part := range parts {
+		if part = strings.TrimSpace(part); part != "" {
+			result = append(result, part)
+		}
+	}
+	return result
+}
+
 func splitOrNil(s string) []string {
 	if strings.TrimSpace(s) == "" {
 		return nil
@@ -74,14 +85,17 @@ func splitOrNil(s string) []string {
 
 // parseWSQuery fills TransportSettings from the shared type/path/host query
 // params (used by vless / trojan links).
-func parseWSQuery(q url.Values, t *TransportSettings) {
-	switch q.Get("type") {
+func parseWSQuery(q url.Values, t *TransportSettings) error {
+	transportType := strings.ToLower(strings.TrimSpace(q.Get("type")))
+	switch transportType {
+	case "", "tcp", "none":
+		return nil
 	case "ws":
 		*t = TransportSettings{Type: "ws", Path: q.Get("path"), Headers: map[string]string{}}
 	case "httpupgrade":
 		*t = TransportSettings{Type: "httpupgrade", Path: q.Get("path"), Headers: map[string]string{}}
 	default:
-		return
+		return fmt.Errorf("unsupported transport %q", transportType)
 	}
 	if h := q.Get("host"); h != "" {
 		t.Headers["Host"] = h
@@ -92,6 +106,7 @@ func parseWSQuery(q url.Values, t *TransportSettings) {
 	if h := q.Get("earlyDataHeaderName"); h != "" {
 		t.EarlyDataHeader = h
 	}
+	return nil
 }
 
 // parseTLSSecurity maps the security/sni/pbk/sid/fp query params of a share
@@ -138,18 +153,20 @@ func parseVLESS(uri string) (ClientNode, error) {
 	cn.User.UUID = u.User.Username()
 	cn.Settings.Flow = q.Get("flow")
 	cn.Settings.PacketEncoding = q.Get("packetEncoding")
-	parseWSQuery(q, &cn.Settings.Transport)
+	if err := parseWSQuery(q, &cn.Settings.Transport); err != nil {
+		return ClientNode{}, err
+	}
 	if err := parseTLSSecurity(q.Get("security"), q.Get("sni"), q.Get("pbk"), q.Get("sid"), insecureFromQuery(q), q.Get("fp"), &cn.Settings.TLS); err != nil {
 		return ClientNode{}, err
 	}
 	if a := q.Get("alpn"); a != "" {
-		cn.Settings.TLS.ALPN = strings.Split(a, ",")
+		cn.Settings.TLS.ALPN = splitList(a)
 	}
 	return cn, nil
 }
 
 func parseVMess(uri string) (ClientNode, error) {
-	raw := strings.TrimPrefix(uri, "vmess://")
+	raw := uri[len("vmess://"):]
 	data, err := base64.StdEncoding.DecodeString(raw)
 	if err != nil {
 		data, err = base64.RawURLEncoding.DecodeString(raw)
@@ -173,11 +190,16 @@ func parseVMess(uri string) (ClientNode, error) {
 	if cn.Settings.VMessSecurity == "" {
 		cn.Settings.VMessSecurity = "auto"
 	}
-	if strOf(obj, "net") == "ws" || strOf(obj, "net") == "httpupgrade" {
-		cn.Settings.Transport = TransportSettings{Type: strOf(obj, "net"), Path: strOf(obj, "path"), Headers: map[string]string{}}
+	network := strings.ToLower(strings.TrimSpace(strOf(obj, "net")))
+	switch network {
+	case "", "tcp", "none":
+	case "ws", "httpupgrade":
+		cn.Settings.Transport = TransportSettings{Type: network, Path: strOf(obj, "path"), Headers: map[string]string{}}
 		if h := strOf(obj, "host"); h != "" {
 			cn.Settings.Transport.Headers["Host"] = h
 		}
+	default:
+		return ClientNode{}, fmt.Errorf("unsupported transport %q", network)
 	}
 	switch strOf(obj, "tls") {
 	case "reality":
@@ -194,13 +216,13 @@ func parseVMess(uri string) (ClientNode, error) {
 		}
 	}
 	if a := strOf(obj, "alpn"); a != "" {
-		cn.Settings.TLS.ALPN = strings.Split(a, ",")
+		cn.Settings.TLS.ALPN = splitList(a)
 	}
 	return cn, nil
 }
 
 func parseShadowsocks(uri string) (ClientNode, error) {
-	rest := strings.TrimPrefix(uri, "ss://")
+	rest := uri[len("ss://"):]
 	name := ""
 	if i := strings.LastIndex(rest, "#"); i >= 0 {
 		name = strings.TrimSpace(rest[i+1:])
@@ -225,10 +247,13 @@ func parseShadowsocks(uri string) (ClientNode, error) {
 	}
 	// userinfo is base64(method:password) or plain method:password
 	decoded := userinfo
-	if d, err := base64.RawURLEncoding.DecodeString(userinfo); err == nil {
-		decoded = string(d)
-	} else if d, err := base64.StdEncoding.DecodeString(userinfo); err == nil {
-		decoded = string(d)
+	for _, encoding := range []*base64.Encoding{
+		base64.RawURLEncoding, base64.URLEncoding, base64.RawStdEncoding, base64.StdEncoding,
+	} {
+		if d, err := encoding.DecodeString(userinfo); err == nil {
+			decoded = string(d)
+			break
+		}
 	}
 	method, password, ok := strings.Cut(decoded, ":")
 	if !ok || method == "" || password == "" {
@@ -271,7 +296,9 @@ func parseTrojan(uri string) (ClientNode, error) {
 	q := u.Query()
 	cn := ClientNode{Name: shareName(u), Server: host, ServerPort: port, Type: "trojan"}
 	cn.User.Password = u.User.Username()
-	parseWSQuery(q, &cn.Settings.Transport)
+	if err := parseWSQuery(q, &cn.Settings.Transport); err != nil {
+		return ClientNode{}, err
+	}
 	if err := parseTLSSecurity(q.Get("security"), q.Get("sni"), q.Get("pbk"), q.Get("sid"), insecureFromQuery(q), q.Get("fp"), &cn.Settings.TLS); err != nil {
 		return ClientNode{}, err
 	}
@@ -286,7 +313,7 @@ func parseTrojan(uri string) (ClientNode, error) {
 		}
 	}
 	if a := q.Get("alpn"); a != "" {
-		cn.Settings.TLS.ALPN = strings.Split(a, ",")
+		cn.Settings.TLS.ALPN = splitList(a)
 	}
 	return cn, nil
 }
@@ -325,7 +352,7 @@ func parseHysteria2(uri string) (ClientNode, error) {
 		cn.Settings.DownMbps = atoiSafe(v)
 	}
 	if a := q.Get("alpn"); a != "" {
-		cn.Settings.TLS.ALPN = strings.Split(a, ",")
+		cn.Settings.TLS.ALPN = splitList(a)
 	}
 	return cn, nil
 }
@@ -394,7 +421,7 @@ func parseTUIC(uri string) (ClientNode, error) {
 		cn.Settings.TUICUDPRelayMode = v
 	}
 	if a := q.Get("alpn"); a != "" {
-		cn.Settings.TLS.ALPN = strings.Split(a, ",")
+		cn.Settings.TLS.ALPN = splitList(a)
 	}
 	return cn, nil
 }
@@ -420,7 +447,7 @@ func parseAnyTLS(uri string) (ClientNode, error) {
 		cn.Settings.TLS.Insecure = true
 	}
 	if a := q.Get("alpn"); a != "" {
-		cn.Settings.TLS.ALPN = strings.Split(a, ",")
+		cn.Settings.TLS.ALPN = splitList(a)
 	}
 	if fp := q.Get("fp"); fp != "" {
 		cn.Settings.TLS.Fingerprint = fp

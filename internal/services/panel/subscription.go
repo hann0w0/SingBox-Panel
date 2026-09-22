@@ -8,6 +8,7 @@ import (
 	"strconv"
 	"strings"
 	"time"
+	"unicode"
 
 	"github.com/gin-gonic/gin"
 	"github.com/goccy/go-yaml"
@@ -1292,10 +1293,27 @@ func (a *App) writeSurge(c *gin.Context, nodes []node) {
 	c.Data(http.StatusOK, "text/plain; charset=utf-8", []byte(b.String()))
 }
 
+func sanitizeSurgeName(name string) string {
+	name = strings.Map(func(r rune) rune {
+		if r == '\r' || r == '\n' || r == '\t' || r < 0x20 || r == 0x7f {
+			return ' '
+		}
+		return r
+	}, name)
+	name = strings.Join(strings.Fields(name), " ")
+	if name == "" {
+		name = "node"
+	}
+	if strings.HasPrefix(name, "#") || strings.HasPrefix(name, ";") || strings.HasPrefix(name, "[") {
+		name = "_" + name
+	}
+	return name
+}
+
 func surgeProxies(nodes []node) (lines, names, skipped []string) {
 	seen := map[string]int{}
 	for _, n := range nodes {
-		name := uniqueName(seen, n.name)
+		name := uniqueName(seen, sanitizeSurgeName(n.name))
 		line := surgeProxy(n, name)
 		if line == "" {
 			skipped = append(skipped, name)
@@ -1322,6 +1340,14 @@ func surgeALPN(alpn []string) string {
 }
 
 func surgeProxy(n node, name string) string {
+	line := surgeProxyUnchecked(n, name)
+	if strings.IndexFunc(line, unicode.IsControl) >= 0 {
+		return ""
+	}
+	return line
+}
+
+func surgeProxyUnchecked(n node, name string) string {
 	st := n.settings
 	u := n.getUserIdentity()
 	sni := sniOf(st, n.server)

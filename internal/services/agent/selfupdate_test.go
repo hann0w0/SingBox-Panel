@@ -39,7 +39,7 @@ func TestValidateAgentBinary(t *testing.T) {
 }
 
 func TestUpgradeWatchdogKeepsSingboxUntouched(t *testing.T) {
-	for _, required := range []string{agentPreviousBinary, agentReadyFile, "systemctl restart singbox-panel-agent.service"} {
+	for _, required := range []string{agentPreviousBinary, agentReadyFile, agentExpectedSHAFile, "systemctl restart singbox-panel-agent.service"} {
 		if !strings.Contains(agentUpgradeScriptBody, required) {
 			t.Fatalf("upgrade watchdog missing %q", required)
 		}
@@ -51,7 +51,7 @@ func TestUpgradeWatchdogKeepsSingboxUntouched(t *testing.T) {
 	if strings.Contains(agentUpgradeScriptBody, `rm -f "$BIN"`) {
 		t.Fatal("rollback deletes the live Agent before the previous binary is ready")
 	}
-	for _, required := range []string{"rollback-ok", "rollback-failed"} {
+	for _, required := range []string{"ready_sha", "expected_sha", "rollback-ok", "rollback-failed"} {
 		if !strings.Contains(agentUpgradeScriptBody, required) {
 			t.Fatalf("upgrade watchdog missing status %q", required)
 		}
@@ -60,6 +60,13 @@ func TestUpgradeWatchdogKeepsSingboxUntouched(t *testing.T) {
 	cmd.Stdin = strings.NewReader(agentUpgradeScriptBody)
 	if out, err := cmd.CombinedOutput(); err != nil {
 		t.Fatalf("upgrade watchdog shell syntax: %v: %s", err, out)
+	}
+}
+
+func TestReadyMarkerContainsVersionAndChecksum(t *testing.T) {
+	got := readyMarker("v1.0.2", "abc123")
+	if got != "v1.0.2\nabc123\n" {
+		t.Fatalf("ready marker = %q", got)
 	}
 }
 

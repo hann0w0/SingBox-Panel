@@ -48,6 +48,26 @@ describe('buildOutboundBody', () => {
     expect(body.settings.settings?.transport?.headers?.Host).toBe('cdn.example.com')
   })
 
+
+  it('preserves a case-insensitive Host header when the compact form omits it', () => {
+    const outbound = {
+      id: 1, server_id: 1, tag: 'vmess', type: 'vmess', remark: '', sort: 0,
+      settings: {
+        server: 'old.example.com', server_port: 443,
+        settings: { transport: { type: 'ws', path: '/ws', headers: { host: 'cdn.example.com', Origin: 'https://origin.example.com' } } },
+      },
+    } satisfies Outbound
+
+    const body = buildOutboundBody(outbound, {
+      type: 'vmess', tag: 'vmess', server: 'new.example.com', server_port: 8443,
+      uuid: 'uuid', vmess_security: 'auto', vmess_alter_id: 0,
+      transport_type: 'ws', ws_path: '/ws',
+    })
+
+    expect(body.settings.settings?.transport?.headers?.host).toBe('cdn.example.com')
+    expect(body.settings.settings?.transport?.headers?.Origin).toBe('https://origin.example.com')
+  })
+
   it('forces TLS for protocols that require it', () => {
     const body = buildOutboundBody(null, {
       type: 'anytls', tag: 'anytls', server: 'example.com', server_port: 443,

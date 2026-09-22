@@ -9,6 +9,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 
+	"github.com/hann0w0/singbox-panel/internal/domain/model"
 	"github.com/hann0w0/singbox-panel/internal/domain/protocol"
 )
 
@@ -99,5 +100,40 @@ func TestExpiredLogSessionIsRemoved(t *testing.T) {
 	}
 	if size := a.logSessionLocks.size(); size != 0 {
 		t.Fatalf("per-server log lock leaked: size=%d", size)
+	}
+}
+
+func TestAggregateTrafficRecordsGroupsInDatabase(t *testing.T) {
+	db := testDB(t)
+	server := model.Server{Name: "traffic", AgentToken: "traffic-aggregate-token"}
+	if err := db.Create(&server).Error; err != nil {
+		t.Fatal(err)
+	}
+	inbound := model.Inbound{ServerID: server.ID, Tag: "in", Type: model.InboundVLESS, ListenPort: 443}
+	if err := db.Create(&inbound).Error; err != nil {
+		t.Fatal(err)
+	}
+	start := time.Now().UTC().Truncate(time.Hour)
+	rows := []model.TrafficRecord{
+		{ServerID: server.ID, Bucket: start.Add(time.Minute), Upload: 10, Download: 20, UploadRate: 3},
+		{ServerID: server.ID, Bucket: start.Add(2 * time.Minute), Upload: 30, Download: 40, UploadRate: 9},
+		{ServerID: server.ID, InboundID: inbound.ID, Bucket: start.Add(time.Minute), Upload: 5, Download: 7},
+	}
+	if err := db.Create(&rows).Error; err != nil {
+		t.Fatal(err)
+	}
+	aggregated, err := aggregateTrafficRecords(db, server.ID, start, start.Add(time.Hour), 30*time.Minute)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(aggregated) != 2 {
+		t.Fatalf("aggregated rows = %d, want 2: %+v", len(aggregated), aggregated)
+	}
+	points, ports := buildAggregatedTrafficPoints(aggregated, start, start.Add(time.Hour), 30*time.Minute)
+	if points[0].Upload != 40 || points[0].Download != 60 || points[0].UploadRate != 9 {
+		t.Fatalf("total point = %+v", points[0])
+	}
+	if ports[inbound.ID][0].Upload != 5 || ports[inbound.ID][0].Download != 7 {
+		t.Fatalf("inbound point = %+v", ports[inbound.ID][0])
 	}
 }

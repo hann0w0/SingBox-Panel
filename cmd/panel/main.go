@@ -14,7 +14,7 @@ import (
 )
 
 // version is set via -ldflags "-X main.version=x.y.z".
-var version = "v1.0.1"
+var version = "v1.0.2"
 
 func main() {
 	cfgPath := flag.String("config", "", "path to panel config YAML")
@@ -32,6 +32,9 @@ func main() {
 	}
 	if err := cfg.Validate(); err != nil {
 		log.Fatalf("config security validation: %v", err)
+	}
+	if err := panel.RecoverPendingRestore(cfg, *cfgPath); err != nil {
+		log.Fatalf("pending restore recovery: %v", err)
 	}
 
 	secret, err := panel.ResolveJWTSecret(cfg)

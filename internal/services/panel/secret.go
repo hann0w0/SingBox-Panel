@@ -19,14 +19,15 @@ const jwtSecretFile = ".jwt_secret"
 // An explicit JWT_SECRET (config or env) always wins. Otherwise, for the
 // default SQLite deployment, a secret is generated once and persisted beside
 // the database so operators never have to supply one and sessions survive
-// restarts. A non-file database without an explicit secret falls back to an
-// ephemeral secret (sessions reset on restart); set JWT_SECRET to avoid that.
+// restarts. Non-file databases must provide an explicit secret: an ephemeral
+// key would also make encrypted OneDrive authorization undecryptable after a
+// restart and could otherwise degrade to a public constant in derived keys.
 func ResolveJWTSecret(cfg config.PanelConfig) (string, error) {
 	if strings.TrimSpace(cfg.JWTSecret) != "" {
 		return cfg.JWTSecret, nil
 	}
 	if cfg.Database.Driver != "sqlite" && cfg.Database.Driver != "" {
-		return "", nil // ephemeral; advanced setups should set JWT_SECRET
+		return "", fmt.Errorf("jwt_secret is required for %s databases", cfg.Database.Driver)
 	}
 
 	dir := filepath.Dir(cfg.Database.DSN)

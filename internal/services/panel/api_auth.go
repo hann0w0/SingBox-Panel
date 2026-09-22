@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
+	"gorm.io/gorm"
 
 	"github.com/hann0w0/singbox-panel/internal/domain/model"
 )
@@ -111,4 +112,23 @@ func (a *App) handleLogin(c *gin.Context) {
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"token": tok, "user": u})
+}
+
+func (a *App) handleLogout(c *gin.Context) {
+	uid := currentUID(c)
+	if uid == 0 {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "unauthorized"})
+		return
+	}
+	result := a.db.Model(&model.User{}).Where("id = ?", uid).
+		UpdateColumn("token_version", gorm.Expr("token_version + 1"))
+	if result.Error != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "退出登录失败"})
+		return
+	}
+	if result.RowsAffected != 1 {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "unauthorized"})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"ok": true})
 }

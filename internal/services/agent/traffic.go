@@ -349,6 +349,58 @@ func (s *trafficSampler) snapshot() *protocol.TrafficSnapshot {
 		snapshot.Ports = append(snapshot.Ports, delta)
 	}
 	sort.Slice(snapshot.Ports, func(i, j int) bool { return snapshot.Ports[i].Inbound < snapshot.Ports[j].Inbound })
-	s.pendingPorts = make(map[string]protocol.PortTrafficSnapshot)
 	return snapshot
+}
+
+func (s *trafficSampler) summarySnapshot() *protocol.TrafficSnapshot {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if !s.available || !s.haveSample {
+		return nil
+	}
+	return &protocol.TrafficSnapshot{
+		UploadTotal:    s.lastUpload,
+		DownloadTotal:  s.lastDownload,
+		UploadRate:     s.uploadRate,
+		DownloadRate:   s.downloadRate,
+		TCPConnections: s.tcpConnections,
+		UDPConnections: s.udpConnections,
+		SampledAt:      s.lastSample.Unix(),
+	}
+}
+
+func (s *trafficSampler) acknowledge(snapshot *protocol.TrafficSnapshot) {
+	if snapshot == nil {
+		return
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	for _, sent := range snapshot.Ports {
+		pending, ok := s.pendingPorts[sent.Inbound]
+		if !ok {
+			continue
+		}
+		pending.Upload = subtractCounter(pending.Upload, sent.Upload)
+		pending.Download = subtractCounter(pending.Download, sent.Download)
+		// Rates are maxima over a reporting window. Clear the sent maximum only
+		// when no newer sample has raised it while the event was being queued.
+		if pending.UploadRate <= sent.UploadRate {
+			pending.UploadRate = 0
+		}
+		if pending.DownloadRate <= sent.DownloadRate {
+			pending.DownloadRate = 0
+		}
+		if pending.Upload == 0 && pending.Download == 0 && pending.UploadRate == 0 && pending.DownloadRate == 0 {
+			delete(s.pendingPorts, sent.Inbound)
+		} else {
+			s.pendingPorts[sent.Inbound] = pending
+		}
+	}
+}
+
+func subtractCounter(current, sent uint64) uint64 {
+	if current <= sent {
+		return 0
+	}
+	return current - sent
 }

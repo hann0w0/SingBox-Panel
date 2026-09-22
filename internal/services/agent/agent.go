@@ -78,8 +78,8 @@ func (a *Agent) trafficReportLoop(ctx context.Context) {
 			return
 		case <-ticker.C:
 			snap := a.traffic.snapshot()
-			if snap != nil {
-				a.client.SendEvent(protocol.EvtTraffic, protocol.TrafficEvt{Traffic: snap})
+			if snap != nil && a.client.SendEvent(protocol.EvtTraffic, protocol.TrafficEvt{Traffic: snap}) {
+				a.traffic.acknowledge(snap)
 			}
 		}
 	}
@@ -156,7 +156,7 @@ func (a *Agent) heartbeat() protocol.HeartbeatEvt {
 		Uptime:         si.Uptime,
 		SingboxActive:  ServiceActive(ctx),
 		SingboxVersion: ver,
-		Traffic:        a.traffic.snapshot(),
+		Traffic:        a.traffic.summarySnapshot(),
 	}
 	return event
 }
@@ -190,7 +190,7 @@ func (a *Agent) onCommand(ctx context.Context, env protocol.Envelope) protocol.C
 		if err := env.Decode(&c); err != nil {
 			return decodeResult(env.ID, err)
 		}
-		out, err := ApplyConfig(ctx, c.Config, c.Reload)
+		out, err := ApplyConfig(ctx, c.Config)
 		return cmdResult(env.ID, out, err)
 
 	case protocol.CmdServiceAction:

@@ -355,6 +355,9 @@ func TestValidateRuleRejectsDanglingReferences(t *testing.T) {
 	if err := a.validateRule(db, srv.ID, match, "missing-outbound"); err == nil {
 		t.Fatal("dangling inbound/outbound references were accepted")
 	}
+	if err := a.validateInboundIdentity(db, srv.ID, 0, "stats-conflict", 29091); err == nil {
+		t.Fatal("reserved local traffic controller port was accepted")
+	}
 	if err := a.validateInboundIdentity(db, srv.ID, 0, "in", 443); err != nil {
 		t.Fatal(err)
 	}
@@ -397,6 +400,41 @@ func TestJWTIsRevokedByTokenVersion(t *testing.T) {
 	}
 	if got := request(); got != http.StatusUnauthorized {
 		t.Fatalf("revoked token status = %d", got)
+	}
+}
+
+func TestLogoutRevokesCurrentToken(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	db := testDB(t)
+	user := model.User{Email: "logout-user", Password: "hash", Role: model.RoleUser, Enabled: true, SubToken: "logout-sub"}
+	if err := db.Create(&user).Error; err != nil {
+		t.Fatal(err)
+	}
+	auth := NewAuth("0123456789abcdef0123456789abcdef", db)
+	token, err := auth.Issue(&user, sessionTTL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	app := &App{db: db, auth: auth}
+	router := gin.New()
+	router.POST("/api/auth/logout", auth.Middleware(), app.handleLogout)
+	request := httptest.NewRequest(http.MethodPost, "/api/auth/logout", nil)
+	request.Header.Set("Authorization", "Bearer "+token)
+	response := httptest.NewRecorder()
+	router.ServeHTTP(response, request)
+	if response.Code != http.StatusOK {
+		t.Fatalf("logout status = %d body=%s", response.Code, response.Body.String())
+	}
+
+	protected := gin.New()
+	protected.Use(auth.Middleware())
+	protected.GET("/ok", func(c *gin.Context) { c.Status(http.StatusNoContent) })
+	request = httptest.NewRequest(http.MethodGet, "/ok", nil)
+	request.Header.Set("Authorization", "Bearer "+token)
+	response = httptest.NewRecorder()
+	protected.ServeHTTP(response, request)
+	if response.Code != http.StatusUnauthorized {
+		t.Fatalf("logged-out token status = %d", response.Code)
 	}
 }
 
@@ -795,7 +833,8 @@ func TestRegisterPrefersReportedIPv4OverObservedIPv6(t *testing.T) {
 	}
 
 	hub := NewHub(db)
-	hub.onRegister(srv.ID, protocol.RegisterEvt{PublicIP: "198.51.100.9"})
+	conn := hub.register(srv.ID, "", nil)
+	hub.onRegister(conn, protocol.RegisterEvt{PublicIP: "198.51.100.9"})
 	var got model.Server
 	if err := db.First(&got, srv.ID).Error; err != nil {
 		t.Fatal(err)

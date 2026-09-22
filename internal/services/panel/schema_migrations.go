@@ -94,8 +94,12 @@ var applicationMigrations = []schemaMigration{
 		version: 8,
 		name:    "custom node multi-user + structured nodes",
 		up: func(tx *gorm.DB) error {
+			legacyUserID := tx.Migrator().HasColumn(&model.CustomNode{}, "user_id")
 			if err := tx.AutoMigrate(&model.CustomNode{}); err != nil {
 				return err
+			}
+			if !legacyUserID {
+				return nil
 			}
 			// v7 stored a single user_id; carry it over to the new user_ids array.
 			var nodes []model.CustomNode
@@ -104,7 +108,7 @@ var applicationMigrations = []schemaMigration{
 			}
 			for i := range nodes {
 				old := struct{ UserID *uint }{}
-				if err := tx.Model(&model.CustomNode{}).Where("id = ?", nodes[i].ID).Select("user_id").Scan(&old).Error; err != nil {
+				if err := tx.Table("custom_nodes").Where("id = ?", nodes[i].ID).Select("user_id").Scan(&old).Error; err != nil {
 					return err
 				}
 				if old.UserID != nil {
@@ -308,18 +312,68 @@ var applicationMigrations = []schemaMigration{
 	},
 }
 
+// migrationReplaySafe records whether an interrupted attempt of each migration
+// may be retried automatically.
+//
+// SQLite never needs a retry: runSchemaMigrations writes a consistent snapshot
+// to "<db>.backups" before the first schema write, so a dirty ledger stays fatal
+// and the operator restores that snapshot.
+//
+// MySQL and Postgres are different: their DDL commits implicitly, so a failed
+// migration leaves a partially applied schema that no transaction can roll back
+// and there is no snapshot to fall back to. Refusing to start forever would
+// leave the deployment with no supported way forward, so a migration whose `up`
+// is genuinely idempotent is replayed instead.
+//
+// Every version must be listed explicitly — TestMigrationReplaySafetyIsExplicit
+// fails when a new migration records no decision — so a future migration cannot
+// silently inherit either policy.
+var migrationReplaySafe = map[uint]bool{
+	1:  true,  // AutoMigrate of every model: idempotent DDL
+	2:  true,  // AutoMigrate
+	3:  true,  // skips inbounds that already carry single-user credentials
+	4:  true,  // AutoMigrate
+	5:  true,  // AutoMigrate
+	6:  true,  // AutoMigrate
+	7:  true,  // AutoMigrate
+	8:  true,  // HasColumn guard: a retry only runs AutoMigrate
+	9:  false, // rewrites every node's audience, discarding later administrator edits
+	10: true,  // AutoMigrate
+	11: true,  // AutoMigrate
+	12: true,  // only fills source_name where it is still empty
+	13: true,  // AutoMigrate
+	14: true,  // AutoMigrate
+	15: true,  // no-op compatibility migration
+	16: true,  // recomputes the same normalized identifiers
+	17: true,  // AutoMigrate
+	18: true,  // guarded DROP TABLE plus a ledger description update
+	19: true,  // only fills empty agent tokens
+	20: true,  // HasColumn-guarded DROP COLUMN plus a ledger description update
+	21: true,  // skips inbounds that are no longer multi-user
+}
+
 // runSchemaMigrations applies every pending migration in order. If any
 // migration fails the transaction is rolled back and InitDB returns the error,
 // so the panel never starts on a partially-upgraded schema.
+//
+// On a database that commits DDL implicitly a known idempotent migration is
+// retried instead of failing forever; see migrationReplaySafe.
 func runSchemaMigrations(db *gorm.DB, cfg config.DatabaseConfig) error {
 	migrations, err := validateMigrations(applicationMigrations)
 	if err != nil {
 		return err
 	}
 
-	applied, hasVersionTable, err := validateSchemaMigrationHistory(db, migrations)
+	fileDatabase := strings.EqualFold(cfg.Driver, "sqlite") || cfg.Driver == ""
+	applied, hasVersionTable, replay, err := validateSchemaMigrationHistory(db, migrations, !fileDatabase)
 	if err != nil {
 		return err
+	}
+	if replay != nil {
+		log.Printf("retrying interrupted schema migration %d (%s): %s commits DDL implicitly and this migration is idempotent", replay.version, replay.name, cfg.Driver)
+		if err := db.Where("version = ?", replay.version).Delete(&model.SchemaMigration{}).Error; err != nil {
+			return fmt.Errorf("clear interrupted schema migration %d: %w", replay.version, err)
+		}
 	}
 
 	pending := make([]schemaMigration, 0, len(migrations))
@@ -335,7 +389,7 @@ func runSchemaMigrations(db *gorm.DB, cfg config.DatabaseConfig) error {
 	// A consistent SQLite snapshot is taken before the first schema write. A
 	// backup failure is fatal: continuing would remove the promised recovery
 	// point from the upgrade path.
-	if strings.EqualFold(cfg.Driver, "sqlite") || cfg.Driver == "" {
+	if fileDatabase {
 		backup, err := backupSQLiteBeforeMigration(db, cfg.DSN, pending[len(pending)-1].version)
 		if err != nil {
 			return fmt.Errorf("backup sqlite before migration: %w", err)
@@ -377,30 +431,58 @@ func runSchemaMigrations(db *gorm.DB, cfg config.DatabaseConfig) error {
 // without applying anything. Keeping this check separate lets the restore path
 // reject a dirty, future, or internally inconsistent database before it can
 // replace the live SQLite file.
-func validateSchemaMigrationHistory(db *gorm.DB, migrations []schemaMigration) (map[uint]bool, bool, error) {
+//
+// allowReplay returns an interrupted (dirty) migration so the caller can retry
+// it. Callers that must never mutate an unverified database — the restore
+// preflight — pass false.
+func validateSchemaMigrationHistory(db *gorm.DB, migrations []schemaMigration, allowReplay bool) (map[uint]bool, bool, *schemaMigration, error) {
 	hasVersionTable := db.Migrator().HasTable(&model.SchemaMigration{})
 	applied := map[uint]bool{}
+	var interrupted *model.SchemaMigration
 	if hasVersionTable {
 		var rows []model.SchemaMigration
 		if err := db.Order("version").Find(&rows).Error; err != nil {
-			return nil, true, fmt.Errorf("read schema version: %w", err)
+			return nil, true, nil, fmt.Errorf("read schema version: %w", err)
 		}
 		for _, row := range rows {
 			if row.Dirty {
-				return nil, true, fmt.Errorf("database schema migration %d (%s) is marked dirty; restore the pre-migration backup before starting", row.Version, row.Name)
+				if interrupted != nil {
+					return nil, true, nil, fmt.Errorf("database schema has interrupted migrations %d and %d; restore the pre-migration backup before starting", interrupted.Version, row.Version)
+				}
+				candidate := row
+				interrupted = &candidate
+				// A retry re-runs this version, so it must not count as applied.
+				continue
 			}
 			applied[row.Version] = true
 		}
 	}
 
-	known := make(map[uint]bool, len(migrations))
+	known := make(map[uint]schemaMigration, len(migrations))
 	for _, migration := range migrations {
-		known[migration.version] = true
+		known[migration.version] = migration
 	}
 	for version := range applied {
-		if !known[version] {
-			return nil, hasVersionTable, fmt.Errorf("database schema version %d is newer than or unknown to this panel binary", version)
+		if _, ok := known[version]; !ok {
+			return nil, hasVersionTable, nil, fmt.Errorf("database schema version %d is newer than or unknown to this panel binary", version)
 		}
+	}
+
+	var replay *schemaMigration
+	if interrupted != nil {
+		migration, ok := known[interrupted.Version]
+		if !ok {
+			return nil, hasVersionTable, nil, fmt.Errorf("interrupted schema migration %d (%s) is newer than or unknown to this panel binary", interrupted.Version, interrupted.Name)
+		}
+		for version := range applied {
+			if version > migration.version {
+				return nil, hasVersionTable, nil, fmt.Errorf("interrupted schema migration %d (%s) is followed by applied migration %d; the schema history is inconsistent", migration.version, migration.name, version)
+			}
+		}
+		if !allowReplay || !migrationReplaySafe[migration.version] {
+			return nil, hasVersionTable, nil, fmt.Errorf("database schema migration %d (%s) is marked dirty; restore the pre-migration backup before starting", migration.version, migration.name)
+		}
+		replay = &migration
 	}
 
 	missingEarlier := false
@@ -410,10 +492,10 @@ func validateSchemaMigrationHistory(db *gorm.DB, migrations []schemaMigration) (
 			continue
 		}
 		if missingEarlier {
-			return nil, hasVersionTable, fmt.Errorf("database schema history is not an ordered prefix: version %d is applied after a missing migration", migration.version)
+			return nil, hasVersionTable, nil, fmt.Errorf("database schema history is not an ordered prefix: version %d is applied after a missing migration", migration.version)
 		}
 	}
-	return applied, hasVersionTable, nil
+	return applied, hasVersionTable, replay, nil
 }
 
 func validateMigrations(source []schemaMigration) ([]schemaMigration, error) {
@@ -481,7 +563,7 @@ func backupSQLiteBeforeMigration(db *gorm.DB, dsn string, targetVersion uint) (s
 		return "", err
 	}
 	if err := pruneSQLiteBackups(backupDir, 5); err != nil {
-		return "", err
+		log.Printf("warning: prune old SQLite migration backups: %v", err)
 	}
 	return backupFile, nil
 }

@@ -2,6 +2,7 @@ package panel
 
 import (
 	"errors"
+	"fmt"
 	"net/http"
 	"sort"
 	"strconv"
@@ -307,8 +308,6 @@ func (a *App) updateUserAccess(c *gin.Context) {
 	if !ok {
 		return
 	}
-	a.userAccessMu.Lock()
-	defer a.userAccessMu.Unlock()
 	var req userAccessReq
 	if !bindJSON(c, &req) {
 		return
@@ -323,6 +322,15 @@ func (a *App) updateUserAccess(c *gin.Context) {
 	}
 	inboundIDs := normalizedIDs(*req.InboundIDs)
 	customNodeIDs := normalizedIDs(*req.CustomNodeIDs)
+	if rejectTooManyIDs(c, serverIDs, inboundIDs, customNodeIDs) {
+		return
+	}
+	if req.NodeOrder != nil && len(*req.NodeOrder) > maxBatchIDs {
+		c.JSON(http.StatusBadRequest, gin.H{"error": fmt.Sprintf("节点排序数量不能超过 %d", maxBatchIDs)})
+		return
+	}
+	a.userAccessMu.Lock()
+	defer a.userAccessMu.Unlock()
 	var user model.User
 	if err := a.db.First(&user, id).Error; err != nil {
 		c.JSON(http.StatusNotFound, gin.H{"error": "user not found"})
@@ -534,13 +542,15 @@ func (a *App) listUsers(c *gin.Context) {
 }
 
 func (a *App) createUser(c *gin.Context) {
-	a.userAccessMu.Lock()
-	defer a.userAccessMu.Unlock()
-
 	var req userReq
 	if !bindJSON(c, &req) {
 		return
 	}
+	if rejectTooManyIDs(c, req.ServerIDs, req.InboundIDs) {
+		return
+	}
+	a.userAccessMu.Lock()
+	defer a.userAccessMu.Unlock()
 	email, normalizedEmail, err := validateUsername(req.Email)
 	if err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
@@ -605,6 +615,13 @@ func (a *App) updateUser(c *gin.Context) {
 	if !ok {
 		return
 	}
+	var req userReq
+	if !bindJSON(c, &req) {
+		return
+	}
+	if rejectTooManyIDs(c, req.ServerIDs, req.InboundIDs) {
+		return
+	}
 	a.userAccessMu.Lock()
 	defer a.userAccessMu.Unlock()
 	var u model.User
@@ -613,10 +630,6 @@ func (a *App) updateUser(c *gin.Context) {
 		return
 	}
 	oldServerIDs := append([]uint(nil), u.ServerIDs...)
-	var req userReq
-	if !bindJSON(c, &req) {
-		return
-	}
 	revokeSessions := false
 	columns := make([]string, 0, 8)
 

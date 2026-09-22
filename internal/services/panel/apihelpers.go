@@ -2,6 +2,7 @@ package panel
 
 import (
 	"errors"
+	"fmt"
 	"io"
 	"net/http"
 	"strconv"
@@ -13,6 +14,8 @@ import (
 )
 
 const maxJSONRequestBytes int64 = 1 << 20
+
+const maxBatchIDs = 5000
 
 func bindJSON(c *gin.Context, v any) bool {
 	return bindJSONLimit(c, v, maxJSONRequestBytes)
@@ -50,6 +53,16 @@ func bindOptionalJSON(c *gin.Context, v any) bool {
 		return false
 	}
 	return true
+}
+
+func rejectTooManyIDs(c *gin.Context, lists ...[]uint) bool {
+	for _, ids := range lists {
+		if len(ids) > maxBatchIDs {
+			c.JSON(http.StatusBadRequest, gin.H{"error": fmt.Sprintf("ID 数量不能超过 %d", maxBatchIDs)})
+			return true
+		}
+	}
+	return false
 }
 
 func uintParam(c *gin.Context, name string) (uint, bool) {

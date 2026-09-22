@@ -12,6 +12,7 @@ import {
   TeamOutlined,
 } from '@ant-design/icons'
 import { Outlet, useLocation, useNavigate } from 'react-router-dom'
+import { logoutSession } from '../api'
 import { useAuth } from '../store'
 import ThemeSelector from './ThemeSelector'
 
@@ -57,8 +58,12 @@ function UserMenu({ compact, showTheme = false }: { compact?: boolean; showTheme
           title="退出登录"
           aria-label="退出登录"
           onClick={() => {
-            logout()
-            nav('/login')
+            void logoutSession()
+              .catch(() => undefined)
+              .finally(() => {
+                logout()
+                nav('/login')
+              })
           }}
         >
           {compact ? '' : '退出'}

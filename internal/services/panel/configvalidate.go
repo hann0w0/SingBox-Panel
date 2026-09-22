@@ -3,12 +3,15 @@ package panel
 import (
 	"encoding/json"
 	"fmt"
+	"net"
+	"strconv"
 	"strings"
 
 	"github.com/gin-gonic/gin"
 	"gorm.io/gorm"
 
 	"github.com/hann0w0/singbox-panel/internal/domain/model"
+	"github.com/hann0w0/singbox-panel/internal/domain/protocol"
 	"github.com/hann0w0/singbox-panel/internal/domain/singbox"
 )
 
@@ -44,12 +47,27 @@ func validateTag(tag string) error {
 	return nil
 }
 
+func localTrafficPort() int {
+	_, portText, err := net.SplitHostPort(protocol.LocalTrafficAddress)
+	if err != nil {
+		return 29091
+	}
+	port, err := strconv.Atoi(portText)
+	if err != nil {
+		return 29091
+	}
+	return port
+}
+
 func (a *App) validateInboundIdentity(db *gorm.DB, serverID, excludeID uint, tag string, port int) error {
 	if err := validateTag(tag); err != nil {
 		return err
 	}
 	if port < 1 || port > 65535 {
 		return fmt.Errorf("监听端口必须在 1-65535 之间")
+	}
+	if port == localTrafficPort() {
+		return fmt.Errorf("监听端口 %d 已保留给节点流量统计服务", port)
 	}
 	var n int64
 	q := db.Model(&model.Inbound{}).Where("server_id = ? AND tag = ?", serverID, tag)

@@ -1,9 +1,5 @@
 import { theme, type ThemeConfig } from 'antd'
 
-export const loginTheme: ThemeConfig = {
-  token: { colorPrimary: '#3a5bff', borderRadius: 8 },
-}
-
 const dayColors = {
   ink: '#1f1f1f', muted: '#595959', faint: '#666666', placeholder: '#737373',
   primary: '#3a5bff', onPrimary: '#ffffff', link: '#1677ff', brand: '#3a5bff',
@@ -20,6 +16,23 @@ const dayColors = {
 
 export type ConsoleThemeId = 'blue' | 'dark'
 export type ConsoleThemePreference = ConsoleThemeId | 'auto'
+
+// The login screen renders before a theme preference is available, so it always
+// uses the day palette. Taking the accent from dayColors keeps the primary
+// button in the same blue as the rest of the panel instead of a second,
+// hardcoded brand colour.
+export const loginTheme: ThemeConfig = {
+  token: {
+    colorPrimary: dayColors.primary,
+    colorText: '#302f2d',
+    colorTextPlaceholder: '#96938e',
+    colorBorder: '#e6e4e1',
+    borderRadius: 8,
+    controlHeightLG: 46,
+    fontSize: 14,
+  },
+}
+
 export type ConsolePalette = {
   id: ConsoleThemeId
   name: string

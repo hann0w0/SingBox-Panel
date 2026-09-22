@@ -243,3 +243,41 @@ func TestParseVMessInsecure(t *testing.T) {
 		})
 	}
 }
+
+func TestParseShareLinkRejectsUnsupportedTransport(t *testing.T) {
+	uuid := "a2b0c3d4-e5f6-4a7b-8c9d-0e1f2a3b4c5d"
+	for _, uri := range []string{
+		"vless://" + uuid + "@example.com:443?type=grpc",
+		"trojan://secret@example.com:443?type=h2",
+	} {
+		if _, err := ParseShareLink(uri); err == nil {
+			t.Fatalf("unsupported transport accepted: %s", uri)
+		}
+	}
+	payload, _ := json.Marshal(map[string]any{"add": "example.com", "port": 443, "id": uuid, "net": "quic"})
+	if _, err := ParseShareLink("vmess://" + base64.StdEncoding.EncodeToString(payload)); err == nil {
+		t.Fatal("unsupported VMess transport accepted")
+	}
+}
+
+func TestParseShadowsocksAcceptsUppercaseSchemeAndURLPadding(t *testing.T) {
+	userinfo := base64.URLEncoding.EncodeToString([]byte("aes-256-gcm:secret"))
+	node, err := ParseShareLink("SS://" + userinfo + "@example.com:8388#node")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if node.Settings.Method != "aes-256-gcm" || node.Settings.SSServerPSK != "secret" {
+		t.Fatalf("parsed node = %+v", node)
+	}
+}
+
+func TestParseShareLinkTrimsALPNItems(t *testing.T) {
+	uuid := "a2b0c3d4-e5f6-4a7b-8c9d-0e1f2a3b4c5d"
+	node, err := ParseShareLink("vless://" + uuid + "@example.com:443?security=tls&alpn=h2,%20http/1.1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(node.Settings.TLS.ALPN) != 2 || node.Settings.TLS.ALPN[1] != "http/1.1" {
+		t.Fatalf("ALPN = %#v", node.Settings.TLS.ALPN)
+	}
+}

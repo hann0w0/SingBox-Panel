@@ -160,11 +160,7 @@ func seed(db *gorm.DB, cfg config.PanelConfig) error {
 	}
 	pass := cfg.Admin.Password
 	if pass == "" {
-		pass = randHex(8)
-		log.Printf("========================================")
-		log.Printf(" bootstrap admin: %s", email)
-		log.Printf(" bootstrap password: %s", pass)
-		log.Printf("========================================")
+		return errors.New("bootstrap administrator password is required when no admin account exists")
 	}
 	if err := validateNewPassword(pass); err != nil {
 		return fmt.Errorf("bootstrap administrator password: %w", err)

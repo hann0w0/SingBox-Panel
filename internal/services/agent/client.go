@@ -116,18 +116,20 @@ func ValidatePanelURL(raw string, insecure bool, environment string) error {
 
 // SendEvent pushes a spontaneous event (no correlation id) to the panel.
 // Non-blocking: if the buffer is full the event is dropped.
-func (c *Client) SendEvent(t protocol.MessageType, payload any) {
+func (c *Client) SendEvent(t protocol.MessageType, payload any) bool {
 	env, err := protocol.NewEnvelope(t, "", payload)
 	if err != nil {
-		return
+		return false
 	}
 	session := c.activeSession.Load()
 	if session == 0 {
-		return
+		return false
 	}
 	select {
 	case c.send <- sessionEnvelope{session: session, env: env}:
+		return true
 	default:
+		return false
 	}
 }
 
@@ -321,10 +323,18 @@ func (c *Client) connectOnce(ctx context.Context) (time.Duration, error) {
 	connectedAt := time.Now()
 	log.Printf("agent: connected to %s", c.wsURL)
 
+	session := c.nextSession.Add(1)
 	connCtx, cancel := context.WithCancel(ctx)
 	defer cancel()
-	session := c.nextSession.Add(1)
 	connCtx = context.WithValue(connCtx, clientSessionContextKey{}, session)
+	// Context cancellation alone does not interrupt a gorilla/websocket read.
+	// Close the socket explicitly so shutdown and self-update do not wait for the
+	// 60-second pong deadline. The context is passed by value: capturing the
+	// variable would race with the assignment above.
+	go func(watchCtx context.Context) {
+		<-watchCtx.Done()
+		_ = conn.Close()
+	}(connCtx)
 
 	// Register synchronously before starting the sole asynchronous writer. A
 	// successful WriteJSON is the readiness boundary used by self-update: the new

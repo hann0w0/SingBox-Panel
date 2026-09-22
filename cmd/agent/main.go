@@ -17,7 +17,7 @@ import (
 )
 
 // version is set via -ldflags "-X main.version=x.y.z".
-var version = "v1.0.1"
+var version = "v1.0.2"
 
 func main() {
 	var (

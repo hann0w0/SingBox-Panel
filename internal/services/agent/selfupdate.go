@@ -24,6 +24,7 @@ const (
 	agentServiceName    = "singbox-panel-agent"
 
 	agentReadyFile       = "/run/singbox-panel-agent.ready"
+	agentExpectedSHAFile = "/run/singbox-panel-agent.expected-sha256"
 	agentUpgradeUnit     = "/etc/systemd/system/singbox-panel-agent-upgrade.service"
 	agentUpgradeScript   = "/run/singbox-panel-agent-upgrade.sh"
 	agentUpgradeUnitName = "singbox-panel-agent-upgrade.service"
@@ -36,6 +37,7 @@ const (
 const agentUpgradeScriptBody = `#!/bin/sh
 sleep 3
 READY=/run/singbox-panel-agent.ready
+EXPECTED=/run/singbox-panel-agent.expected-sha256
 BIN=/usr/local/bin/singbox-panel-agent
 PREV=/usr/local/bin/singbox-panel-agent.prev
 STATUS=/var/lib/singbox-panel-agent/update-status
@@ -46,9 +48,11 @@ systemctl restart singbox-panel-agent.service >/dev/null 2>&1 || true
 
 i=0
 while [ "$i" -lt 30 ]; do
-  if systemctl is-active --quiet singbox-panel-agent.service && [ -s "$READY" ]; then
+  expected_sha=$(cat "$EXPECTED" 2>/dev/null || true)
+  ready_sha=$(sed -n '2p' "$READY" 2>/dev/null || true)
+  if systemctl is-active --quiet singbox-panel-agent.service && [ -n "$expected_sha" ] && [ "$ready_sha" = "$expected_sha" ]; then
     printf 'ok\n' > "$STATUS"
-    rm -f "$PREV"
+    rm -f "$PREV" "$EXPECTED"
     rm -f /etc/systemd/system/singbox-panel-agent-upgrade.service
     rm -f /run/singbox-panel-agent-upgrade.sh
     systemctl daemon-reload >/dev/null 2>&1 || true
@@ -70,7 +74,7 @@ else
   printf 'rollback-failed-no-previous-binary\n' > "$STATUS"
 fi
 rm -f /etc/systemd/system/singbox-panel-agent-upgrade.service
-rm -f /run/singbox-panel-agent-upgrade.sh
+rm -f /run/singbox-panel-agent-upgrade.sh "$EXPECTED"
 systemctl daemon-reload >/dev/null 2>&1 || true
 `
 
@@ -181,7 +185,16 @@ func SelfUpdate(ctx context.Context, panelURL, token string, insecure bool) (str
 		}
 		return "", fmt.Errorf("替换 Agent 失败: %w", err)
 	}
+	if err := writeAtomicFile(agentExpectedSHAFile, []byte(actual+"\n"), 0o644); err != nil {
+		rollbackErr := restorePreviousAgent()
+		_ = os.Remove(agentExpectedSHAFile)
+		if rollbackErr != nil {
+			return "", fmt.Errorf("写入 Agent 就绪校验失败: %v；恢复旧 Agent 也失败: %w", err, rollbackErr)
+		}
+		return "", fmt.Errorf("写入 Agent 就绪校验失败，已恢复旧 Agent: %w", err)
+	}
 	if err := scheduleAgentUpgrade(ctx); err != nil {
+		_ = os.Remove(agentExpectedSHAFile)
 		rollbackErr := restorePreviousAgent()
 		if rollbackErr != nil {
 			return "", fmt.Errorf("启动升级守护失败: %v；恢复旧 Agent 失败: %w", err, rollbackErr)
@@ -260,8 +273,30 @@ func restoreFileFromPrevious(previous, live string) error {
 }
 
 // markAgentReady is called only after the WebSocket handshake and registration
-// write succeed. A separate updater process watches this marker and rolls back
-// a binary that starts but cannot reconnect to its panel.
+// write succeed. The marker includes the running executable's hash so a stale
+// process cannot satisfy a watchdog waiting for a newly staged binary.
 func markAgentReady(version string) error {
-	return writeAtomicFile(agentReadyFile, []byte(version+"\n"), 0o644)
+	executable, err := currentExecutablePath()
+	if err != nil {
+		return err
+	}
+	checksum, err := fileSHA256(executable)
+	if err != nil {
+		return fmt.Errorf("hash running Agent: %w", err)
+	}
+	return writeAtomicFile(agentReadyFile, []byte(readyMarker(version, checksum)), 0o644)
+}
+
+func readyMarker(version, checksum string) string {
+	return version + "\n" + checksum + "\n"
+}
+
+func currentExecutablePath() (string, error) {
+	// Opening /proc/self/exe follows the kernel's reference to the running
+	// inode. This matters during an upgrade: the pathname may already point to
+	// the new binary while the old process is still running from a deleted inode.
+	if _, err := os.Stat("/proc/self/exe"); err == nil {
+		return "/proc/self/exe", nil
+	}
+	return os.Executable()
 }

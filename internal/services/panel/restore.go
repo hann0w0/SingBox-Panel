@@ -26,6 +26,7 @@ import (
 	"gorm.io/gorm"
 	"gorm.io/gorm/logger"
 
+	"github.com/hann0w0/singbox-panel/internal/config"
 	"github.com/hann0w0/singbox-panel/internal/domain/model"
 )
 
@@ -56,7 +57,18 @@ const (
 	maxRestoreRollbacks   = 5
 	backupUploadTimeout   = 30 * time.Minute
 	sqliteMagic           = "SQLite format 3\x00"
+	restoreMarkerSuffix   = ".restore-pending.json"
 )
+
+type pendingRestore struct {
+	Version           int    `json:"version"`
+	TargetSHA256      string `json:"target_sha256"`
+	LiveSHA256        string `json:"live_sha256"`
+	RollbackPath      string `json:"rollback_path"`
+	RollbackSHA256    string `json:"rollback_sha256"`
+	JWTSecret         string `json:"jwt_secret"`
+	PreviousJWTSecret string `json:"previous_jwt_secret"`
+}
 
 // POST /api/admin/maintenance/restore — multipart upload field "file".
 func (a *App) restoreBackup(c *gin.Context) {
@@ -291,6 +303,38 @@ func (a *App) restoreBackupReader(c *gin.Context, src io.Reader) (restartSchedul
 			return
 		}
 	}
+	targetHash, err := hashFile(stagedDB)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "计算恢复数据库校验值失败：" + err.Error()})
+		return
+	}
+	rollbackHash := ""
+	if rollback != "" {
+		rollbackHash, err = hashFile(rollback)
+		if err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "计算回滚数据库校验值失败：" + err.Error()})
+			return
+		}
+	}
+	liveHash, err := hashFile(dbPath)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "计算现有数据库校验值失败：" + err.Error()})
+		return
+	}
+	markerPath := dbPath + restoreMarkerSuffix
+	marker, err := json.Marshal(pendingRestore{
+		Version: 1, TargetSHA256: targetHash, LiveSHA256: liveHash, RollbackPath: rollback,
+		RollbackSHA256: rollbackHash, JWTSecret: runtimeSecret,
+		PreviousJWTSecret: a.cfg.JWTSecret,
+	})
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "生成恢复事务标记失败：" + err.Error()})
+		return
+	}
+	if err := writeFileAtomic(markerPath, marker, 0o600); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "写入恢复事务标记失败：" + err.Error()})
+		return
+	}
 
 	// 2) close the live connection pool so no descriptor pins the old inode.
 	if sqlDB, err := a.db.DB(); err == nil {
@@ -317,6 +361,12 @@ func (a *App) restoreBackupReader(c *gin.Context, src io.Reader) (restartSchedul
 			return
 		}
 	}
+	if err := syncParentDirectory(dbPath); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "持久化恢复数据库失败：" + err.Error()})
+		restartScheduled = true
+		a.scheduleRestart()
+		return
+	}
 
 	// 4) Persist the exact secret selected during preflight. It may intentionally
 	// differ from a legacy/unsafe imported secret, or be fixed by an environment
@@ -332,6 +382,11 @@ func (a *App) restoreBackupReader(c *gin.Context, src io.Reader) (restartSchedul
 		restartScheduled = true
 		a.scheduleRestart()
 		return
+	}
+	if err := os.Remove(markerPath); err != nil && !errors.Is(err, os.ErrNotExist) {
+		log.Printf("remove completed restore marker: %v", err)
+	} else if err == nil {
+		_ = syncParentDirectory(markerPath)
 	}
 	if restoreWarning == "" {
 		restoreWarning = secretWarning
@@ -740,7 +795,7 @@ func validateSQLiteFile(path string) error {
 	if err != nil {
 		return fmt.Errorf("面板迁移定义无效：%w", err)
 	}
-	if _, _, err := validateSchemaMigrationHistory(db, migrations); err != nil {
+	if _, _, _, err := validateSchemaMigrationHistory(db, migrations, false); err != nil {
 		return fmt.Errorf("备份数据库迁移历史无效：%w", err)
 	}
 	return nil
@@ -871,7 +926,131 @@ func writeFileAtomic(path string, data []byte, perm os.FileMode) error {
 	if err := f.Close(); err != nil {
 		return err
 	}
-	return os.Rename(tmp, path)
+	if err := os.Rename(tmp, path); err != nil {
+		return err
+	}
+	return syncParentDirectory(path)
+}
+
+func syncParentDirectory(path string) error {
+	dir, err := os.Open(filepath.Dir(path))
+	if err != nil {
+		return err
+	}
+	defer dir.Close()
+	return dir.Sync()
+}
+
+// RecoverPendingRestore runs before the database is opened. If a host stopped
+// after the restored database was renamed but before jwt_secret was persisted,
+// finish the secret write. Unknown file states are rejected instead of guessed.
+func RecoverPendingRestore(cfg config.PanelConfig, cfgPath string) error {
+	dbPath := sqliteFilePath(cfg.Database.DSN)
+	if dbPath == "" {
+		return nil
+	}
+	markerPath := dbPath + restoreMarkerSuffix
+	raw, err := os.ReadFile(markerPath)
+	if errors.Is(err, os.ErrNotExist) {
+		return nil
+	}
+	if err != nil {
+		return fmt.Errorf("read pending restore marker: %w", err)
+	}
+	var marker pendingRestore
+	if err := json.Unmarshal(raw, &marker); err != nil || marker.Version != 1 ||
+		marker.TargetSHA256 == "" || marker.JWTSecret == "" {
+		return errors.New("pending restore marker is invalid; restore the pre-restore snapshot manually")
+	}
+	liveHash, hashErr := hashFile(dbPath)
+	liveMissing := errors.Is(hashErr, os.ErrNotExist)
+	if hashErr != nil && !liveMissing {
+		return fmt.Errorf("hash database while recovering restore: %w", hashErr)
+	}
+	// A dangling path is not the same as a deleted file. Deployments that keep the
+	// database on another mount reach it through a symlink, and a mount that is not
+	// up yet makes that symlink resolve to nothing. Copying the snapshot over the
+	// path would replace the symlink with a regular file and silently fork the data
+	// once the mount returns, so refuse instead of recovering over it.
+	if liveMissing {
+		if info, lstatErr := os.Lstat(dbPath); lstatErr == nil && info.Mode()&os.ModeSymlink != 0 {
+			return fmt.Errorf("database path %s is a symlink that does not resolve; the mount or link target is unavailable, refusing to recover over it", dbPath)
+		}
+	}
+	// liveHash is empty exactly when the file is missing, and not every marker field
+	// is validated to be non-empty, so an empty hash must never match a recorded
+	// state. Only the first case below may handle a missing database.
+	matches := func(recorded string) bool { return liveHash != "" && liveHash == recorded }
+	switch {
+	case liveMissing:
+		// Nothing is at the path and it is not a symlink, so the file was deleted or
+		// lost at the filesystem level. That does not prove the imported database never
+		// became live: the marker outlives a completed restore when removing it failed.
+		// Recovering the checksum-verified snapshot is still the only way forward, so
+		// do it loudly rather than silently.
+		log.Printf("pending restore: live database %s is missing; recovering pre-restore snapshot %s and its signing key",
+			dbPath, marker.RollbackPath)
+		if err := restoreRollbackSnapshot(dbPath, cfgPath, marker); err != nil {
+			return fmt.Errorf("live database is missing and the pre-restore snapshot could not be restored: %w", err)
+		}
+	case matches(marker.TargetSHA256):
+		applied, warning := persistRestoredJWTSecret(cfgPath, dbPath, marker.JWTSecret)
+		if !applied {
+			return fmt.Errorf("finish pending restore jwt_secret: %s", warning)
+		}
+	case matches(marker.LiveSHA256):
+		// The process stopped before the database switch. Keep the live database
+		// and its current signing key; only discard the unfinished marker.
+	case matches(marker.RollbackSHA256):
+		if err := applyPreviousJWTSecret(cfgPath, dbPath, marker); err != nil {
+			return err
+		}
+	default:
+		log.Printf("pending restore: live database %s matches no recorded state; recovering pre-restore snapshot %s",
+			dbPath, marker.RollbackPath)
+		if err := restoreRollbackSnapshot(dbPath, cfgPath, marker); err != nil {
+			return err
+		}
+	}
+	if err := os.Remove(markerPath); err != nil && !errors.Is(err, os.ErrNotExist) {
+		return fmt.Errorf("remove completed restore marker: %w", err)
+	}
+	return syncParentDirectory(markerPath)
+}
+
+// restoreRollbackSnapshot puts the pre-restore snapshot back in place of the live
+// database. It proves the snapshot's checksum before writing anything, so an
+// unrelated or truncated file next to the database can never become the live one,
+// and it re-applies the signing key that was live before the restore.
+func restoreRollbackSnapshot(dbPath, cfgPath string, marker pendingRestore) error {
+	if marker.RollbackPath == "" || !strings.HasPrefix(marker.RollbackPath, dbPath+".pre-restore-") {
+		return fmt.Errorf("pending restore marker does not name a rollback snapshot next to %s", dbPath)
+	}
+	rollbackHash, err := hashFile(marker.RollbackPath)
+	if err != nil || rollbackHash != marker.RollbackSHA256 {
+		return fmt.Errorf("pending restore rollback snapshot %s is unavailable or invalid", marker.RollbackPath)
+	}
+	for _, suffix := range []string{"-wal", "-shm"} {
+		_ = os.Remove(dbPath + suffix)
+	}
+	if err := copyFile(marker.RollbackPath, dbPath); err != nil {
+		return fmt.Errorf("recover rollback snapshot %s: %w", marker.RollbackPath, err)
+	}
+	return applyPreviousJWTSecret(cfgPath, dbPath, marker)
+}
+
+// applyPreviousJWTSecret restores the signing key that was in use before the
+// interrupted restore, so the database that is now live keeps the key that
+// encrypted its stored secrets.
+func applyPreviousJWTSecret(cfgPath, dbPath string, marker pendingRestore) error {
+	if marker.PreviousJWTSecret == "" {
+		return nil
+	}
+	applied, warning := persistRestoredJWTSecret(cfgPath, dbPath, marker.PreviousJWTSecret)
+	if !applied {
+		return fmt.Errorf("restore previous jwt_secret: %s", warning)
+	}
+	return nil
 }
 
 func pruneRestoreRollbacks(dbPath string, keep int) error {

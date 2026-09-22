@@ -45,6 +45,7 @@ INSTALL_REAL=""
 PANEL_CONFIG=""
 CONFIG_WRITTEN=0
 BOOTSTRAP_ADMIN_PASSWORD=""
+CURL_DOWNLOAD_ARGS=(--fail --silent --show-error --location --connect-timeout 10 --max-time 300 --retry 3 --retry-delay 2 --retry-connrefused)
 
 usage() {
   cat <<'EOF'
@@ -101,10 +102,10 @@ info() {
 cleanup() {
   local temp_file=""
   local temp_dir=""
-  for temp_file in ${TEMP_FILES+"${TEMP_FILES[@]}"}; do
+  for temp_file in "${TEMP_FILES[@]}"; do
     [[ -n "$temp_file" ]] && rm -f -- "$temp_file"
   done
-  for temp_dir in ${TEMP_DIRS+"${TEMP_DIRS[@]}"}; do
+  for temp_dir in "${TEMP_DIRS[@]}"; do
     if [[ -n "$temp_dir" && "$temp_dir" != "$PRESERVED_ROLLBACK_DIR" ]]; then
       rm -rf -- "$temp_dir"
     fi
@@ -293,13 +294,28 @@ confirm_uninstall() {
   fi
 }
 
+panel_process_running() {
+  if command -v pgrep >/dev/null 2>&1; then
+    pgrep -x singbox-panel >/dev/null 2>&1 && return 0
+    pgrep -f '(^|/)singbox-panel([[:space:]]|$)' >/dev/null 2>&1 && return 0
+  fi
+  return 1
+}
+
 uninstall_binary_panel() {
   if [[ -f "$SERVICE_FILE" ]]; then
     info "Stopping $SERVICE_NAME"
     systemctl disable --now "$SERVICE_NAME" >/dev/null 2>&1 || true
+    if systemctl is-active --quiet "$SERVICE_NAME" || panel_process_running; then
+      die "refusing to uninstall while singbox-panel is still running"
+    fi
     rm -f -- "$SERVICE_FILE"
     systemctl daemon-reload || true
     systemctl reset-failed "$SERVICE_NAME" >/dev/null 2>&1 || true
+  fi
+
+  if panel_process_running; then
+    die "refusing to remove files while singbox-panel is still running"
   fi
 
   if [[ -e "$PANEL_BIN" ]]; then
@@ -310,7 +326,7 @@ uninstall_binary_panel() {
   if [[ "$PURGE_DATA" -eq 1 ]]; then
     if [[ -e "$INSTALL_DIR" ]]; then
       info "Removing $INSTALL_DIR"
-      find "$INSTALL_DIR" -depth -delete
+      find "$INSTALL_DIR" -depth -delete || die "failed to completely remove $INSTALL_DIR"
     fi
     printf '\nSingBox Panel completely uninstalled. Configuration and database were removed.\n'
     return
@@ -504,7 +520,9 @@ if [[ "$INTERACTIVE" -eq 1 && ( "$EXISTING_INSTALL" -eq 0 || "$CONFIGURE" -eq 1 
 fi
 
 [[ -n "$BASE_URL" ]] || die "panel and Agent domain is required; pass --base-url panel.example.com"
-normalize_panel_domain "$BASE_URL"
+if [[ "$EXISTING_INSTALL" -eq 0 || "$CONFIGURE" -eq 1 || "$BASE_URL_PROVIDED" -eq 1 ]]; then
+  normalize_panel_domain "$BASE_URL"
+fi
 
 [[ "$PANEL_PORT" =~ ^[0-9]+$ ]] || die "port must be a number"
 (( PANEL_PORT >= 1 && PANEL_PORT <= 65535 )) || die "port must be between 1 and 65535"
@@ -514,7 +532,7 @@ validate_install_dir
 [[ -z "$PANEL_VERSION" || "$PANEL_VERSION" =~ ^v[0-9]+(\.[0-9]+){1,2}([-+][0-9A-Za-z][0-9A-Za-z.-]*)?$ ]] ||
   die "invalid release version: $PANEL_VERSION (expected vX.Y or vX.Y.Z)"
 [[ -n "$ADMIN_USERNAME" ]] || die "administrator username cannot be empty"
-[[ "$ADMIN_USERNAME" != *$'\n'* && "$ADMIN_USERNAME" != *$'\r'* ]] || die "administrator username cannot contain a newline"
+[[ "$ADMIN_USERNAME" != *[[:cntrl:]]* ]] || die "administrator username cannot contain control characters"
 [[ "$ADMIN_PASSWORD" != *$'\n'* && "$ADMIN_PASSWORD" != *$'\r'* ]] || die "administrator password cannot contain a newline"
 
 random_hex() {
@@ -526,7 +544,7 @@ random_hex() {
   fi
 }
 
-if [[ -z "$ADMIN_PASSWORD" && "$EXISTING_INSTALL" -eq 0 ]]; then
+if [[ -z "$ADMIN_PASSWORD" && ( "$EXISTING_INSTALL" -eq 0 || "$CONFIGURE" -eq 1 ) ]]; then
   ADMIN_PASSWORD="$(random_hex 12)"
   PASSWORD_GENERATED=1
 fi
@@ -589,7 +607,7 @@ release_arch() {
 
 latest_release_tag() {
   local body=""
-  body="$(curl -fsSL "https://api.github.com/repos/${GITHUB_REPO}/releases/latest")" ||
+  body="$(curl "${CURL_DOWNLOAD_ARGS[@]}" "https://api.github.com/repos/${GITHUB_REPO}/releases/latest")" ||
     die "unable to reach the GitHub API (network, or the 60 req/hour anonymous limit). Pass --version vX.Y.Z to skip this lookup"
   # `q` rather than piping to head: under `set -o pipefail` a head that closes
   # the pipe early would SIGPIPE sed and fail the whole command substitution.
@@ -616,7 +634,7 @@ download_release_asset() {
   local expected=""
   local actual=""
 
-  curl -fsSL "https://github.com/${GITHUB_REPO}/releases/download/${PANEL_VERSION}/${asset_name}" \
+  curl "${CURL_DOWNLOAD_ARGS[@]}" "https://github.com/${GITHUB_REPO}/releases/download/${PANEL_VERSION}/${asset_name}" \
     -o "$destination" || die "failed to download $asset_name from release $PANEL_VERSION"
 
   [[ -n "$CHECKSUMS_FILE" ]] || die "checksums.txt is unavailable; refusing to install unverified assets"
@@ -854,6 +872,7 @@ install_binary_panel() {
   local had_previous_web=0
   local had_previous_unit=0
   local had_previous_config=0
+  local service_enabled_by_install=0
   local data_snapshot_ready=0
   local agents_name=""
   local web_name=""
@@ -880,7 +899,7 @@ install_binary_panel() {
 
   checksums_temp="$(make_temp)"
   TEMP_FILES+=("$checksums_temp")
-  if curl -fsSL "https://github.com/${GITHUB_REPO}/releases/download/${PANEL_VERSION}/checksums.txt" \
+  if curl "${CURL_DOWNLOAD_ARGS[@]}" "https://github.com/${GITHUB_REPO}/releases/download/${PANEL_VERSION}/checksums.txt" \
     -o "$checksums_temp"; then
     CHECKSUMS_FILE="$checksums_temp"
   else
@@ -984,48 +1003,50 @@ install_binary_panel() {
   fi
   data_snapshot_ready=1
   if [[ "$had_previous_agents" -eq 1 ]] && ! mv -- "$INSTALL_REAL/dist/agents" "$rollback_dir/agents"; then
-    restore_previous_install_or_die "$rollback_dir" "$had_previous_binary" "$had_previous_agents" "$had_previous_web" "$had_previous_unit" "$had_previous_config" "$data_snapshot_ready"
+    restore_previous_install_or_die "$rollback_dir" "$had_previous_binary" "$had_previous_agents" "$had_previous_web" "$had_previous_unit" "$had_previous_config" "$data_snapshot_ready" "$service_enabled_by_install"
     die "failed to stage the previous Agent bundle"
   fi
   if [[ "$had_previous_web" -eq 1 ]] && ! mv -- "$INSTALL_REAL/web/dist" "$rollback_dir/web"; then
-    restore_previous_install_or_die "$rollback_dir" "$had_previous_binary" "$had_previous_agents" "$had_previous_web" "$had_previous_unit" "$had_previous_config" "$data_snapshot_ready"
+    restore_previous_install_or_die "$rollback_dir" "$had_previous_binary" "$had_previous_agents" "$had_previous_web" "$had_previous_unit" "$had_previous_config" "$data_snapshot_ready" "$service_enabled_by_install"
     die "failed to stage the previous frontend bundle"
   fi
   if ! install -d -m 755 "$INSTALL_REAL/dist" "$INSTALL_REAL/web"; then
-    restore_previous_install_or_die "$rollback_dir" "$had_previous_binary" "$had_previous_agents" "$had_previous_web" "$had_previous_unit" "$had_previous_config" "$data_snapshot_ready"
+    restore_previous_install_or_die "$rollback_dir" "$had_previous_binary" "$had_previous_agents" "$had_previous_web" "$had_previous_unit" "$had_previous_config" "$data_snapshot_ready" "$service_enabled_by_install"
     die "failed to prepare release directories"
   fi
   if ! mv -- "$asset_stage/agents" "$INSTALL_REAL/dist/agents" ||
      ! mv -- "$asset_stage/web" "$INSTALL_REAL/web/dist" ||
      ! install -m 0755 "$binary_temp" "$PANEL_BIN"; then
-    restore_previous_install_or_die "$rollback_dir" "$had_previous_binary" "$had_previous_agents" "$had_previous_web" "$had_previous_unit" "$had_previous_config" "$data_snapshot_ready"
+    restore_previous_install_or_die "$rollback_dir" "$had_previous_binary" "$had_previous_agents" "$had_previous_web" "$had_previous_unit" "$had_previous_config" "$data_snapshot_ready" "$service_enabled_by_install"
     die "failed to install the complete release bundle"
   fi
   if ! prepare_binary_permissions; then
-    restore_previous_install_or_die "$rollback_dir" "$had_previous_binary" "$had_previous_agents" "$had_previous_web" "$had_previous_unit" "$had_previous_config" "$data_snapshot_ready"
+    restore_previous_install_or_die "$rollback_dir" "$had_previous_binary" "$had_previous_agents" "$had_previous_web" "$had_previous_unit" "$had_previous_config" "$data_snapshot_ready" "$service_enabled_by_install"
     die "failed to apply secure file permissions"
   fi
   if ! write_service_unit; then
-    restore_previous_install_or_die "$rollback_dir" "$had_previous_binary" "$had_previous_agents" "$had_previous_web" "$had_previous_unit" "$had_previous_config" "$data_snapshot_ready"
+    restore_previous_install_or_die "$rollback_dir" "$had_previous_binary" "$had_previous_agents" "$had_previous_web" "$had_previous_unit" "$had_previous_config" "$data_snapshot_ready" "$service_enabled_by_install"
     die "failed to install the systemd service unit"
   fi
-  systemctl enable "$SERVICE_NAME" >/dev/null 2>&1 || true
+  if systemctl enable "$SERVICE_NAME" >/dev/null 2>&1; then
+    service_enabled_by_install=1
+  fi
 
   info "Starting $SERVICE_NAME"
   if ! systemctl restart "$SERVICE_NAME"; then
-    restore_previous_install_or_die "$rollback_dir" "$had_previous_binary" "$had_previous_agents" "$had_previous_web" "$had_previous_unit" "$had_previous_config" "$data_snapshot_ready"
+    restore_previous_install_or_die "$rollback_dir" "$had_previous_binary" "$had_previous_agents" "$had_previous_web" "$had_previous_unit" "$had_previous_config" "$data_snapshot_ready" "$service_enabled_by_install"
     die "failed to start $SERVICE_NAME"
   fi
 
   if ! wait_for_health; then
     printf 'Error: the panel did not become healthy in 60 seconds. Recent logs follow:\n' >&2
     journalctl -u "$SERVICE_NAME" -n 100 --no-pager >&2 2>/dev/null || true
-    restore_previous_install_or_die "$rollback_dir" "$had_previous_binary" "$had_previous_agents" "$had_previous_web" "$had_previous_unit" "$had_previous_config" "$data_snapshot_ready"
+    restore_previous_install_or_die "$rollback_dir" "$had_previous_binary" "$had_previous_agents" "$had_previous_web" "$had_previous_unit" "$had_previous_config" "$data_snapshot_ready" "$service_enabled_by_install"
     die "installation failed; see the logs above"
   fi
 
   if ! clear_binary_bootstrap_password || ! systemctl restart "$SERVICE_NAME" || ! wait_for_health; then
-    restore_previous_install_or_die "$rollback_dir" "$had_previous_binary" "$had_previous_agents" "$had_previous_web" "$had_previous_unit" "$had_previous_config" "$data_snapshot_ready"
+    restore_previous_install_or_die "$rollback_dir" "$had_previous_binary" "$had_previous_agents" "$had_previous_web" "$had_previous_unit" "$had_previous_config" "$data_snapshot_ready" "$service_enabled_by_install"
     die "failed to remove the one-time administrator password; the previous installation was restored"
   fi
   rm -rf -- "$rollback_dir" "$asset_stage"
@@ -1041,6 +1062,7 @@ restore_previous_install() {
   local had_unit="$5"
   local had_config="$6"
   local restore_data="$7"
+  local enabled_by_install="${8:-0}"
   local failed=0
   printf 'Restoring the previous panel release\n' >&2
   systemctl stop "$SERVICE_NAME" >/dev/null 2>&1 || true
@@ -1097,6 +1119,9 @@ restore_previous_install() {
   fi
   prepare_binary_permissions >/dev/null 2>&1 || failed=1
   systemctl daemon-reload >/dev/null 2>&1 || failed=1
+  if [[ "$had_unit" -eq 0 && "$enabled_by_install" -eq 1 ]]; then
+    systemctl disable "$SERVICE_NAME" >/dev/null 2>&1 || failed=1
+  fi
   if [[ "$had_unit" -eq 1 ]]; then
     systemctl restart "$SERVICE_NAME" >/dev/null 2>&1 || failed=1
   fi

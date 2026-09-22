@@ -135,3 +135,40 @@ func TestAnyTLSShareLinkFingerprint(t *testing.T) {
 		t.Fatalf("anytls:// must keep explicit fp and udp_over_stream: %s", link)
 	}
 }
+
+func TestSurgeSanitizesInjectedNodeNames(t *testing.T) {
+	nodes := []node{
+		{name: "safe\n[Rule]\nFINAL,DIRECT", server: "example.com", port: 1080, typ: "socks"},
+		{name: "#commented", server: "example.net", port: 1080, typ: "socks"},
+	}
+	lines, names, skipped := surgeProxies(nodes)
+	if len(lines) != 2 || len(names) != 2 || len(skipped) != 0 {
+		t.Fatalf("surge output = lines:%v names:%v skipped:%v", lines, names, skipped)
+	}
+	for _, line := range lines {
+		if strings.ContainsAny(line, "\r\n") {
+			t.Fatalf("Surge line contains injected newline: %q", line)
+		}
+	}
+	if strings.HasPrefix(names[1], "#") || strings.HasPrefix(names[1], ";") {
+		t.Fatalf("Surge name can be parsed as a comment: %q", names[1])
+	}
+	if strings.Contains(lines[0], "\n[Rule]") {
+		t.Fatalf("Surge section injection survived: %q", lines[0])
+	}
+}
+
+func TestSurgeSkipsControlCharactersInCredentials(t *testing.T) {
+	n := node{
+		name: "unsafe", server: "example.com", port: 443, typ: "trojan",
+		settings: singbox.InboundSettings{TLS: singbox.TLSSettings{Enabled: true}},
+		user:     singbox.ProxyUser{Password: "secret\n[Rule]"},
+	}
+	if line := surgeProxy(n, n.name); line != "" {
+		t.Fatalf("unsafe Surge credential emitted: %q", line)
+	}
+	lines, _, skipped := surgeProxies([]node{n})
+	if len(lines) != 0 || len(skipped) != 1 {
+		t.Fatalf("unsafe node was not reported as skipped: lines=%v skipped=%v", lines, skipped)
+	}
+}

@@ -1,5 +1,5 @@
-VERSION ?= v1.0.1
-AGENT_VERSION ?= $(shell cat cmd/agent/VERSION 2>/dev/null || echo "v1.0.1")
+VERSION ?= v1.0.2
+AGENT_VERSION ?= $(shell cat cmd/agent/VERSION 2>/dev/null || echo "v1.0.2")
 PANEL_LDFLAGS := -s -w -X main.version=$(VERSION)
 AGENT_LDFLAGS := -s -w -X main.version=$(AGENT_VERSION)
 DIST := dist

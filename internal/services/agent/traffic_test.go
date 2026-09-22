@@ -5,6 +5,9 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
+
+	"github.com/hann0w0/singbox-panel/internal/domain/protocol"
 )
 
 func TestCountProcSocketsAcceptsSequenceColon(t *testing.T) {
@@ -38,5 +41,53 @@ func TestCappedCommandOutputStopsGrowing(t *testing.T) {
 	}
 	if len(got) > maxCommandOutputBytes+64 {
 		t.Fatalf("buffer grew past cap: %d", len(got))
+	}
+}
+
+func TestTrafficSnapshotRequiresAcknowledgementBeforeDraining(t *testing.T) {
+	sampler := newTrafficSampler()
+	sampler.available = true
+	sampler.haveSample = true
+	sampler.lastSample = time.Now()
+	sampler.pendingPorts["vless-in"] = protocol.PortTrafficSnapshot{
+		Inbound: "vless-in", Upload: 120, Download: 80, UploadRate: 50, DownloadRate: 40,
+	}
+
+	first := sampler.snapshot()
+	second := sampler.snapshot()
+	if len(first.Ports) != 1 || len(second.Ports) != 1 || second.Ports[0].Upload != 120 {
+		t.Fatalf("unacknowledged traffic was drained: first=%+v second=%+v", first.Ports, second.Ports)
+	}
+
+	sampler.mu.Lock()
+	pending := sampler.pendingPorts["vless-in"]
+	pending.Upload += 30
+	pending.Download += 20
+	pending.UploadRate = 75
+	sampler.pendingPorts["vless-in"] = pending
+	sampler.mu.Unlock()
+	sampler.acknowledge(first)
+
+	remaining := sampler.snapshot()
+	if len(remaining.Ports) != 1 || remaining.Ports[0].Upload != 30 || remaining.Ports[0].Download != 20 || remaining.Ports[0].UploadRate != 75 {
+		t.Fatalf("acknowledgement removed newer traffic: %+v", remaining.Ports)
+	}
+	sampler.acknowledge(remaining)
+	if got := sampler.snapshot(); len(got.Ports) != 0 {
+		t.Fatalf("acknowledged traffic still pending: %+v", got.Ports)
+	}
+}
+
+func TestTrafficSummaryDoesNotCarryPortDeltas(t *testing.T) {
+	sampler := newTrafficSampler()
+	sampler.available = true
+	sampler.haveSample = true
+	sampler.lastSample = time.Now()
+	sampler.pendingPorts["in"] = protocol.PortTrafficSnapshot{Inbound: "in", Upload: 10}
+	if summary := sampler.summarySnapshot(); summary == nil || len(summary.Ports) != 0 {
+		t.Fatalf("summary snapshot = %+v", summary)
+	}
+	if full := sampler.snapshot(); len(full.Ports) != 1 {
+		t.Fatal("summary snapshot consumed pending port traffic")
 	}
 }

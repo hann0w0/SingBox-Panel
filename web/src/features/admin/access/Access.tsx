@@ -1,5 +1,6 @@
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import {
+	Alert,
   AutoComplete,
   Button,
   Card,
@@ -165,6 +166,7 @@ export function AssignModal({ userId, userEmail, nodes, open, onClose, onSaved, 
   const [accessError, setAccessError] = useState<string | null>(null)
   const [retryKey, setRetryKey] = useState(0)
   const [saving, setSaving] = useState(false)
+  const saveLockRef = useRef(false)
   const [activeTab, setActiveTab] = useState<'nodes' | 'order'>('nodes')
   const [activeNodeTab, setActiveNodeTab] = useState<'managed' | 'custom'>('managed')
   const [expandedGroups, setExpandedGroups] = useState<Set<string>>(() => new Set())
@@ -493,7 +495,8 @@ export function AssignModal({ userId, userEmail, nodes, open, onClose, onSaved, 
   }
 
   const save = async () => {
-    if (!userId || saving || !isDirty) return
+    if (!userId || saveLockRef.current || !isDirty) return
+    saveLockRef.current = true
     setSaving(true)
     try {
       // A historical ServerIDs=[A], InboundIDs=[] grant means every current
@@ -521,6 +524,7 @@ export function AssignModal({ userId, userEmail, nodes, open, onClose, onSaved, 
     } catch (e) {
       message.error(errMsg(e))
     } finally {
+      saveLockRef.current = false
       setSaving(false)
     }
   }
@@ -684,6 +688,15 @@ export function AssignModal({ userId, userEmail, nodes, open, onClose, onSaved, 
     >
       <RequestState loading={accessLoading || serversLoading} error={accessError || serversError} hasData={accessLoaded && serversLoaded} onRetry={() => setRetryKey((value) => value + 1)}>
       <Spin spinning={accessLoading || serversLoading}>
+        {loadedServerWide ? (
+          <Alert
+            type="info"
+            showIcon
+            style={{ marginBottom: 12 }}
+            message="整机授权"
+            description={`该用户已获整机授权：${loadedServerIDs.map((id) => servers.find((server) => server.id === id)?.name || `#${id}`).join('、')}。当前及未来新增的入站都会自动授权；仅调整外部节点或排序不会改变此语义。`}
+          />
+        ) : null}
         <Tabs
           activeKey={activeTab}
           onChange={(key) => setActiveTab(key as 'nodes' | 'order')}

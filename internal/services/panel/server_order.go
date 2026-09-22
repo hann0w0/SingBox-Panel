@@ -55,6 +55,9 @@ func (a *App) updateServerOrder(c *gin.Context) {
 	if !bindJSON(c, &req) {
 		return
 	}
+	if rejectTooManyIDs(c, req.IDs) {
+		return
+	}
 	var current []uint
 	if err := a.db.Model(&model.Server{}).Order("id").Pluck("id", &current).Error; err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})

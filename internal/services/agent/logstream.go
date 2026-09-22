@@ -3,7 +3,6 @@ package agent
 import (
 	"bufio"
 	"context"
-	"io"
 	"os/exec"
 	"strconv"
 	"sync"
@@ -78,16 +77,19 @@ func (ls *logStreamer) start(lines int, onLine func(string)) error {
 		for scanner.Scan() {
 			select {
 			case <-streamCtx.Done():
-				return
+				// Cancellation kills journalctl; leave the loop through the common
+				// cleanup path so cmd.Wait always reaps it.
+				break
 			default:
+			}
+			if streamCtx.Err() != nil {
+				break
 			}
 			onLine(scanner.Text())
 		}
 		// Scanner errors (including an oversized journal line) must terminate the
-		// follower. Otherwise io.Copy would continue consuming a silent, live
-		// journalctl process forever while the UI receives no more lines.
+		// follower. Always cancel and wait so no journalctl child is leaked.
 		cancel()
-		_, _ = io.Copy(io.Discard, stdout)
 		_ = cmd.Wait()
 	}()
 

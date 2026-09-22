@@ -40,8 +40,8 @@ type outboundReq struct {
 	Tag      string          `json:"tag"`
 	Type     string          `json:"type"`
 	Settings json.RawMessage `json:"settings"`
-	Remark   string          `json:"remark"`
-	Sort     int             `json:"sort"`
+	Remark   *string         `json:"remark"`
+	Sort     *int            `json:"sort"`
 }
 
 func (a *App) createOutbound(c *gin.Context) {
@@ -75,9 +75,17 @@ func (a *App) createOutbound(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
+	remark := ""
+	if req.Remark != nil {
+		remark = *req.Remark
+	}
+	sort := 0
+	if req.Sort != nil {
+		sort = *req.Sort
+	}
 	ob := &model.Outbound{
 		ServerID: id, Tag: req.Tag, Type: req.Type,
-		Settings: model.JSONText(req.Settings), Remark: req.Remark, Sort: req.Sort,
+		Settings: model.JSONText(req.Settings), Remark: remark, Sort: sort,
 	}
 	if err := a.db.Create(ob).Error; err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
@@ -129,8 +137,12 @@ func (a *App) updateOutbound(c *gin.Context) {
 	ob.Tag = nextTag
 	ob.Type = nextType
 	ob.Settings = model.JSONText(nextSettings)
-	ob.Remark = req.Remark
-	ob.Sort = req.Sort
+	if req.Remark != nil {
+		ob.Remark = *req.Remark
+	}
+	if req.Sort != nil {
+		ob.Sort = *req.Sort
+	}
 	tx := a.db.Begin()
 	if tx.Error != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": tx.Error.Error()})
@@ -446,6 +458,9 @@ func (a *App) reorderRules(c *gin.Context) {
 	}
 	var req reorderRulesReq
 	if !bindJSON(c, &req) {
+		return
+	}
+	if rejectTooManyIDs(c, req.Order) {
 		return
 	}
 	var existing []uint

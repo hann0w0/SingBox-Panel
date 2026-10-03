@@ -15,7 +15,6 @@ import type { SSEMessage } from '../../../useSSE'
 import { copyToClipboard } from '../../../util'
 import { VirtualList } from '../../../components/VirtualList'
 
-const LINE_OPTIONS = [100, 200, 500, 1000]
 
 const NOISE_PATTERNS = [
   'unknown user password',
@@ -33,6 +32,11 @@ type LogLevel = '' | 'TRACE' | 'DEBUG' | 'INFO' | 'WARN' | 'ERROR' | 'FATAL'
 type LevelFilter = 'all' | 'TRACE' | 'DEBUG' | 'INFO' | 'WARN' | 'ERROR'
 type LogDirection = '' | 'inbound' | 'outbound'
 type DirectionFilter = 'all' | 'inbound' | 'outbound'
+const DIRECTION_OPTIONS: Array<{ value: DirectionFilter; label: string }> = [
+  { value: 'all', label: '全部方向' },
+  { value: 'inbound', label: '入站' },
+  { value: 'outbound', label: '出站' },
+]
 type DisplayMode = 'compact' | 'raw'
 
 type ParsedLogLine = {
@@ -57,12 +61,6 @@ const LEVEL_OPTIONS: Array<{ value: LevelFilter; label: string }> = [
   { value: 'INFO', label: 'INFO' },
   { value: 'WARN', label: 'WARN' },
   { value: 'ERROR', label: 'ERROR' },
-]
-
-const DIRECTION_OPTIONS: Array<{ value: DirectionFilter; label: string }> = [
-  { value: 'all', label: '全部方向' },
-  { value: 'inbound', label: '入站' },
-  { value: 'outbound', label: '出站' },
 ]
 
 function parseLogLine(raw: string): ParsedLogLine {
@@ -251,10 +249,12 @@ function formatUpdatedAt(value: number | null) {
   return new Date(value).toLocaleTimeString('zh-CN', { hour12: false })
 }
 
-export default function Logs() {
+// Logs renders one node's sing-box journal. With serverId fixed (server
+// detail tab) the node selector is hidden.
+export default function Logs({ serverId }: { serverId?: number } = {}) {
   const [servers, setServers] = useState<Server[]>([])
-  const [sid, setSid] = useState<number | null>(null)
-  const [lines, setLines] = useState(200)
+  const [sid, setSid] = useState<number | null>(serverId ?? null)
+  const lines = 200
   const [logEntries, setLogEntries] = useState<LogEntry[]>([])
   const [loading, setLoading] = useState(false)
   const [live, setLive] = useState(false)
@@ -262,8 +262,8 @@ export default function Logs() {
   const [keyword, setKeyword] = useState('')
   const [levelFilter, setLevelFilter] = useState<LevelFilter>('all')
   const [directionFilter, setDirectionFilter] = useState<DirectionFilter>('all')
-  const [displayMode, setDisplayMode] = useState<DisplayMode>('compact')
-  const [wrapLines, setWrapLines] = useState(true)
+  const displayMode: DisplayMode = 'compact'
+  const wrapLines = true
   const [following, setFollowing] = useState(true)
   const [lastUpdatedAt, setLastUpdatedAt] = useState<number | null>(null)
   const boxRef = useRef<HTMLDivElement>(null)
@@ -278,6 +278,11 @@ export default function Logs() {
   const liveFlushTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
 
   useEffect(() => {
+    if (serverId !== undefined) {
+      setLive(false)
+      setSid(serverId)
+      return
+    }
     const controller = new AbortController()
     serverListAbortRef.current = controller
     listServers(controller.signal)
@@ -294,7 +299,7 @@ export default function Logs() {
       controller.abort()
       if (serverListAbortRef.current === controller) serverListAbortRef.current = null
     }
-  }, [])
+  }, [serverId])
 
   const setFollowState = (value: boolean) => {
     followingRef.current = value
@@ -332,6 +337,9 @@ export default function Logs() {
       setLogEntries(merged.length > MAX_LIVE_LINES ? merged.slice(merged.length - MAX_LIVE_LINES) : merged)
       setLastUpdatedAt(Date.now())
       scrollToLatest()
+      // Live tail is the default view; it only pauses when the stream fails
+      // or the node goes offline.
+      if (servers.find((s) => s.id === sid)?.online !== false) setLive(true)
     } catch (e) {
       if (!quiet && !isCanceledRequest(e)) message.error(errMsg(e))
     } finally {
@@ -340,7 +348,7 @@ export default function Logs() {
         if (!quiet) setLoading(false)
       }
     }
-  }, [lines, scrollToLatest, sid])
+  }, [lines, scrollToLatest, servers, sid])
 
   useEffect(() => () => {
     loadGenerationRef.current += 1
@@ -495,7 +503,7 @@ export default function Logs() {
     window.setTimeout(() => URL.revokeObjectURL(url), 1000)
   }
 
-  const liveStatus = !live ? '实时关闭' : sseConnected ? '实时已连接' : '实时连接中'
+  const liveStatus = !live ? '实时已暂停' : sseConnected ? '实时' : '连接中'
   const emptyDescription = loading
     ? '读取中…'
       : logEntries.length
@@ -511,27 +519,21 @@ export default function Logs() {
       }
     >
       <div className="logs-toolbar">
-        <Select
+        {serverId === undefined && <Select
           className="logs-server-select"
           value={sid ?? undefined}
           onChange={(next) => {
             setLive(false)
             setSid(next)
           }}
-          placeholder="选择节点"
+          placeholder="选择主机"
           popupMatchSelectWidth={false}
           options={servers.map((s) => ({
             value: s.id,
             label: `${s.name}${s.region ? ' · ' + s.region : ''}${s.online ? '' : '（离线）'}`,
             disabled: !s.online,
           }))}
-        />
-        <Select
-          className="logs-lines-select"
-          value={lines}
-          onChange={setLines}
-          options={LINE_OPTIONS.map((n) => ({ value: n, label: `最近 ${n} 行` }))}
-        />
+        />}
         <Select
           className="logs-filter-select"
           value={levelFilter}
@@ -556,15 +558,6 @@ export default function Logs() {
           <Switch size="small" checked={hideNoise} onChange={setHideNoise} />
           <span>过滤噪音</span>
         </label>
-        <label className="logs-toggle">
-          <Switch
-            size="small"
-            checked={live}
-            onChange={handleLiveChange}
-            disabled={!current?.online}
-          />
-          <span>实时</span>
-        </label>
       </div>
 
       <div className="logs-subtoolbar">
@@ -580,19 +573,9 @@ export default function Logs() {
         </div>
 
         <div className="logs-view-options">
-          <Select
-            size="small"
-            value={displayMode}
-            onChange={(value: DisplayMode) => setDisplayMode(value)}
-            options={[
-              { value: 'compact', label: '精简显示' },
-              { value: 'raw', label: '原始日志' },
-            ]}
-          />
-          <label className="logs-toggle logs-wrap-toggle">
-            <Switch size="small" checked={wrapLines} onChange={setWrapLines} />
-            <span>自动换行</span>
-          </label>
+          {!live && current?.online ? (
+            <Button size="small" onClick={() => handleLiveChange(true)}>恢复实时</Button>
+          ) : null}
           <Button
             size="small"
             icon={<DownloadOutlined />}

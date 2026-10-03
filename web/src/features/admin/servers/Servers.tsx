@@ -1,10 +1,13 @@
 import { useEffect, useRef, useState, type DragEvent, type PointerEvent as ReactPointerEvent } from 'react'
-import { Alert, Button, Card, Form, Grid, Input, Modal, Radio, Select, Space, Table, Tag, Typography, message } from 'antd'
+import { Alert, Button, Card, Form, Grid, Input, Modal, Radio, Select, Space, Tag, Typography, message } from 'antd'
 import { ArrowUpOutlined, CloudDownloadOutlined, DeleteOutlined, EditOutlined, PlusOutlined, ReloadOutlined } from '@ant-design/icons'
 import { useNavigate } from 'react-router-dom'
-import { createServer, deleteServer, errMsg, getServersMeta, installSingbox, updateAllAgents, updateServer, updateServerOrder } from '../../../api'
+import { createServer, deleteServer, errMsg, getOverview, getServersMeta, installSingbox, isCanceledRequest, updateAllAgents, updateServer, updateServerOrder } from '../../../api'
 import type { Server } from '../../../types'
+import { formatBytes } from '../../../util'
 import { RequestState } from '../../../components/RequestState'
+
+const rate = (n: number) => `${formatBytes(n)}/s`
 
 export default function Servers() {
   const nav = useNavigate()
@@ -24,6 +27,7 @@ export default function Servers() {
   const [draggingID, setDraggingID] = useState<number | null>(null)
   const [dropTarget, setDropTarget] = useState<{ id: number; after: boolean } | null>(null)
   const [sortAnnouncement, setSortAnnouncement] = useState('')
+  const [usersExpiring, setUsersExpiring] = useState(0)
   const pointerDragRef = useRef<{ id: number; pointerId: number } | null>(null)
   const pointerDropRef = useRef<{ id: number; after: boolean } | null>(null)
   const loadRef = useRef<{ generation: number; controller: AbortController | null }>({ generation: 0, controller: null })
@@ -100,23 +104,25 @@ export default function Servers() {
     load()
   }
 
-  const load = () => {
+  const hasDataRef = useRef(false)
+  const load = (quiet = false) => {
     loadRef.current.controller?.abort()
     const controller = new AbortController()
     const generation = ++loadRef.current.generation
     loadRef.current.controller = controller
-    setLoading(true)
+    if (!quiet || !hasDataRef.current) setLoading(true)
     setLoadError(null)
     getServersMeta(controller.signal)
       .then((res) => {
         if (generation !== loadRef.current.generation) return
+        hasDataRef.current = true
         setServers(res.servers)
         if (res.latest_agent_version) {
           setLatestAgentVer(res.latest_agent_version)
         }
       })
       .catch((e) => {
-        if (generation === loadRef.current.generation && !controller.signal.aborted) setLoadError(errMsg(e))
+        if (generation === loadRef.current.generation && !controller.signal.aborted && !isCanceledRequest(e)) setLoadError(errMsg(e))
       })
       .finally(() => {
         if (generation === loadRef.current.generation) {
@@ -124,14 +130,27 @@ export default function Servers() {
           setLoading(false)
         }
       })
+    getOverview(controller.signal)
+      .then((o) => {
+        if (generation === loadRef.current.generation) setUsersExpiring(o.users_expiring)
+      })
+      .catch(() => {
+        // Only feeds the expiry banner; the table does not depend on it.
+      })
   }
   useEffect(() => {
     load()
+    // Online state, rates and versions change on their own; keep them fresh
+    // without the user pressing refresh. Skip while a drag is in progress.
+    const timer = window.setInterval(() => {
+      if (pointerDragRef.current === null && !sorting) load(true)
+    }, 10000)
     return () => {
+      window.clearInterval(timer)
       loadRef.current.generation++
       loadRef.current.controller?.abort()
     }
-  }, [])
+  }, [sorting])
 
   const openCreate = () => {
     setEditing(null)
@@ -165,7 +184,7 @@ export default function Servers() {
       form.resetFields()
       load()
       Modal.success({
-        title: '服务器已创建 · 在 VPS 上执行以下命令接入',
+        title: '主机已创建 · 在 VPS 上执行以下命令接入',
         width: 680,
         content: (
           <div>
@@ -216,8 +235,8 @@ export default function Servers() {
     setDropTarget(null)
     e.dataTransfer.effectAllowed = 'move'
     e.dataTransfer.setData('text/plain', String(s.id))
-    const row = e.currentTarget.closest('tr')
-    if (row) e.dataTransfer.setDragImage(row, 24, 24)
+    const card = e.currentTarget.closest<HTMLElement>('.server-card')
+    if (card) e.dataTransfer.setDragImage(card, 24, 24)
   }
 
   const dropServer = async (targetID: number, after: boolean, sourceIDOverride?: number) => {
@@ -257,27 +276,29 @@ export default function Servers() {
     void dropServer(target.id, direction > 0, server.id)
   }
 
-  // Calculate a stable insertion slot from the rows that remain after the
-  // dragged server is removed. The list is not reordered while the finger is
-  // moving, so the same touch position cannot make the target oscillate.
-  const pointerDropTargetAt = (sourceID: number, clientY: number) => {
-    const rows = Array.from(document.querySelectorAll<HTMLElement>('.servers-card tbody tr[data-row-key]'))
-      .map((row) => ({ row, id: Number(row.dataset.rowKey) }))
+  // Find the insertion slot among the cards that remain after the dragged
+  // server is removed. Cards flow in reading order inside a grid, so a point
+  // inside a card picks its left/right half; a point between cards snaps to
+  // the nearest card on that row, else to the first card of the next row.
+  const pointerDropTargetAt = (sourceID: number, clientX: number, clientY: number) => {
+    const cards = Array.from(document.querySelectorAll<HTMLElement>('.servers-card .server-card[data-server-id]'))
+      .map((card) => ({ rect: card.getBoundingClientRect(), id: Number(card.dataset.serverId) }))
       .filter((entry) => Number.isFinite(entry.id) && entry.id !== sourceID)
-    if (rows.length === 0) return null
-
-    let insertionIndex = rows.length
-    for (let index = 0; index < rows.length; index += 1) {
-      const rect = rows[index].row.getBoundingClientRect()
-      if (clientY <= rect.top + rect.height / 2) {
-        insertionIndex = index
-        break
+    if (cards.length === 0) return null
+    for (const { rect, id } of cards) {
+      if (clientX >= rect.left && clientX <= rect.right && clientY >= rect.top && clientY <= rect.bottom) {
+        return { id, after: clientX >= rect.left + rect.width / 2 }
       }
     }
-    if (insertionIndex === rows.length) {
-      return { id: rows[rows.length - 1].id, after: true }
+    const sameRow = cards.filter(({ rect }) => clientY >= rect.top && clientY <= rect.bottom)
+    if (sameRow.length) {
+      const leftOf = sameRow.filter(({ rect }) => rect.left > clientX)
+      if (leftOf.length) return { id: leftOf[0].id, after: false }
+      return { id: sameRow[sameRow.length - 1].id, after: true }
     }
-    return { id: rows[insertionIndex].id, after: false }
+    const below = cards.filter(({ rect }) => rect.top > clientY)
+    if (below.length) return { id: below[0].id, after: false }
+    return { id: cards[cards.length - 1].id, after: true }
   }
 
   const handlePointerDragStart = (event: ReactPointerEvent<HTMLSpanElement>, server: Server) => {
@@ -298,7 +319,7 @@ export default function Servers() {
     const edgeSize = Math.min(72, window.innerHeight / 5)
     if (event.clientY < edgeSize) window.scrollBy({ top: -12, behavior: 'auto' })
     else if (event.clientY > window.innerHeight - edgeSize) window.scrollBy({ top: 12, behavior: 'auto' })
-    const target = pointerDropTargetAt(drag.id, event.clientY)
+    const target = pointerDropTargetAt(drag.id, event.clientX, event.clientY)
     pointerDropRef.current = target
     setDropTarget(target)
   }
@@ -307,7 +328,7 @@ export default function Servers() {
     const drag = pointerDragRef.current
     if (!drag || event.pointerId !== drag.pointerId) return
     event.preventDefault()
-    const target = pointerDropTargetAt(drag.id, event.clientY) ?? pointerDropRef.current
+    const target = pointerDropTargetAt(drag.id, event.clientX, event.clientY) ?? pointerDropRef.current
     if (event.currentTarget.hasPointerCapture(event.pointerId)) {
       event.currentTarget.releasePointerCapture(event.pointerId)
     }
@@ -335,7 +356,7 @@ export default function Servers() {
   return (
     <Card
       className="servers-card"
-      title="服务器"
+      title="主机"
       extra={
         <Space wrap>
           <Button
@@ -356,179 +377,148 @@ export default function Servers() {
           >
             <span className="server-action-label">更新 Agent</span>
           </Button>
-          <Button type="primary" icon={<PlusOutlined />} onClick={openCreate} title="新增服务器" aria-label="新增服务器">
-            <span className="server-action-label">新增服务器</span>
+          <Button type="primary" icon={<PlusOutlined />} onClick={openCreate} title="新增主机" aria-label="新增主机">
+            <span className="server-action-label">新增主机</span>
           </Button>
         </Space>
       }
     >
-      <RequestState loading={loading} error={loadError} hasData={servers.length > 0} empty={!loading && !loadError && servers.length === 0} emptyDescription="暂无服务器" onRetry={load}>
-      <Table
-        rowKey="id"
-        loading={loading}
-        dataSource={servers}
-        pagination={false}
-        scroll={{ x: 'max-content' }}
-        // Tapping the row opens the node — far easier than side-scrolling to a
-        // link on a phone.
-        onRow={(s) => ({
-          onClick: () => nav(`/admin/servers/${s.id}`),
-          onKeyDown: (event) => {
-            if (event.target !== event.currentTarget) return
-            if (event.key === 'Enter' || event.key === ' ') {
-              event.preventDefault()
-              nav(`/admin/servers/${s.id}`)
-            }
-          },
-          onDragOver: (e) => {
-            if (draggingID === null || draggingID === s.id) return
-            e.preventDefault()
-            e.dataTransfer.dropEffect = 'move'
-            const rect = e.currentTarget.getBoundingClientRect()
-            setDropTarget({ id: s.id, after: e.clientY >= rect.top + rect.height / 2 })
-          },
-          onDrop: (e) => {
-            if (draggingID === null) return
-            e.preventDefault()
-            e.stopPropagation()
-            const rect = e.currentTarget.getBoundingClientRect()
-            void dropServer(s.id, e.clientY >= rect.top + rect.height / 2)
-          },
-          className: [
-            draggingID === s.id ? 'server-row-dragging' : '',
-            dropTarget?.id === s.id ? (dropTarget.after ? 'server-row-drop-after' : 'server-row-drop-before') : '',
-          ].filter(Boolean).join(' '),
-          role: 'link',
-          tabIndex: 0,
-          style: { cursor: 'pointer' },
-        })}
-        columns={[
-          {
-            title: '',
-            width: 36,
-            align: 'center',
-            className: 'server-drag-column',
-            render: (_, s: Server) => (
-              <span
-                className="server-drag-handle"
-                draggable={!isMobile && !sorting}
-                role="button"
-                tabIndex={0}
-                aria-label={`拖动 ${s.name} 排序`}
-                aria-describedby="server-sort-help"
-                title="按住拖动排序"
-                onClick={(e) => e.stopPropagation()}
-                onKeyDown={(e) => {
-                  e.stopPropagation()
-                  if (e.key === 'ArrowUp' || e.key === 'ArrowDown') {
-                    e.preventDefault()
-                    moveServerByKeyboard(s, e.key === 'ArrowUp' ? -1 : 1)
-                  }
-                }}
-                onPointerDown={(e) => handlePointerDragStart(e, s)}
-                onPointerMove={handlePointerDragMove}
-                onPointerUp={finishPointerDrag}
-                onPointerCancel={cancelPointerDrag}
-                onDragStart={(e) => startDrag(e, s)}
-                onDragEnd={() => {
-                  setDraggingID(null)
-                  setDropTarget(null)
-                  pointerDragRef.current = null
-                  pointerDropRef.current = null
-                }}
-              >
-                <span className="server-drag-bars" aria-hidden="true">
-                  <i />
-                  <i />
-                  <i />
-                </span>
-              </span>
-            ),
-          },
-          { title: '名称', dataIndex: 'name' },
-          {
-            title: '连接地址',
-            responsive: ['md'],
-            render: (_, s: Server) =>
-              s.address || s.public_ip || '—',
-          },
-          {
-            title: '状态',
-            dataIndex: 'online',
-            render: (v: boolean) => (v ? <Tag color="green">在线</Tag> : <Tag>离线</Tag>),
-          },
-          {
-            title: 'sing-box',
-            render: (_, s: Server) => {
-              if (!s.singbox_installed) return <Tag color="orange">未安装</Tag>
-              const versionStr = s.singbox_version || '已安装'
-              if (s.singbox_has_update) {
-                return (
-                  <Tag
-                    color="orange"
-                    icon={<ArrowUpOutlined />}
-                    title={`发现新版本 (${s.singbox_latest_version || '可升级'})，点击可进入详情升级`}
-                  >
-                    {versionStr} (可升级)
-                  </Tag>
-                )
-              }
-              return <Tag color="blue">{versionStr}</Tag>
-            },
-          },
-          {
-            title: 'Agent',
-            render: (_, s: Server) => {
-              if (!s.agent_version) return <Tag>—</Tag>
-              const needsSync = s.online && s.agent_has_update === true
-              return needsSync ? (
-                <Tag color="orange" title={`同步至 ${s.agent_latest_version || latestAgentVer}`}>
-                  {s.agent_version} (待同步)
-                </Tag>
-              ) : (
-                <Tag color="purple">{s.agent_version}</Tag>
-              )
-            },
-          },
-          {
-            title: '',
-            width: 88,
-            render: (_, s: Server) => (
-              <Space size={0}>
-                <Button
-                  size="small"
-                  type="text"
-                  icon={<EditOutlined />}
-                  aria-label="编辑"
-                  title="编辑"
-                  onClick={(e) => {
-                    e.stopPropagation() // row click opens the node
-                    openEdit(s)
-                  }}
-                />
-                <Button
-                  size="small"
-                  type="text"
-                  danger
-                  icon={<DeleteOutlined />}
-                  aria-label="删除"
-                  title="删除"
-                  onClick={(e) => {
+      {(() => {
+        const offline = servers.filter((s) => !s.online)
+        const notes: string[] = []
+        if (offline.length) notes.push(`${offline.length} 台离线：${offline.map((s) => s.name).join('、')}`)
+        if (usersExpiring > 0) notes.push(`${usersExpiring} 个用户将在 7 天内到期`)
+        return notes.length ? (
+          <Alert type="warning" showIcon style={{ marginBottom: 14 }} message={notes.map((n) => <div key={n}>{n}</div>)} />
+        ) : null
+      })()}
+      <RequestState loading={loading} error={loadError} hasData={servers.length > 0} empty={!loading && !loadError && servers.length === 0} emptyDescription="暂无主机" onRetry={() => load()}>
+      <div className="server-card-grid">
+        {servers.map((s) => {
+          const memPct = s.mem_total ? Math.round((s.mem_used / s.mem_total) * 100) : null
+          const dropClass = dropTarget?.id === s.id ? (dropTarget.after ? ' server-card-drop-after' : ' server-card-drop-before') : ''
+          return (
+            <div
+              key={s.id}
+              data-server-id={s.id}
+              className={`server-card${s.online ? '' : ' is-offline'}${draggingID === s.id ? ' server-card-dragging' : ''}${dropClass}`}
+              role="link"
+              tabIndex={0}
+              onClick={() => nav(`/admin/servers/${s.id}`)}
+              onKeyDown={(event) => {
+                if (event.target !== event.currentTarget) return
+                if (event.key === 'Enter' || event.key === ' ') {
+                  event.preventDefault()
+                  nav(`/admin/servers/${s.id}`)
+                }
+              }}
+              onDragOver={(e) => {
+                if (draggingID === null || draggingID === s.id) return
+                e.preventDefault()
+                e.dataTransfer.dropEffect = 'move'
+                const rect = e.currentTarget.getBoundingClientRect()
+                setDropTarget({ id: s.id, after: e.clientX >= rect.left + rect.width / 2 })
+              }}
+              onDrop={(e) => {
+                if (draggingID === null) return
+                e.preventDefault()
+                e.stopPropagation()
+                const rect = e.currentTarget.getBoundingClientRect()
+                void dropServer(s.id, e.clientX >= rect.left + rect.width / 2)
+              }}
+            >
+              <div className="server-card-head">
+                <span
+                  className="server-drag-handle"
+                  draggable={!isMobile && !sorting}
+                  role="button"
+                  tabIndex={0}
+                  aria-label={`拖动 ${s.name} 排序`}
+                  aria-describedby="server-sort-help"
+                  title="按住拖动排序"
+                  onClick={(e) => e.stopPropagation()}
+                  onKeyDown={(e) => {
                     e.stopPropagation()
-                    onDelete(s)
+                    if (e.key === 'ArrowUp' || e.key === 'ArrowDown' || e.key === 'ArrowLeft' || e.key === 'ArrowRight') {
+                      e.preventDefault()
+                      moveServerByKeyboard(s, e.key === 'ArrowUp' || e.key === 'ArrowLeft' ? -1 : 1)
+                    }
                   }}
-                />
-              </Space>
-            ),
-          },
-        ]}
-      />
+                  onPointerDown={(e) => handlePointerDragStart(e, s)}
+                  onPointerMove={handlePointerDragMove}
+                  onPointerUp={finishPointerDrag}
+                  onPointerCancel={cancelPointerDrag}
+                  onDragStart={(e) => startDrag(e, s)}
+                  onDragEnd={() => {
+                    setDraggingID(null)
+                    setDropTarget(null)
+                    pointerDragRef.current = null
+                    pointerDropRef.current = null
+                  }}
+                >
+                  <span className="server-drag-bars" aria-hidden="true"><i /><i /><i /></span>
+                </span>
+                <span className="server-card-name">{s.name}</span>
+                {s.online ? <Tag color="green">在线</Tag> : <Tag>离线</Tag>}
+                <Space size={0} className="server-card-actions" onClick={(e) => e.stopPropagation()}>
+                  <Button size="small" type="text" icon={<EditOutlined />} aria-label="编辑" title="编辑" onClick={() => openEdit(s)} />
+                  <Button size="small" type="text" danger icon={<DeleteOutlined />} aria-label="删除" title="删除" onClick={() => onDelete(s)} />
+                </Space>
+              </div>
+
+              <div className="server-card-versions">
+                {!s.singbox_installed ? (
+                  <Tag color="orange">sing-box 未安装</Tag>
+                ) : s.singbox_has_update ? (
+                  <Tag color="orange" icon={<ArrowUpOutlined />} title={`发现新版本 ${s.singbox_latest_version || ''}，进入详情升级`}>sing-box {s.singbox_version || '已安装'} · 可升级</Tag>
+                ) : (
+                  <Tag color="blue">sing-box {s.singbox_version || '已安装'}</Tag>
+                )}
+                {s.agent_version ? (
+                  s.online && s.agent_has_update ? (
+                    <Tag color="orange" title={`同步至 ${s.agent_latest_version || latestAgentVer}`}>Agent {s.agent_version} · 待同步</Tag>
+                  ) : (
+                    <Tag color="purple">Agent {s.agent_version}</Tag>
+                  )
+                ) : null}
+              </div>
+
+              <div className="server-card-metrics">
+                <div>
+                  <span className="server-card-metric-label">负载</span>
+                  <span className="server-card-metric-value">{s.online ? s.load1.toFixed(2) : '—'}</span>
+                </div>
+                <div>
+                  <span className="server-card-metric-label">内存</span>
+                  <span className="server-card-metric-value" style={{ color: memPct !== null && s.online ? (memPct >= 85 ? 'var(--console-error)' : memPct >= 60 ? 'var(--console-warning)' : undefined) : undefined }}>
+                    {s.online && memPct !== null ? `${memPct}%` : '—'}
+                  </span>
+                </div>
+                <div>
+                  <span className="server-card-metric-label">下行</span>
+                  <span className="server-card-metric-value">{s.online && s.traffic_available ? rate(s.traffic_download_rate ?? 0) : '—'}</span>
+                </div>
+                <div>
+                  <span className="server-card-metric-label">上行</span>
+                  <span className="server-card-metric-value">{s.online && s.traffic_available ? rate(s.traffic_upload_rate ?? 0) : '—'}</span>
+                </div>
+              </div>
+
+
+              <div className="server-card-foot">
+                <span className="server-card-muted" title="客户端连接地址">{s.address || s.public_ip || '未设置地址'}</span>
+                <span className="server-card-muted">入站 {s.inbounds?.length ?? 0}</span>
+              </div>
+            </div>
+          )
+        })}
+      </div>
       </RequestState>
-      <span id="server-sort-help" className="sr-only">使用上方向键或下方向键调整服务器顺序</span>
+      <span id="server-sort-help" className="sr-only">使用方向键调整服务器顺序</span>
       <div className="sr-only" aria-live="polite" aria-atomic="true">{sortAnnouncement}</div>
 
       <Modal
-        title={editing ? `编辑 ${editing.name}` : '新增服务器'}
+        title={editing ? `编辑 ${editing.name}` : '新增主机'}
         open={open}
         onOk={onSubmit}
         onCancel={() => setOpen(false)}

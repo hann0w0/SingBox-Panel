@@ -161,14 +161,20 @@ type HeartbeatEvt struct {
 // TrafficSnapshot contains sing-box's cumulative node counters and the
 // per-inbound deltas observed since the previous Agent sample.
 type TrafficSnapshot struct {
-	UploadTotal    uint64                `json:"upload_total"`
-	DownloadTotal  uint64                `json:"download_total"`
-	UploadRate     uint64                `json:"upload_rate"`
-	DownloadRate   uint64                `json:"download_rate"`
-	TCPConnections int                   `json:"tcp_connections"`
-	UDPConnections int                   `json:"udp_connections"`
-	SampledAt      int64                 `json:"sampled_at"`
-	Ports          []PortTrafficSnapshot `json:"ports,omitempty"`
+	UploadTotal    uint64 `json:"upload_total"`
+	DownloadTotal  uint64 `json:"download_total"`
+	UploadRate     uint64 `json:"upload_rate"`
+	DownloadRate   uint64 `json:"download_rate"`
+	TCPConnections int    `json:"tcp_connections"`
+	UDPConnections int    `json:"udp_connections"`
+	SampledAt      int64  `json:"sampled_at"`
+	// PeakUploadRate/PeakDownloadRate are the highest one-second rates the
+	// Agent observed since the previous acknowledged report. UploadRate and
+	// DownloadRate remain the latest instantaneous values for live charts.
+	// Older Agents omit them; the panel then falls back to the instant rate.
+	PeakUploadRate   uint64                `json:"peak_upload_rate,omitempty"`
+	PeakDownloadRate uint64                `json:"peak_download_rate,omitempty"`
+	Ports            []PortTrafficSnapshot `json:"ports,omitempty"`
 }
 
 // PortTrafficSnapshot is a delta for one sing-box inbound tag, not a

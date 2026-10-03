@@ -8,13 +8,14 @@ import (
 	"log"
 	"os/signal"
 	"syscall"
+	_ "time/tzdata" // traffic day boundaries must not depend on the host zoneinfo
 
 	"github.com/hann0w0/singbox-panel/internal/config"
 	"github.com/hann0w0/singbox-panel/internal/services/panel"
 )
 
 // version is set via -ldflags "-X main.version=x.y.z".
-var version = "v1.0.2"
+var version = "v1.0.3"
 
 func main() {
 	cfgPath := flag.String("config", "", "path to panel config YAML")

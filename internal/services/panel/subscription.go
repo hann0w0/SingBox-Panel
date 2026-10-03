@@ -55,6 +55,7 @@ func (a *App) handleSubscription(c *gin.Context) {
 		c.String(http.StatusNotFound, "not found")
 		return
 	}
+	defer func() { a.recordSubscriptionFetch(c, &user, subFormat(c), c.Writer.Status()) }()
 	// A disabled or expired account must stop receiving nodes. Report the expiry
 	// so the client can show why, but hand out nothing.
 	if !userActive(&user) {

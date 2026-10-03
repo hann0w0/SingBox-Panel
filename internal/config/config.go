@@ -34,6 +34,10 @@ type PanelConfig struct {
 	// the web_dir YAML field for binary installs.
 	WebDir string `yaml:"web_dir"`
 
+	// Timezone is the IANA zone used for traffic day/month boundaries and
+	// server quota reset days. Defaults to Asia/Shanghai.
+	Timezone string `yaml:"timezone"`
+
 	Database     DatabaseConfig `yaml:"database"`
 	Admin        AdminBootstrap `yaml:"admin"`
 	Subscription SubConfig      `yaml:"subscription"`
@@ -73,6 +77,7 @@ func Default() PanelConfig {
 		BaseURL:     "http://localhost:8080",
 		AgentsDir:   "./dist/agents",
 		WebDir:      "./web/dist",
+		Timezone:    DefaultTimezone,
 		Database: DatabaseConfig{
 			Driver:          "sqlite",
 			DSN:             "./data/singbox-panel.db",
@@ -137,6 +142,9 @@ func applyEnv(cfg *PanelConfig) error {
 	}
 	if v := firstEnv("SINGBOX_PANEL_WEB_DIR"); v != "" {
 		cfg.WebDir = v
+	}
+	if v := firstEnv("SINGBOX_PANEL_TIMEZONE"); v != "" {
+		cfg.Timezone = v
 	}
 	if v := firstEnv("SINGBOX_PANEL_DB_DRIVER"); v != "" {
 		cfg.Database.Driver = v
@@ -217,6 +225,26 @@ func applyDefaults(cfg *PanelConfig) {
 	if cfg.WebDir == "" {
 		cfg.WebDir = "./web/dist"
 	}
+	if strings.TrimSpace(cfg.Timezone) == "" {
+		cfg.Timezone = DefaultTimezone
+	}
+}
+
+// DefaultTimezone is used for traffic day boundaries when none is configured.
+const DefaultTimezone = "Asia/Shanghai"
+
+// Location resolves the configured timezone, falling back to the default
+// and finally to UTC when the zone database lacks the name.
+func (cfg PanelConfig) Location() *time.Location {
+	for _, name := range []string{strings.TrimSpace(cfg.Timezone), DefaultTimezone} {
+		if name == "" {
+			continue
+		}
+		if loc, err := time.LoadLocation(name); err == nil {
+			return loc
+		}
+	}
+	return time.UTC
 }
 
 // Validate checks settings that must be safe before the HTTP server starts.
@@ -229,6 +257,11 @@ func (cfg PanelConfig) Validate() error {
 	}
 	if cfg.Database.MaxOpenConns > 0 && cfg.Database.MaxIdleConns > cfg.Database.MaxOpenConns {
 		return fmt.Errorf("database max_idle_conns must not exceed max_open_conns")
+	}
+	if tz := strings.TrimSpace(cfg.Timezone); tz != "" {
+		if _, err := time.LoadLocation(tz); err != nil {
+			return fmt.Errorf("timezone %q is not a valid IANA zone: %w", tz, err)
+		}
 	}
 	env := strings.ToLower(strings.TrimSpace(cfg.Environment))
 	if env == "" {

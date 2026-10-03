@@ -111,6 +111,7 @@ func (a *App) handleLogin(c *gin.Context) {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "token error"})
 		return
 	}
+	a.recordLogin(c, &u)
 	c.JSON(http.StatusOK, gin.H{"token": tok, "user": u})
 }
 

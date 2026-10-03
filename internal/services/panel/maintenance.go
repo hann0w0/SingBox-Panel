@@ -18,6 +18,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"runtime"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -204,7 +205,7 @@ func (a *App) maintenanceInfo(c *gin.Context) {
 	refresh := c.Query("refresh") == "1" || strings.EqualFold(c.Query("refresh"), "true")
 	if latest, err := latestPanelRelease(refresh); err == nil {
 		resp["latest_version"] = latest
-		resp["has_update"] = supported && latest != "" && !sameVersion(latest, a.version)
+		resp["has_update"] = supported && latest != "" && compareVersions(latest, a.version) > 0
 	} else {
 		resp["latest_error"] = err.Error()
 	}
@@ -214,6 +215,46 @@ func (a *App) maintenanceInfo(c *gin.Context) {
 // sameVersion compares tags tolerant of a leading v.
 func sameVersion(a, b string) bool {
 	return strings.TrimPrefix(a, "v") == strings.TrimPrefix(b, "v")
+}
+
+// compareVersions orders vMAJOR.MINOR.PATCH tags numerically. Pre-release or
+// build suffixes ("-rc1", "+meta") are ignored for ordering. Unparseable
+// versions compare equal so they never look like an upgrade or downgrade.
+func compareVersions(a, b string) int {
+	pa, okA := parseVersionTriplet(a)
+	pb, okB := parseVersionTriplet(b)
+	if !okA || !okB {
+		return 0
+	}
+	for i := range pa {
+		if pa[i] != pb[i] {
+			if pa[i] > pb[i] {
+				return 1
+			}
+			return -1
+		}
+	}
+	return 0
+}
+
+func parseVersionTriplet(v string) ([3]int, bool) {
+	var out [3]int
+	v = strings.TrimPrefix(strings.TrimSpace(v), "v")
+	if i := strings.IndexAny(v, "-+"); i >= 0 {
+		v = v[:i]
+	}
+	parts := strings.Split(v, ".")
+	if len(parts) != 3 {
+		return out, false
+	}
+	for i, part := range parts {
+		n, err := strconv.Atoi(part)
+		if err != nil || n < 0 {
+			return out, false
+		}
+		out[i] = n
+	}
+	return out, true
 }
 
 type panelUpdateOperation struct {
@@ -540,6 +581,12 @@ func (a *App) selfUpdate(c *gin.Context) {
 	}
 	if sameVersion(target, a.version) && !body.Force {
 		c.JSON(http.StatusOK, gin.H{"ok": true, "message": "已是目标版本 " + target + "，无需更新", "updated": false})
+		return
+	}
+	// An older release cannot open a database migrated by this one, so never
+	// downgrade implicitly (e.g. when the latest public release lags behind).
+	if compareVersions(target, a.version) < 0 && !body.Force {
+		c.JSON(http.StatusOK, gin.H{"ok": true, "message": "当前版本 " + a.version + " 比目标版本 " + target + " 更新，已跳过降级", "updated": false})
 		return
 	}
 

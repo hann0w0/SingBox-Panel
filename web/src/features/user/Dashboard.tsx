@@ -1,70 +1,55 @@
 import { useEffect, useRef, useState } from 'react'
-import { Alert, Button, Card, Descriptions, Empty, Form, Grid, Input, List, Modal, Segmented, Space, Tag, Typography, message } from 'antd'
-import { QRCodeSVG } from 'qrcode.react'
-import { changePassword, errMsg, getMe, getUserNodes, resetSub } from '../../api'
-import type { UserNode } from '../../api'
+import { Button, Card, Form, Input, Modal, Space, Typography, message } from 'antd'
+import { changePassword, errMsg, getMe, resetSub } from '../../api'
 import type { User } from '../../types'
 import { copyToClipboard } from '../../util'
 import { useAuth } from '../../store'
-import { CONTINENT_ORDER, continentOf, type Continent } from '../../continents'
-import regionData from '../../assets/regions.json'
-import { VirtualList } from '../../components/VirtualList'
 import { RequestState } from '../../components/RequestState'
 
-type RegionInfo = { geo: string; coord: [number, number]; label: string }
-const REGIONS = regionData as unknown as Record<string, RegionInfo>
-const userNodeKey = (node: UserNode) => `${node.type}:${node.name}:${node.server}:${node.port}`
+const LOGO_VERSION = '20260906-2'
+type ClientKind = 'surge' | 'clash' | 'shadowrocket'
 
-const TYPE_COLORS: Record<string, string> = {
-  vless: 'blue', vmess: 'purple', trojan: 'geekblue', shadowsocks: 'green',
-  hysteria2: 'cyan', hysteria: 'cyan', tuic: 'orange', anytls: 'magenta',
-  snell: 'gold', socks: 'default', mixed: 'volcano',
+interface ClientSpec {
+  kind: ClientKind
+  label: string
+  logo: string
+  logoClass: string
+  target: string
 }
 
-const LOGO_VERSION = '20260906-2'
-type ClientLogoKind = 'surge' | 'clashmeta' | 'shadowrocket'
+const CLIENTS: ClientSpec[] = [
+  { kind: 'surge', label: 'Surge', logo: '/logos/surge.png', logoClass: 'client-logo-surge', target: 'surge' },
+  { kind: 'clash', label: 'ClashMeta', logo: '/logos/clashmeta.png', logoClass: 'client-logo-clashmeta', target: 'clash' },
+  { kind: 'shadowrocket', label: 'Shadowrocket', logo: '/logos/shadowrocket.png', logoClass: 'client-logo-shadowrocket', target: 'shadowrocket' },
+]
 
-function ClientLogo({ src, kind }: { src: string; kind: ClientLogoKind }) {
+function ClientLogo({ spec }: { spec: ClientSpec }) {
   return (
-    <span className={`client-logo client-logo-${kind}`} aria-hidden="true">
-      <img src={`${src}?v=${LOGO_VERSION}`} alt="" />
+    <span className={`client-logo ${spec.logoClass}`} aria-hidden="true">
+      <img src={`${spec.logo}?v=${LOGO_VERSION}`} alt="" />
     </span>
   )
 }
 
-// Chinese label for an ISO region code (HK → 香港), falls back to the code.
-const labelOf = (code: string): string => REGIONS[code]?.label || (code === 'Other' ? '其他' : code)
-
 export default function Dashboard() {
-  const screens = Grid.useBreakpoint()
-  const isMobile = !screens.md
   const setAuth = useAuth((s) => s.setAuth)
   const setUser = useAuth((s) => s.setUser)
   const [user, setLocalUser] = useState<User | null>(null)
   const [subUrl, setSubUrl] = useState('')
-  const [nodes, setNodes] = useState<UserNode[]>([])
-  const [continentNodes, setContinentNodes] = useState<Partial<Record<Continent, UserNode[]>>>({})
-  const [seg, setSeg] = useState<Continent>('亚洲')
-  const [selectedNode, setSelectedNode] = useState<UserNode | null>(null)
   const [pwdOpen, setPwdOpen] = useState(false)
   const [loading, setLoading] = useState(true)
   const [loadError, setLoadError] = useState<string | null>(null)
-  const [nodesLoading, setNodesLoading] = useState(true)
-  const [nodesError, setNodesError] = useState<string | null>(null)
-  const loadRef = useRef<{ generation: number; controllers: AbortController[] }>({ generation: 0, controllers: [] })
+  const loadRef = useRef<{ generation: number; controller: AbortController | null }>({ generation: 0, controller: null })
   const [pwdForm] = Form.useForm()
 
   const load = () => {
-    loadRef.current.controllers.forEach((controller) => controller.abort())
-    const meController = new AbortController()
-    const nodesController = new AbortController()
+    loadRef.current.controller?.abort()
+    const controller = new AbortController()
     const generation = ++loadRef.current.generation
-    loadRef.current.controllers = [meController, nodesController]
+    loadRef.current.controller = controller
     setLoading(true)
-    setNodesLoading(true)
     setLoadError(null)
-    setNodesError(null)
-    getMe(meController.signal)
+    getMe(controller.signal)
       .then((d) => {
         if (generation !== loadRef.current.generation) return
         setLocalUser(d.user)
@@ -72,51 +57,31 @@ export default function Dashboard() {
         setUser(d.user)
       })
       .catch((e) => {
-        if (generation === loadRef.current.generation && !meController.signal.aborted) setLoadError(errMsg(e))
+        if (generation === loadRef.current.generation && !controller.signal.aborted) setLoadError(errMsg(e))
       })
       .finally(() => {
-        if (generation === loadRef.current.generation && !meController.signal.aborted) setLoading(false)
-      })
-    getUserNodes(nodesController.signal)
-      .then((next) => {
-        if (generation === loadRef.current.generation) setNodes(next)
-      })
-      .catch((e) => {
-        if (generation === loadRef.current.generation && !nodesController.signal.aborted) setNodesError(errMsg(e))
-      })
-      .finally(() => {
-        if (generation === loadRef.current.generation && !nodesController.signal.aborted) setNodesLoading(false)
+        if (generation === loadRef.current.generation && !controller.signal.aborted) setLoading(false)
       })
   }
   useEffect(() => {
     load()
     return () => {
       loadRef.current.generation++
-      loadRef.current.controllers.forEach((controller) => controller.abort())
+      loadRef.current.controller?.abort()
     }
   }, [])
-
-  useEffect(() => {
-    const byContinent: Partial<Record<Continent, UserNode[]>> = {}
-    for (const n of nodes) {
-      const c = continentOf(n.region)
-      if (!byContinent[c]) byContinent[c] = []
-      byContinent[c].push(n)
-    }
-    setContinentNodes(byContinent)
-  }, [nodes])
 
   if (!user) {
     return <RequestState loading={loading} error={loadError} hasData={false} onRetry={load}><span /></RequestState>
   }
 
   const link = (target: string) => (target ? `${subUrl}?target=${target}` : subUrl)
-  const copySub = async (target: string, label: string) => {
+  const copySub = async (spec: ClientSpec) => {
     try {
-      await copyToClipboard(link(target))
-      message.success(`已复制 ${label} 订阅链接`)
+      await copyToClipboard(link(spec.target))
+      message.success(`已复制 ${spec.label} 订阅链接`)
     } catch {
-      Modal.info({ title: `${label} 订阅链接`, width: 640, content: <Typography.Paragraph copyable code style={{ whiteSpace: 'pre-wrap', wordBreak: 'break-all' }}>{link(target)}</Typography.Paragraph> })
+      Modal.info({ title: `${spec.label} 订阅链接`, width: 640, content: <Typography.Paragraph copyable code style={{ whiteSpace: 'pre-wrap', wordBreak: 'break-all' }}>{link(spec.target)}</Typography.Paragraph> })
     }
   }
   const doReset = () => Modal.confirm({
@@ -146,53 +111,17 @@ export default function Dashboard() {
     }
   }
 
-  // Only show continents that actually have nodes; keep the current segment
-  // valid if it becomes empty after a refresh.
-  const segOptions = CONTINENT_ORDER
-    .map((c) => ({ value: c, count: continentNodes[c]?.length ?? 0 }))
-    .filter((o) => o.count > 0)
-    .map((o) => ({ label: `${o.value} ${o.count}`, value: o.value }))
-  const activeSeg = segOptions.some((o) => o.value === seg) ? seg : (segOptions[0]?.value ?? '其他')
-  const activeNodes = continentNodes[activeSeg] ?? []
-  const renderNode = (n: UserNode) => (
-    <List.Item
-      onClick={() => setSelectedNode(n)}
-      onKeyDown={(event) => {
-        if (event.key === 'Enter' || event.key === ' ') {
-          event.preventDefault()
-          setSelectedNode(n)
-        }
-      }}
-      role="button"
-      tabIndex={0}
-      className="dashboard-node-row"
-    >
-      <List.Item.Meta
-        title={<span style={{ fontWeight: 600 }}>{n.name}</span>}
-        description={
-          <Space size={[4, 4]} wrap>
-            <Tag color={TYPE_COLORS[n.type]}>{n.type}</Tag>
-            {labelOf(n.region || '') && <span style={{ color: 'var(--console-muted)', fontSize: 12 }}>{labelOf(n.region || '')}</span>}
-            <span style={{ fontFamily: 'monospace', fontSize: 12, color: 'var(--console-muted)' }}>{n.server}:{n.port}</span>
-          </Space>
-        }
-      />
-    </List.Item>
-  )
-
   return (
     <RequestState loading={loading} error={loadError} hasData onRetry={load}>
-      <header className="dashboard-intro">
-        <h1>我的订阅</h1>
-        <p>管理订阅链接，查看可用节点。</p>
-      </header>
       <Space direction="vertical" size="large" style={{ width: '100%' }}>
       <Card title="订阅链接">
         <p className="subscription-hint">选择客户端，复制对应的订阅链接</p>
         <div className="client-subscriptions">
-          <Button className="client-subscription-button" icon={<ClientLogo src="/logos/surge.png" kind="surge" />} onClick={() => copySub('surge', 'Surge')}>Surge</Button>
-          <Button className="client-subscription-button" icon={<ClientLogo src="/logos/clashmeta.png" kind="clashmeta" />} onClick={() => copySub('clash', 'ClashMeta')}>ClashMeta</Button>
-          <Button className="client-subscription-button" icon={<ClientLogo src="/logos/shadowrocket.png" kind="shadowrocket" />} onClick={() => copySub('shadowrocket', 'Shadowrocket')}>Shadowrocket</Button>
+          {CLIENTS.map((spec) => (
+            <Button key={spec.kind} className="client-subscription-button" icon={<ClientLogo spec={spec} />} onClick={() => void copySub(spec)}>
+              {spec.label}
+            </Button>
+          ))}
         </div>
         <div className="subscription-actions">
             <Button onClick={doReset}>重置订阅链接</Button>
@@ -200,58 +129,10 @@ export default function Dashboard() {
         </div>
       </Card>
 
-      <Card title={`可用节点（${nodes.length}）`}>
-        <RequestState loading={nodesLoading} error={nodesError} hasData={nodes.length > 0} empty={!nodesLoading && !nodesError && nodes.length === 0} emptyDescription="暂无节点，请联系管理员开通" onRetry={load}>
-          <Space direction="vertical" size="middle" style={{ width: '100%' }}>
-            <Segmented block options={segOptions} value={activeSeg} onChange={(v) => setSeg(v as Continent)} />
-            {activeNodes.length > 0 ? (
-              isMobile || activeNodes.length > 50 ? (
-                <VirtualList
-                  className="dashboard-node-virtual-list"
-                  style={{ height: Math.min(activeNodes.length, isMobile ? 5 : 8) * 72, maxHeight: isMobile ? 360 : 576 }}
-                  items={activeNodes}
-                  getKey={userNodeKey}
-                  estimatedItemHeight={72}
-                  overscan={5}
-                  renderItem={renderNode}
-                />
-              ) : (
-                <List itemLayout="horizontal" dataSource={activeNodes} renderItem={renderNode} />
-              )
-            ) : (
-              <Empty description="该大区暂无节点" style={{ padding: '24px 0' }} />
-            )}
-          </Space>
-        </RequestState>
-      </Card>
-
-      <Modal title={selectedNode?.name} open={!!selectedNode} onCancel={() => setSelectedNode(null)} footer={<Button onClick={() => setSelectedNode(null)}>关闭</Button>} width={560} styles={{ body: { maxHeight: '70vh', overflowY: 'auto' } }}>
-        {selectedNode && (
-          <Space direction="vertical" size="middle" style={{ width: '100%' }}>
-            {selectedNode.link ? (
-              <div style={{ textAlign: 'center' }}>
-                <div style={{ display: 'inline-block', padding: 12, background: '#fff', borderRadius: 8, border: '1px solid #eee' }}>
-                  <QRCodeSVG value={selectedNode.link} size={196} />
-                </div>
-                <div style={{ marginTop: 8, color: 'var(--console-muted)' }}>扫码导入（{selectedNode.type}）</div>
-              </div>
-            ) : (
-              <Alert type="info" showIcon message={`${selectedNode.type} 没有通用的分享链接格式`} description="请用下面的参数在客户端手动添加，或直接使用上方的订阅链接导入。" />
-            )}
-            <Descriptions bordered size="small" column={1}>
-              {Object.entries(selectedNode.params).map(([k, v]) => (
-                <Descriptions.Item key={k} label={k}><Typography.Text copyable style={{ wordBreak: 'break-all' }}>{v}</Typography.Text></Descriptions.Item>
-              ))}
-            </Descriptions>
-            <Typography.Paragraph copyable={{ text: selectedNode.link }} code style={{ wordBreak: 'break-all', margin: 0 }}>{selectedNode.link}</Typography.Paragraph>
-          </Space>
-        )}
-      </Modal>
-
       <Modal title="修改密码" open={pwdOpen} onOk={doChangePwd} onCancel={() => setPwdOpen(false)} destroyOnClose>
         <Form form={pwdForm} layout="vertical">
           <Form.Item name="old_password" label="当前密码" rules={[{ required: true }]}><Input.Password /></Form.Item>
-          <Form.Item name="new_password" label="新密码" rules={[{ required: true, min: 8, max: 72 }]}><Input.Password /></Form.Item>
+          <Form.Item name="new_password" label="新密码" rules={[{ required: true, message: '请输入新密码' }, { max: 72 }]}><Input.Password /></Form.Item>
         </Form>
       </Modal>
       </Space>

@@ -96,6 +96,17 @@ type User struct {
 	// changes, account disabling and other security-sensitive updates increment it.
 	TokenVersion uint `json:"-"`
 
+	// Usage tracking. Exact per-user byte counters are unavailable from
+	// official sing-box builds, so activity is derived from panel logins and
+	// subscription fetches instead.
+	LastLoginAt   *time.Time `json:"last_login_at"`
+	LastLoginIP   string     `gorm:"size:64" json:"last_login_ip"`
+	LastSubAt     *time.Time `json:"last_sub_at"`
+	LastSubIP     string     `gorm:"size:64" json:"last_sub_ip"`
+	LastSubClient string     `gorm:"size:32" json:"last_sub_client"`
+	LastSubUA     string     `gorm:"size:255" json:"last_sub_ua"`
+	SubFetchCount int64      `gorm:"not null;default:0" json:"sub_fetch_count"`
+
 	CreatedAt time.Time `json:"created_at"`
 	UpdatedAt time.Time `json:"updated_at"`
 }
@@ -165,6 +176,11 @@ type Server struct {
 	TrafficUpdatedAt      *time.Time `json:"traffic_updated_at"`
 	TrafficRemoteUpload   uint64     `json:"-"`
 	TrafficRemoteDownload uint64     `json:"-"`
+	// TrafficQuota/TrafficResetDay are retained columns from a removed
+	// provider-quota feature (the panel only sees sing-box traffic, not the
+	// host's). They are no longer read or written by the API.
+	TrafficQuota    uint64 `gorm:"not null;default:0" json:"-"`
+	TrafficResetDay int    `gorm:"not null;default:1" json:"-"`
 
 	// FinalOutbound is the default route target (default "direct").
 	FinalOutbound string `gorm:"size:64" json:"final_outbound"`
@@ -282,7 +298,7 @@ type Setting struct {
 	Value string `json:"value"`
 }
 
-// TrafficRecord is one five-minute accounting bucket. InboundID=0 stores the
+// TrafficRecord is one one-minute accounting bucket. InboundID=0 stores the
 // node total; non-zero rows are attributed to a sing-box inbound port.
 type TrafficRecord struct {
 	ID             uint      `gorm:"primaryKey" json:"id"`
@@ -297,6 +313,40 @@ type TrafficRecord struct {
 	UDPConnections int       `gorm:"not null;default:0" json:"udp_connections"`
 	CreatedAt      time.Time `json:"created_at"`
 	UpdatedAt      time.Time `json:"updated_at"`
+}
+
+// TrafficHourly is the long-retention hourly rollup of TrafficRecord. It is
+// written alongside the minute buckets so long ranges never scan minute rows.
+// TCP/UDP connection columns hold the hour's maximum.
+type TrafficHourly struct {
+	ID             uint      `gorm:"primaryKey" json:"id"`
+	ServerID       uint      `gorm:"not null;uniqueIndex:idx_traffic_hourly_key,priority:1;index" json:"server_id"`
+	InboundID      uint      `gorm:"not null;default:0;uniqueIndex:idx_traffic_hourly_key,priority:2" json:"inbound_id"`
+	Bucket         time.Time `gorm:"not null;uniqueIndex:idx_traffic_hourly_key,priority:3;index" json:"bucket"`
+	Upload         uint64    `gorm:"not null;default:0" json:"upload"`
+	Download       uint64    `gorm:"not null;default:0" json:"download"`
+	UploadRate     uint64    `gorm:"not null;default:0" json:"upload_rate"`
+	DownloadRate   uint64    `gorm:"not null;default:0" json:"download_rate"`
+	TCPConnections int       `gorm:"not null;default:0" json:"tcp_connections"`
+	UDPConnections int       `gorm:"not null;default:0" json:"udp_connections"`
+	CreatedAt      time.Time `json:"created_at"`
+	UpdatedAt      time.Time `json:"updated_at"`
+}
+
+// TableName keeps the hourly table name stable.
+func (TrafficHourly) TableName() string { return "traffic_hourly" }
+
+// SubscriptionFetch is one subscription download, kept for a limited window
+// so administrators can see which clients and addresses use an account.
+type SubscriptionFetch struct {
+	ID        uint      `gorm:"primaryKey" json:"id"`
+	UserID    uint      `gorm:"not null;index:idx_sub_fetch_user_time,priority:1" json:"user_id"`
+	IP        string    `gorm:"size:64" json:"ip"`
+	Client    string    `gorm:"size:32" json:"client"`
+	Format    string    `gorm:"size:16" json:"format"`
+	UserAgent string    `gorm:"size:255" json:"user_agent"`
+	Status    int       `json:"status"`
+	CreatedAt time.Time `gorm:"index;index:idx_sub_fetch_user_time,priority:2" json:"created_at"`
 }
 
 // SchemaMigration records one successfully-applied database schema change.
@@ -388,7 +438,7 @@ type CustomNodeSubscription struct {
 func AllModels() []any {
 	return []any{
 		&User{}, &UserNodeOrder{}, &Server{}, &Inbound{}, &Outbound{}, &RouteRule{}, &RuleSet{}, &Setting{}, &TrafficRecord{},
-		&CustomNodeSubscription{}, &CustomNode{},
+		&CustomNodeSubscription{}, &CustomNode{}, &TrafficHourly{}, &SubscriptionFetch{},
 	}
 }
 

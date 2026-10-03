@@ -11,6 +11,16 @@ export interface User {
   node_count?: number
   expire_at: string | null
   enabled: boolean
+  last_login_at?: string | null
+  last_login_ip?: string
+  last_sub_at?: string | null
+  last_sub_ip?: string
+  last_sub_client?: string
+  last_sub_ua?: string
+  sub_fetch_count?: number
+  // Only present in the admin user list.
+  sub_fetches_24h?: number
+  sub_ips_24h?: number
   // sub_token intentionally absent: the API never returns it (see model.User).
   // The frontend uses subscription_url from /api/user/me and /api/user/reset-sub.
   created_at: string
@@ -43,6 +53,9 @@ export interface Server {
   mem_used: number
   mem_total: number
   final_outbound: string
+  traffic_available?: boolean
+  traffic_upload_rate?: number
+  traffic_download_rate?: number
   config_mode: 'managed' | 'raw' | ''
   agent_url: string
   inbounds?: Inbound[]
@@ -76,9 +89,14 @@ export interface TrafficSeries {
   available: boolean
   range: TrafficRange
   step_seconds: number
+  timezone?: string
   updated_at: string | null
   upload: number
   download: number
+  peak_upload_rate?: number
+  peak_download_rate?: number
+  unattributed_upload?: number
+  unattributed_download?: number
   upload_rate: number
   download_rate: number
   tcp_connections: number
@@ -260,21 +278,6 @@ export interface Inbound {
   updated_at: string
 }
 
-export interface NodeBrief {
-  id: number
-  name: string
-  region: string
-  online: boolean
-  singbox_version: string
-  singbox_installed: boolean
-  load1: number
-  mem_used: number
-  mem_total: number
-  inbounds: number
-  outbounds: number
-  rules: number
-}
-
 export interface Overview {
   servers_total: number
   servers_online: number
@@ -289,7 +292,6 @@ export interface Overview {
   mem_total: number
   mem_percent: number
   uptime_seconds: number
-  nodes: NodeBrief[] | null
 }
 
 export interface InboundBrief {

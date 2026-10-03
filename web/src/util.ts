@@ -6,14 +6,6 @@ export function formatBytes(n: number): string {
   return `${v.toFixed(i === 0 ? 0 : 2)} ${units[i]}`
 }
 
-export function gbToBytes(gb: number): number {
-  return Math.round(gb * 1024 * 1024 * 1024)
-}
-
-export function bytesToGB(n: number): number {
-  return n / (1024 * 1024 * 1024)
-}
-
 // randomHex returns a cryptographically-random hex string of 2*bytes chars.
 export function randomHex(bytes: number): string {
   const a = new Uint8Array(bytes)
@@ -108,4 +100,46 @@ export function formatDuration(sec: number): string {
   if (d > 0) return `${d} 天 ${h} 小时`
   if (h > 0) return `${h} 小时 ${m} 分`
   return `${m} 分`
+}
+
+// relativeTime renders a past timestamp as 刚刚 / N 分钟前 / N 小时前 / N 天前,
+// falling back to a date for anything older than 30 days.
+export function relativeTime(value: string | null | undefined, now: number = Date.now()): string {
+  if (!value) return '—'
+  const t = new Date(value).getTime()
+  if (!Number.isFinite(t) || t <= 0) return '—'
+  const seconds = Math.max(0, Math.floor((now - t) / 1000))
+  if (seconds < 60) return '刚刚'
+  if (seconds < 3600) return `${Math.floor(seconds / 60)} 分钟前`
+  if (seconds < 86400) return `${Math.floor(seconds / 3600)} 小时前`
+  if (seconds < 30 * 86400) return `${Math.floor(seconds / 86400)} 天前`
+  return new Date(t).toLocaleDateString('zh-CN')
+}
+
+// daysUntil returns whole days until a timestamp (negative when past), or null.
+export function daysUntil(value: string | null | undefined, now: number = Date.now()): number | null {
+  if (!value) return null
+  const t = new Date(value).getTime()
+  if (!Number.isFinite(t)) return null
+  return Math.floor((t - now) / 86400000)
+}
+
+// toCSV serializes rows with RFC 4180 quoting and a BOM so Excel keeps UTF-8.
+export function toCSV(rows: (string | number)[][]): string {
+  const escape = (cell: string | number) => {
+    const text = String(cell)
+    return /[",\n\r]/.test(text) ? `"${text.replace(/"/g, '""')}"` : text
+  }
+  return '\uFEFF' + rows.map((row) => row.map(escape).join(',')).join('\r\n')
+}
+
+export function downloadText(filename: string, text: string, type = 'text/csv;charset=utf-8') {
+  const url = URL.createObjectURL(new Blob([text], { type }))
+  const a = document.createElement('a')
+  a.href = url
+  a.download = filename
+  document.body.appendChild(a)
+  a.click()
+  a.remove()
+  setTimeout(() => URL.revokeObjectURL(url), 1000)
 }

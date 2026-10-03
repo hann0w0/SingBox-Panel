@@ -19,7 +19,9 @@ import (
 	"github.com/hann0w0/singbox-panel/internal/domain/protocol"
 )
 
-const maxTrafficResponseSize = 4 << 20
+// maxTrafficResponseSize bounds one /connections response. Busy nodes with
+// thousands of open connections can exceed a few MiB of JSON.
+const maxTrafficResponseSize = 16 << 20
 
 type trafficSampler struct {
 	mu sync.Mutex
@@ -36,6 +38,8 @@ type trafficSampler struct {
 	available       bool
 	uploadRate      uint64
 	downloadRate    uint64
+	peakUpload      uint64
+	peakDownload    uint64
 	tcpConnections  int
 	udpConnections  int
 	client          *http.Client
@@ -260,11 +264,14 @@ func (s *trafficSampler) poll(ctx context.Context) {
 		return
 	}
 
-	now := time.Now()
+	s.ingest(cfg.Endpoint, counters, time.Now())
+}
 
+// ingest folds one /connections response into the sampler state.
+func (s *trafficSampler) ingest(endpoint string, counters clashTrafficResponse, now time.Time) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if s.endpoint != "" && s.endpoint != cfg.Endpoint {
+	if s.endpoint != "" && s.endpoint != endpoint {
 		s.connections = make(map[string]trafficConnection)
 		s.pendingPorts = make(map[string]protocol.PortTrafficSnapshot)
 		s.haveConnections = false
@@ -274,7 +281,7 @@ func (s *trafficSampler) poll(ctx context.Context) {
 	uploadRate := uint64(0)
 	downloadRate := uint64(0)
 	sampleSeconds := 1.0
-	if s.haveSample && s.endpoint == cfg.Endpoint && now.After(s.lastSample) {
+	if s.haveSample && s.endpoint == endpoint && now.After(s.lastSample) {
 		sampleSeconds = now.Sub(s.lastSample).Seconds()
 		if sampleSeconds > 0 {
 			uploadRate = uint64(float64(counterDelta(counters.UploadTotal, s.lastUpload)) / sampleSeconds)
@@ -289,36 +296,50 @@ func (s *trafficSampler) poll(ctx context.Context) {
 	// metadata.type, for example "vless/vless-in". Sampling deltas provides
 	// useful per-port history without requiring the optional V2Ray API build tag.
 	nextConnections := make(map[string]trafficConnection, len(counters.Connections))
+	sampleDeltas := make(map[string][2]uint64)
 	for _, connection := range counters.Connections {
 		if connection.ID == "" {
 			continue
 		}
 		inbound := parseInboundTag(connection.Metadata.Type)
 		current := trafficConnection{inbound: inbound, upload: connection.Upload, download: connection.Download}
-		if s.haveConnections {
-			if previous, ok := s.connections[connection.ID]; ok && previous.inbound == inbound && inbound != "" {
-				delta := s.pendingPorts[inbound]
-				delta.Inbound = inbound
-				uploadDelta := counterDelta(connection.Upload, previous.upload)
-				downloadDelta := counterDelta(connection.Download, previous.download)
-				delta.Upload += uploadDelta
-				delta.Download += downloadDelta
-				uploadRate := uint64(float64(uploadDelta) / sampleSeconds)
-				downloadRate := uint64(float64(downloadDelta) / sampleSeconds)
-				if uploadRate > delta.UploadRate {
-					delta.UploadRate = uploadRate
-				}
-				if downloadRate > delta.DownloadRate {
-					delta.DownloadRate = downloadRate
-				}
-				s.pendingPorts[inbound] = delta
+		if s.haveConnections && inbound != "" {
+			// A connection absent from the previous sample was opened since
+			// then, so all of its bytes are new. Counting only increments of
+			// already-known connections dropped short-lived connections and
+			// the first second of every long one.
+			uploadDelta, downloadDelta := connection.Upload, connection.Download
+			if previous, ok := s.connections[connection.ID]; ok && previous.inbound == inbound {
+				uploadDelta = counterDelta(connection.Upload, previous.upload)
+				downloadDelta = counterDelta(connection.Download, previous.download)
+			}
+			if uploadDelta > 0 || downloadDelta > 0 {
+				sample := sampleDeltas[inbound]
+				sample[0] += uploadDelta
+				sample[1] += downloadDelta
+				sampleDeltas[inbound] = sample
 			}
 		}
 		nextConnections[connection.ID] = current
 	}
+	// A port's rate is the sum of all its connections in this sample, not the
+	// fastest single connection.
+	for inbound, sample := range sampleDeltas {
+		delta := s.pendingPorts[inbound]
+		delta.Inbound = inbound
+		delta.Upload += sample[0]
+		delta.Download += sample[1]
+		if rate := uint64(float64(sample[0]) / sampleSeconds); rate > delta.UploadRate {
+			delta.UploadRate = rate
+		}
+		if rate := uint64(float64(sample[1]) / sampleSeconds); rate > delta.DownloadRate {
+			delta.DownloadRate = rate
+		}
+		s.pendingPorts[inbound] = delta
+	}
 	s.connections = nextConnections
 	s.haveConnections = true
-	s.endpoint = cfg.Endpoint
+	s.endpoint = endpoint
 	s.lastUpload = counters.UploadTotal
 	s.lastDownload = counters.DownloadTotal
 	s.lastSample = now
@@ -326,6 +347,12 @@ func (s *trafficSampler) poll(ctx context.Context) {
 	s.available = true
 	s.uploadRate = uploadRate
 	s.downloadRate = downloadRate
+	if uploadRate > s.peakUpload {
+		s.peakUpload = uploadRate
+	}
+	if downloadRate > s.peakDownload {
+		s.peakDownload = downloadRate
+	}
 	s.tcpConnections, s.udpConnections = hostConnectionCounts()
 
 }
@@ -337,13 +364,15 @@ func (s *trafficSampler) snapshot() *protocol.TrafficSnapshot {
 		return nil
 	}
 	snapshot := &protocol.TrafficSnapshot{
-		UploadTotal:    s.lastUpload,
-		DownloadTotal:  s.lastDownload,
-		UploadRate:     s.uploadRate,
-		DownloadRate:   s.downloadRate,
-		TCPConnections: s.tcpConnections,
-		UDPConnections: s.udpConnections,
-		SampledAt:      s.lastSample.Unix(),
+		UploadTotal:      s.lastUpload,
+		DownloadTotal:    s.lastDownload,
+		UploadRate:       s.uploadRate,
+		DownloadRate:     s.downloadRate,
+		TCPConnections:   s.tcpConnections,
+		UDPConnections:   s.udpConnections,
+		SampledAt:        s.lastSample.Unix(),
+		PeakUploadRate:   s.peakUpload,
+		PeakDownloadRate: s.peakDownload,
 	}
 	for _, delta := range s.pendingPorts {
 		snapshot.Ports = append(snapshot.Ports, delta)
@@ -375,6 +404,13 @@ func (s *trafficSampler) acknowledge(snapshot *protocol.TrafficSnapshot) {
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	// Clear the node peak only when no newer sample raised it meanwhile.
+	if s.peakUpload <= snapshot.PeakUploadRate {
+		s.peakUpload = 0
+	}
+	if s.peakDownload <= snapshot.PeakDownloadRate {
+		s.peakDownload = 0
+	}
 	for _, sent := range snapshot.Ports {
 		pending, ok := s.pendingPorts[sent.Inbound]
 		if !ok {

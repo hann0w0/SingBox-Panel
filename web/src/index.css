@@ -30,51 +30,6 @@ body {
   gap: 10px;
 }
 
-.traffic-summary-grid {
-  display: grid;
-  grid-template-columns: repeat(4, minmax(0, 1fr));
-  gap: 0;
-  margin-top: 18px;
-  border: 1px solid var(--console-border);
-  border-radius: 8px;
-  background: var(--console-surface);
-  overflow: hidden;
-}
-
-.traffic-summary-card {
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
-  min-width: 0;
-  padding: 11px 16px;
-  border-right: 1px solid var(--console-border);
-}
-
-.traffic-summary-card:last-child {
-  border-right: 0;
-}
-
-.traffic-summary-card span {
-  color: var(--console-muted);
-  font-size: 12px;
-}
-
-.traffic-summary-card strong {
-  overflow: hidden;
-  color: var(--console-ink);
-  font-size: 20px;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.traffic-section-heading {
-  display: flex;
-  align-items: baseline;
-  justify-content: space-between;
-  gap: 12px;
-  margin-top: 22px;
-}
-
 .traffic-dual-grid {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
@@ -111,25 +66,6 @@ body {
   margin: 14px 0 -2px 34px;
   color: var(--console-muted);
   font-size: 12px;
-}
-
-.traffic-updated-at {
-  margin-top: 8px;
-  color: var(--console-muted);
-  font-size: 12px;
-  text-align: right;
-}
-
-.traffic-section-heading .ant-typography {
-  margin: 0;
-}
-
-.traffic-port-heading {
-  align-items: center;
-}
-
-.traffic-port-heading > div:first-child {
-  min-width: 0;
 }
 
 .traffic-port-hint {
@@ -766,7 +702,6 @@ body {
   gap: 0;
 }
 
-.mobile-user-list.is-scrollable,
 .mobile-subscription-list.is-scrollable,
 .mobile-node-list.is-scrollable {
   max-height: 560px;
@@ -775,7 +710,6 @@ body {
   overscroll-behavior: contain;
 }
 
-.mobile-user-card,
 .mobile-subscription-card,
 .mobile-node-card {
   box-sizing: border-box;
@@ -1272,11 +1206,6 @@ body {
     width: 100%;
   }
 
-  .traffic-summary-grid {
-    grid-template-columns: repeat(2, minmax(0, 1fr));
-    gap: 0;
-  }
-
   .traffic-panel-card {
     padding: 12px 12px 8px;
   }
@@ -1289,38 +1218,9 @@ body {
     font-size: 12px;
   }
 
-  .traffic-summary-card {
-    padding: 11px 12px;
-    border-right: 1px solid var(--console-border);
-    border-bottom: 1px solid var(--console-border);
-  }
-
-  .traffic-summary-card:nth-child(2n) {
-    border-right: 0;
-  }
-
-  .traffic-summary-card:nth-last-child(-n + 2) {
-    border-bottom: 0;
-  }
-
-  .traffic-summary-card strong {
-    font-size: 17px;
-  }
-
   .traffic-dual-grid {
     grid-template-columns: 1fr;
     gap: 10px;
-  }
-
-  .traffic-section-heading {
-    align-items: flex-start;
-    flex-direction: column;
-    gap: 6px;
-  }
-
-  .traffic-port-heading {
-    align-items: stretch;
-    flex-direction: row;
   }
 
   .route-rule-modal .ant-modal-content {
@@ -1471,7 +1371,6 @@ pre {
   background: currentColor;
 }
 
-
 .server-drag-handle:hover {
   color: var(--console-primary);
 }
@@ -1516,20 +1415,6 @@ pre {
   gap: 16px;
 }
 
-.users-page-grid {
-  display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  grid-template-areas:
-    "users subscriptions"
-    "nodes nodes";
-  gap: 16px;
-  align-items: start;
-}
-
-.users-overview-card {
-  grid-area: users;
-}
-
 .subscription-overview-card {
   grid-area: subscriptions;
 }
@@ -1558,8 +1443,26 @@ pre {
   overflow: hidden;
 }
 
-.management-fixed-table .ant-table-body {
-  scrollbar-gutter: stable;
+/* The users page tables scroll with the wheel/trackpad only; scrollbars are
+   hidden. Native bars cover regular tables, and the virtual-list bar is a
+   separate element antd renders once a table switches to virtual mode. */
+.users-page .ant-table-body,
+.users-page .ant-table-content,
+.users-page .ant-table-tbody-virtual-holder {
+  scrollbar-width: none;
+  -ms-overflow-style: none;
+}
+
+.users-page .ant-table-body::-webkit-scrollbar,
+.users-page .ant-table-content::-webkit-scrollbar,
+.users-page .ant-table-tbody-virtual-holder::-webkit-scrollbar {
+  display: none;
+  width: 0;
+  height: 0;
+}
+
+.users-page .ant-table-tbody-virtual-scrollbar {
+  display: none !important;
 }
 
 .management-fixed-table .ant-table-tbody > tr > td {
@@ -1589,16 +1492,6 @@ pre {
   margin-inline-end: 0;
 }
 
-@media (max-width: 1199px) {
-  .users-page-grid {
-    grid-template-columns: minmax(0, 1fr);
-    grid-template-areas:
-      "users"
-      "subscriptions"
-      "nodes";
-  }
-}
-
 @media (max-width: 900px) {
   .custom-node-filter-bar {
     flex-wrap: wrap;
@@ -1626,7 +1519,6 @@ pre {
     overflow: hidden;
   }
 
-  .mobile-user-list,
   .mobile-subscription-list,
   .mobile-node-list {
     flex: 1;
@@ -1635,12 +1527,10 @@ pre {
     overflow-y: auto;
   }
 
-  .mobile-user-list.is-scrollable,
   .mobile-subscription-list.is-scrollable,
   .mobile-node-list.is-scrollable {
     overscroll-behavior-y: auto;
   }
-
 }
 
 /* The date+time popup is ~457px wide (288px date panel + 3 time columns), which
@@ -1674,10 +1564,6 @@ pre {
   flex: 1 1 240px;
   min-width: 210px;
   max-width: 320px;
-}
-
-.logs-lines-select {
-  flex: 0 0 128px;
 }
 
 .logs-filter-select {
@@ -2120,7 +2006,6 @@ pre {
     max-width: none;
   }
 
-  .logs-lines-select,
   .logs-filter-select {
     width: 100%;
   }
@@ -2245,4 +2130,290 @@ pre {
   clip: rect(0, 0, 0, 0) !important;
   white-space: nowrap !important;
   border: 0 !important;
+}
+
+/* Sorted column: keep the sort arrows but not the column highlight. */
+.traffic-port-table .ant-table-thead > tr > th.ant-table-column-sort,
+.traffic-port-table .ant-table-tbody > tr > td.ant-table-column-sort,
+.traffic-port-table .ant-table-thead > tr > th.ant-table-column-has-sorters:hover {
+  background: inherit;
+}
+
+.users-page-single {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+/* 外部节点 page: the two panels stack full width; no fixed card height. */
+.external-nodes-page .users-top-card {
+  height: auto;
+}
+
+.external-nodes-page .users-top-card > .ant-card-body {
+  overflow: visible;
+}
+
+.user-card-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(340px, 1fr));
+  gap: 14px;
+}
+
+.user-card {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding: 16px 18px 14px;
+  border: 1px solid var(--console-border);
+  border-radius: 12px;
+  background: var(--console-container);
+  transition: border-color 0.15s ease, box-shadow 0.15s ease;
+}
+
+.user-card:hover {
+  border-color: var(--console-border-hover);
+  box-shadow: 0 6px 18px rgb(var(--console-shadow) / 6%);
+}
+
+.user-card-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.user-card-title {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+
+.user-card-title .ant-tag {
+  margin-inline-end: 0;
+}
+
+.user-card-name {
+  font-size: 16px;
+  font-weight: 600;
+  color: var(--console-ink);
+  overflow-wrap: anywhere;
+}
+
+.user-card-actions {
+  flex: 0 0 auto;
+}
+
+.user-card-row {
+  display: flex;
+  gap: 10px;
+  align-items: flex-start;
+}
+
+.user-card-label {
+  flex: 0 0 56px;
+  padding-top: 2px;
+  color: var(--console-muted);
+  font-size: 12px;
+}
+
+.user-card-tags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  min-width: 0;
+}
+
+.user-card-tags .ant-tag {
+  margin-inline-end: 0;
+}
+
+.user-card-muted {
+  color: var(--console-muted);
+  font-size: 13px;
+}
+
+.user-card-foot {
+  display: flex;
+  justify-content: space-between;
+  gap: 10px;
+  margin-top: auto;
+  padding-top: 10px;
+  border-top: 1px solid var(--console-border);
+  font-size: 13px;
+  color: var(--console-ink);
+}
+
+@media (max-width: 767px) {
+  .user-card-grid {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 10px;
+  }
+
+  .user-card {
+    padding: 14px;
+  }
+}
+
+/* Servers page: one card per node. */
+.server-card-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(360px, 1fr));
+  gap: 14px;
+}
+
+.server-card {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding: 16px 18px 14px;
+  border: 1px solid var(--console-border);
+  border-radius: 12px;
+  background: var(--console-container);
+  cursor: pointer;
+  transition: border-color 0.15s ease, box-shadow 0.15s ease, opacity 0.15s ease;
+}
+
+.server-card:hover,
+.server-card:focus-visible {
+  border-color: var(--console-border-hover);
+  box-shadow: 0 6px 18px rgb(var(--console-shadow) / 6%);
+  outline: none;
+}
+
+.server-card.is-offline {
+  background: var(--console-surface);
+}
+
+.server-card-dragging {
+  opacity: 0.45;
+}
+
+.server-card-drop-before {
+  box-shadow: inset 3px 0 0 var(--console-primary);
+}
+
+.server-card-drop-after {
+  box-shadow: inset -3px 0 0 var(--console-primary);
+}
+
+.server-card-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+
+.server-card-head .ant-tag {
+  margin-inline-end: 0;
+}
+
+.server-card-name {
+  flex: 1 1 auto;
+  min-width: 0;
+  font-size: 16px;
+  font-weight: 600;
+  color: var(--console-ink);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.server-card-actions {
+  flex: 0 0 auto;
+  margin-left: auto;
+}
+
+.server-card-versions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+
+.server-card-versions .ant-tag {
+  margin-inline-end: 0;
+}
+
+.server-card-metrics {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 8px;
+  padding: 10px 12px;
+  border-radius: 10px;
+  background: var(--console-surface);
+}
+
+.server-card-metrics > div {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.server-card-metric-label {
+  color: var(--console-muted);
+  font-size: 12px;
+}
+
+.server-card-metric-value {
+  font-size: 14px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  color: var(--console-ink);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.server-card-foot {
+  display: flex;
+  justify-content: space-between;
+  gap: 10px;
+  margin-top: auto;
+  padding-top: 10px;
+  border-top: 1px solid var(--console-border);
+  font-size: 12px;
+}
+
+.server-card-muted {
+  color: var(--console-muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+@media (max-width: 767px) {
+  .server-card-grid {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 10px;
+  }
+
+  .server-card {
+    padding: 14px;
+  }
+}
+
+@media (max-width: 767px) {
+  .traffic-port-table {
+    margin-top: 14px;
+  }
+
+  .traffic-port-table .ant-table-thead > tr > th,
+  .traffic-port-table .ant-table-tbody > tr > td,
+  .traffic-port-table .ant-table-summary > tr > td {
+    padding: 7px 6px;
+    font-size: 13px;
+  }
+
+  .traffic-port-table .ant-table-thead > tr > th:first-child,
+  .traffic-port-table .ant-table-tbody > tr > td:first-child,
+  .traffic-port-table .ant-table-summary > tr > td:first-child {
+    padding-left: 10px;
+  }
+
+  .traffic-port-table .ant-table-column-sorter {
+    margin-inline-start: 2px;
+  }
 }

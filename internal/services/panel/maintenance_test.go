@@ -784,3 +784,23 @@ func writeExecutable(t *testing.T, path, contents string) {
 		t.Fatal(err)
 	}
 }
+
+func TestCompareVersions(t *testing.T) {
+	cases := []struct {
+		a, b string
+		want int
+	}{
+		{"v1.0.3", "v1.0.2", 1},
+		{"v1.0.2", "v1.0.3", -1},
+		{"1.0.10", "v1.0.9", 1},
+		{"v1.0.2", "1.0.2", 0},
+		{"v1.0.3-rc1", "v1.0.3", 0},
+		{"v1.0.2-trafficfix.20261003", "v1.0.2", 0},
+		{"unknown", "v1.0.2", 0},
+	}
+	for _, tc := range cases {
+		if got := compareVersions(tc.a, tc.b); got != tc.want {
+			t.Errorf("compareVersions(%q, %q) = %d, want %d", tc.a, tc.b, got, tc.want)
+		}
+	}
+}

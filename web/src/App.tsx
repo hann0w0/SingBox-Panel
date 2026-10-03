@@ -8,11 +8,11 @@ import { RouteErrorBoundary } from './components/RouteErrorBoundary'
 // and user pages from downloading the much larger admin forms up front.
 const AppLayout = lazy(() => import('./components/Layout'))
 const Login = lazy(() => import('./features/auth/Login'))
-const Overview = lazy(() => import('./features/admin/overview/Overview'))
 const Servers = lazy(() => import('./features/admin/servers/Servers'))
 const ServerDetail = lazy(() => import('./features/admin/servers/ServerDetail'))
-const Logs = lazy(() => import('./features/admin/logs/Logs'))
+const ExternalNodes = lazy(() => import('./features/admin/nodes/ExternalNodes'))
 const Traffic = lazy(() => import('./features/admin/traffic/Traffic'))
+const Logs = lazy(() => import('./features/admin/logs/Logs'))
 const Users = lazy(() => import('./features/admin/users/Users'))
 const Settings = lazy(() => import('./features/admin/settings/Settings'))
 const Dashboard = lazy(() => import('./features/user/Dashboard'))
@@ -31,7 +31,7 @@ function AdminGuard({ children }: { children: JSX.Element }) {
 
 function Home() {
   const user = useAuth((s) => s.user)
-  return <Navigate to={user?.role === 'admin' ? '/admin/overview' : '/dashboard'} replace />
+  return <Navigate to={user?.role === 'admin' ? '/admin/servers' : '/dashboard'} replace />
 }
 
 // Spinner renders an Apple-style 12-spoke throbber (pure CSS, no icon font).
@@ -80,12 +80,13 @@ export default function App() {
         >
           <Route path="/" element={<Home />} />
           <Route path="/dashboard" element={<Dashboard />} />
-          <Route path="/admin/overview" element={<AdminGuard><Overview /></AdminGuard>} />
+          <Route path="/admin/overview" element={<Navigate to="/admin/servers" replace />} />
           <Route path="/admin/servers" element={<AdminGuard><Servers /></AdminGuard>} />
           <Route path="/admin/servers/:id" element={<AdminGuard><ServerDetail /></AdminGuard>} />
           <Route path="/admin/traffic" element={<AdminGuard><Traffic /></AdminGuard>} />
           <Route path="/admin/users" element={<AdminGuard><Users /></AdminGuard>} />
           <Route path="/admin/logs" element={<AdminGuard><Logs /></AdminGuard>} />
+          <Route path="/admin/external-nodes" element={<AdminGuard><ExternalNodes /></AdminGuard>} />
           <Route path="/admin/settings" element={<AdminGuard><Settings /></AdminGuard>} />
         </Route>
         <Route path="*" element={<Navigate to="/" replace />} />

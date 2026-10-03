@@ -8,9 +8,11 @@ import (
 )
 
 const (
-	maxUsernameBytes  = 191
-	minPasswordBytes  = 8
-	maxPasswordBytes  = 72 // bcrypt ignores/rejects input beyond this boundary
+	maxUsernameBytes = 191
+	// No minimum length or complexity: this panel serves a handful of known
+	// users and the administrator chooses their passwords. The only limit is
+	// bcrypt's 72-byte input boundary.
+	maxPasswordBytes  = 72
 	maxLoginJSONBytes = 8 << 10
 )
 
@@ -18,7 +20,7 @@ var (
 	errUsernameRequired = errors.New("username cannot be empty")
 	errUsernameTooLong  = errors.New("username must not exceed 191 bytes")
 	errUsernameControl  = errors.New("username cannot contain control characters")
-	errPasswordTooShort = errors.New("password must be at least 8 bytes")
+	errPasswordRequired = errors.New("password cannot be empty")
 	errPasswordTooLong  = errors.New("password must not exceed 72 bytes")
 )
 
@@ -43,8 +45,8 @@ func validateUsername(value string) (string, string, error) {
 }
 
 func validateNewPassword(value string) error {
-	if len(value) < minPasswordBytes {
-		return errPasswordTooShort
+	if value == "" {
+		return errPasswordRequired
 	}
 	if len(value) > maxPasswordBytes {
 		return errPasswordTooLong

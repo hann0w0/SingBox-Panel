@@ -90,8 +90,7 @@
   font-weight: 700;
 }
 
-.console-brand:focus-visible,
-.console-app .dashboard-node-row:focus-visible {
+.console-brand:focus-visible {
   outline: 2px solid var(--console-focus);
   outline-offset: 5px;
   border-radius: 4px;
@@ -177,14 +176,23 @@
   display: flex;
   min-width: 0;
   align-items: center;
-  padding-inline: 2px 4px;
+  gap: 8px;
+  padding-inline: 6px 10px;
 }
 
-.console-account-details {
-  display: flex;
-  min-width: 0;
-  flex-direction: column;
-  gap: 2px;
+.console-account-avatar {
+  display: inline-flex;
+  width: 26px;
+  height: 26px;
+  flex: 0 0 26px;
+  align-items: center;
+  justify-content: center;
+  border-radius: 50%;
+  background: var(--console-primary);
+  color: #fff;
+  font-size: 13px;
+  font-weight: 600;
+  line-height: 1;
 }
 
 .console-account-name {
@@ -198,12 +206,6 @@
   white-space: nowrap;
 }
 
-.console-account-role {
-  color: var(--console-muted);
-  font-size: 11px;
-  line-height: 1.3;
-}
-
 .console-account-actions {
   display: flex;
   height: 42px;
@@ -214,6 +216,23 @@
   border: 1px solid var(--console-border);
   border-radius: 12px;
   background: var(--console-surface);
+}
+
+.console-account .console-subscription-link {
+  height: 42px;
+  padding-inline: 14px;
+  border-color: var(--console-border);
+  border-radius: 12px;
+  background: var(--console-surface);
+  color: var(--console-ink);
+  font-size: 13px;
+}
+
+.console-account.is-compact .console-subscription-link {
+  width: 38px;
+  height: 38px;
+  padding: 0;
+  border-radius: 10px;
 }
 
 .console-account-divider {
@@ -244,7 +263,14 @@
 }
 
 .console-account.is-compact .console-account-identity {
-  padding-inline: 4px 2px;
+  padding-inline: 4px 4px;
+}
+
+.console-account.is-compact .console-account-avatar {
+  width: 24px;
+  height: 24px;
+  flex-basis: 24px;
+  font-size: 12px;
 }
 
 .console-account.is-compact .console-account-name {
@@ -316,20 +342,21 @@
   transform: translateY(1px);
 }
 
-/* Animate mounted content, not live data updates or individual log rows.
+/* Animate mounted content,
+not live data updates or individual log rows.
    No forwards fill: transforms must not retain a stacking/scroll context. */
-.console-route :is(.ant-card, .traffic-panel-card, .mobile-user-card, .mobile-node-card, .mobile-subscription-card, .node-card) {
+.console-route :is(.ant-card, .traffic-panel-card, .user-card, .server-card, .mobile-node-card, .mobile-subscription-card, .node-card) {
   animation: console-card-enter 420ms cubic-bezier(0.22, 1, 0.36, 1) backwards;
 }
 
-.console-route :is(.ant-row > .ant-col:nth-child(2), .users-page-grid > :nth-child(2)) > .ant-card,
-.console-route :is(.ant-card, .traffic-panel-card, .mobile-user-card, .mobile-node-card, .mobile-subscription-card):nth-child(2) { animation-delay: 45ms; }
+.console-route .ant-row > .ant-col:nth-child(2) > .ant-card,
+.console-route :is(.ant-card, .traffic-panel-card, .user-card, .server-card, .mobile-node-card, .mobile-subscription-card):nth-child(2) { animation-delay: 45ms; }
 .console-route .ant-row > .ant-col:nth-child(3) > .ant-card,
-.console-route :is(.ant-card, .traffic-panel-card, .mobile-user-card, .mobile-node-card, .mobile-subscription-card):nth-child(3) { animation-delay: 90ms; }
+.console-route :is(.ant-card, .traffic-panel-card, .user-card, .server-card, .mobile-node-card, .mobile-subscription-card):nth-child(3) { animation-delay: 90ms; }
 .console-route .ant-row > .ant-col:nth-child(n+4) > .ant-card,
-.console-route :is(.ant-card, .traffic-panel-card, .mobile-user-card, .mobile-node-card, .mobile-subscription-card):nth-child(n+4) { animation-delay: 135ms; }
+.console-route :is(.ant-card, .traffic-panel-card, .user-card, .server-card, .mobile-node-card, .mobile-subscription-card):nth-child(n+4) { animation-delay: 135ms; }
 
-.console-route :is(.page-toolbar, .dashboard-intro, .request-state) {
+.console-route :is(.page-toolbar, .request-state) {
   animation: console-card-enter 300ms ease-out backwards;
 }
 
@@ -354,18 +381,6 @@
   line-height: 18px;
 }
 
-.console-app .dashboard-intro {
-  margin-bottom: 26px;
-}
-
-.console-app .dashboard-intro h1 {
-  margin: 0 0 8px;
-  font-size: 26px;
-  font-weight: 600;
-  letter-spacing: -0.7px;
-}
-
-.console-app .dashboard-intro p,
 .console-app .subscription-hint {
   margin: 0;
   color: var(--console-muted);
@@ -426,17 +441,6 @@
   margin-top: 22px;
 }
 
-.console-app .dashboard-node-row {
-  padding: 12px 10px;
-  border-radius: 8px;
-  cursor: pointer;
-  transition: background-color 180ms ease;
-}
-
-.console-app .dashboard-node-row .ant-list-item-meta-description {
-  color: var(--console-muted);
-}
-
 :root[data-console-theme='blue'] .console-app {
   -webkit-font-smoothing: auto;
 }
@@ -487,7 +491,6 @@
 .console-nav-drawer .ant-drawer-close {
   color: var(--console-ink);
 }
-
 
 .console-sidebar-footer .console-theme-trigger { width: 100%; }
 .console-nav-drawer .console-sidebar-footer { padding: 24px 4px 8px; }
@@ -675,9 +678,6 @@
     box-shadow: 0 6px 16px rgb(var(--console-shadow) / 6%);
   }
 
-  .console-app .dashboard-node-row:hover {
-    background: var(--console-surface);
-  }
 }
 
 @media (max-width: 767px) {
@@ -697,8 +697,7 @@
   .console-brand { font-size: 18px; }
   .console-shell .console-content { padding: 20px 12px 32px; }
   .console-mobile-title { margin: 0 4px 18px; font-size: 22px; font-weight: 600; }
-  .console-app .dashboard-intro { margin: 0 4px 22px; }
-  .console-app .dashboard-intro h1 { font-size: 24px; }
+
   .console-app .client-subscriptions { grid-template-columns: minmax(0, 1fr); gap: 8px; }
   .console-app .client-subscription-button { height: 54px; justify-content: flex-start; padding-inline: 18px; }
   .console-app .overview-gauge { gap: 20px; }

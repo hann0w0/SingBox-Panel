@@ -1,9 +1,9 @@
 import { useEffect, useRef, useState } from 'react'
 import { Button, Drawer, Grid, Layout, Menu } from 'antd'
 import {
+  ApartmentOutlined,
   AreaChartOutlined,
   CloudServerOutlined,
-  DashboardOutlined,
   FileTextOutlined,
   LinkOutlined,
   LogoutOutlined,
@@ -21,14 +21,14 @@ const { Header, Sider, Content } = Layout
 function Brand() {
   const nav = useNavigate()
   const { user } = useAuth()
-  const targetPath = user?.role === 'admin' ? '/admin/overview' : '/dashboard'
+  const targetPath = user?.role === 'admin' ? '/admin/servers' : '/dashboard'
   return (
     <button
       type="button"
       onClick={() => nav(targetPath)}
       className="console-brand"
-      title="返回概览界面"
-      aria-label="返回概览界面"
+      title="返回首页"
+      aria-label="返回首页"
     >
       SingBox<span> Panel</span>
     </button>
@@ -42,13 +42,23 @@ function UserMenu({ compact, showTheme = false }: { compact?: boolean; showTheme
   const roleLabel = user?.role === 'admin' ? '管理员' : '用户'
   return (
     <div className={`console-account${compact ? ' is-compact' : ''}`} role="group" aria-label={`当前账号：${username}，${roleLabel}`}>
-      <div className="console-account-identity" title={`${username} · ${roleLabel}`}>
-        <div className="console-account-details">
-          <span className="console-account-name">{username}</span>
-          {!compact && <span className="console-account-role">{roleLabel}</span>}
-        </div>
-      </div>
+      {user?.role === 'admin' && (
+        <Button
+          className="console-subscription-link"
+          icon={<LinkOutlined />}
+          title="我的订阅"
+          aria-label="我的订阅"
+          onClick={() => nav('/dashboard')}
+        >
+          {compact ? '' : '订阅'}
+        </Button>
+      )}
       <div className="console-account-actions">
+        <div className="console-account-identity" title={`${username} · ${roleLabel}`}>
+          <span className="console-account-avatar" aria-hidden="true">{username.slice(0, 1).toUpperCase()}</span>
+          {!compact && <span className="console-account-name">{username}</span>}
+        </div>
+        <span className="console-account-divider" aria-hidden="true" />
         {showTheme && <ThemeSelector scope={user?.role === 'admin' ? 'admin' : 'user'} variant="account" compact={compact} />}
         {showTheme && <span className="console-account-divider" aria-hidden="true" />}
         <Button
@@ -96,13 +106,12 @@ function RouteContent() {
 }
 
 const ADMIN_ITEMS = [
-  { key: '/admin/overview', icon: <DashboardOutlined />, label: '概览' },
   { key: '/admin/servers', icon: <CloudServerOutlined />, label: '主机' },
   { key: '/admin/traffic', icon: <AreaChartOutlined />, label: '流量' },
-  { key: '/admin/users', icon: <TeamOutlined />, label: '用户' },
   { key: '/admin/logs', icon: <FileTextOutlined />, label: '日志' },
+  { key: '/admin/users', icon: <TeamOutlined />, label: '用户' },
+  { key: '/admin/external-nodes', icon: <ApartmentOutlined />, label: '节点' },
   { key: '/admin/settings', icon: <SettingOutlined />, label: '设置' },
-  { key: '/dashboard', icon: <LinkOutlined />, label: '订阅' },
 ]
 
 export default function AppLayout() {
@@ -132,7 +141,7 @@ export default function AppLayout() {
 
   // ---- admin ----
   const selected = ADMIN_ITEMS.find((i) => loc.pathname.startsWith(i.key))?.key ?? loc.pathname
-  const pageTitle = ADMIN_ITEMS.find((i) => i.key === selected)?.label || '控制台'
+  const pageTitle = loc.pathname === '/dashboard' ? '订阅' : (ADMIN_ITEMS.find((i) => i.key === selected)?.label || '控制台')
   const menu = (
     <Menu
       theme="light"

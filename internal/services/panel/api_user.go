@@ -39,26 +39,6 @@ func (a *App) handleMe(c *gin.Context) {
 	})
 }
 
-// handleUserNodes lists the nodes the current user can use.
-func (a *App) handleUserNodes(c *gin.Context) {
-	var u model.User
-	if err := a.db.First(&u, currentUID(c)).Error; err != nil {
-		c.JSON(http.StatusNotFound, gin.H{"error": "user not found"})
-		return
-	}
-	// Same gate as the subscription: a disabled/expired account gets no nodes.
-	if u.Role != model.RoleAdmin && !userActive(&u) {
-		c.JSON(http.StatusForbidden, gin.H{"error": "账号已停用或已到期"})
-		return
-	}
-	nodes, err := a.userNodeDetails(&u)
-	if err != nil {
-		c.JSON(http.StatusServiceUnavailable, gin.H{"error": "暂时无法读取节点，请稍后重试"})
-		return
-	}
-	c.JSON(http.StatusOK, gin.H{"nodes": nodes})
-}
-
 // handleResetSub regenerates the user's subscription token.
 func (a *App) handleResetSub(c *gin.Context) {
 	uid := currentUID(c)

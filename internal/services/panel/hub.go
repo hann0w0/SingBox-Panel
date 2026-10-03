@@ -34,6 +34,8 @@ type Hub struct {
 	mu    sync.RWMutex
 	live  *liveHub
 	state *keyedMutex[uint]
+	// traffic buffers per-minute history and writes it in batches.
+	traffic *trafficWriter
 
 	// AfterRegister, if set, runs when an agent (re)registers — used to push the
 	// latest config so a reconnecting server converges automatically.
@@ -42,7 +44,7 @@ type Hub struct {
 
 // NewHub builds a Hub bound to a database.
 func NewHub(db *gorm.DB) *Hub {
-	return &Hub{db: db, conns: map[uint]*agentConn{}, live: newLiveHub(), state: newKeyedMutex[uint]()}
+	return &Hub{db: db, conns: map[uint]*agentConn{}, live: newLiveHub(), state: newKeyedMutex[uint](), traffic: newTrafficWriter(db)}
 }
 
 // agentConn is one live agent WebSocket connection.
@@ -347,7 +349,7 @@ func (h *Hub) handleEvent(ac *agentConn, env protocol.Envelope) {
 	case protocol.EvtTraffic:
 		var e protocol.TrafficEvt
 		if env.Decode(&e) == nil && e.Traffic != nil {
-			if err := recordServerTraffic(h.db, serverID, e.Traffic); err != nil {
+			if err := h.traffic.record(serverID, e.Traffic); err != nil {
 				log.Printf("traffic: record server %d: %v", serverID, err)
 			}
 			h.live.publishTraffic(serverID, e.Traffic)
@@ -415,7 +417,7 @@ func (h *Hub) onHeartbeat(ac *agentConn, e protocol.HeartbeatEvt) {
 		updates["singbox_installed"] = true
 	}
 	h.db.Model(&model.Server{}).Where("id = ?", serverID).Updates(updates)
-	if err := recordServerTraffic(h.db, serverID, e.Traffic); err != nil {
+	if err := h.traffic.record(serverID, e.Traffic); err != nil {
 		log.Printf("traffic: record server %d: %v", serverID, err)
 	}
 }

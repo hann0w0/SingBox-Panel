@@ -129,7 +129,6 @@ func (a *App) routes() *gin.Engine {
 	{
 		user.POST("/auth/logout", a.handleLogout)
 		user.GET("/user/me", a.handleMe)
-		user.GET("/user/nodes", a.handleUserNodes)
 		user.POST("/user/reset-sub", a.handleResetSub)
 		user.POST("/user/change-password", a.handleChangePassword)
 	}
@@ -191,6 +190,7 @@ func (a *App) routes() *gin.Engine {
 		admin.POST("/users", a.createUser)
 		admin.PUT("/users/:id", a.updateUser)
 		admin.GET("/users/:id/access", a.getUserAccess)
+		admin.GET("/users/:id/sub-fetches", a.listUserSubscriptionFetches)
 		admin.PUT("/users/:id/access", a.updateUserAccess)
 		admin.DELETE("/users/:id", a.deleteUser)
 
@@ -299,6 +299,9 @@ func (a *App) Run(ctx context.Context) error {
 	ResetServersOffline(a.db)
 
 	go a.host.run(ctx)
+	if a.hub != nil && a.hub.traffic != nil {
+		go a.hub.traffic.run(ctx)
+	}
 
 	rec := NewReconciler(a.db, func(serverIDs []uint) { a.refreshUserProxyAccess(serverIDs) })
 	go rec.Run(ctx)
@@ -314,10 +317,23 @@ func (a *App) Run(ctx context.Context) error {
 	}()
 
 	log.Printf("panel listening on %s (base URL %s)", a.cfg.Listen, a.cfg.BaseURL)
-	if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+	err := srv.ListenAndServe()
+	// Persist buffered traffic history before the process exits.
+	a.flushTraffic()
+	if err != nil && err != http.ErrServerClosed {
 		return err
 	}
 	return nil
+}
+
+// flushTraffic writes buffered traffic history so reads include it.
+func (a *App) flushTraffic() {
+	if a.hub == nil || a.hub.traffic == nil {
+		return
+	}
+	if err := a.hub.traffic.flush(); err != nil {
+		log.Printf("traffic: flush history: %v", err)
+	}
 }
 
 const (

@@ -221,6 +221,9 @@ func (a *App) listServers(c *gin.Context) {
 	latestAgentVersion := a.latestAgentVersion()
 	for i := range servers {
 		servers[i].Online = a.hub.IsOnline(servers[i].ID)
+		if !servers[i].Online {
+			servers[i].TrafficUploadRate, servers[i].TrafficDownloadRate = 0, 0
+		}
 		if agentHasUpdate(servers[i].AgentVersion, latestAgentVersion) {
 			servers[i].AgentHasUpdate = true
 			servers[i].AgentLatestVersion = latestAgentVersion
@@ -387,10 +390,15 @@ func (a *App) deleteServer(c *gin.Context) {
 			return
 		}
 	}
-	if err := tx.Where("server_id = ?", id).Delete(&model.TrafficRecord{}).Error; err != nil {
-		tx.Rollback()
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
-		return
+	if a.hub != nil && a.hub.traffic != nil {
+		a.hub.traffic.dropServer(id)
+	}
+	for _, row := range []any{&model.TrafficRecord{}, &model.TrafficHourly{}} {
+		if err := tx.Where("server_id = ?", id).Delete(row).Error; err != nil {
+			tx.Rollback()
+			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+			return
+		}
 	}
 	if err := deleteUserNodeOrderRefs(tx, userNodeTypeManaged, inboundIDs); err != nil {
 		tx.Rollback()
@@ -438,8 +446,11 @@ func (a *App) deleteServer(c *gin.Context) {
 		return
 	}
 	if a.hub != nil {
-		if err := a.db.Where("server_id = ?", id).Delete(&model.TrafficRecord{}).Error; err != nil {
-			log.Printf("delete server %d: final traffic cleanup failed: %v", id, err)
+		a.hub.traffic.dropServer(id)
+		for _, row := range []any{&model.TrafficRecord{}, &model.TrafficHourly{}} {
+			if err := a.db.Where("server_id = ?", id).Delete(row).Error; err != nil {
+				log.Printf("delete server %d: final traffic cleanup failed: %v", id, err)
+			}
 		}
 		if a.hub.live != nil {
 			a.hub.live.clearServer(id)

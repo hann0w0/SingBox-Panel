@@ -70,18 +70,6 @@ export const getMe = (signal?: AbortSignal) =>
     .get<{ user: User; subscription_url: string }>('/api/user/me', { signal })
     .then((r) => r.data)
 
-export interface UserNode {
-  name: string
-  type: string
-  server: string
-  port: number
-  region?: string // ISO-ish code (US/HK/JP…) for dashboard map
-  link: string
-  params: Record<string, string>
-}
-export const getUserNodes = (signal?: AbortSignal) =>
-  http.get<{ nodes: UserNode[] }>('/api/user/nodes', { signal }).then((r) => r.data.nodes)
-
 export const resetSub = () =>
   http.post<{ subscription_url: string }>('/api/user/reset-sub').then((r) => r.data)
 
@@ -98,6 +86,8 @@ interface ServerBody {
   address?: string
   region?: string
   remark?: string
+  traffic_quota?: number
+  traffic_reset_day?: number
 }
 export const listServers = (signal?: AbortSignal) =>
   http.get<{ servers: Server[]; latest_agent_version: string }>('/api/admin/servers', { signal }).then((r) => r.data.servers)
@@ -292,6 +282,25 @@ export const createUser = (body: UserBody) =>
 export const updateUser = (id: number, body: UserBody) =>
   http.put<{ user: User }>(`/api/admin/users/${id}`, body).then((r) => r.data.user)
 export const deleteUser = (id: number) => http.delete(`/api/admin/users/${id}`).then((r) => r.data)
+
+export interface SubscriptionFetch {
+  id: number
+  user_id: number
+  ip: string
+  client: string
+  format: string
+  user_agent: string
+  status: number
+  created_at: string
+}
+export interface SubscriptionIPSummary {
+  ip: string
+  client: string
+  fetches: number
+  last_seen: string
+}
+export const getUserSubFetches = (id: number, signal?: AbortSignal) =>
+  http.get<{ fetches: SubscriptionFetch[]; ips: SubscriptionIPSummary[]; retention_days: number }>(`/api/admin/users/${id}/sub-fetches`, { signal }).then((r) => r.data)
 
 export interface UserAccess {
   user_id: number

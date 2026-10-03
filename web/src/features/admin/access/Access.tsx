@@ -1389,36 +1389,42 @@ export function CustomNodesPanel({ nodes, loading, error, onNodesChange }: {
           pagination={false}
           virtual={subscriptions.length > MAX_VISIBLE_SUBSCRIPTIONS}
           scroll={{
-            x: 720,
+            x: 520,
             y: subscriptions.length > MAX_VISIBLE_SUBSCRIPTIONS ? SUBSCRIPTION_TABLE_SCROLL_HEIGHT : undefined,
           }}
           columns={[
             {
               title: '名称',
               dataIndex: 'name',
-              width: 280,
+              ellipsis: true,
               render: (value: string) => value,
             },
             {
               title: '节点',
               dataIndex: 'node_count',
-              width: 70,
+              width: 64,
               render: (value: number) => `${value} 个`,
             },
             {
               title: '最近同步',
-              width: 180,
+              width: 150,
               render: (_: unknown, subscription: CustomNodeSubscription) => (
-                <span title={subscription.last_error || undefined} style={{ color: subscription.last_error ? 'var(--console-error-text)' : undefined }}>
-                  {subscription.last_sync_at ? new Date(subscription.last_sync_at).toLocaleString() : '尚未同步'}
+                <span
+                  title={subscription.last_error || (subscription.last_sync_at ? new Date(subscription.last_sync_at).toLocaleString('zh-CN') : undefined)}
+                  style={{ color: subscription.last_error ? 'var(--console-error-text)' : undefined, whiteSpace: 'nowrap' }}
+                >
+                  {subscription.last_sync_at
+                    ? new Date(subscription.last_sync_at).toLocaleString('zh-CN', { month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' })
+                    : '尚未同步'}
                 </span>
               ),
             },
             {
               title: '操作',
-              width: 190,
+              width: 176,
+              fixed: 'right' as const,
               render: (_: unknown, subscription: CustomNodeSubscription) => (
-                <Space size={4}>
+                <Space size={4} style={{ whiteSpace: 'nowrap' }}>
                   <Button
                     size="small"
                     type="link"

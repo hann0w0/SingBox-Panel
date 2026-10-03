@@ -7,6 +7,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/gin-gonic/gin"
 	"gorm.io/gorm"
@@ -59,6 +60,9 @@ type userAccessResp struct {
 type userListItem struct {
 	model.User
 	NodeCount int `json:"node_count"`
+	// Subscription activity in the last 24 hours.
+	SubFetches24h int64 `json:"sub_fetches_24h"`
+	SubIPs24h     int64 `json:"sub_ips_24h"`
 }
 
 func normalizedIDs(ids []uint) []uint {
@@ -505,6 +509,12 @@ func (a *App) listUsers(c *gin.Context) {
 		return
 	}
 
+	activity, err := subscriptionActivitySince(a.db, time.Now().Add(-24*time.Hour))
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+
 	inboundServers := make(map[uint]uint, len(inbounds))
 	serverInboundCounts := make(map[uint]int)
 	for i := range inbounds {
@@ -536,7 +546,8 @@ func (a *App) listUsers(c *gin.Context) {
 				count++
 			}
 		}
-		items = append(items, userListItem{User: users[i], NodeCount: count})
+		recent := activity[users[i].ID]
+		items = append(items, userListItem{User: users[i], NodeCount: count, SubFetches24h: recent.Fetches, SubIPs24h: recent.IPs})
 	}
 	c.JSON(http.StatusOK, gin.H{"users": items})
 }

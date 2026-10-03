@@ -91,3 +91,62 @@ func TestTrafficSummaryDoesNotCarryPortDeltas(t *testing.T) {
 		t.Fatal("summary snapshot consumed pending port traffic")
 	}
 }
+
+func trafficConn(id, inbound string, up, down uint64) clashConnection {
+	var c clashConnection
+	c.ID = id
+	c.Upload = up
+	c.Download = down
+	c.Metadata.Type = "vless/" + inbound
+	return c
+}
+
+func TestTrafficSamplerCountsNewAndShortLivedConnections(t *testing.T) {
+	sampler := newTrafficSampler()
+	start := time.Unix(1_700_000_000, 0)
+	// Baseline: a connection that existed before the Agent started is not
+	// counted (its history predates the accounting window).
+	sampler.ingest("e", clashTrafficResponse{UploadTotal: 100, DownloadTotal: 1000, Connections: []clashConnection{
+		trafficConn("old", "in", 100, 1000),
+	}}, start)
+	// One second later: the old connection grew, and a new one appeared with
+	// bytes already transferred. Both must be attributed in full.
+	sampler.ingest("e", clashTrafficResponse{UploadTotal: 160, DownloadTotal: 1600, Connections: []clashConnection{
+		trafficConn("old", "in", 110, 1100),
+		trafficConn("new", "in", 50, 500),
+	}}, start.Add(time.Second))
+	snap := sampler.snapshot()
+	if len(snap.Ports) != 1 {
+		t.Fatalf("ports = %+v", snap.Ports)
+	}
+	port := snap.Ports[0]
+	if port.Upload != 60 || port.Download != 600 {
+		t.Fatalf("port delta = %d/%d, want 60/600", port.Upload, port.Download)
+	}
+	// Rates are the port sum for that second, not the fastest connection.
+	if port.UploadRate != 60 || port.DownloadRate != 600 {
+		t.Fatalf("port rate = %d/%d, want 60/600", port.UploadRate, port.DownloadRate)
+	}
+	if snap.PeakUploadRate != 60 || snap.PeakDownloadRate != 600 {
+		t.Fatalf("peak = %d/%d", snap.PeakUploadRate, snap.PeakDownloadRate)
+	}
+}
+
+func TestTrafficSamplerPeakSurvivesUntilAcknowledged(t *testing.T) {
+	sampler := newTrafficSampler()
+	start := time.Unix(1_700_000_000, 0)
+	sampler.ingest("e", clashTrafficResponse{UploadTotal: 0, DownloadTotal: 0}, start)
+	sampler.ingest("e", clashTrafficResponse{UploadTotal: 0, DownloadTotal: 5000}, start.Add(time.Second))
+	sampler.ingest("e", clashTrafficResponse{UploadTotal: 0, DownloadTotal: 5100}, start.Add(2*time.Second))
+	snap := sampler.snapshot()
+	if snap.DownloadRate != 100 || snap.PeakDownloadRate != 5000 {
+		t.Fatalf("instant/peak = %d/%d, want 100/5000", snap.DownloadRate, snap.PeakDownloadRate)
+	}
+	if summary := sampler.summarySnapshot(); summary.PeakDownloadRate != 0 {
+		t.Fatal("heartbeat summary must not carry or consume the peak")
+	}
+	sampler.acknowledge(snap)
+	if got := sampler.snapshot().PeakDownloadRate; got != 0 {
+		t.Fatalf("peak after ack = %d", got)
+	}
+}

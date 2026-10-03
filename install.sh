@@ -553,7 +553,7 @@ username_length="$(LC_ALL=C printf '%s' "$ADMIN_USERNAME" | wc -c | tr -d ' ')"
 (( username_length <= 191 )) || die "administrator username must not exceed 191 bytes"
 if [[ -n "$ADMIN_PASSWORD" ]]; then
   password_length="$(LC_ALL=C printf '%s' "$ADMIN_PASSWORD" | wc -c | tr -d ' ')"
-  (( password_length >= 8 )) || die "administrator password must be at least 8 bytes"
+  (( password_length >= 1 )) || die "administrator password cannot be empty"
   (( password_length <= 72 )) || die "administrator password must not exceed 72 bytes (bcrypt limit)"
 fi
 BOOTSTRAP_ADMIN_PASSWORD="$ADMIN_PASSWORD"

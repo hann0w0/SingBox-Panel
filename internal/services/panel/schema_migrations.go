@@ -310,6 +310,20 @@ var applicationMigrations = []schemaMigration{
 		name:    "single-user SOCKS inbounds",
 		up:      migrateSOCKSSingleUserInbounds,
 	},
+	{
+		version: 22,
+		name:    "traffic hourly rollups, server quotas and usage tracking",
+		up: func(tx *gorm.DB) error {
+			if err := tx.AutoMigrate(&model.TrafficHourly{}, &model.SubscriptionFetch{}, &model.User{}, &model.Server{}); err != nil {
+				return err
+			}
+			if err := tx.Model(&model.Server{}).Where("traffic_reset_day IS NULL OR traffic_reset_day < 1 OR traffic_reset_day > 31").
+				Update("traffic_reset_day", 1).Error; err != nil {
+				return err
+			}
+			return backfillTrafficHourly(tx)
+		},
+	},
 }
 
 // migrationReplaySafe records whether an interrupted attempt of each migration
@@ -350,6 +364,7 @@ var migrationReplaySafe = map[uint]bool{
 	19: true,  // only fills empty agent tokens
 	20: true,  // HasColumn-guarded DROP COLUMN plus a ledger description update
 	21: true,  // skips inbounds that are no longer multi-user
+	22: true,  // AutoMigrate plus a rollup rebuilt from scratch
 }
 
 // runSchemaMigrations applies every pending migration in order. If any

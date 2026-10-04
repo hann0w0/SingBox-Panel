@@ -90,7 +90,8 @@
   font-weight: 700;
 }
 
-.console-brand:focus-visible {
+.console-brand:focus-visible,
+.console-app .dashboard-node-row:focus-visible {
   outline: 2px solid var(--console-focus);
   outline-offset: 5px;
   border-radius: 4px;
@@ -441,6 +442,17 @@ not live data updates or individual log rows.
   margin-top: 22px;
 }
 
+.console-app .dashboard-node-row {
+  padding: 12px 10px;
+  border-radius: 8px;
+  cursor: pointer;
+  transition: background-color 180ms ease;
+}
+
+.console-app .dashboard-node-row .ant-list-item-meta-description {
+  color: var(--console-muted);
+}
+
 :root[data-console-theme='blue'] .console-app {
   -webkit-font-smoothing: auto;
 }
@@ -678,6 +690,9 @@ not live data updates or individual log rows.
     box-shadow: 0 6px 16px rgb(var(--console-shadow) / 6%);
   }
 
+  .console-app .dashboard-node-row:hover {
+    background: var(--console-surface);
+  }
 }
 
 @media (max-width: 767px) {

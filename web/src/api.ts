@@ -70,6 +70,18 @@ export const getMe = (signal?: AbortSignal) =>
     .get<{ user: User; subscription_url: string }>('/api/user/me', { signal })
     .then((r) => r.data)
 
+export interface UserNode {
+  name: string
+  type: string
+  server: string
+  port: number
+  region?: string // ISO-ish code (US/HK/JP…) used to group nodes by continent
+  link: string
+  params: Record<string, string>
+}
+export const getUserNodes = (signal?: AbortSignal) =>
+  http.get<{ nodes: UserNode[] }>('/api/user/nodes', { signal }).then((r) => r.data.nodes)
+
 export const resetSub = () =>
   http.post<{ subscription_url: string }>('/api/user/reset-sub').then((r) => r.data)
 

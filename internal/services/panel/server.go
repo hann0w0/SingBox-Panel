@@ -129,6 +129,7 @@ func (a *App) routes() *gin.Engine {
 	{
 		user.POST("/auth/logout", a.handleLogout)
 		user.GET("/user/me", a.handleMe)
+		user.GET("/user/nodes", a.handleUserNodes)
 		user.POST("/user/reset-sub", a.handleResetSub)
 		user.POST("/user/change-password", a.handleChangePassword)
 	}

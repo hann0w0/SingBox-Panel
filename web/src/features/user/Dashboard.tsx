@@ -1,10 +1,25 @@
 import { useEffect, useRef, useState } from 'react'
-import { Button, Card, Form, Input, Modal, Space, Typography, message } from 'antd'
-import { changePassword, errMsg, getMe, resetSub } from '../../api'
+import { Alert, Button, Card, Descriptions, Empty, Form, Grid, Input, List, Modal, Segmented, Space, Tag, Typography, message } from 'antd'
+import { QRCodeSVG } from 'qrcode.react'
+import { changePassword, errMsg, getMe, getUserNodes, resetSub } from '../../api'
+import type { UserNode } from '../../api'
 import type { User } from '../../types'
 import { copyToClipboard } from '../../util'
 import { useAuth } from '../../store'
+import { CONTINENT_ORDER, continentOf, type Continent } from '../../continents'
+import regionData from '../../assets/regions.json'
+import { VirtualList } from '../../components/VirtualList'
 import { RequestState } from '../../components/RequestState'
+
+type RegionInfo = { geo: string; coord: [number, number]; label: string }
+const REGIONS = regionData as unknown as Record<string, RegionInfo>
+const userNodeKey = (node: UserNode) => `${node.type}:${node.name}:${node.server}:${node.port}`
+
+const TYPE_COLORS: Record<string, string> = {
+  vless: 'blue', vmess: 'purple', trojan: 'geekblue', shadowsocks: 'green',
+  hysteria2: 'cyan', hysteria: 'cyan', tuic: 'orange', anytls: 'magenta',
+  snell: 'gold', socks: 'default', mixed: 'volcano',
+}
 
 const LOGO_VERSION = '20260906-2'
 type ClientKind = 'surge' | 'clash' | 'shadowrocket'
@@ -31,25 +46,39 @@ function ClientLogo({ spec }: { spec: ClientSpec }) {
   )
 }
 
+// Chinese label for an ISO region code (HK → 香港), falls back to the code.
+const labelOf = (code: string): string => REGIONS[code]?.label || (code === 'Other' ? '其他' : code)
+
 export default function Dashboard() {
+  const screens = Grid.useBreakpoint()
+  const isMobile = !screens.md
   const setAuth = useAuth((s) => s.setAuth)
   const setUser = useAuth((s) => s.setUser)
   const [user, setLocalUser] = useState<User | null>(null)
   const [subUrl, setSubUrl] = useState('')
+  const [nodes, setNodes] = useState<UserNode[]>([])
+  const [continentNodes, setContinentNodes] = useState<Partial<Record<Continent, UserNode[]>>>({})
+  const [seg, setSeg] = useState<Continent>('亚洲')
+  const [selectedNode, setSelectedNode] = useState<UserNode | null>(null)
   const [pwdOpen, setPwdOpen] = useState(false)
   const [loading, setLoading] = useState(true)
   const [loadError, setLoadError] = useState<string | null>(null)
-  const loadRef = useRef<{ generation: number; controller: AbortController | null }>({ generation: 0, controller: null })
+  const [nodesLoading, setNodesLoading] = useState(true)
+  const [nodesError, setNodesError] = useState<string | null>(null)
+  const loadRef = useRef<{ generation: number; controllers: AbortController[] }>({ generation: 0, controllers: [] })
   const [pwdForm] = Form.useForm()
 
   const load = () => {
-    loadRef.current.controller?.abort()
-    const controller = new AbortController()
+    loadRef.current.controllers.forEach((controller) => controller.abort())
+    const meController = new AbortController()
+    const nodesController = new AbortController()
     const generation = ++loadRef.current.generation
-    loadRef.current.controller = controller
+    loadRef.current.controllers = [meController, nodesController]
     setLoading(true)
+    setNodesLoading(true)
     setLoadError(null)
-    getMe(controller.signal)
+    setNodesError(null)
+    getMe(meController.signal)
       .then((d) => {
         if (generation !== loadRef.current.generation) return
         setLocalUser(d.user)
@@ -57,19 +86,39 @@ export default function Dashboard() {
         setUser(d.user)
       })
       .catch((e) => {
-        if (generation === loadRef.current.generation && !controller.signal.aborted) setLoadError(errMsg(e))
+        if (generation === loadRef.current.generation && !meController.signal.aborted) setLoadError(errMsg(e))
       })
       .finally(() => {
-        if (generation === loadRef.current.generation && !controller.signal.aborted) setLoading(false)
+        if (generation === loadRef.current.generation && !meController.signal.aborted) setLoading(false)
+      })
+    getUserNodes(nodesController.signal)
+      .then((next) => {
+        if (generation === loadRef.current.generation) setNodes(next)
+      })
+      .catch((e) => {
+        if (generation === loadRef.current.generation && !nodesController.signal.aborted) setNodesError(errMsg(e))
+      })
+      .finally(() => {
+        if (generation === loadRef.current.generation && !nodesController.signal.aborted) setNodesLoading(false)
       })
   }
   useEffect(() => {
     load()
     return () => {
       loadRef.current.generation++
-      loadRef.current.controller?.abort()
+      loadRef.current.controllers.forEach((controller) => controller.abort())
     }
   }, [])
+
+  useEffect(() => {
+    const byContinent: Partial<Record<Continent, UserNode[]>> = {}
+    for (const n of nodes) {
+      const c = continentOf(n.region)
+      if (!byContinent[c]) byContinent[c] = []
+      byContinent[c].push(n)
+    }
+    setContinentNodes(byContinent)
+  }, [nodes])
 
   if (!user) {
     return <RequestState loading={loading} error={loadError} hasData={false} onRetry={load}><span /></RequestState>
@@ -111,6 +160,40 @@ export default function Dashboard() {
     }
   }
 
+  // Only show continents that actually have nodes; keep the current segment
+  // valid if it becomes empty after a refresh.
+  const segOptions = CONTINENT_ORDER
+    .map((c) => ({ value: c, count: continentNodes[c]?.length ?? 0 }))
+    .filter((o) => o.count > 0)
+    .map((o) => ({ label: `${o.value} ${o.count}`, value: o.value }))
+  const activeSeg = segOptions.some((o) => o.value === seg) ? seg : (segOptions[0]?.value ?? '其他')
+  const activeNodes = continentNodes[activeSeg] ?? []
+  const renderNode = (n: UserNode) => (
+    <List.Item
+      onClick={() => setSelectedNode(n)}
+      onKeyDown={(event) => {
+        if (event.key === 'Enter' || event.key === ' ') {
+          event.preventDefault()
+          setSelectedNode(n)
+        }
+      }}
+      role="button"
+      tabIndex={0}
+      className="dashboard-node-row"
+    >
+      <List.Item.Meta
+        title={<span style={{ fontWeight: 600 }}>{n.name}</span>}
+        description={
+          <Space size={[4, 4]} wrap>
+            <Tag color={TYPE_COLORS[n.type]}>{n.type}</Tag>
+            {labelOf(n.region || '') && <span style={{ color: 'var(--console-muted)', fontSize: 12 }}>{labelOf(n.region || '')}</span>}
+            <span style={{ fontFamily: 'monospace', fontSize: 12, color: 'var(--console-muted)' }}>{n.server}:{n.port}</span>
+          </Space>
+        }
+      />
+    </List.Item>
+  )
+
   return (
     <RequestState loading={loading} error={loadError} hasData onRetry={load}>
       <Space direction="vertical" size="large" style={{ width: '100%' }}>
@@ -128,6 +211,56 @@ export default function Dashboard() {
             <Button onClick={() => setPwdOpen(true)}>修改密码</Button>
         </div>
       </Card>
+
+      <Card title={`可用节点（${nodes.length}）`}>
+        <RequestState loading={nodesLoading} error={nodesError} hasData={nodes.length > 0} empty={!nodesLoading && !nodesError && nodes.length === 0} emptyDescription="暂无节点，请联系管理员开通" onRetry={load}>
+          <Space direction="vertical" size="middle" style={{ width: '100%' }}>
+            <Segmented block options={segOptions} value={activeSeg} onChange={(v) => setSeg(v as Continent)} />
+            {activeNodes.length > 0 ? (
+              isMobile || activeNodes.length > 50 ? (
+                <VirtualList
+                  className="dashboard-node-virtual-list"
+                  style={{ height: Math.min(activeNodes.length, isMobile ? 5 : 8) * 72, maxHeight: isMobile ? 360 : 576 }}
+                  items={activeNodes}
+                  getKey={userNodeKey}
+                  estimatedItemHeight={72}
+                  overscan={5}
+                  renderItem={renderNode}
+                />
+              ) : (
+                <List itemLayout="horizontal" dataSource={activeNodes} renderItem={renderNode} />
+              )
+            ) : (
+              <Empty description="该大区暂无节点" style={{ padding: '24px 0' }} />
+            )}
+          </Space>
+        </RequestState>
+      </Card>
+
+      <Modal title={selectedNode?.name} open={!!selectedNode} onCancel={() => setSelectedNode(null)} footer={<Button onClick={() => setSelectedNode(null)}>关闭</Button>} width={560} styles={{ body: { maxHeight: '70vh', overflowY: 'auto' } }}>
+        {selectedNode && (
+          <Space direction="vertical" size="middle" style={{ width: '100%' }}>
+            {selectedNode.link ? (
+              <div style={{ textAlign: 'center' }}>
+                <div style={{ display: 'inline-block', padding: 12, background: '#fff', borderRadius: 8, border: '1px solid #eee' }}>
+                  <QRCodeSVG value={selectedNode.link} size={196} />
+                </div>
+                <div style={{ marginTop: 8, color: 'var(--console-muted)' }}>扫码导入（{selectedNode.type}）</div>
+              </div>
+            ) : (
+              <Alert type="info" showIcon message={`${selectedNode.type} 没有通用的分享链接格式`} description="请用下面的参数在客户端手动添加，或直接使用上方的订阅链接导入。" />
+            )}
+            <Descriptions bordered size="small" column={1}>
+              {Object.entries(selectedNode.params).map(([k, v]) => (
+                <Descriptions.Item key={k} label={k}><Typography.Text copyable style={{ wordBreak: 'break-all' }}>{v}</Typography.Text></Descriptions.Item>
+              ))}
+            </Descriptions>
+            {selectedNode.link && (
+              <Typography.Paragraph copyable={{ text: selectedNode.link }} code style={{ wordBreak: 'break-all', margin: 0 }}>{selectedNode.link}</Typography.Paragraph>
+            )}
+          </Space>
+        )}
+      </Modal>
 
       <Modal title="修改密码" open={pwdOpen} onOk={doChangePwd} onCancel={() => setPwdOpen(false)} destroyOnClose>
         <Form form={pwdForm} layout="vertical">

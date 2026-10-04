@@ -9,6 +9,11 @@ import "encoding/json"
 // sing-box configs. It is never exposed outside the node.
 const LocalTrafficAddress = "127.0.0.1:29091"
 
+// LocalStatsAPIAddress is the loopback-only sing-box 1.14+ API service used for
+// per-user connection accounting. Like LocalTrafficAddress it requires the
+// node's stats secret and is never exposed outside the node.
+const LocalStatsAPIAddress = "127.0.0.1:29092"
+
 // MessageType enumerates the fixed command/event set.
 type MessageType string
 
@@ -175,6 +180,18 @@ type TrafficSnapshot struct {
 	PeakUploadRate   uint64                `json:"peak_upload_rate,omitempty"`
 	PeakDownloadRate uint64                `json:"peak_download_rate,omitempty"`
 	Ports            []PortTrafficSnapshot `json:"ports,omitempty"`
+	// Users are per (inbound, authenticated user) byte deltas, reported only by
+	// Agents that read the sing-box API service. Older Agents omit them.
+	Users []UserTrafficSnapshot `json:"users,omitempty"`
+}
+
+// UserTrafficSnapshot is a delta for one authenticated proxy user on one
+// inbound tag, not a cumulative counter.
+type UserTrafficSnapshot struct {
+	Inbound  string `json:"inbound"`
+	User     string `json:"user"`
+	Upload   uint64 `json:"upload"`
+	Download uint64 `json:"download"`
 }
 
 // PortTrafficSnapshot is a delta for one sing-box inbound tag, not a

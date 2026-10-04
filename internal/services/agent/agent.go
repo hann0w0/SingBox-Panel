@@ -54,6 +54,10 @@ func New(cfg Config) *Agent {
 // Run blocks until ctx is cancelled.
 func (a *Agent) Run(ctx context.Context) {
 	go a.traffic.run(ctx)
+	// sing-box 1.14+ API service: per-user attribution and exact final totals
+	// for closing connections. Without it the Clash poll alone keeps per-port
+	// accounting working.
+	go newStatsStream(a.traffic).run(ctx)
 	// Push high-frequency traffic snapshots every 3s, independent of the 10s
 	// heartbeat. This lets the panel capture short-lived rate spikes without
 	// bloating the heartbeat payload.

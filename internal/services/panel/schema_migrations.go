@@ -324,6 +324,13 @@ var applicationMigrations = []schemaMigration{
 			return backfillTrafficHourly(tx)
 		},
 	},
+	{
+		version: 23,
+		name:    "per-user traffic hourly table",
+		up: func(tx *gorm.DB) error {
+			return tx.AutoMigrate(&model.TrafficUserHourly{})
+		},
+	},
 }
 
 // migrationReplaySafe records whether an interrupted attempt of each migration
@@ -365,6 +372,7 @@ var migrationReplaySafe = map[uint]bool{
 	20: true,  // HasColumn-guarded DROP COLUMN plus a ledger description update
 	21: true,  // skips inbounds that are no longer multi-user
 	22: true,  // AutoMigrate plus a rollup rebuilt from scratch
+	23: true,  // AutoMigrate
 }
 
 // runSchemaMigrations applies every pending migration in order. If any

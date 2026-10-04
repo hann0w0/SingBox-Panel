@@ -4,7 +4,9 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"net"
 	"net/http"
+	"strconv"
 	"time"
 
 	"gorm.io/gorm"
@@ -221,21 +223,84 @@ func buildManagedConfigFromImport(p *singbox.ParsedConfig, raw []byte) ([]byte, 
 		rule.Outbound = parsedRule.Outbound
 		rules = append(rules, rule)
 	}
-	statsController := ""
+	statsController, statsSecretValue, statsAPI := importedStatsSettings(raw)
+	return singbox.BuildServerConfig(singbox.ServerConfigInput{
+		Inbounds: inbounds, Outbounds: outbounds, Rules: rules,
+		RuleSets: p.RuleSets, Final: p.Final, StatsController: statsController,
+		StatsSecret: statsSecretValue, StatsAPI: statsAPI,
+	})
+}
+
+// rawConfigSecurityWarnings flags control endpoints without a secret. A
+// proxy user can reach the node's loopback interface through the proxy, so an
+// unauthenticated Clash API or API service exposes every user's connections
+// and lets anyone close them.
+func rawConfigSecurityWarnings(raw []byte) []string {
 	var root struct {
 		Experimental struct {
 			ClashAPI struct {
 				ExternalController string `json:"external_controller"`
+				Secret             string `json:"secret"`
 			} `json:"clash_api"`
 		} `json:"experimental"`
+		Services []struct {
+			Type       string `json:"type"`
+			Tag        string `json:"tag"`
+			Listen     string `json:"listen"`
+			ListenPort int    `json:"listen_port"`
+			Secret     string `json:"secret"`
+		} `json:"services"`
 	}
-	if json.Unmarshal(raw, &root) == nil && root.Experimental.ClashAPI.ExternalController == protocol.LocalTrafficAddress {
-		statsController = protocol.LocalTrafficAddress
+	if json.Unmarshal(raw, &root) != nil {
+		return nil
 	}
-	return singbox.BuildServerConfig(singbox.ServerConfigInput{
-		Inbounds: inbounds, Outbounds: outbounds, Rules: rules,
-		RuleSets: p.RuleSets, Final: p.Final, StatsController: statsController,
-	})
+	warnings := []string{}
+	clash := root.Experimental.ClashAPI
+	if clash.ExternalController != "" && clash.Secret == "" {
+		warnings = append(warnings, fmt.Sprintf("Clash API（%s）未设置 secret：代理用户可经节点访问它，查看他人连接或断开所有连接", clash.ExternalController))
+	}
+	for _, service := range root.Services {
+		if service.Type == "api" && service.Secret == "" {
+			warnings = append(warnings, fmt.Sprintf("API 服务 %s（%s）未设置 secret：代理用户可经节点访问它并控制 sing-box",
+				service.Tag, net.JoinHostPort(service.Listen, strconv.Itoa(service.ListenPort))))
+		}
+	}
+	return warnings
+}
+
+// importedStatsSettings recovers the panel's own stats hooks from an imported
+// config so a panel-generated config compares losslessly and stays managed.
+// Only the exact shapes the panel emits are recognised.
+func importedStatsSettings(raw []byte) (controller, secret, api string) {
+	var root struct {
+		Experimental struct {
+			ClashAPI struct {
+				ExternalController string `json:"external_controller"`
+				Secret             string `json:"secret"`
+			} `json:"clash_api"`
+		} `json:"experimental"`
+		Services []struct {
+			Type       string `json:"type"`
+			Tag        string `json:"tag"`
+			Listen     string `json:"listen"`
+			ListenPort int    `json:"listen_port"`
+			Secret     string `json:"secret"`
+		} `json:"services"`
+	}
+	if json.Unmarshal(raw, &root) != nil || root.Experimental.ClashAPI.ExternalController != protocol.LocalTrafficAddress {
+		return "", "", ""
+	}
+	controller = protocol.LocalTrafficAddress
+	secret = root.Experimental.ClashAPI.Secret
+	if secret != "" && len(root.Services) == 1 {
+		service := root.Services[0]
+		address := net.JoinHostPort(service.Listen, strconv.Itoa(service.ListenPort))
+		if service.Type == "api" && service.Tag == singbox.StatsServiceTag &&
+			service.Secret == secret && address == protocol.LocalStatsAPIAddress {
+			api = protocol.LocalStatsAPIAddress
+		}
+	}
+	return controller, secret, api
 }
 
 func equivalentJSON(left, right []byte) bool {

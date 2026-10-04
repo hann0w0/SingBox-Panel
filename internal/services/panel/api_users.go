@@ -63,6 +63,11 @@ type userListItem struct {
 	// Subscription activity in the last 24 hours.
 	SubFetches24h int64 `json:"sub_fetches_24h"`
 	SubIPs24h     int64 `json:"sub_ips_24h"`
+	// Attributed traffic of the last 30 days (multi-user inbounds only).
+	// Admin list only: it is never part of the User model, so normal users
+	// cannot see it through /api/user/me.
+	TrafficUpload30d   uint64 `json:"traffic_upload_30d"`
+	TrafficDownload30d uint64 `json:"traffic_download_30d"`
 }
 
 func normalizedIDs(ids []uint) []uint {
@@ -514,6 +519,12 @@ func (a *App) listUsers(c *gin.Context) {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
+	a.flushTraffic()
+	traffic30d, err := userTrafficTotalsSince(a.db, time.Now().Add(-30*24*time.Hour))
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
 
 	inboundServers := make(map[uint]uint, len(inbounds))
 	serverInboundCounts := make(map[uint]int)
@@ -547,7 +558,11 @@ func (a *App) listUsers(c *gin.Context) {
 			}
 		}
 		recent := activity[users[i].ID]
-		items = append(items, userListItem{User: users[i], NodeCount: count, SubFetches24h: recent.Fetches, SubIPs24h: recent.IPs})
+		usage := traffic30d[users[i].ID]
+		items = append(items, userListItem{
+			User: users[i], NodeCount: count, SubFetches24h: recent.Fetches, SubIPs24h: recent.IPs,
+			TrafficUpload30d: usage.Upload, TrafficDownload30d: usage.Download,
+		})
 	}
 	c.JSON(http.StatusOK, gin.H{"users": items})
 }
@@ -661,6 +676,9 @@ func (a *App) updateUser(c *gin.Context) {
 			c.JSON(http.StatusConflict, gin.H{"error": "email already exists"})
 			return
 		}
+		if normalizeUsername(u.Email) != normalizedEmail && a.hub != nil && a.hub.traffic != nil {
+			a.hub.traffic.noteRename(u.Email, u.ID, time.Now())
+		}
 		u.Email = email
 		u.EmailNormalized = &normalizedEmail
 		columns = append(columns, "Email", "EmailNormalized")
@@ -772,11 +790,17 @@ func (a *App) deleteUser(c *gin.Context) {
 	}
 	unlockAudience := a.subscriptionManager().lockAudience()
 	defer unlockAudience()
+	if a.hub != nil && a.hub.traffic != nil {
+		a.hub.traffic.dropUser(id)
+	}
 	err := a.db.Transaction(func(tx *gorm.DB) error {
 		if err := tx.Delete(&model.User{}, id).Error; err != nil {
 			return err
 		}
 		if err := tx.Where("user_id = ?", id).Delete(&model.UserNodeOrder{}).Error; err != nil {
+			return err
+		}
+		if err := tx.Where("user_id = ?", id).Delete(&model.TrafficUserHourly{}).Error; err != nil {
 			return err
 		}
 		// Drop the deleted user from every custom node's audience lists so no
@@ -808,6 +832,9 @@ func (a *App) deleteUser(c *gin.Context) {
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
+	}
+	if a.hub != nil && a.hub.traffic != nil {
+		a.hub.traffic.dropUser(id)
 	}
 	a.refreshUserProxyAccess(u.ServerIDs)
 	c.JSON(http.StatusOK, gin.H{"ok": true})

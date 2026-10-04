@@ -99,8 +99,9 @@ func getLatestSingboxReleases() SingboxLatestReleases {
 }
 
 // compareSemver returns -1 if a < b, 0 if a == b, 1 if a > b.
-// Handles semver-like strings (e.g. "1.14.0", "1.14.0-rc.1").
-// Pre-release suffixes are considered older than the bare release.
+// Handles semver-like strings (e.g. "1.14.0", "1.15.0-alpha.10", "1.14.0-rc.1").
+// Pre-release suffixes are considered older than the bare release, and
+// pre-release stages order as alpha < beta < rc.
 func compareSemver(a, b string) int {
 	if a == b {
 		return 0
@@ -117,7 +118,58 @@ func compareSemver(a, b string) int {
 	if aPre != "" && bPre == "" {
 		return -1
 	}
-	return compareDotted(aPre, bPre)
+	return comparePrerelease(aPre, bPre)
+}
+
+// comparePrerelease compares dot-separated pre-release identifiers. Numeric
+// identifiers compare numerically; the stage names sing-box publishes compare
+// as alpha < beta < rc (other names fall back to string order). Numeric
+// identifiers sort before names, and a shorter list sorts first, per semver.
+func comparePrerelease(a, b string) int {
+	pa := strings.Split(a, ".")
+	pb := strings.Split(b, ".")
+	for i := 0; i < len(pa) && i < len(pb); i++ {
+		if c := comparePrereleaseIdent(pa[i], pb[i]); c != 0 {
+			return c
+		}
+	}
+	switch {
+	case len(pa) < len(pb):
+		return -1
+	case len(pa) > len(pb):
+		return 1
+	}
+	return 0
+}
+
+var prereleaseStageRank = map[string]int{"alpha": 1, "beta": 2, "rc": 3}
+
+func comparePrereleaseIdent(a, b string) int {
+	na, errA := strconv.Atoi(a)
+	nb, errB := strconv.Atoi(b)
+	switch {
+	case errA == nil && errB == nil:
+		return cmpInt(na, nb)
+	case errA == nil:
+		return -1
+	case errB == nil:
+		return 1
+	}
+	ra, rb := prereleaseStageRank[strings.ToLower(a)], prereleaseStageRank[strings.ToLower(b)]
+	if ra != 0 && rb != 0 {
+		return cmpInt(ra, rb)
+	}
+	return strings.Compare(a, b)
+}
+
+func cmpInt(a, b int) int {
+	switch {
+	case a < b:
+		return -1
+	case a > b:
+		return 1
+	}
+	return 0
 }
 
 func splitSemver(v string) (core, pre string) {
@@ -148,21 +200,36 @@ func compareDotted(a, b string) int {
 	return 0
 }
 
+// checkSingboxUpdate reports whether a newer sing-box should be offered.
+// Stable installs are only ever offered a newer stable release. Pre-release
+// installs are offered a newer stable release first (e.g. 1.14.0-beta.17 →
+// 1.14.2), otherwise a newer pre-release of the SAME minor line only — never a
+// jump to the next minor's alpha, whose config schema the panel may not yet
+// support (sing-box 1.15 alphas reject options 1.14 merely deprecated).
 func checkSingboxUpdate(installedVersion string, releases SingboxLatestReleases) (hasUpdate bool, latestVersion string) {
 	if installedVersion == "" {
 		return false, ""
 	}
 	cleanInstalled := strings.TrimPrefix(installedVersion, "v")
-	isBeta := strings.Contains(cleanInstalled, "beta") || strings.Contains(cleanInstalled, "alpha") || strings.Contains(cleanInstalled, "rc")
+	core, pre := splitSemver(cleanInstalled)
 
-	if isBeta {
-		if releases.Beta != "" && compareSemver(cleanInstalled, releases.Beta) < 0 {
+	if releases.Stable != "" && compareSemver(cleanInstalled, releases.Stable) < 0 {
+		return true, releases.Stable
+	}
+	if pre != "" && releases.Beta != "" {
+		betaCore, _ := splitSemver(releases.Beta)
+		if minorLine(betaCore) == minorLine(core) && compareSemver(cleanInstalled, releases.Beta) < 0 {
 			return true, releases.Beta
-		}
-	} else {
-		if releases.Stable != "" && compareSemver(cleanInstalled, releases.Stable) < 0 {
-			return true, releases.Stable
 		}
 	}
 	return false, ""
+}
+
+// minorLine returns the "major.minor" prefix of a dotted version core.
+func minorLine(core string) string {
+	parts := strings.SplitN(core, ".", 3)
+	if len(parts) < 2 {
+		return core
+	}
+	return parts[0] + "." + parts[1]
 }

@@ -215,11 +215,51 @@ func buildRuleSet(rs RuleSetInput) map[string]any {
 		return m
 	}
 	m["url"] = rs.URL
-	if rs.DownloadDetour != "" {
-		m["download_detour"] = rs.DownloadDetour
-	}
+	// Download routing is emitted by BuildServerConfig as an explicit
+	// http_client: the legacy download_detour and the implicit default HTTP
+	// client were deprecated in sing-box 1.14 and are fatal from 1.15 on.
 	if rs.UpdateInterval != "" {
 		m["update_interval"] = rs.UpdateInterval
 	}
 	return m
+}
+
+// Tags of the HTTP clients the panel generates for remote rule-set downloads.
+const (
+	HTTPClientDirectTag    = "http-direct"
+	httpClientDetourPrefix = "http-via-"
+)
+
+// ruleSetHTTPClients assigns each remote rule-set an explicit top-level HTTP
+// client, one per distinct download route, in first-use order.
+type ruleSetHTTPClients struct {
+	final      string
+	directTags map[string]bool
+	byTag      map[string]bool
+	list       []map[string]any
+}
+
+func newRuleSetHTTPClients(final string, directTags map[string]bool) *ruleSetHTTPClients {
+	return &ruleSetHTTPClients{final: final, directTags: directTags, byTag: map[string]bool{}}
+}
+
+// tagFor returns the HTTP client tag that downloads through detour. An empty
+// detour keeps the pre-1.14 meaning (the default outbound, i.e. route.final).
+// A direct outbound becomes a client without detour: sing-box rejects a dial
+// detour to an empty direct outbound, and no detour already dials directly.
+func (c *ruleSetHTTPClients) tagFor(detour string) string {
+	if detour == "" {
+		detour = c.final
+	}
+	tag := HTTPClientDirectTag
+	client := map[string]any{"tag": tag}
+	if detour != "" && !c.directTags[detour] {
+		tag = httpClientDetourPrefix + detour
+		client = map[string]any{"tag": tag, "detour": detour}
+	}
+	if !c.byTag[tag] {
+		c.byTag[tag] = true
+		c.list = append(c.list, client)
+	}
+	return tag
 }

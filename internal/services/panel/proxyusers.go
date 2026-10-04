@@ -68,7 +68,7 @@ func proxyUsersForInbound(db *gorm.DB, inbound *model.Inbound, settings singbox.
 			return nil, fmt.Errorf("server %d has no agent token for multi-user lockout credential", inbound.ServerID)
 		}
 		lockout := proxyIdentity(&model.User{ProxyToken: "lockout:" + server.AgentToken}, inbound.ID)
-		lockout.Name = "__singbox_panel_disabled__"
+		lockout.Name = lockoutProxyUserName
 		lockout.Username = lockout.Name
 		identities = append(identities, lockout)
 	}

@@ -60,7 +60,7 @@ type singboxInstaller struct {
 
 func (i singboxInstaller) install(ctx context.Context, channel, version, method string) (string, error) {
 	if channel == "" {
-		channel = protocol.ChannelBeta
+		channel = protocol.ChannelStable
 	}
 	if channel != protocol.ChannelStable && channel != protocol.ChannelBeta {
 		return "", fmt.Errorf("unknown sing-box channel %q", channel)

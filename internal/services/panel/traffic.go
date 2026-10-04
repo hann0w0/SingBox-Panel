@@ -111,10 +111,16 @@ type trafficWriter struct {
 	pending map[trafficBucketKey]trafficBucketValue
 	dropped map[uint]bool
 	flushMu sync.Mutex
+	// Per-user hourly deltas and recent rename aliases (traffic_users.go).
+	pendingUsers map[userBucketKey]userBucketValue
+	aliases      map[string]userAlias
 }
 
 func newTrafficWriter(db *gorm.DB) *trafficWriter {
-	return &trafficWriter{db: db, pending: map[trafficBucketKey]trafficBucketValue{}, dropped: map[uint]bool{}}
+	return &trafficWriter{
+		db: db, pending: map[trafficBucketKey]trafficBucketValue{}, dropped: map[uint]bool{},
+		pendingUsers: map[userBucketKey]userBucketValue{}, aliases: map[string]userAlias{},
+	}
 }
 
 func (w *trafficWriter) add(deltas []trafficBucketDelta) {
@@ -143,6 +149,11 @@ func (w *trafficWriter) dropServer(serverID uint) {
 			delete(w.pending, key)
 		}
 	}
+	for key := range w.pendingUsers {
+		if key.ServerID == serverID {
+			delete(w.pendingUsers, key)
+		}
+	}
 	w.dropped[serverID] = true
 }
 
@@ -151,11 +162,18 @@ func (w *trafficWriter) record(serverID uint, snapshot *protocol.TrafficSnapshot
 	w.mu.Lock()
 	delete(w.dropped, serverID)
 	w.mu.Unlock()
-	deltas, err := applyServerTraffic(w.db, serverID, snapshot, time.Now())
+	deltas, userDeltas, err := applyServerTraffic(w.db, serverID, snapshot, time.Now())
 	if err != nil {
 		return err
 	}
 	w.add(deltas)
+	if len(userDeltas) > 0 {
+		resolved, err := w.resolveUserDeltas(userDeltas, time.Now())
+		if err != nil {
+			return err
+		}
+		w.addUsers(resolved)
+	}
 	return nil
 }
 
@@ -165,7 +183,14 @@ func (w *trafficWriter) flush() error {
 	w.mu.Lock()
 	pending := w.pending
 	w.pending = map[trafficBucketKey]trafficBucketValue{}
+	pendingUsers := w.pendingUsers
+	w.pendingUsers = map[userBucketKey]userBucketValue{}
 	w.mu.Unlock()
+	if err := writeUserTrafficBuckets(w.db, pendingUsers); err != nil {
+		w.restoreUsers(pendingUsers)
+		// Node and port history below is independent; still write it.
+		log.Printf("traffic: flush per-user history: %v", err)
+	}
 	if len(pending) == 0 {
 		return nil
 	}
@@ -198,7 +223,7 @@ func (w *trafficWriter) run(ctx context.Context) {
 
 // recordServerTraffic applies one report and writes its history immediately.
 func recordServerTraffic(db *gorm.DB, serverID uint, snapshot *protocol.TrafficSnapshot) error {
-	deltas, err := applyServerTraffic(db, serverID, snapshot, time.Now())
+	deltas, _, err := applyServerTraffic(db, serverID, snapshot, time.Now())
 	if err != nil {
 		return err
 	}
@@ -219,10 +244,11 @@ func trafficSampleTime(sampledAt int64, now time.Time) time.Time {
 }
 
 // applyServerTraffic updates the node counters and returns the bucket deltas
-// this report contributes.
-func applyServerTraffic(db *gorm.DB, serverID uint, snapshot *protocol.TrafficSnapshot, now time.Time) ([]trafficBucketDelta, error) {
+// this report contributes, plus per-user deltas (still keyed by the proxy
+// user name) for multi-user inbounds.
+func applyServerTraffic(db *gorm.DB, serverID uint, snapshot *protocol.TrafficSnapshot, now time.Time) ([]trafficBucketDelta, []userTrafficDelta, error) {
 	if snapshot == nil {
-		return nil, db.Model(&model.Server{}).Where("id = ?", serverID).Updates(map[string]any{
+		return nil, nil, db.Model(&model.Server{}).Where("id = ?", serverID).Updates(map[string]any{
 			"traffic_available":       false,
 			"traffic_upload_rate":     0,
 			"traffic_download_rate":   0,
@@ -232,11 +258,12 @@ func applyServerTraffic(db *gorm.DB, serverID uint, snapshot *protocol.TrafficSn
 	}
 
 	var deltas []trafficBucketDelta
+	var userDeltas []userTrafficDelta
 	err := db.Transaction(func(tx *gorm.DB) error {
 		var server model.Server
 		if err := tx.Select(
 			"id", "traffic_available", "traffic_upload", "traffic_download",
-			"traffic_remote_upload", "traffic_remote_download", "traffic_updated_at",
+			"traffic_remote_upload", "traffic_remote_download", "traffic_updated_at", "config_mode",
 		).First(&server, serverID).Error; err != nil {
 			return err
 		}
@@ -283,11 +310,11 @@ func applyServerTraffic(db *gorm.DB, serverID uint, snapshot *protocol.TrafficSn
 		// Without a baseline the node total for this report is zero, so the
 		// per-inbound deltas (which the Agent accumulated meanwhile) must be
 		// dropped too; otherwise ports would exceed the node total.
-		if !hasBaseline || len(snapshot.Ports) == 0 {
+		if !hasBaseline || (len(snapshot.Ports) == 0 && len(snapshot.Users) == 0) {
 			return nil
 		}
 		var inbounds []model.Inbound
-		if err := tx.Select("id", "tag").Where("server_id = ?", serverID).Find(&inbounds).Error; err != nil {
+		if err := tx.Select("id", "tag", "type", "settings").Where("server_id = ?", serverID).Find(&inbounds).Error; err != nil {
 			return err
 		}
 		inboundIDs := make(map[string]uint, len(inbounds))
@@ -307,12 +334,17 @@ func applyServerTraffic(db *gorm.DB, serverID uint, snapshot *protocol.TrafficSn
 				},
 			})
 		}
+		// Raw-mode configs carry user names the panel did not issue, which could
+		// match panel users by accident; only managed configs are attributed.
+		if server.ConfigMode != model.ConfigModeRaw {
+			userDeltas = multiUserTrafficDeltas(serverID, inbounds, snapshot.Users, sampledAt.Truncate(trafficHourlyBucket))
+		}
 		return nil
 	})
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
-	return deltas, nil
+	return deltas, userDeltas, nil
 }
 
 // trafficUpsertSet builds the conflict update for one bucket table. Bytes add
@@ -465,8 +497,8 @@ type trafficSeries struct {
 	Points           []trafficPoint      `json:"points"`
 	Ports            []trafficPortSeries `json:"ports"`
 	// Unattributed is node traffic that could not be assigned to a known
-	// inbound (connections that closed between Agent samples, or inbounds
-	// managed outside the panel).
+	// inbound: inbounds managed outside the panel, and (on nodes without the
+	// sing-box 1.14+ API service) connections that closed between samples.
 	UnattributedUpload   uint64 `json:"unattributed_upload"`
 	UnattributedDownload uint64 `json:"unattributed_download"`
 }
@@ -766,7 +798,10 @@ func pruneTrafficRecords(db *gorm.DB, now time.Time) error {
 		return err
 	}
 	hourlyCutoff := now.UTC().Add(-trafficHourlyRetention).Truncate(24 * time.Hour)
-	return db.Where("bucket < ?", hourlyCutoff).Delete(&model.TrafficHourly{}).Error
+	if err := db.Where("bucket < ?", hourlyCutoff).Delete(&model.TrafficHourly{}).Error; err != nil {
+		return err
+	}
+	return db.Where("bucket < ?", hourlyCutoff).Delete(&model.TrafficUserHourly{}).Error
 }
 
 // backfillTrafficHourly rebuilds hourly rollups from existing minute rows.

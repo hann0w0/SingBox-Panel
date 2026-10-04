@@ -62,8 +62,9 @@ export function toForm(ib: Inbound | null): FormVals {
       zero_rtt_handshake: false,
       heartbeat: '10s',
       tls_mode: 'reality',
-      reality_handshake_server: 'www.microsoft.com',
-      reality_handshake_port: 443,
+      // REALITY camouflage target is the operator's choice — do not prefill one.
+      reality_handshake_server: undefined,
+      reality_handshake_port: undefined,
       transport_type: 'tcp',
       snell_version: 5,
       snell_obfs_mode: 'none',
@@ -111,8 +112,8 @@ export function toForm(ib: Inbound | null): FormVals {
     gecko_max_packet_size: s.gecko_max_packet_size ?? undefined,
     tls_mode,
     tls_alpn: tls.alpn?.join(', '),
-    reality_handshake_server: tls.reality?.handshake_server ?? 'www.microsoft.com',
-    reality_handshake_port: tls.reality?.handshake_server_port ?? 443,
+    reality_handshake_server: tls.reality?.handshake_server || undefined,
+    reality_handshake_port: tls.reality?.handshake_server_port || undefined,
     tls_server_name: tls.server_name,
     tls_cert_path: tls.certificate_path,
     tls_key_path: tls.key_path,
@@ -393,7 +394,11 @@ export default function InboundForm({
             name="multi_user"
             label="单端口多用户"
             valuePropName="checked"
-            extra="开启后，每个获授权用户使用独立凭证；停用、到期或取消授权会自动从节点配置移除。"
+            extra={
+              inbound && !inbound.settings?.multi_user
+                ? '开启后，每个获授权用户使用独立凭证，并可按用户统计流量。注意：会更换该入站的凭证，已分享的用户需要重新更新订阅。'
+                : '开启后，每个获授权用户使用独立凭证，并可按用户统计流量；停用、到期或取消授权会自动从节点配置移除。'
+            }
           >
             <Switch />
           </Form.Item>
@@ -755,11 +760,16 @@ export default function InboundForm({
             )}
             {tlsMode === 'reality' && (
               <>
-                <Form.Item name="reality_handshake_server" label="目标握手域名" rules={[{ required: true }]}>
-                  <Input placeholder="www.microsoft.com" />
+                <Form.Item
+                  name="reality_handshake_server"
+                  label="目标握手域名"
+                  extra="选一个支持 TLS 1.3 的境外大站作为伪装目标"
+                  rules={[{ required: true, whitespace: true, message: '请填写伪装目标域名' }]}
+                >
+                  <Input placeholder="如 www.apple.com" />
                 </Form.Item>
                 <Form.Item name="reality_handshake_port" label="握手端口">
-                  <InputNumber min={1} max={65535} style={{ width: '100%' }} />
+                  <InputNumber min={1} max={65535} placeholder="留空默认 443" style={{ width: '100%' }} />
                 </Form.Item>
               </>
             )}

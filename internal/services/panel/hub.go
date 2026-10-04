@@ -40,6 +40,10 @@ type Hub struct {
 	// AfterRegister, if set, runs when an agent (re)registers — used to push the
 	// latest config so a reconnecting server converges automatically.
 	AfterRegister func(serverID uint)
+	// AfterStatsCapabilityChange, if set, runs when a heartbeat reports a
+	// sing-box version that crosses the stats API threshold (e.g. after an
+	// in-place upgrade to 1.14), so the config can enable or drop the service.
+	AfterStatsCapabilityChange func(serverID uint)
 }
 
 // NewHub builds a Hub bound to a database.
@@ -352,7 +356,11 @@ func (h *Hub) handleEvent(ac *agentConn, env protocol.Envelope) {
 			if err := h.traffic.record(serverID, e.Traffic); err != nil {
 				log.Printf("traffic: record server %d: %v", serverID, err)
 			}
-			h.live.publishTraffic(serverID, e.Traffic)
+			// The live stream only needs node and port data; per-user deltas
+			// stay out of its in-memory backlog.
+			live := *e.Traffic
+			live.Users = nil
+			h.live.publishTraffic(serverID, &live)
 		}
 	case protocol.EvtProgress:
 		var e protocol.ProgressEvt
@@ -412,11 +420,21 @@ func (h *Hub) onHeartbeat(ac *agentConn, e protocol.HeartbeatEvt) {
 		"uptime":         e.Uptime,
 		"singbox_active": e.SingboxActive,
 	}
+	capabilityChanged := false
 	if e.SingboxVersion != "" {
 		updates["singbox_version"] = e.SingboxVersion
 		updates["singbox_installed"] = true
+		var previous model.Server
+		if h.db.Select("singbox_version").First(&previous, serverID).Error == nil &&
+			previous.SingboxVersion != e.SingboxVersion &&
+			statsAPISupported(previous.SingboxVersion) != statsAPISupported(e.SingboxVersion) {
+			capabilityChanged = true
+		}
 	}
 	h.db.Model(&model.Server{}).Where("id = ?", serverID).Updates(updates)
+	if capabilityChanged && h.AfterStatsCapabilityChange != nil {
+		h.AfterStatsCapabilityChange(serverID)
+	}
 	if err := h.traffic.record(serverID, e.Traffic); err != nil {
 		log.Printf("traffic: record server %d: %v", serverID, err)
 	}

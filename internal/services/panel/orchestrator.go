@@ -2,10 +2,14 @@ package panel
 
 import (
 	"context"
+	"crypto/hmac"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"log"
+	"strings"
 	"sync"
 	"time"
 
@@ -156,7 +160,49 @@ func (o *Orchestrator) BuildServerConfig(srv *model.Server) ([]byte, error) {
 		RuleSets:        rsets,
 		Final:           srv.FinalOutbound,
 		StatsController: protocol.LocalTrafficAddress,
+		StatsSecret:     statsSecret(srv.AgentToken),
+		StatsAPI:        statsAPIAddress(srv, inbounds),
 	})
+}
+
+// statsSecret derives the per-node secret protecting the loopback stats
+// endpoints. It is deterministic so repeated pushes produce identical configs
+// (no needless sing-box restarts), and only the Agent (which reads it from the
+// node's config) and the panel can know it.
+func statsSecret(agentToken string) string {
+	if agentToken == "" {
+		return ""
+	}
+	mac := hmac.New(sha256.New, []byte(agentToken))
+	mac.Write([]byte("singbox-panel stats"))
+	return hex.EncodeToString(mac.Sum(nil))
+}
+
+// statsAPIAddress enables the sing-box API service only when the node runs a
+// release that has it (1.14.0+), the node has a secret, and no enabled
+// inbound already listens on the service port. Otherwise the Agent keeps the
+// Clash-only (per-port) accounting.
+func statsAPIAddress(srv *model.Server, inbounds []model.Inbound) string {
+	if !statsAPISupported(srv.SingboxVersion) || srv.AgentToken == "" {
+		return ""
+	}
+	port := addressPort(protocol.LocalStatsAPIAddress)
+	for _, inbound := range inbounds {
+		if inbound.ListenPort == port {
+			return ""
+		}
+	}
+	return protocol.LocalStatsAPIAddress
+}
+
+// statsAPISupported reports whether a sing-box version string is a release
+// with the API service (1.14.0 and later; 1.14 pre-releases are excluded).
+func statsAPISupported(version string) bool {
+	version = strings.TrimPrefix(strings.TrimSpace(version), "v")
+	if version == "" {
+		return false
+	}
+	return compareSemver(version, "1.14.0") >= 0
 }
 
 // ApplyDesiredConfig synchronously attempts to activate the saved desired

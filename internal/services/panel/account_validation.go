@@ -20,6 +20,7 @@ var (
 	errUsernameRequired = errors.New("username cannot be empty")
 	errUsernameTooLong  = errors.New("username must not exceed 191 bytes")
 	errUsernameControl  = errors.New("username cannot contain control characters")
+	errUsernameReserved = errors.New("username is reserved")
 	errPasswordRequired = errors.New("password cannot be empty")
 	errPasswordTooLong  = errors.New("password must not exceed 72 bytes")
 )
@@ -40,6 +41,9 @@ func validateUsername(value string) (string, string, error) {
 		if unicode.IsControl(r) {
 			return "", "", errUsernameControl
 		}
+	}
+	if normalizeUsername(display) == lockoutProxyUserName {
+		return "", "", errUsernameReserved
 	}
 	return display, normalizeUsername(display), nil
 }

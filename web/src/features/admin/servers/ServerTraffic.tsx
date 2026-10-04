@@ -59,7 +59,7 @@ const PROTOCOL_TAGS: Record<string, { label: string; color: string }> = {
   mixed: { label: 'Mixed', color: 'volcano' },
 }
 
-function ProtocolTag({ type }: { type: string }) {
+export function ProtocolTag({ type }: { type: string }) {
   const protocol = type.trim().toLowerCase()
   const tag = PROTOCOL_TAGS[protocol]
   return <Tag color={tag?.color}>{tag?.label || type}</Tag>
@@ -93,7 +93,7 @@ function tooltipTime(time: string, range: TrafficRange): string {
 // TrafficTrend renders one SVG area chart. Memoized: geometry, axes and path
 // data are recomputed only when points/width/step/range change; mouse hover
 // only re-renders the tooltip overlay.
-const TrafficTrend = memo(function TrafficTrend({
+export const TrafficTrend = memo(function TrafficTrend({
   points,
   range,
   stepSeconds,
@@ -416,7 +416,7 @@ export default function ServerTraffic({ serverId, serverName, titleExtra }: { se
               <Table.Summary.Row>
                 <Table.Summary.Cell index={0}>—</Table.Summary.Cell>
                 <Table.Summary.Cell index={1}>
-                  <Tooltip title="节点总量中无法归属到具体入站的部分：采样间隔内建立又关闭的连接，或不由面板管理的入站">
+                  <Tooltip title="节点总量中无法归属到具体入站的部分：不由面板管理的入站；sing-box 低于 1.14 时还包括采样间隔内建立又关闭的连接">
                     <span style={{ color: 'var(--console-muted)' }}>未归属 ⓘ</span>
                   </Tooltip>
                 </Table.Summary.Cell>

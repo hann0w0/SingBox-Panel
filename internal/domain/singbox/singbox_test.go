@@ -757,8 +757,11 @@ func TestBuildRouteActionsAndRuleSets(t *testing.T) {
 		Tag: "remote", Type: "remote", Format: "binary", URL: "https://example.com/rules.srs",
 		DownloadDetour: "direct", UpdateInterval: "1d",
 	})
-	if remote["url"] == "" || remote["download_detour"] != "direct" || remote["update_interval"] != "1d" {
+	if remote["url"] == "" || remote["update_interval"] != "1d" {
 		t.Fatalf("remote rule-set = %v", remote)
+	}
+	if _, exists := remote["download_detour"]; exists {
+		t.Fatalf("remote rule-set must not emit the deprecated download_detour: %v", remote)
 	}
 }
 

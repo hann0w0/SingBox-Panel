@@ -96,9 +96,9 @@ type User struct {
 	// changes, account disabling and other security-sensitive updates increment it.
 	TokenVersion uint `json:"-"`
 
-	// Usage tracking. Exact per-user byte counters are unavailable from
-	// official sing-box builds, so activity is derived from panel logins and
-	// subscription fetches instead.
+	// Usage tracking from panel logins and subscription fetches. Per-user
+	// bytes live in TrafficUserHourly (multi-user inbounds on sing-box 1.14+)
+	// and are deliberately not fields here, so /api/user/me never exposes them.
 	LastLoginAt   *time.Time `json:"last_login_at"`
 	LastLoginIP   string     `gorm:"size:64" json:"last_login_ip"`
 	LastSubAt     *time.Time `json:"last_sub_at"`
@@ -336,6 +336,24 @@ type TrafficHourly struct {
 // TableName keeps the hourly table name stable.
 func (TrafficHourly) TableName() string { return "traffic_hourly" }
 
+// TrafficUserHourly is one hour of one panel user's traffic on one multi-user
+// inbound, attributed from the sing-box API service connection stream. It is
+// visible to administrators only; nothing here is exposed on the User model.
+type TrafficUserHourly struct {
+	ID        uint      `gorm:"primaryKey" json:"id"`
+	ServerID  uint      `gorm:"not null;uniqueIndex:idx_traffic_user_hourly_key,priority:1;index" json:"server_id"`
+	InboundID uint      `gorm:"not null;uniqueIndex:idx_traffic_user_hourly_key,priority:2" json:"inbound_id"`
+	UserID    uint      `gorm:"not null;uniqueIndex:idx_traffic_user_hourly_key,priority:3;index:idx_traffic_user_hourly_user,priority:1" json:"user_id"`
+	Bucket    time.Time `gorm:"not null;uniqueIndex:idx_traffic_user_hourly_key,priority:4;index:idx_traffic_user_hourly_user,priority:2;index" json:"bucket"`
+	Upload    uint64    `gorm:"not null;default:0" json:"upload"`
+	Download  uint64    `gorm:"not null;default:0" json:"download"`
+	CreatedAt time.Time `json:"created_at"`
+	UpdatedAt time.Time `json:"updated_at"`
+}
+
+// TableName keeps the per-user hourly table name stable.
+func (TrafficUserHourly) TableName() string { return "traffic_user_hourly" }
+
 // SubscriptionFetch is one subscription download, kept for a limited window
 // so administrators can see which clients and addresses use an account.
 type SubscriptionFetch struct {
@@ -438,7 +456,7 @@ type CustomNodeSubscription struct {
 func AllModels() []any {
 	return []any{
 		&User{}, &UserNodeOrder{}, &Server{}, &Inbound{}, &Outbound{}, &RouteRule{}, &RuleSet{}, &Setting{}, &TrafficRecord{},
-		&CustomNodeSubscription{}, &CustomNode{}, &TrafficHourly{}, &SubscriptionFetch{},
+		&CustomNodeSubscription{}, &CustomNode{}, &TrafficHourly{}, &SubscriptionFetch{}, &TrafficUserHourly{},
 	}
 }
 
@@ -491,8 +509,8 @@ func (n *CustomNode) HasUser(userID uint) bool {
 // Scope: expiry gates panel access and subscriptions. Managed multi-user
 // inbounds also remove expired users during reconciliation. A protocol kept in
 // single-credential mode cannot revoke one user without rotating its shared
-// credential. Exact per-user traffic quotas remain unavailable until the
-// installed sing-box build exposes authenticated-user counters.
+// credential. Per-user traffic is recorded for viewing only; there are no
+// traffic quotas.
 func (u *User) Expired(now time.Time) bool {
 	return u.ExpireAt != nil && now.After(*u.ExpireAt)
 }

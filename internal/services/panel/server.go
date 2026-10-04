@@ -94,6 +94,9 @@ func NewApp(cfg config.PanelConfig, db *gorm.DB) *App {
 		go orch.PushConfigIfManaged(serverID)
 		go a.resumeLogStream(serverID)
 	}
+	hub.AfterStatsCapabilityChange = func(serverID uint) {
+		go orch.PushConfigIfManaged(serverID)
+	}
 	a.engine = a.routes()
 	return a
 }
@@ -192,6 +195,7 @@ func (a *App) routes() *gin.Engine {
 		admin.PUT("/users/:id", a.updateUser)
 		admin.GET("/users/:id/access", a.getUserAccess)
 		admin.GET("/users/:id/sub-fetches", a.listUserSubscriptionFetches)
+		admin.GET("/users/:id/traffic", a.userTraffic)
 		admin.PUT("/users/:id/access", a.updateUserAccess)
 		admin.DELETE("/users/:id", a.deleteUser)
 

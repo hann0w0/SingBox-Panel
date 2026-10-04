@@ -21,6 +21,9 @@ export interface User {
   // Only present in the admin user list.
   sub_fetches_24h?: number
   sub_ips_24h?: number
+  // Attributed traffic of the last 30 days (multi-user inbounds only).
+  traffic_upload_30d?: number
+  traffic_download_30d?: number
   // sub_token intentionally absent: the API never returns it (see model.User).
   // The frontend uses subscription_url from /api/user/me and /api/user/reset-sub.
   created_at: string
@@ -103,6 +106,30 @@ export interface TrafficSeries {
   udp_connections: number
   points: TrafficPoint[]
   ports: TrafficPortSeries[]
+}
+
+export type UserTrafficRange = '24h' | '7d' | '30d'
+
+export interface UserTrafficInbound {
+  server_id: number
+  server_name: string
+  inbound_id: number
+  tag: string
+  port: number
+  type: string
+  deleted: boolean
+  upload: number
+  download: number
+}
+
+export interface UserTrafficSeries {
+  range: UserTrafficRange
+  step_seconds: number
+  timezone: string
+  upload: number
+  download: number
+  points: TrafficPoint[]
+  inbounds: UserTrafficInbound[]
 }
 
 export type InboundType =

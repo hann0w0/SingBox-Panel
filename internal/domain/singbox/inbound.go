@@ -17,7 +17,10 @@ type InboundInput struct {
 
 // ---- sing-box wire structs (subset we generate) ----
 
-type acmeInbound struct {
+// acmeProvider is an inline ACME certificate provider (sing-box 1.14+). It
+// replaces the inline tls.acme object, which 1.14 deprecated and 1.15 rejects.
+type acmeProvider struct {
+	Type   string   `json:"type"` // always "acme"
 	Domain []string `json:"domain"`
 	Email  string   `json:"email,omitempty"`
 }
@@ -42,7 +45,7 @@ type tlsInbound struct {
 	Key             []string        `json:"key,omitempty"`         // inline PEM lines
 	CertificatePath string          `json:"certificate_path,omitempty"`
 	KeyPath         string          `json:"key_path,omitempty"`
-	ACME            *acmeInbound    `json:"acme,omitempty"`
+	CertProvider    *acmeProvider   `json:"certificate_provider,omitempty"`
 	Reality         *realityInbound `json:"reality,omitempty"`
 }
 
@@ -97,7 +100,7 @@ func buildTLS(t TLSSettings) *tlsInbound {
 		out.Certificate = pemLines(t.Certificate)
 		out.Key = pemLines(t.Key)
 	case t.ACMEDomain != "":
-		out.ACME = &acmeInbound{Domain: []string{t.ACMEDomain}, Email: t.ACMEEmail}
+		out.CertProvider = &acmeProvider{Type: "acme", Domain: []string{t.ACMEDomain}, Email: t.ACMEEmail}
 		if out.ServerName == "" {
 			out.ServerName = t.ACMEDomain
 		}
@@ -353,7 +356,7 @@ func BuildInbound(in InboundInput) (json.RawMessage, error) {
 		m["users"] = users
 		m["tls"] = tls // required
 
-	case "snell": // requires a sing-box 1.14 beta binary on the node
+	case "snell": // requires sing-box 1.14+ on the node
 		m["version"] = in.Settings.SnellVersion
 		m["psk"] = in.Settings.SnellPSK
 		// Snell is intentionally fixed to one PSK in this panel. Do not emit

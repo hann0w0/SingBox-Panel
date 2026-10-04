@@ -32,9 +32,16 @@ type trafficSampler struct {
 	lastSample   time.Time
 	haveSample   bool
 
-	connections     map[string]trafficConnection
+	// ledger is the single per-connection account fed by both the Clash poll
+	// and the sing-box API connection stream (see trafficledger.go).
+	ledger          map[string]*ledgerEntry
+	tombstones      map[string]*ledgerEntry
+	tombstoneOrder  []string
+	startedAt       time.Time
 	haveConnections bool
+	portWindow      map[string][2]uint64
 	pendingPorts    map[string]protocol.PortTrafficSnapshot
+	pendingUsers    map[userTrafficKey]protocol.UserTrafficSnapshot
 	available       bool
 	uploadRate      uint64
 	downloadRate    uint64
@@ -51,12 +58,6 @@ type trafficSampler struct {
 	configValue     localTrafficConfig
 }
 
-type trafficConnection struct {
-	inbound  string
-	upload   uint64
-	download uint64
-}
-
 type localTrafficConfig struct {
 	Endpoint string
 	Secret   string
@@ -69,9 +70,10 @@ type clashTrafficResponse struct {
 }
 
 type clashConnection struct {
-	ID       string `json:"id"`
-	Upload   uint64 `json:"upload"`
-	Download uint64 `json:"download"`
+	ID       string    `json:"id"`
+	Upload   uint64    `json:"upload"`
+	Download uint64    `json:"download"`
+	Start    time.Time `json:"start"`
 	Metadata struct {
 		Network string `json:"network"`
 		Type    string `json:"type"`
@@ -114,8 +116,12 @@ func countProcSockets(path string, excludeListen bool) int {
 
 func newTrafficSampler() *trafficSampler {
 	return &trafficSampler{
-		connections:  make(map[string]trafficConnection),
+		ledger:       make(map[string]*ledgerEntry),
+		tombstones:   make(map[string]*ledgerEntry),
+		startedAt:    time.Now(),
+		portWindow:   make(map[string][2]uint64),
 		pendingPorts: make(map[string]protocol.PortTrafficSnapshot),
+		pendingUsers: make(map[userTrafficKey]protocol.UserTrafficSnapshot),
 		client:       &http.Client{Timeout: 3 * time.Second},
 	}
 }
@@ -229,6 +235,7 @@ func (s *trafficSampler) poll(ctx context.Context) {
 		s.mu.Unlock()
 		return
 	}
+	requestedAt := time.Now()
 	requestCtx, cancel := context.WithTimeout(ctx, 3*time.Second)
 	defer cancel()
 	req, err := http.NewRequestWithContext(requestCtx, http.MethodGet, cfg.Endpoint, nil)
@@ -264,17 +271,24 @@ func (s *trafficSampler) poll(ctx context.Context) {
 		return
 	}
 
-	s.ingest(cfg.Endpoint, counters, time.Now())
+	s.ingestAt(cfg.Endpoint, counters, requestedAt, time.Now())
 }
 
 // ingest folds one /connections response into the sampler state.
 func (s *trafficSampler) ingest(endpoint string, counters clashTrafficResponse, now time.Time) {
+	s.ingestAt(endpoint, counters, now, now)
+}
+
+// ingestAt is ingest with the time the request was issued. Ledger entries
+// first seen after that moment (from the connection stream) cannot be in the
+// response and must not be treated as closed.
+func (s *trafficSampler) ingestAt(endpoint string, counters clashTrafficResponse, requestedAt, now time.Time) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if s.endpoint != "" && s.endpoint != endpoint {
-		s.connections = make(map[string]trafficConnection)
-		s.pendingPorts = make(map[string]protocol.PortTrafficSnapshot)
-		s.haveConnections = false
+		// A different controller is a different sing-box instance view; node
+		// totals restart. Connection ids are global UUIDs, so the ledger and
+		// unsent deltas stay valid.
 		s.haveSample = false
 	}
 
@@ -292,43 +306,30 @@ func (s *trafficSampler) ingest(endpoint string, counters clashTrafficResponse, 
 		sampleSeconds = 1
 	}
 
-	// The Clash API exposes per-connection counters and inbound tag in
-	// metadata.type, for example "vless/vless-in". Sampling deltas provides
-	// useful per-port history without requiring the optional V2Ray API build tag.
-	nextConnections := make(map[string]trafficConnection, len(counters.Connections))
-	sampleDeltas := make(map[string][2]uint64)
+	// The Clash API exposes per-connection counters and the inbound tag in
+	// metadata.type, for example "vless/vless-in". Every observation goes
+	// through the shared ledger, which attributes only bytes not yet counted.
+	present := make(map[string]bool, len(counters.Connections))
 	for _, connection := range counters.Connections {
 		if connection.ID == "" {
 			continue
 		}
-		inbound := parseInboundTag(connection.Metadata.Type)
-		current := trafficConnection{inbound: inbound, upload: connection.Upload, download: connection.Download}
-		if s.haveConnections && inbound != "" {
-			// A connection absent from the previous sample was opened since
-			// then, so all of its bytes are new. Counting only increments of
-			// already-known connections dropped short-lived connections and
-			// the first second of every long one.
-			uploadDelta, downloadDelta := connection.Upload, connection.Download
-			if previous, ok := s.connections[connection.ID]; ok && previous.inbound == inbound {
-				uploadDelta = counterDelta(connection.Upload, previous.upload)
-				downloadDelta = counterDelta(connection.Download, previous.download)
-			}
-			if uploadDelta > 0 || downloadDelta > 0 {
-				sample := sampleDeltas[inbound]
-				sample[0] += uploadDelta
-				sample[1] += downloadDelta
-				sampleDeltas[inbound] = sample
-			}
+		present[connection.ID] = true
+		// Without a creation time, the very first sample is the baseline: those
+		// connections' history predates the accounting window.
+		baseline := !s.haveConnections
+		if !connection.Start.IsZero() {
+			baseline = connection.Start.Before(s.startedAt)
 		}
-		nextConnections[connection.ID] = current
+		s.observeConnection(connection.ID, parseInboundTag(connection.Metadata.Type), "",
+			[2]uint64{connection.Upload, connection.Download}, baseline, now)
 	}
-	// A port's rate is the sum of all its connections in this sample, not the
-	// fastest single connection.
-	for inbound, sample := range sampleDeltas {
+	s.closeMissing(present, requestedAt)
+	// A port's rate is the sum of all its connections over this sample window
+	// (including bytes the stream reported in between), not the fastest one.
+	for inbound, sample := range s.portWindow {
 		delta := s.pendingPorts[inbound]
 		delta.Inbound = inbound
-		delta.Upload += sample[0]
-		delta.Download += sample[1]
 		if rate := uint64(float64(sample[0]) / sampleSeconds); rate > delta.UploadRate {
 			delta.UploadRate = rate
 		}
@@ -337,7 +338,7 @@ func (s *trafficSampler) ingest(endpoint string, counters clashTrafficResponse, 
 		}
 		s.pendingPorts[inbound] = delta
 	}
-	s.connections = nextConnections
+	clear(s.portWindow)
 	s.haveConnections = true
 	s.endpoint = endpoint
 	s.lastUpload = counters.UploadTotal
@@ -378,6 +379,15 @@ func (s *trafficSampler) snapshot() *protocol.TrafficSnapshot {
 		snapshot.Ports = append(snapshot.Ports, delta)
 	}
 	sort.Slice(snapshot.Ports, func(i, j int) bool { return snapshot.Ports[i].Inbound < snapshot.Ports[j].Inbound })
+	for _, delta := range s.pendingUsers {
+		snapshot.Users = append(snapshot.Users, delta)
+	}
+	sort.Slice(snapshot.Users, func(i, j int) bool {
+		if snapshot.Users[i].Inbound != snapshot.Users[j].Inbound {
+			return snapshot.Users[i].Inbound < snapshot.Users[j].Inbound
+		}
+		return snapshot.Users[i].User < snapshot.Users[j].User
+	})
 	return snapshot
 }
 
@@ -430,6 +440,20 @@ func (s *trafficSampler) acknowledge(snapshot *protocol.TrafficSnapshot) {
 			delete(s.pendingPorts, sent.Inbound)
 		} else {
 			s.pendingPorts[sent.Inbound] = pending
+		}
+	}
+	for _, sent := range snapshot.Users {
+		key := userTrafficKey{inbound: sent.Inbound, user: sent.User}
+		pending, ok := s.pendingUsers[key]
+		if !ok {
+			continue
+		}
+		pending.Upload = subtractCounter(pending.Upload, sent.Upload)
+		pending.Download = subtractCounter(pending.Download, sent.Download)
+		if pending.Upload == 0 && pending.Download == 0 {
+			delete(s.pendingUsers, key)
+		} else {
+			s.pendingUsers[key] = pending
 		}
 	}
 }

@@ -393,7 +393,7 @@ func (a *App) deleteServer(c *gin.Context) {
 	if a.hub != nil && a.hub.traffic != nil {
 		a.hub.traffic.dropServer(id)
 	}
-	for _, row := range []any{&model.TrafficRecord{}, &model.TrafficHourly{}} {
+	for _, row := range []any{&model.TrafficRecord{}, &model.TrafficHourly{}, &model.TrafficUserHourly{}} {
 		if err := tx.Where("server_id = ?", id).Delete(row).Error; err != nil {
 			tx.Rollback()
 			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
@@ -447,7 +447,7 @@ func (a *App) deleteServer(c *gin.Context) {
 	}
 	if a.hub != nil {
 		a.hub.traffic.dropServer(id)
-		for _, row := range []any{&model.TrafficRecord{}, &model.TrafficHourly{}} {
+		for _, row := range []any{&model.TrafficRecord{}, &model.TrafficHourly{}, &model.TrafficUserHourly{}} {
 			if err := a.db.Where("server_id = ?", id).Delete(row).Error; err != nil {
 				log.Printf("delete server %d: final traffic cleanup failed: %v", id, err)
 			}
@@ -482,7 +482,7 @@ func (a *App) installSingbox(c *gin.Context) {
 		return
 	}
 	if req.Channel == "" {
-		req.Channel = protocol.ChannelBeta
+		req.Channel = protocol.ChannelStable
 	}
 	if req.Method == "" {
 		req.Method = protocol.MethodScript
@@ -889,6 +889,7 @@ func (a *App) applyRawConfig(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{
 		"ok": true, "output": res.Output, "summary": buildImportSummary(parsed),
 		"config_mode": synced.ConfigMode,
+		"warnings":    rawConfigSecurityWarnings(raw),
 	})
 }
 

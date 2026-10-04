@@ -86,6 +86,13 @@ func TestCompareSemver(t *testing.T) {
 		{"1.14.1", "1.14.0", 1},
 		{"1.10.0", "1.9.0", 1},
 		{"1.14.0", "1.14.0-rc.1", 1}, // release > pre-release
+		// pre-release stages and numeric identifiers
+		{"1.15.0-alpha.10", "1.15.0-beta.1", -1}, // alpha < beta regardless of number
+		{"1.15.0-beta.1", "1.15.0-alpha.10", 1},
+		{"1.14.0-beta.16", "1.14.0-rc.1", -1},
+		{"1.15.0-alpha.9", "1.15.0-alpha.10", -1}, // numeric, not lexical
+		{"1.15.0-alpha.10", "1.15.0-alpha.9", 1},
+		{"1.15.0-alpha", "1.15.0-alpha.1", -1},
 	}
 	for _, tt := range tests {
 		got := compareSemver(tt.a, tt.b)
@@ -135,5 +142,32 @@ func TestCheckSingboxUpdate_BetaIsNewer(t *testing.T) {
 	hasUp, _ = checkSingboxUpdate("1.15.0-beta.2", releases)
 	if hasUp {
 		t.Error("newer beta version should not report update")
+	}
+}
+
+func TestCheckSingboxUpdate_StaysOnSafeLine(t *testing.T) {
+	releases := SingboxLatestReleases{Stable: "1.14.2", Beta: "1.15.0-alpha.10"}
+	tests := []struct {
+		installed  string
+		wantUpdate bool
+		wantLatest string
+	}{
+		{"1.14.2", false, ""},              // stable never offered an alpha
+		{"1.14.0", true, "1.14.2"},         // newer stable
+		{"1.14.0-beta.17", true, "1.14.2"}, // pre-release → its stable release
+		{"1.14.0-rc.5", true, "1.14.2"},
+		{"1.15.0-alpha.3", true, "1.15.0-alpha.10"}, // same minor line pre-release
+		{"1.15.0-alpha.10", false, ""},
+		{"v1.15.0-alpha.9", true, "1.15.0-alpha.10"}, // tolerate a v prefix
+	}
+	for _, tt := range tests {
+		hasUp, latest := checkSingboxUpdate(tt.installed, releases)
+		if hasUp != tt.wantUpdate || latest != tt.wantLatest {
+			t.Errorf("checkSingboxUpdate(%q) = %v, %q; want %v, %q", tt.installed, hasUp, latest, tt.wantUpdate, tt.wantLatest)
+		}
+	}
+	// A pre-release of the current line is not pushed to the next minor's alpha.
+	if hasUp, latest := checkSingboxUpdate("1.14.0-beta.3", SingboxLatestReleases{Beta: "1.15.0-alpha.10"}); hasUp {
+		t.Errorf("1.14 beta was offered next-minor alpha %q", latest)
 	}
 }

@@ -757,6 +757,9 @@ export default function ServerDetail() {
       } else {
         message.info('已下发并同步；配置无法无损转换，继续保留完整原始配置')
       }
+      for (const warning of result.warnings ?? []) {
+        message.warning({ content: `安全提醒：${warning}`, duration: 10 })
+      }
       setCfgOpen(false)
       setCfgServerID(null)
       void load().catch(() => {})

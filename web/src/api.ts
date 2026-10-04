@@ -16,6 +16,8 @@ import type {
   TrafficRange,
   TrafficSeries,
   User,
+  UserTrafficRange,
+  UserTrafficSeries,
 } from './types'
 import { useAuth } from './store'
 
@@ -153,7 +155,7 @@ export const getServerTraffic = (id: number, range: TrafficRange = '24h', signal
 export const remoteConfig = (id: number, signal?: AbortSignal) =>
   http.get<RemoteConfig>(`/api/admin/servers/${id}/remote-config`, { signal }).then((r) => r.data)
 export const applyRawConfig = (id: number, config: string) =>
-  http.post<{ ok: boolean; output: string; summary: ImportSummary; config_mode: 'managed' | 'raw' }>(`/api/admin/servers/${id}/apply-raw`, { config }).then((r) => r.data)
+  http.post<{ ok: boolean; output: string; summary: ImportSummary; config_mode: 'managed' | 'raw'; warnings?: string[] }>(`/api/admin/servers/${id}/apply-raw`, { config }).then((r) => r.data)
 
 // ---- admin: inbounds ----
 interface InboundBody {
@@ -313,6 +315,8 @@ export interface SubscriptionIPSummary {
 }
 export const getUserSubFetches = (id: number, signal?: AbortSignal) =>
   http.get<{ fetches: SubscriptionFetch[]; ips: SubscriptionIPSummary[]; retention_days: number }>(`/api/admin/users/${id}/sub-fetches`, { signal }).then((r) => r.data)
+export const getUserTraffic = (id: number, range: UserTrafficRange = '24h', signal?: AbortSignal) =>
+  http.get<UserTrafficSeries>(`/api/admin/users/${id}/traffic`, { params: { range }, signal }).then((r) => r.data)
 
 export interface UserAccess {
   user_id: number

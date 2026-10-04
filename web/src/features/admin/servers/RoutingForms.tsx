@@ -101,7 +101,8 @@ export function OutboundForm({
       form.setFieldsValue({
         type: 'shadowsocks',
         method: '2022-blake3-aes-128-gcm',
-        server_port: 443,
+        // Landing port must match the remote server — never guess it.
+        server_port: undefined,
         tls: false,
         tls_mode: 'none',
         tls_alpn: '',
@@ -173,8 +174,8 @@ export function OutboundForm({
           <Form.Item name="server" label="服务器地址" rules={[{ required: true }]} style={{ flex: 1 }}>
             <Input placeholder="hg.example.com" />
           </Form.Item>
-          <Form.Item name="server_port" label="端口" rules={[{ required: true }]}>
-            <InputNumber min={1} max={65535} />
+          <Form.Item name="server_port" label="端口" rules={[{ required: true, message: '请填写落地服务器的端口' }]}>
+            <InputNumber min={1} max={65535} placeholder="如 443" style={{ width: 120 }} />
           </Form.Item>
         </Space>
 

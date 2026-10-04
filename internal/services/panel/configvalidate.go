@@ -48,13 +48,18 @@ func validateTag(tag string) error {
 }
 
 func localTrafficPort() int {
-	_, portText, err := net.SplitHostPort(protocol.LocalTrafficAddress)
+	return addressPort(protocol.LocalTrafficAddress)
+}
+
+// addressPort returns the numeric port of a fixed host:port constant.
+func addressPort(address string) int {
+	_, portText, err := net.SplitHostPort(address)
 	if err != nil {
-		return 29091
+		return 0
 	}
 	port, err := strconv.Atoi(portText)
 	if err != nil {
-		return 29091
+		return 0
 	}
 	return port
 }
@@ -66,7 +71,7 @@ func (a *App) validateInboundIdentity(db *gorm.DB, serverID, excludeID uint, tag
 	if port < 1 || port > 65535 {
 		return fmt.Errorf("监听端口必须在 1-65535 之间")
 	}
-	if port == localTrafficPort() {
+	if port == localTrafficPort() || port == addressPort(protocol.LocalStatsAPIAddress) {
 		return fmt.Errorf("监听端口 %d 已保留给节点流量统计服务", port)
 	}
 	var n int64

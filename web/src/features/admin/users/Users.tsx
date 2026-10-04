@@ -1,11 +1,12 @@
 import { useEffect, useRef, useState } from 'react'
-import { Button, Card, DatePicker, Descriptions, Form, Input, Modal, Space, Switch, Table, Tag, Tooltip, Typography, message } from 'antd'
+import { Button, Card, DatePicker, Descriptions, Form, Input, Modal, Segmented, Space, Switch, Table, Tag, Tooltip, Typography, message } from 'antd'
 import { ApartmentOutlined, DeleteOutlined, EditOutlined, HistoryOutlined, PlusOutlined, WarningOutlined } from '@ant-design/icons'
 import dayjs from 'dayjs'
-import { createUser, deleteUser, errMsg, getUserSubFetches, listCustomNodes, listServers, listUsers, updateUser } from '../../../api'
+import { createUser, deleteUser, errMsg, getUserSubFetches, getUserTraffic, listCustomNodes, listServers, listUsers, updateUser } from '../../../api'
 import type { CustomNode, SubscriptionFetch, SubscriptionIPSummary } from '../../../api'
-import type { Server, User } from '../../../types'
-import { daysUntil, relativeTime } from '../../../util'
+import type { Server, User, UserTrafficInbound, UserTrafficRange, UserTrafficSeries } from '../../../types'
+import { daysUntil, formatBytes, relativeTime } from '../../../util'
+import { ProtocolTag, TrafficTrend } from '../servers/ServerTraffic'
 import { AssignModal } from '../access/Access'
 import { RequestState } from '../../../components/RequestState'
 
@@ -47,6 +48,81 @@ function SubscriptionSummary({ user }: { user: User }) {
   )
 }
 
+const USER_TRAFFIC_RANGES: { label: string; value: UserTrafficRange }[] = [
+  { label: '24 小时', value: '24h' },
+  { label: '7 天', value: '7d' },
+  { label: '30 天', value: '30d' },
+]
+
+// UserTraffic shows traffic attributed to one user. Only inbounds in
+// multi-user mode can tell users apart; single-user inbounds count toward
+// their port totals on the traffic page instead.
+function UserTraffic({ user }: { user: User }) {
+  const [range, setRange] = useState<UserTrafficRange>('24h')
+  const [data, setData] = useState<UserTrafficSeries | null>(null)
+  const [loading, setLoading] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+  const [reloadKey, setReloadKey] = useState(0)
+  useEffect(() => {
+    const controller = new AbortController()
+    setLoading(true)
+    setError(null)
+    getUserTraffic(user.id, range, controller.signal)
+      .then((d) => setData(d))
+      .catch((e) => {
+        if (!controller.signal.aborted) setError(errMsg(e))
+      })
+      .finally(() => {
+        if (!controller.signal.aborted) setLoading(false)
+      })
+    return () => controller.abort()
+  }, [user.id, range, reloadKey])
+  return (
+    <Card
+      size="small"
+      title="流量"
+      extra={<Segmented size="small" options={USER_TRAFFIC_RANGES} value={range} onChange={(v) => setRange(v as UserTrafficRange)} />}
+    >
+      <RequestState loading={loading && !data} error={error} hasData={!!data} onRetry={() => setReloadKey((k) => k + 1)}>
+        {data ? (
+          <Space direction="vertical" size="small" style={{ width: '100%' }}>
+            <Space size="large" wrap>
+              <span>下载 <b style={{ color: 'var(--console-download)' }}>{formatBytes(data.download)}</b></span>
+              <span>上传 <b style={{ color: 'var(--console-upload)' }}>{formatBytes(data.upload)}</b></span>
+              <span>合计 <b>{formatBytes(data.upload + data.download)}</b></span>
+            </Space>
+            <TrafficTrend points={data.points} range={data.range} stepSeconds={data.step_seconds} mode="usage" />
+            <Table<UserTrafficInbound>
+              size="small"
+              rowKey={(r) => `${r.server_id}-${r.inbound_id}`}
+              pagination={false}
+              dataSource={data.inbounds}
+              scroll={{ x: 520 }}
+              locale={{ emptyText: '暂无记录' }}
+              columns={[
+                { title: '主机', dataIndex: 'server_name', render: (v: string, r) => v || (r.deleted ? <Typography.Text type="secondary">已删除</Typography.Text> : '—') },
+                {
+                  title: '入站', dataIndex: 'tag',
+                  render: (v: string, r) => r.deleted && !v
+                    ? <Typography.Text type="secondary">已删除</Typography.Text>
+                    : <span>{v}{r.port ? <Typography.Text type="secondary"> :{r.port}</Typography.Text> : null}</span>,
+                },
+                { title: '协议', dataIndex: 'type', width: 100, render: (v: string) => (v ? <ProtocolTag type={v} /> : '—') },
+                { title: '下载', dataIndex: 'download', width: 100, render: (v: number) => formatBytes(v) },
+                { title: '上传', dataIndex: 'upload', width: 100, render: (v: number) => formatBytes(v) },
+                { title: '合计', key: 'total', width: 100, render: (_: unknown, r) => formatBytes(r.upload + r.download) },
+              ]}
+            />
+            <Typography.Text type="secondary" style={{ fontSize: 12 }}>
+              只统计开启了"单端口多用户"的入站；单用户入站的流量计入该端口总量，不区分用户。时区 {data.timezone}。
+            </Typography.Text>
+          </Space>
+        ) : null}
+      </RequestState>
+    </Card>
+  )
+}
+
 function SubscriptionHistory({ user, open, onClose }: { user: User | null; open: boolean; onClose: () => void }) {
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
@@ -77,6 +153,7 @@ function SubscriptionHistory({ user, open, onClose }: { user: User | null; open:
       <RequestState loading={loading} error={error} hasData={!loading} onRetry={() => undefined}>
         <Space direction="vertical" size="middle" style={{ width: '100%' }}>
           {user && <SubscriptionSummary user={user} />}
+          {user && <UserTraffic user={user} />}
           <Typography.Text type="secondary">明细保留 {retention} 天</Typography.Text>
           <Table<SubscriptionIPSummary>
             size="small"
@@ -329,6 +406,21 @@ export default function Users() {
             {groups.length
               ? groups.map(([group, count]) => <Tag key={group} color="blue">{group} · {count}</Tag>)
               : <span className="user-card-muted">无</span>}
+          </div>
+        </div>
+
+        <div className="user-card-row">
+          <span className="user-card-label">流量</span>
+          <div className="user-card-tags">
+            {(u.traffic_upload_30d ?? 0) + (u.traffic_download_30d ?? 0) > 0 ? (
+              <Tooltip title="近 30 天，仅统计多用户入站">
+                <span>
+                  <span style={{ color: 'var(--console-download)' }}>↓{formatBytes(u.traffic_download_30d ?? 0)}</span>
+                  {' '}
+                  <span style={{ color: 'var(--console-upload)' }}>↑{formatBytes(u.traffic_upload_30d ?? 0)}</span>
+                </span>
+              </Tooltip>
+            ) : <span className="user-card-muted">近 30 天无记录</span>}
           </div>
         </div>
 

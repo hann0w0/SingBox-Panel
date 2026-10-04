@@ -1,14 +1,19 @@
-// Package singbox generates official sing-box 1.14 beta server configs
+// Package singbox generates official sing-box 1.14+ server configs
 // and client subscription artifacts. It is dependency-free (stdlib only) and
 // decoupled from the panel's persistence types; the panel adapts its models to
 // the input types here.
 //
-// The generated config follows the official 1.14 beta schema:
+// The generated config follows the official 1.14 schema and avoids every
+// option deprecated by 1.14 (which 1.15 refuses to start with):
 //   - no removed special outbounds (block/dns) — DNS hijack via route action
 //   - no removed inbound sniff/domain_strategy fields — sniff via route action
 //   - new-format DNS servers ({"type":"local"|"udp"|"tls"|...})
 //   - transports limited to tcp/ws (official builds omit with_grpc)
-//   - no experimental.clash_api (single shared credentials cannot identify users)
+//   - experimental.clash_api and the API service only on loopback, always
+//     with a secret (the Agent's traffic accounting)
+//   - ACME via tls.certificate_provider, not the inline tls.acme object
+//   - remote rule-sets download through explicit http_clients, never through
+//     download_detour or the implicit default HTTP client
 package singbox
 
 import (
@@ -255,7 +260,7 @@ type InboundSettings struct {
 	// trojan
 	TrojanFallback *FallbackSettings `json:"trojan_fallback,omitempty"`
 
-	// snell (requires a sing-box 1.14 beta binary on the node)
+	// snell (requires sing-box 1.14+ on the node)
 	SnellVersion  int    `json:"snell_version,omitempty"`   // inbound: 5 | 6; sing-box outbound: 4 | 6
 	SnellPSK      string `json:"snell_psk,omitempty"`       // server pre-shared key
 	SnellReuse    bool   `json:"snell_reuse,omitempty"`     // outbound reuse

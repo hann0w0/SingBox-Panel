@@ -131,7 +131,7 @@ func TestImportSyncPreservesInboundGrantsByTag(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(nodes) != 1 || nodes[0].Name != "node - Snell" {
+	if len(nodes) != 1 || nodes[0].Name != "node" {
 		t.Fatalf("authorized nodes after sync = %+v", nodes)
 	}
 }

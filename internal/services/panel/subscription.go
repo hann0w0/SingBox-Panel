@@ -153,6 +153,7 @@ func (a *App) gatherNodesWithError(user *model.User) ([]node, error) {
 			if err := a.db.Where("server_id = ? AND enabled = ?", srv.ID, true).Order("id").Find(&inbounds).Error; err != nil {
 				return nil, err
 			}
+			first := len(out)
 			for _, ib := range inbounds {
 				// Respect per-inbound access: a protocol the user isn't granted must
 				// not appear in their subscription.
@@ -176,7 +177,6 @@ func (a *App) gatherNodesWithError(user *model.User) ([]node, error) {
 					orderType: userNodeTypeManaged,
 					orderID:   ib.ID,
 					tag:       ib.Tag,
-					name:      formatNodeDisplayName(srv.Name, ib.Tag, string(ib.Type)),
 					server:    host,
 					port:      ib.ListenPort,
 					typ:       string(ib.Type),
@@ -185,6 +185,7 @@ func (a *App) gatherNodesWithError(user *model.User) ([]node, error) {
 					user:      identity,
 				})
 			}
+			nameServerNodes(srv.Name, out[first:])
 		}
 	}
 
@@ -570,6 +571,21 @@ func regionFromName(name string) string {
 		}
 	}
 	return ""
+}
+
+// nameServerNodes names the panel-managed nodes one server contributes to a
+// node list. A server's only node is named after the server alone; the protocol
+// (or a custom inbound tag) is appended only when the same server contributes
+// several nodes, so those entries stay distinguishable.
+func nameServerNodes(serverName string, nodes []node) {
+	serverName = strings.TrimSpace(serverName)
+	for i := range nodes {
+		if len(nodes) == 1 && serverName != "" {
+			nodes[i].name = serverName
+			continue
+		}
+		nodes[i].name = formatNodeDisplayName(serverName, nodes[i].tag, nodes[i].typ)
+	}
 }
 
 func formatNodeDisplayName(serverName, tag, typ string) string {

@@ -52,7 +52,6 @@ func (a *App) serverNodeFormats(c *gin.Context) {
 		st.SingleUser = true
 		nodes = append(nodes, node{
 			tag:      ib.Tag,
-			name:     formatNodeDisplayName(srv.Name, ib.Tag, string(ib.Type)),
 			server:   host,
 			port:     ib.ListenPort,
 			typ:      string(ib.Type),
@@ -60,6 +59,7 @@ func (a *App) serverNodeFormats(c *gin.Context) {
 			user:     st.SingleUserIdentity(),
 		})
 	}
+	nameServerNodes(srv.Name, nodes)
 
 	var uriLines []string
 	for _, n := range nodes {

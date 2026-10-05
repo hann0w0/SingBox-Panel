@@ -1,6 +1,6 @@
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import type React from 'react'
-import { Button, Card, Grid, Segmented, Table, Tag, Tooltip, Typography, message } from 'antd'
+import { Button, Card, Grid, Segmented, Space, Table, Tag, Tooltip, Typography, message } from 'antd'
 import { ReloadOutlined } from '@ant-design/icons'
 import { errMsg, getServerTraffic, isCanceledRequest } from '../../../api'
 import type { TrafficPoint, TrafficPortSeries, TrafficRange, TrafficSeries } from '../../../types'
@@ -349,6 +349,20 @@ export default function ServerTraffic({ serverId, titleExtra }: { serverId: numb
         <div className="traffic-toolbar" style={{ marginBottom: 12 }}>
           {titleExtra}
           <Segmented<TrafficRange> block size="small" options={RANGE_OPTIONS} value={range} onChange={setRange} />
+        </div>
+      )}
+      {data?.available && (
+        <div style={{ marginBottom: 16 }}>
+          <Space size="large" wrap>
+            <span>上传 ↑ <b style={{ color: 'var(--console-upload)' }}>{formatBytes(data.upload)}</b></span>
+            <span>下载 ↓ <b style={{ color: 'var(--console-download)' }}>{formatBytes(data.download)}</b></span>
+            <span>合计 <b>{formatBytes(data.upload + data.download)}</b></span>
+          </Space>
+          <div style={{ marginTop: 4 }}>
+            <Typography.Text type="secondary" style={{ fontSize: 12 }}>
+              所选时段内此主机的 sing-box 总用量，包含共用凭据节点和多用户用量。
+            </Typography.Text>
+          </div>
         </div>
       )}
       <div className="traffic-dual-grid" style={{ marginTop: 0 }}>

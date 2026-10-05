@@ -1,49 +1,26 @@
 import { useEffect, useRef, useState } from 'react'
-import { Button, Card, DatePicker, Descriptions, Form, Input, Modal, Segmented, Space, Switch, Table, Tag, Tooltip, Typography, message } from 'antd'
-import { ApartmentOutlined, DeleteOutlined, EditOutlined, HistoryOutlined, PlusOutlined, WarningOutlined } from '@ant-design/icons'
+import { Button, Card, DatePicker, Descriptions, Form, Grid, Input, Modal, Segmented, Space, Switch, Table, Tag, Tooltip, Typography, message } from 'antd'
+import { ApartmentOutlined, DeleteOutlined, EditOutlined, HistoryOutlined, PlusOutlined } from '@ant-design/icons'
 import dayjs from 'dayjs'
 import { createUser, deleteUser, errMsg, getUserSubFetches, getUserTraffic, listCustomNodes, listServers, listUsers, updateUser } from '../../../api'
-import type { CustomNode, SubscriptionFetch, SubscriptionIPSummary } from '../../../api'
+import type { CustomNode, SubscriptionFetch } from '../../../api'
 import type { Server, User, UserTrafficInbound, UserTrafficRange, UserTrafficSeries } from '../../../types'
 import { daysUntil, formatBytes, relativeTime } from '../../../util'
-import { ProtocolTag, TrafficTrend } from '../servers/ServerTraffic'
+import { ProtocolTag } from '../servers/ServerTraffic'
 import { AssignModal } from '../access/Access'
 import { RequestState } from '../../../components/RequestState'
 
-// Several distinct addresses fetching one subscription within 24 hours is a
-// common sign that a link is being shared.
-const SHARED_IP_THRESHOLD = 4
-
 function SubscriptionSummary({ user }: { user: User }) {
-  const ips = user.sub_ips_24h ?? 0
-  const fetches = user.sub_fetches_24h ?? 0
-  const shared = ips >= SHARED_IP_THRESHOLD
   return (
     <Descriptions size="small" bordered column={{ xs: 1, sm: 2 }}>
-      <Descriptions.Item label="最近订阅">
+      <Descriptions.Item label="最近拉取">
         {user.last_sub_at ? (
           <Tooltip title={new Date(user.last_sub_at).toLocaleString('zh-CN')}><span>{relativeTime(user.last_sub_at)}</span></Tooltip>
         ) : '从未'}
       </Descriptions.Item>
       <Descriptions.Item label="客户端">{user.last_sub_client || '—'}</Descriptions.Item>
-      <Descriptions.Item label="来源 IP">{user.last_sub_ip || '—'}</Descriptions.Item>
-      <Descriptions.Item label="24 小时内">
-        {fetches === 0 ? '无拉取' : (
-          <span style={{ color: shared ? 'var(--console-warning)' : undefined }}>
-            {shared ? <WarningOutlined style={{ marginRight: 4 }} /> : null}
-            {fetches} 次 · {ips} 个 IP{shared ? '（可能存在共享）' : ''}
-          </span>
-        )}
-      </Descriptions.Item>
+      <Descriptions.Item label="24 小时拉取">{user.sub_fetches_24h ?? 0} 次</Descriptions.Item>
       <Descriptions.Item label="累计拉取">{user.sub_fetch_count ?? 0} 次</Descriptions.Item>
-      <Descriptions.Item label="最近登录">
-        {user.last_login_at ? `${relativeTime(user.last_login_at)}${user.last_login_ip ? ` · ${user.last_login_ip}` : ''}` : '从未'}
-      </Descriptions.Item>
-      {user.last_sub_ua ? (
-        <Descriptions.Item label="User-Agent" span={2}>
-          <Typography.Text style={{ wordBreak: 'break-all', fontSize: 12 }}>{user.last_sub_ua}</Typography.Text>
-        </Descriptions.Item>
-      ) : null}
     </Descriptions>
   )
 }
@@ -58,6 +35,8 @@ const USER_TRAFFIC_RANGES: { label: string; value: UserTrafficRange }[] = [
 // multi-user mode can tell users apart; single-user inbounds count toward
 // their port totals on the traffic page instead.
 function UserTraffic({ user }: { user: User }) {
+  const screens = Grid.useBreakpoint()
+  const compact = !screens.sm
   const [range, setRange] = useState<UserTrafficRange>('24h')
   const [data, setData] = useState<UserTrafficSeries | null>(null)
   const [loading, setLoading] = useState(false)
@@ -67,8 +46,11 @@ function UserTraffic({ user }: { user: User }) {
     const controller = new AbortController()
     setLoading(true)
     setError(null)
+    setData(null)
     getUserTraffic(user.id, range, controller.signal)
-      .then((d) => setData(d))
+      .then((d) => {
+        if (!controller.signal.aborted) setData(d)
+      })
       .catch((e) => {
         if (!controller.signal.aborted) setError(errMsg(e))
       })
@@ -77,44 +59,45 @@ function UserTraffic({ user }: { user: User }) {
       })
     return () => controller.abort()
   }, [user.id, range, reloadKey])
+  const rangeSelector = (
+    <Segmented<UserTrafficRange> block={compact} size="small" options={USER_TRAFFIC_RANGES} value={range} onChange={setRange} />
+  )
   return (
     <Card
       size="small"
-      title="流量"
-      extra={<Segmented size="small" options={USER_TRAFFIC_RANGES} value={range} onChange={(v) => setRange(v as UserTrafficRange)} />}
+      title="用户用量"
+      extra={compact ? undefined : rangeSelector}
     >
+      {compact && <div style={{ marginBottom: 12 }}>{rangeSelector}</div>}
       <RequestState loading={loading && !data} error={error} hasData={!!data} onRetry={() => setReloadKey((k) => k + 1)}>
         {data ? (
           <Space direction="vertical" size="small" style={{ width: '100%' }}>
             <Space size="large" wrap>
-              <span>下载 <b style={{ color: 'var(--console-download)' }}>{formatBytes(data.download)}</b></span>
-              <span>上传 <b style={{ color: 'var(--console-upload)' }}>{formatBytes(data.upload)}</b></span>
+              <span>上传 ↑ <b style={{ color: 'var(--console-upload)' }}>{formatBytes(data.upload)}</b></span>
+              <span>下载 ↓ <b style={{ color: 'var(--console-download)' }}>{formatBytes(data.download)}</b></span>
               <span>合计 <b>{formatBytes(data.upload + data.download)}</b></span>
             </Space>
-            <TrafficTrend points={data.points} range={data.range} stepSeconds={data.step_seconds} mode="usage" />
             <Table<UserTrafficInbound>
               size="small"
               rowKey={(r) => `${r.server_id}-${r.inbound_id}`}
               pagination={false}
               dataSource={data.inbounds}
-              scroll={{ x: 520 }}
+              scroll={{ x: 620 }}
               locale={{ emptyText: '暂无记录' }}
               columns={[
                 { title: '主机', dataIndex: 'server_name', render: (v: string, r) => v || (r.deleted ? <Typography.Text type="secondary">已删除</Typography.Text> : '—') },
                 {
-                  title: '入站', dataIndex: 'tag',
-                  render: (v: string, r) => r.deleted && !v
-                    ? <Typography.Text type="secondary">已删除</Typography.Text>
-                    : <span>{v}{r.port ? <Typography.Text type="secondary"> :{r.port}</Typography.Text> : null}</span>,
+                  title: '协议', dataIndex: 'type', width: 100,
+                  render: (v: string) => v ? <ProtocolTag type={v} /> : '—',
                 },
-                { title: '协议', dataIndex: 'type', width: 100, render: (v: string) => (v ? <ProtocolTag type={v} /> : '—') },
-                { title: '下载', dataIndex: 'download', width: 100, render: (v: number) => formatBytes(v) },
-                { title: '上传', dataIndex: 'upload', width: 100, render: (v: number) => formatBytes(v) },
-                { title: '合计', key: 'total', width: 100, render: (_: unknown, r) => formatBytes(r.upload + r.download) },
+                { title: '端口', dataIndex: 'port', width: 70, render: (v: number, r) => v ? <Tooltip title={r.tag}>{v}</Tooltip> : '—' },
+                { title: '上传 ↑', dataIndex: 'upload', width: 100, sorter: (a, b) => a.upload - b.upload, render: (v: number) => <span style={{ color: 'var(--console-upload)' }}>{formatBytes(v)}</span> },
+                { title: '下载 ↓', dataIndex: 'download', width: 100, sorter: (a, b) => a.download - b.download, render: (v: number) => <span style={{ color: 'var(--console-download)' }}>{formatBytes(v)}</span> },
+                { title: '合计', key: 'total', width: 100, sorter: (a, b) => a.upload + a.download - b.upload - b.download, render: (_: unknown, r) => <b>{formatBytes(r.upload + r.download)}</b> },
               ]}
             />
             <Typography.Text type="secondary" style={{ fontSize: 12 }}>
-              只统计开启了"单端口多用户"的入站；单用户入站的流量计入该端口总量，不区分用户。时区 {data.timezone}。
+              共用凭据节点的用量计入「流量」页总量，无法按用户区分。
             </Typography.Text>
           </Space>
         ) : null}
@@ -127,18 +110,22 @@ function SubscriptionHistory({ user, open, onClose }: { user: User | null; open:
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [fetches, setFetches] = useState<SubscriptionFetch[]>([])
-  const [ips, setIps] = useState<SubscriptionIPSummary[]>([])
   const [retention, setRetention] = useState(30)
+  const [loaded, setLoaded] = useState(false)
+  const [reloadKey, setReloadKey] = useState(0)
   useEffect(() => {
     if (!open || !user) return
     const controller = new AbortController()
     setLoading(true)
     setError(null)
+    setLoaded(false)
+    setFetches([])
     getUserSubFetches(user.id, controller.signal)
       .then((d) => {
+        if (controller.signal.aborted) return
         setFetches(d.fetches)
-        setIps(d.ips)
         setRetention(d.retention_days)
+        setLoaded(true)
       })
       .catch((e) => {
         if (!controller.signal.aborted) setError(errMsg(e))
@@ -147,47 +134,34 @@ function SubscriptionHistory({ user, open, onClose }: { user: User | null; open:
         if (!controller.signal.aborted) setLoading(false)
       })
     return () => controller.abort()
-  }, [open, user])
+  }, [open, user?.id, reloadKey])
   return (
     <Modal title={user ? `${user.email} · 使用情况` : ''} open={open} onCancel={onClose} footer={null} width={760} destroyOnClose>
-      <RequestState loading={loading} error={error} hasData={!loading} onRetry={() => undefined}>
-        <Space direction="vertical" size="middle" style={{ width: '100%' }}>
-          {user && <SubscriptionSummary user={user} />}
-          {user && <UserTraffic user={user} />}
-          <Typography.Text type="secondary">明细保留 {retention} 天</Typography.Text>
-          <Table<SubscriptionIPSummary>
-            size="small"
-            rowKey="ip"
-            title={() => '来源 IP'}
-            pagination={false}
-            dataSource={ips}
-            scroll={{ y: 200 }}
-            locale={{ emptyText: '暂无记录' }}
-            columns={[
-              { title: 'IP', dataIndex: 'ip' },
-              { title: '客户端', dataIndex: 'client', width: 130 },
-              { title: '次数', dataIndex: 'fetches', width: 80 },
-              { title: '最近', dataIndex: 'last_seen', width: 120, render: (v: string) => relativeTime(v) },
-            ]}
-          />
-          <Table<SubscriptionFetch>
-            size="small"
-            rowKey="id"
-            title={() => '最近拉取'}
-            pagination={false}
-            dataSource={fetches}
-            scroll={{ y: 260 }}
-            locale={{ emptyText: '暂无记录' }}
-            columns={[
-              { title: '时间', dataIndex: 'created_at', width: 170, render: (v: string) => new Date(v).toLocaleString('zh-CN') },
-              { title: 'IP', dataIndex: 'ip', width: 150 },
-              { title: '客户端', dataIndex: 'client', width: 110, render: (v: string, r) => <Tooltip title={r.user_agent}><span>{v}</span></Tooltip> },
-              { title: '格式', dataIndex: 'format', width: 90 },
-              { title: '结果', dataIndex: 'status', width: 70, render: (v: number) => (v === 200 ? <Tag color="green">成功</Tag> : <Tag color="red">{v}</Tag>) },
-            ]}
-          />
-        </Space>
-      </RequestState>
+      <Space direction="vertical" size="middle" style={{ width: '100%' }}>
+        {open && user && <UserTraffic key={user.id} user={user} />}
+        <Card size="small" title="订阅拉取记录" extra={<Typography.Text type="secondary">保留 {retention} 天</Typography.Text>}>
+          <Space direction="vertical" size="middle" style={{ width: '100%' }}>
+            {user && <SubscriptionSummary user={user} />}
+            <RequestState loading={loading} error={error} hasData={loaded} onRetry={() => setReloadKey((k) => k + 1)}>
+              <Table<SubscriptionFetch>
+                size="small"
+                rowKey="id"
+                pagination={false}
+                dataSource={fetches}
+                scroll={{ x: 590, y: 260 }}
+                locale={{ emptyText: '暂无记录' }}
+                columns={[
+                  { title: '时间', dataIndex: 'created_at', width: 170, render: (v: string) => new Date(v).toLocaleString('zh-CN') },
+                  { title: 'IP', dataIndex: 'ip', width: 150 },
+                  { title: '客户端', dataIndex: 'client', width: 110, render: (v: string, r) => <Tooltip title={r.user_agent}><span>{v}</span></Tooltip> },
+                  { title: '格式', dataIndex: 'format', width: 90 },
+                  { title: '结果', dataIndex: 'status', width: 70, render: (v: number) => (v === 200 ? <Tag color="green">成功</Tag> : <Tag color="red">{v}</Tag>) },
+                ]}
+              />
+            </RequestState>
+          </Space>
+        </Card>
+      </Space>
     </Modal>
   )
 }

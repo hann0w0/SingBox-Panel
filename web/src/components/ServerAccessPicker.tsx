@@ -86,7 +86,7 @@ export default function ServerAccessPicker({ servers, value = [], onChange }: Se
                   onChange={(e) => handleServerToggle(e.target.checked)}
                 />
                 <span style={{ fontWeight: 600, fontSize: 13, color: 'var(--console-ink)', wordBreak: 'break-all' }}>
-                  {s.name} {s.region ? `· ${s.region}` : ''}
+                  {s.name}
                 </span>
               </div>
 

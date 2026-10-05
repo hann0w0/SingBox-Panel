@@ -32,7 +32,7 @@ export default function Traffic() {
       popupMatchSelectWidth={false}
       options={servers.map((server) => ({
         value: server.id,
-        label: `${server.name}${server.region ? ` · ${server.region}` : ''}${server.online ? '' : '（离线）'}`,
+        label: `${server.name}${server.online ? '' : '（离线）'}`,
       }))}
       style={{ minWidth: 220, width: '100%', maxWidth: 320 }}
     />
@@ -46,5 +46,5 @@ export default function Traffic() {
       </Card>
     )
   }
-  return <ServerTraffic key={serverId} serverId={serverId} serverName={current.name} titleExtra={selector} />
+  return <ServerTraffic key={serverId} serverId={serverId} titleExtra={selector} />
 }

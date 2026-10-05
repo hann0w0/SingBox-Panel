@@ -530,7 +530,7 @@ export default function Logs({ serverId }: { serverId?: number } = {}) {
           popupMatchSelectWidth={false}
           options={servers.map((s) => ({
             value: s.id,
-            label: `${s.name}${s.region ? ' · ' + s.region : ''}${s.online ? '' : '（离线）'}`,
+            label: `${s.name}${s.online ? '' : '（离线）'}`,
             disabled: !s.online,
           }))}
         />}

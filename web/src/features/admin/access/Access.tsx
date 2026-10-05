@@ -1376,7 +1376,6 @@ export function CustomNodesPanel({ nodes, loading, error, onNodesChange }: {
     <>
       <Card
         title="订阅"
-        size="small"
         className="users-top-card subscription-overview-card"
         extra={<Button type="primary" size="small" icon={<PlusOutlined />} onClick={openSubscriptionCreate}>新增订阅</Button>}
       >
@@ -1444,7 +1443,6 @@ export function CustomNodesPanel({ nodes, loading, error, onNodesChange }: {
       </Card>
       <Card
         title="节点"
-        size="small"
         className="nodes-wide-card"
         extra={<Button type="primary" size="small" icon={<PlusOutlined />} onClick={openNodeCreate}>新增节点</Button>}
       >

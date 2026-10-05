@@ -1,10 +1,10 @@
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import type React from 'react'
 import { Button, Card, Grid, Segmented, Table, Tag, Tooltip, Typography, message } from 'antd'
-import { DownloadOutlined, ReloadOutlined } from '@ant-design/icons'
+import { ReloadOutlined } from '@ant-design/icons'
 import { errMsg, getServerTraffic, isCanceledRequest } from '../../../api'
 import type { TrafficPoint, TrafficPortSeries, TrafficRange, TrafficSeries } from '../../../types'
-import { downloadText, formatBytes, toCSV } from '../../../util'
+import { formatBytes } from '../../../util'
 import { useSSE } from '../../../useSSE'
 import type { SSEMessage } from '../../../useSSE'
 
@@ -270,27 +270,12 @@ const RANGE_OPTIONS: { label: string; value: TrafficRange }[] = [
 
 type PortRow = Pick<TrafficPortSeries, 'inbound_id' | 'tag' | 'port' | 'type' | 'upload' | 'download'>
 
-function pointsCSV(points: TrafficPoint[], stepSeconds: number): (string | number)[][] {
-  return [
-    ['时间', '下行(字节)', '上行(字节)', '峰值下行(字节/秒)', '峰值上行(字节/秒)', '平均下行(字节/秒)', '平均上行(字节/秒)'],
-    ...points.map((p) => [
-      new Date(p.time).toLocaleString('zh-CN', { hour12: false }),
-      p.download,
-      p.upload,
-      p.download_rate,
-      p.upload_rate,
-      Math.round(p.download / Math.max(1, stepSeconds)),
-      Math.round(p.upload / Math.max(1, stepSeconds)),
-    ]),
-  ]
-}
-
 const bytesSorter = <T extends { upload: number; download: number }>(key: 'upload' | 'download' | 'total') =>
   (a: T, b: T) => (key === 'total' ? a.upload + a.download - (b.upload + b.download) : a[key] - b[key])
 
 // ServerTraffic is the per-server traffic tab: live rate, history and the
 // per-inbound breakdown for one node.
-export default function ServerTraffic({ serverId, serverName, titleExtra }: { serverId: number; serverName: string; titleExtra?: React.ReactNode }) {
+export default function ServerTraffic({ serverId, titleExtra }: { serverId: number; titleExtra?: React.ReactNode }) {
   const screens = Grid.useBreakpoint()
   // Below antd's md breakpoint the controls leave the card header, which is
   // too narrow for a selector plus a five-way segmented control.
@@ -341,28 +326,22 @@ export default function ServerTraffic({ serverId, serverName, titleExtra }: { se
   const unattributedUpload = data?.unattributed_upload ?? 0
   const unattributedDownload = data?.unattributed_download ?? 0
 
-  const exportCSV = () => {
-    if (!data) return
-    const stamp = new Date().toISOString().slice(0, 10)
-    const rows = pointsCSV(data.points, data.step_seconds)
-    rows.push([], ['端口', '标签', '协议', '下行(字节)', '上行(字节)', '合计(字节)'])
-    for (const p of portRows) rows.push([p.port || '', p.tag, p.type, p.download, p.upload, p.upload + p.download])
-    if (unattributedUpload + unattributedDownload > 0) rows.push(['', '未归属', '', unattributedDownload, unattributedUpload, unattributedUpload + unattributedDownload])
-    downloadText(`traffic-${serverName}-${range}-${stamp}.csv`, toCSV(rows))
-  }
-
   return (
     <Card
       title="流量"
-      size={compact ? 'small' : 'default'}
       extra={
         <span style={{ display: 'inline-flex', gap: 8, alignItems: 'center' }}>
           {!compact && titleExtra}
-          {!compact && <Segmented<TrafficRange> options={RANGE_OPTIONS} value={range} onChange={setRange} />}
-          <Tooltip title="导出 CSV">
-            <Button size={compact ? 'small' : 'middle'} icon={<DownloadOutlined />} disabled={!data} onClick={exportCSV} aria-label="导出 CSV" />
-          </Tooltip>
-          <Button size={compact ? 'small' : 'middle'} icon={<ReloadOutlined />} loading={loading} onClick={() => void load()} title="刷新" aria-label="刷新" />
+          {!compact && <Segmented<TrafficRange> options={RANGE_OPTIONS} value={range} onChange={setRange} style={{ flex: 'none' }} />}
+          <Button
+            size={compact ? 'small' : 'middle'}
+            icon={<ReloadOutlined />}
+            loading={loading}
+            onClick={() => void load()}
+            title="刷新"
+            aria-label="刷新"
+            style={{ flex: 'none' }}
+          />
         </span>
       }
     >

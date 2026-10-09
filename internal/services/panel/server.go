@@ -3,6 +3,7 @@ package panel
 import (
 	"context"
 	"log"
+	"mime"
 	"net/http"
 	"net/url"
 	"os"
@@ -263,20 +264,62 @@ func (a *App) webDir() string {
 
 func (a *App) mountFrontend(r *gin.Engine) {
 	dir := a.webDir()
+
+	// Go's built-in MIME table has no entry for .webmanifest, so without this
+	// http.ServeContent falls back to content sniffing and serves the manifest
+	// as text/plain. Browsers then reject it and the app never becomes
+	// installable. AddExtensionType is safe to call unconditionally.
+	if err := mime.AddExtensionType(".webmanifest", "application/manifest+json"); err != nil {
+		log.Printf("cannot register webmanifest MIME type: %v", err)
+	}
+
 	for _, staticDir := range []string{"assets", "logos"} {
 		path := filepath.Join(dir, staticDir)
 		if dirExists(path) {
 			r.Static("/"+staticDir, path)
 		}
 	}
-	// Root-level favicon files live next to index.html in the built dist and
-	// must be served verbatim — the NoRoute fallback would otherwise answer
-	// with index.html (SPA catch-all) and browsers would never see the icon.
-	for _, fav := range []string{"favicon.svg", "favicon-32x32.png", "apple-touch-icon.png"} {
-		path := filepath.Join(dir, fav)
-		if fileExists(path) {
-			r.StaticFile("/"+fav, path)
+	// Root-level files live next to index.html in the built dist and must be
+	// served verbatim — the NoRoute fallback would otherwise answer with
+	// index.html and the browser would never see the icon, manifest or worker.
+	rootFiles := []struct {
+		name string
+		// cacheControl is empty for files that keep the previous behaviour
+		// (no explicit header, so the browser applies heuristic freshness).
+		cacheControl string
+	}{
+		{name: "favicon.svg"},
+		{name: "favicon-32x32.png"},
+		{name: "apple-touch-icon.png"},
+		// PWA entry points, revalidated on every load. None of them is
+		// content-hashed, so a long max-age would strand an installed app on an
+		// outdated worker (delaying an in-place upgrade by up to 24h) or on a
+		// manifest still pointing at icons the new build replaced.
+		{name: "manifest.webmanifest", cacheControl: "no-cache"},
+		{name: "sw.js", cacheControl: "no-cache"},
+		{name: "icon-192.png", cacheControl: "no-cache"},
+		{name: "icon-512.png", cacheControl: "no-cache"},
+		{name: "icon-maskable-192.png", cacheControl: "no-cache"},
+		{name: "icon-maskable-512.png", cacheControl: "no-cache"},
+	}
+	for _, file := range rootFiles {
+		path := filepath.Join(dir, file.name)
+		if !fileExists(path) {
+			continue
 		}
+		// sw.js in particular must never fall through to the SPA catch-all: a
+		// worker script is parsed as JavaScript, so an HTML response makes
+		// registration fail and silently disables installation for the origin.
+		serve := func(c *gin.Context) {
+			if file.cacheControl != "" {
+				c.Header("Cache-Control", file.cacheControl)
+			}
+			c.File(path)
+		}
+		r.GET("/"+file.name, serve)
+		// gin does not infer HEAD from GET, and net/http drops the body of a
+		// HEAD response for us.
+		r.HEAD("/"+file.name, serve)
 	}
 	r.NoRoute(func(c *gin.Context) {
 		if strings.HasPrefix(c.Request.URL.Path, "/api") {

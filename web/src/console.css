@@ -731,3 +731,55 @@ not live data updates or individual log rows.
     scroll-behavior: auto !important;
   }
 }
+
+/* --- Installed-app (PWA) layout -------------------------------------------
+   Only applies once the panel runs as an installed app: main.tsx sets
+   data-standalone from the PWA helper, because iOS reports standalone-ness via
+   legacy navigator.standalone rather than the display-mode media query.
+   In a browser tab none of this matches, so the existing layout is untouched.
+   Every rule composes the inset with calc() into the shorthand the base rule
+   already sets — a bare `padding-block` here would silently drop the existing
+   horizontal padding and flatten the whole console. */
+html[data-standalone] .console-shell .console-header {
+  height: calc(76px + env(safe-area-inset-top, 0px));
+  padding-top: calc(env(safe-area-inset-top, 0px));
+  padding-right: calc(32px + env(safe-area-inset-right, 0px));
+  padding-left: calc(32px + env(safe-area-inset-left, 0px));
+}
+
+html[data-standalone] .console-shell .console-content {
+  padding-top: calc(28px + env(safe-area-inset-top, 0px));
+  padding-right: calc(32px + env(safe-area-inset-right, 0px));
+  padding-bottom: calc(40px + env(safe-area-inset-bottom, 0px));
+  padding-left: calc(32px + env(safe-area-inset-left, 0px));
+}
+
+html[data-standalone] .console-sidebar {
+  padding-left: calc(env(safe-area-inset-left, 0px));
+}
+
+html[data-standalone] .console-sidebar-brand {
+  padding-top: calc(env(safe-area-inset-top, 0px));
+  padding-bottom: calc(env(safe-area-inset-top, 0px));
+}
+
+/* The sidebar is 100dvh tall but the safe areas are subtracted from that same
+   viewport, so without this the nav footer sits under the gesture bar. */
+html[data-standalone] .console-shell .console-sidebar-footer {
+  padding-bottom: calc(20px + env(safe-area-inset-bottom, 0px));
+}
+
+@media (max-width: 767px) {
+  html[data-standalone] .console-shell .console-header {
+    height: calc(64px + env(safe-area-inset-top, 0px));
+    padding-right: calc(16px + env(safe-area-inset-right, 0px));
+    padding-left: calc(16px + env(safe-area-inset-left, 0px));
+  }
+
+  html[data-standalone] .console-shell .console-content {
+    padding: calc(20px + env(safe-area-inset-top, 0px))
+              calc(12px + env(safe-area-inset-right, 0px))
+              calc(32px + env(safe-area-inset-bottom, 0px))
+              calc(12px + env(safe-area-inset-left, 0px));
+  }
+}

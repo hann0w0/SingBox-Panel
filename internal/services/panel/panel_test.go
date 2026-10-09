@@ -1070,3 +1070,86 @@ func TestFrontendIndexDisablesCaching(t *testing.T) {
 		t.Fatalf("Cache-Control = %q; want no-store", got)
 	}
 }
+
+// The PWA entry points sit at the dist root, exactly like the favicons, so a
+// missing route would silently be answered by the SPA catch-all. For sw.js that
+// failure is invisible: registration rejects an HTML script without surfacing
+// anything to the page, and the panel just never becomes installable.
+func TestFrontendServesPWAEntryPoints(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	dir := t.TempDir()
+	manifest := []byte(`{"name":"SingBox Panel"}`)
+	files := map[string][]byte{
+		"manifest.webmanifest":  manifest,
+		"sw.js":                 []byte("self.addEventListener('install',()=>{})"),
+		"icon-192.png":          []byte("png-192"),
+		"icon-512.png":          []byte("png-512"),
+		"icon-maskable-192.png": []byte("png-maskable-192"),
+		"icon-maskable-512.png": []byte("png-maskable-512"),
+	}
+	for name, body := range files {
+		if err := os.WriteFile(filepath.Join(dir, name), body, 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	// The catch-all is what the routes must win against.
+	if err := os.WriteFile(filepath.Join(dir, "index.html"), []byte("spa-index"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	r := gin.New()
+	(&App{cfg: config.PanelConfig{WebDir: dir}}).mountFrontend(r)
+
+	for name, want := range files {
+		w := httptest.NewRecorder()
+		r.ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/"+name, nil))
+		if w.Code != http.StatusOK {
+			t.Fatalf("GET /%s status = %d, body = %q", name, w.Code, w.Body.String())
+		}
+		if !bytes.Equal(w.Body.Bytes(), want) {
+			t.Fatalf("GET /%s body = %q, want %q", name, w.Body.Bytes(), want)
+		}
+	}
+
+	// A wrong content type on the manifest is enough to make Chrome refuse it.
+	manifestResponse := httptest.NewRecorder()
+	r.ServeHTTP(manifestResponse, httptest.NewRequest(http.MethodGet, "/manifest.webmanifest", nil))
+	if ct := manifestResponse.Header().Get("Content-Type"); !strings.Contains(ct, "application/manifest+json") {
+		t.Fatalf("manifest Content-Type = %q", ct)
+	}
+
+	// The manifest and the worker must stay revalidated, or an installed app
+	// keeps an outdated worker (and thus a delayed upgrade) for up to 24h.
+	for _, name := range []string{"manifest.webmanifest", "sw.js", "icon-192.png"} {
+		w := httptest.NewRecorder()
+		r.ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/"+name, nil))
+		if got := w.Header().Get("Cache-Control"); got != "no-cache" {
+			t.Fatalf("%s Cache-Control = %q, want no-cache", name, got)
+		}
+	}
+
+	// Registrars probe the worker with HEAD before fetching it.
+	head := httptest.NewRecorder()
+	r.ServeHTTP(head, httptest.NewRequest(http.MethodHead, "/sw.js", nil))
+	if head.Code != http.StatusOK {
+		t.Fatalf("HEAD /sw.js status = %d", head.Code)
+	}
+}
+
+func TestFrontendOmitsPWAEntryPointsInLegacyBuilds(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "index.html"), []byte("spa-index"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	r := gin.New()
+	(&App{cfg: config.PanelConfig{WebDir: dir}}).mountFrontend(r)
+
+	// An older web bundle without the PWA files must still boot: the route is
+	// only registered when the file exists, and the catch-all serves the shell.
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/manifest.webmanifest", nil))
+	if w.Code != http.StatusOK || w.Body.String() != "spa-index" {
+		t.Fatalf("status = %d, body = %q; want the SPA shell", w.Code, w.Body.String())
+	}
+}

@@ -14,6 +14,7 @@ import {
 import { Outlet, useLocation, useNavigate } from 'react-router-dom'
 import { logoutSession } from '../api'
 import { useAuth } from '../store'
+import InstallAppButton from './InstallAppButton'
 import ThemeSelector from './ThemeSelector'
 
 const { Header, Sider, Content } = Layout
@@ -59,6 +60,7 @@ function UserMenu({ compact, showTheme = false }: { compact?: boolean; showTheme
           {!compact && <span className="console-account-name">{username}</span>}
         </div>
         <span className="console-account-divider" aria-hidden="true" />
+        <InstallAppButton compact={compact} />
         {showTheme && <ThemeSelector scope={user?.role === 'admin' ? 'admin' : 'user'} variant="account" compact={compact} />}
         {showTheme && <span className="console-account-divider" aria-hidden="true" />}
         <Button

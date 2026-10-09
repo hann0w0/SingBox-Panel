@@ -2,14 +2,26 @@
 <html lang="zh-CN">
   <head>
     <meta charset="UTF-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
     <meta http-equiv="Cache-Control" content="no-store, no-cache, must-revalidate" />
     <meta http-equiv="Pragma" content="no-cache" />
     <meta http-equiv="Expires" content="0" />
     <title>SingBox Panel</title>
+    <link rel="manifest" href="/manifest.webmanifest" />
     <link rel="icon" type="image/svg+xml" href="/favicon.svg?v=20260909" />
     <link rel="icon" type="image/png" sizes="32x32" href="/favicon-32x32.png?v=20260909" />
     <link rel="apple-touch-icon" sizes="180x180" href="/apple-touch-icon.png?v=20260909" />
+    <!-- iOS reads the home-screen app name from this meta tag, not the manifest. -->
+    <meta name="apple-mobile-web-app-title" content="SingBox" />
+    <meta name="application-name" content="SingBox Panel" />
+    <!-- Kept even though the manifest also declares "standalone": iOS only
+         honours the standalone display mode through these legacy meta tags. -->
+    <meta name="mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <!-- "default" rather than "black-translucent": the translucent style draws
+         white status-bar text, which is invisible against the panel's light
+         theme header. -->
+    <meta name="apple-mobile-web-app-status-bar-style" content="default" />
     <meta name="theme-color" content="#0f172a" />
   </head>
   <body>

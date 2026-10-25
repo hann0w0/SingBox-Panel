@@ -10,6 +10,8 @@ Docker 只运行管理面板。每个被管理的 VPS 继续使用面板生成�
 
 默认使用 `ghcr.io/hann0w0/singbox-panel:latest`。首次正式镜像发布成功且包已公开后才能拉取；fork 用户将镜像地址改为自己的 GHCR 命名空间。
 
+默认将宿主机的 `127.0.0.1:32334` 映射到容器内 `8080`，与原生安装的默认对外端口一致。容器内部监听和健康检查仍使用 `8080`。
+
 ## 方式一：docker run
 
 替换下面的 HTTPS 域名、管理员账号和初始密码后执行：
@@ -20,7 +22,7 @@ docker run -d \
   --name singbox-panel \
   --restart unless-stopped \
   --stop-timeout 30 \
-  --publish 127.0.0.1:8080:8080 \
+  --publish 127.0.0.1:32334:8080 \
   --mount type=volume,source=singbox-panel-data,target=/app/data \
   --env SINGBOX_PANEL_BASE_URL='https://panel.example.com' \
   --env SINGBOX_PANEL_ADMIN_EMAIL='admin' \
@@ -40,7 +42,7 @@ docker run -d \
 ```bash
 docker ps --filter name=singbox-panel
 docker logs --tail=100 singbox-panel
-curl -fsS http://127.0.0.1:8080/api/ready
+curl -fsS http://127.0.0.1:32334/api/ready
 ```
 
 参数说明：
@@ -49,7 +51,7 @@ curl -fsS http://127.0.0.1:8080/api/ready
 | --- | --- |
 | `--name singbox-panel` | 固定容器名，便于查看日志、更新和停止 |
 | `--restart unless-stopped` | 容器退出后自动重启，手动停止后保持停止 |
-| `--publish 127.0.0.1:8080:8080` | 仅向宿主机反向代理开放 HTTP 端口 |
+| `--publish 127.0.0.1:32334:8080` | 仅向宿主机反向代理开放 HTTP 端口 |
 | `--mount …target=/app/data` | 将数据库、密钥及恢复文件保存在命名卷中 |
 | `SINGBOX_PANEL_BASE_URL` | 面板对外 HTTPS 地址，不带路径；用于 Agent 和订阅 |
 | `SINGBOX_PANEL_ADMIN_EMAIL` | 首次创建的管理员账号，支持用户名或邮箱格式 |
@@ -69,7 +71,7 @@ services:
     restart: unless-stopped
     stop_grace_period: 30s
     ports:
-      - "127.0.0.1:8080:8080"
+      - "127.0.0.1:32334:8080"
     environment:
       SINGBOX_PANEL_BASE_URL: "https://panel.example.com"
       SINGBOX_PANEL_ADMIN_EMAIL: "admin"
@@ -101,10 +103,10 @@ docker compose pull panel
 docker compose up -d
 docker compose ps
 docker compose logs --tail=100 panel
-curl -fsS http://127.0.0.1:8080/api/ready
+curl -fsS http://127.0.0.1:32334/api/ready
 ```
 
-仓库及 Release 提供的 Compose 模板使用 `.env` 传入相同参数，也可以继续使用；本页内联示例是单文件部署。
+仓库及 Release 提供的 Compose 模板使用 `.env` 传入相同参数，也可以继续使用；本页内联示例是单文件部署。现有 `.env` 如果仍设置 `PANEL_PORT=8080`，需要改为 `PANEL_PORT=32334` 后执行 `docker compose up -d` 重建端口映射，并同步调整宿主机反向代理。
 
 两种方式的管理员账号和密码都只在数据库没有管理员时使用，修改环境变量不会重置已有账号。首次登录成功后，可移除 `docker run` 中的初始密码参数再重建容器；Compose 则将 YAML 中的 `SINGBOX_PANEL_ADMIN_PASSWORD` 改为空字符串后执行 `docker compose up -d`。保留原数据卷即可继续使用已有账号。
 
@@ -116,7 +118,7 @@ curl -fsS http://127.0.0.1:8080/api/ready
 client_max_body_size 520m;
 
 location / {
-    proxy_pass http://127.0.0.1:8080;
+    proxy_pass http://127.0.0.1:32334;
     proxy_http_version 1.1;
     proxy_set_header Host $host;
     proxy_set_header X-Forwarded-Proto $scheme;
@@ -131,7 +133,7 @@ location / {
 
 上传大小和超时设置用于较大的备份恢复。HTTPS 证书需覆盖 `SINGBOX_PANEL_BASE_URL` 中的域名。
 
-反向代理本身也在 Docker 中时，可让两个服务加入同一个 Docker 网络，并将上游设为 `panel:8080`。反向代理容器内的 `127.0.0.1` 指向它自己，不能直接使用上面的宿主机上游地址。没有必要为了此用途将面板 8080 端口公开到公网。
+反向代理本身也在 Docker 中时，可让两个服务加入同一个 Docker 网络，并将上游设为 `panel:8080`。反向代理容器内的 `127.0.0.1` 指向它自己，不能直接使用上面的宿主机上游地址。容器间仍使用内部端口 `8080`，无需为此将面板端口公开到公网。
 
 ## 节点接入
 

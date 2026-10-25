@@ -5,7 +5,7 @@ services:
     stop_grace_period: 30s
     ports:
       # Put an HTTPS reverse proxy on this host in front of the panel.
-      - "${PANEL_BIND:-127.0.0.1}:${PANEL_PORT:-8080}:8080"
+      - "${PANEL_BIND:-127.0.0.1}:${PANEL_PORT:-32334}:8080"
     environment:
       SINGBOX_PANEL_BASE_URL: ${PANEL_BASE_URL:?Set PANEL_BASE_URL to the public HTTPS origin}
       SINGBOX_PANEL_ADMIN_EMAIL: ${PANEL_ADMIN:?Set PANEL_ADMIN to the initial admin account}

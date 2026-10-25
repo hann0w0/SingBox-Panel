@@ -28,7 +28,7 @@ Docker 仅运行控制面板，各节点 VPS 上的 Agent 和 sing-box 仍以原
 docker run -d \
   --name singbox-panel \
   --restart unless-stopped \
-  -p 127.0.0.1:8080:8080 \
+  -p 127.0.0.1:32334:8080 \
   -v singbox-panel-data:/app/data \
   -e SINGBOX_PANEL_BASE_URL='https://panel.example.com' \
   -e SINGBOX_PANEL_ADMIN_EMAIL='admin' \
@@ -38,7 +38,7 @@ docker run -d \
 
 - `SINGBOX_PANEL_BASE_URL`：面板对外公开访问的 HTTPS 根地址（节点 Agent 连接及订阅分发均依赖此地址）。
 - 管理员账号和初始密码仅在首次初始化数据库时使用。
-- 服务仅监听本地 `127.0.0.1:8080`，需由反向代理统一对外提供 HTTPS。
+- 宿主机仅发布 `127.0.0.1:32334`，映射到容器内 `8080`，需由反向代理统一对外提供 HTTPS。
 
 #### 方式二：Docker Compose
 
@@ -50,7 +50,7 @@ services:
     image: ghcr.io/hann0w0/singbox-panel:latest
     restart: unless-stopped
     ports:
-      - "127.0.0.1:8080:8080"
+      - "127.0.0.1:32334:8080"
     environment:
       SINGBOX_PANEL_BASE_URL: "https://panel.example.com"
       SINGBOX_PANEL_ADMIN_EMAIL: "admin"

@@ -4,26 +4,9 @@
 
 ## 安装
 
-面板推荐使用 Docker Compose 部署；节点 Agent 和 sing-box 仍以原生 systemd 服务运行。
+### 原生面板安装
 
-面板服务器需要 Docker Engine、Docker Compose，以及支持 WebSocket 的 HTTPS 反向代理和域名。镜像支持 Linux x86_64、arm64。
-
-```bash
-git clone https://github.com/hann0w0/SingBox-Panel.git
-cd SingBox-Panel
-cp .env.example .env
-chmod 600 .env
-# 编辑 .env：设置 PANEL_BASE_URL、PANEL_ADMIN、PANEL_ADMIN_PASSWORD
-docker compose up -d --build
-```
-
-默认只向宿主机的 `127.0.0.1:8080` 提供服务，由反向代理对外提供 HTTPS。首次登录成功后可清空 `.env` 中的初始密码，再重建容器；现有账号密码不会被重置。
-
-数据保存在独立的 `panel-data` 卷中。**不要用 `docker compose down -v` 卸载日常服务，该命令会删除数据卷。** 镜像更新、反向代理、备份恢复和原生部署迁移详见 [Docker 部署说明](docs/docker.md)。
-
-### 原生面板安装（可选）
-
-原生方式需要 Linux x86_64 或 arm64、systemd，以及支持 WebSocket 的 HTTPS 反向代理和域名。
+需要 Linux x86_64 或 arm64、systemd、已解析到面板服务器的域名，以及支持 WebSocket 的 HTTPS 反向代理。
 
 ```bash
 curl -fsSL https://github.com/hann0w0/SingBox-Panel/releases/latest/download/install.sh | sudo bash
@@ -31,25 +14,89 @@ curl -fsSL https://github.com/hann0w0/SingBox-Panel/releases/latest/download/ins
 
 安装脚本支持非交互安装（`--base-url`、`--admin`、`--password`、`--non-interactive`），用 `--version vX.Y.Z` 可指定版本。安装完成后在面板中创建服务器，并在目标 VPS 上执行该节点详情页生成的 Agent 安装命令。
 
-## 卸载
+### Docker 部署
 
-Docker 部署停止并删除容器，同时保留数据卷：
+Docker 仅运行控制面板，各节点 VPS 上的 Agent 和 sing-box 仍以原生方式运行。提供以下两种部署方式（二选一），直接拉取官方镜像即可使用。
+
+前置要求：Docker Engine、已解析到服务器的域名，以及支持 WebSocket 的 HTTPS 反向代理（Compose 方式另需 Compose 插件）。
+
+#### 方式一：docker run
+
+替换域名、管理员账号和初始密码后执行：
 
 ```bash
-docker compose down
+docker run -d \
+  --name singbox-panel \
+  --restart unless-stopped \
+  -p 127.0.0.1:8080:8080 \
+  -v singbox-panel-data:/app/data \
+  -e SINGBOX_PANEL_BASE_URL='https://panel.example.com' \
+  -e SINGBOX_PANEL_ADMIN_EMAIL='admin' \
+  -e SINGBOX_PANEL_ADMIN_PASSWORD='请替换为自己的初始密码' \
+  ghcr.io/hann0w0/singbox-panel:latest
 ```
 
-原生面板卸载：
+- `SINGBOX_PANEL_BASE_URL`：面板对外公开访问的 HTTPS 根地址（节点 Agent 连接及订阅分发均依赖此地址）。
+- 管理员账号和初始密码仅在首次初始化数据库时使用。
+- 服务仅监听本地 `127.0.0.1:8080`，需由反向代理统一对外提供 HTTPS。
+
+#### 方式二：Docker Compose
+
+在新目录创建 `compose.yaml`：
+
+```yaml
+services:
+  panel:
+    image: ghcr.io/hann0w0/singbox-panel:latest
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:8080:8080"
+    environment:
+      SINGBOX_PANEL_BASE_URL: "https://panel.example.com"
+      SINGBOX_PANEL_ADMIN_EMAIL: "admin"
+      SINGBOX_PANEL_ADMIN_PASSWORD: "请替换为自己的初始密码"
+    volumes:
+      - panel-data:/app/data
+
+volumes:
+  panel-data:
+```
+
+> **提示**：如果初始密码中含有字符 `$`，在 YAML 中需写为 `$$` 转义。
+
+启动服务：
 
 ```bash
-# 保留配置与数据库
+docker compose up -d
+```
+
+更多关于镜像更新、数据备份恢复及生产安全加固配置（如只读文件系统、权限收紧等），详见 [Docker 部署说明](docs/docker.md)。
+
+## 卸载
+
+### 原生面板卸载
+
+```bash
+# 卸载面板服务，保留配置与数据库
 curl -fsSL https://github.com/hann0w0/SingBox-Panel/releases/latest/download/install.sh | sudo bash -s -- --uninstall --yes
 
-# 连同配置与数据库一并删除
+# 完整卸载，连同配置与数据库一并删除
 curl -fsSL https://github.com/hann0w0/SingBox-Panel/releases/latest/download/install.sh | sudo bash -s -- --uninstall --purge --yes
 ```
 
-节点 Agent 与 sing-box 在对应服务器详情页单独卸载，互不影响。
+### Docker 面板卸载
+
+停止并删除容器（数据保存在数据卷中，默认保留）：
+
+```bash
+# docker run 方式
+docker stop singbox-panel && docker rm singbox-panel
+
+# Docker Compose 方式（在 compose.yaml 目录下）
+docker compose down
+```
+
+> **注意**：请勿添加 `-v` 或删除数据卷，除非确认清空所有数据。各 VPS 上的节点 Agent 与 sing-box 可在面板对应服务器详情页单独卸载。
 
 ## 工作模式
 

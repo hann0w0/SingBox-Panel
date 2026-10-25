@@ -61,6 +61,10 @@ def main():
         return json.loads(request(path, body, **kwargs)[0])
 
     with tempfile.TemporaryDirectory(prefix=project) as temporary:
+        # Deploy from a directory containing only the two downloadable files.
+        # No Dockerfile, application source or local build context is available.
+        compose_file = Path(temporary) / "compose.yaml"
+        compose_file.write_bytes((ROOT / "compose.yaml").read_bytes())
         env_file = Path(temporary) / "compose.env"
         env_file.write_text(
             f"PANEL_IMAGE={args.image}\nPANEL_BASE_URL=https://panel.example.test\n"
@@ -75,8 +79,8 @@ def main():
         def compose(*options):
             return subprocess.check_output(
                 ["docker", "compose", "--project-name", project, "--env-file", str(env_file),
-                 "--file", str(ROOT / "compose.yaml"), *options],
-                cwd=ROOT, env=compose_env, text=True,
+                 "--file", str(compose_file), *options],
+                cwd=temporary, env=compose_env, text=True,
             ).strip()
 
         def start():
@@ -92,6 +96,8 @@ def main():
                 assert hashlib.sha256(binary).hexdigest() == headers["X-SingBox-Panel-SHA256"], arch
 
         try:
+            config = json.loads(compose("config", "--format", "json"))
+            assert "build" not in config["services"]["panel"], "production Compose must only pull images"
             container = start()
             state = json.loads(command("docker", "inspect", container))[0]
             assert state["Config"]["User"] == "10001:10001"
@@ -173,8 +179,8 @@ def main():
             print("PASS: backup restore, automatic restart and restored database/Agent credentials", flush=True)
         except Exception:
             subprocess.run(["docker", "compose", "--project-name", project, "--env-file", str(env_file),
-                            "--file", str(ROOT / "compose.yaml"), "logs", "--tail", "60"],
-                           cwd=ROOT, env=compose_env, check=False)
+                            "--file", str(compose_file), "logs", "--tail", "60"],
+                           cwd=temporary, env=compose_env, check=False)
             raise
         finally:
             # This unique project's volume contains only disposable smoke-test data.

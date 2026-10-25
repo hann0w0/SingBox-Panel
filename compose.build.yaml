@@ -1,0 +1,8 @@
+# Optional source build: docker compose -f compose.yaml -f compose.build.yaml up -d --build
+services:
+  panel:
+    image: ${PANEL_IMAGE:-singbox-panel:local}
+    build:
+      context: .
+      args:
+        VERSION: ${PANEL_VERSION:-dev}

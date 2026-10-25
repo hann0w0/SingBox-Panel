@@ -100,6 +100,9 @@ jobs:
       - name: Package tarballs
         run: |
           cp install.sh dist/install.sh
+          cp compose.yaml dist/compose.yaml
+          image="ghcr.io/${GITHUB_REPOSITORY,,}:${RELEASE_TAG}"
+          sed "s|^PANEL_IMAGE=.*|PANEL_IMAGE=${image}|" .env.example > dist/panel.env.example
           tar -czf "dist/singbox-panel-agents-${RELEASE_TAG}.tar.gz" \
             -C dist/agents .
           tar -czf "dist/singbox-panel-web-${RELEASE_TAG}.tar.gz" \
@@ -111,7 +114,7 @@ jobs:
           sha256sum \
             panel/singbox-panel-linux-amd64 \
             panel/singbox-panel-linux-arm64 \
-            install.sh \
+            install.sh compose.yaml panel.env.example \
             "singbox-panel-agents-${RELEASE_TAG}.tar.gz" \
             "singbox-panel-web-${RELEASE_TAG}.tar.gz" \
             | sed 's#panel/##' > checksums.txt
@@ -124,6 +127,8 @@ jobs:
             dist/panel/singbox-panel-linux-amd64
             dist/panel/singbox-panel-linux-arm64
             dist/install.sh
+            dist/compose.yaml
+            dist/panel.env.example
             dist/singbox-panel-agents-${{ env.RELEASE_TAG }}.tar.gz
             dist/singbox-panel-web-${{ env.RELEASE_TAG }}.tar.gz
             dist/checksums.txt
@@ -138,19 +143,27 @@ jobs:
           # 发布说明的唯一来源：只放安装与卸载命令，保持精简。
           # 不要在此添加标题或变更列表，也不要启用 generate_release_notes（会自动追加提交历史）。
           body: |
-            ### 安装
+            ### 原生面板安装（默认）
 
             ```bash
             curl -fsSL https://github.com/hann0w0/SingBox-Panel/releases/download/${{ env.RELEASE_TAG }}/install.sh | sudo bash -s -- --version ${{ env.RELEASE_TAG }}
             ```
 
+            ### Docker 部署（可选）
+
+            支持 `docker run` 和 Docker Compose 两种方式，完整命令及 Compose YAML 见 [Docker 部署说明](https://github.com/${{ github.repository }}/blob/${{ env.RELEASE_TAG }}/docs/docker.md)。请等待本版本镜像发布任务成功后安装。
+
             ### 卸载
+
+            原生面板：
 
             ```bash
             curl -fsSL https://github.com/hann0w0/SingBox-Panel/releases/download/${{ env.RELEASE_TAG }}/install.sh | sudo bash -s -- --uninstall --yes
             ```
 
-            卸载默认保留数据库与配置，重新安装即可恢复原有账号与设置；如需一并删除数据，在命令末尾加上 `--purge`。
+            原生卸载默认保留数据库与配置；如需清空，在命令末尾加上 `--purge`。
+
+            `docker run` 部署使用 `docker stop singbox-panel && docker rm singbox-panel`；Compose 部署使用 `docker compose down`。两者均保留数据卷。
 
           files: |
             dist/panel/singbox-panel-linux-amd64
@@ -159,64 +172,13 @@ jobs:
             dist/singbox-panel-web-${{ env.RELEASE_TAG }}.tar.gz
             dist/checksums.txt
             dist/install.sh
+            dist/compose.yaml
+            dist/panel.env.example
 
   docker:
-    name: Publish panel image (amd64 + arm64)
+    name: Publish release image
     needs: build
-    runs-on: ubuntu-latest
-    timeout-minutes: 30
     permissions:
       contents: read
       packages: write
-    steps:
-      - name: Checkout
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
-      - name: Set up QEMU
-        uses: docker/setup-qemu-action@c7c53464625b32c7a7e944ae62b3e17d2b600130 # v3
-      - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3
-      - name: Log in to GHCR
-        uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3
-        with:
-          registry: ghcr.io
-          username: ${{ github.actor }}
-          password: ${{ secrets.GITHUB_TOKEN }}
-      - name: Prepare image tags
-        id: image
-        env:
-          RELEASE_TAG: ${{ github.ref_name }}
-        run: |
-          image="ghcr.io/${GITHUB_REPOSITORY,,}"
-          {
-            echo 'tags<<TAGS'
-            echo "${image}:${RELEASE_TAG}"
-            if [[ "$RELEASE_TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
-              echo "${image}:latest"
-            fi
-            echo 'TAGS'
-          } >> "$GITHUB_OUTPUT"
-      - name: Build image for deployment verification
-        uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # v6
-        with:
-          context: .
-          load: true
-          platforms: linux/amd64
-          tags: singbox-panel:docker-test
-          build-args: VERSION=${{ github.ref_name }}
-          cache-from: type=gha,scope=panel-docker
-      - name: Verify deployment before publishing
-        run: python3 scripts/docker-smoke.py --image singbox-panel:docker-test
-      - name: Build and publish
-        uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # v6
-        with:
-          context: .
-          platforms: linux/amd64,linux/arm64
-          push: true
-          tags: ${{ steps.image.outputs.tags }}
-          build-args: VERSION=${{ github.ref_name }}
-          labels: |
-            org.opencontainers.image.source=https://github.com/${{ github.repository }}
-            org.opencontainers.image.version=${{ github.ref_name }}
-            org.opencontainers.image.revision=${{ github.sha }}
-          cache-from: type=gha,scope=panel-docker
-          cache-to: type=gha,mode=max,scope=panel-docker
+    uses: ./.github/workflows/docker.yml

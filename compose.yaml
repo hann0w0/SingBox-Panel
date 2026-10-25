@@ -1,10 +1,6 @@
 services:
   panel:
-    image: ${PANEL_IMAGE:-singbox-panel:local}
-    build:
-      context: .
-      args:
-        VERSION: ${PANEL_VERSION:-dev}
+    image: ${PANEL_IMAGE:-ghcr.io/hann0w0/singbox-panel:latest}
     restart: unless-stopped
     stop_grace_period: 30s
     ports:

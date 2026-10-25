@@ -1,0 +1,111 @@
+name: Publish Docker image
+
+on:
+  workflow_call:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ghcr-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  publish:
+    name: Verify and publish to GHCR
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - name: Prepare image metadata
+        id: meta
+        run: |
+          python3 scripts/test-docker-metadata.py
+          bash scripts/docker-metadata.sh
+
+      # Automatic callers have already passed these checks. A manual run must
+      # pass the same checks rather than providing an untested publish shortcut.
+      - name: Setup Go for manual verification
+        if: github.event_name == 'workflow_dispatch'
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7
+        with:
+          go-version: '1.26.6'
+          cache: true
+      - name: Setup Node.js for manual verification
+        if: github.event_name == 'workflow_dispatch'
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
+        with:
+          node-version: '24'
+          cache: 'npm'
+          cache-dependency-path: web/package-lock.json
+      - name: Verify source for manual publication
+        if: github.event_name == 'workflow_dispatch'
+        run: |
+          go test ./...
+          go vet ./...
+          npm ci --prefix web
+          npm test --prefix web
+          npm run typecheck --prefix web
+          npm run build --prefix web
+
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@c7c53464625b32c7a7e944ae62b3e17d2b600130 # v3
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3
+      - name: Build image for deployment verification
+        uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # v6
+        with:
+          context: .
+          load: true
+          platforms: linux/amd64
+          tags: singbox-panel:docker-test
+          build-args: VERSION=${{ steps.meta.outputs.version }}
+          cache-from: type=gha,scope=panel-docker
+      - name: Verify deployment without a source checkout
+        run: python3 scripts/docker-smoke.py --image singbox-panel:docker-test
+      - name: Log in to GHCR
+        uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Build and publish
+        id: push
+        uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # v6
+        with:
+          context: .
+          platforms: linux/amd64,linux/arm64
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          build-args: VERSION=${{ steps.meta.outputs.version }}
+          labels: |
+            org.opencontainers.image.source=https://github.com/${{ github.repository }}
+            org.opencontainers.image.version=${{ steps.meta.outputs.version }}
+            org.opencontainers.image.revision=${{ github.sha }}
+          cache-from: type=gha,scope=panel-docker
+          cache-to: type=gha,mode=max,scope=panel-docker
+      - name: Prepare deployment files
+        env:
+          IMAGE_REF: ${{ steps.meta.outputs.image }}:${{ steps.meta.outputs.primary_tag }}
+        run: |
+          mkdir -p dist/docker
+          cp compose.yaml dist/docker/compose.yaml
+          sed "s|^PANEL_IMAGE=.*|PANEL_IMAGE=${IMAGE_REF}|" .env.example > dist/docker/panel.env.example
+          cp docs/docker.md dist/docker/README.md
+          {
+            echo '### Published panel image'
+            printf '\n`%s`\n' "$IMAGE_REF"
+            echo 'Download the docker-deploy artifact, rename panel.env.example to .env, configure the domain/admin, then run docker compose pull and docker compose up -d.'
+            echo 'For anonymous pulls, set the GHCR package visibility to Public after its first publication.'
+          } >> "$GITHUB_STEP_SUMMARY"
+      - name: Upload deployment files
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
+        with:
+          name: docker-deploy-${{ steps.meta.outputs.primary_tag }}
+          path: dist/docker/
+          if-no-files-found: error

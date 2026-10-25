@@ -15,6 +15,9 @@
 
 # local config with secrets
 /deploy/panel.yaml
+/.env
+/.env.*
+!/.env.example
 
 # os
 .DS_Store

@@ -1,0 +1,17 @@
+**
+!Dockerfile
+!go.mod
+!go.sum
+!cmd/
+!cmd/**
+!internal/
+!internal/**
+!web/
+!web/**
+web/node_modules
+web/dist
+web/.env*
+**/*.test.ts
+**/*.test.tsx
+**/*_test.go
+**/.DS_Store

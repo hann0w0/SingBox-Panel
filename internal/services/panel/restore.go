@@ -44,7 +44,7 @@ import (
 //  1. snapshot the current DB to *.pre-restore-<ts> first (rollback),
 //  2. write the imported DB atomically next to the live file,
 //  3. persist jwt_secret into panel.yaml or the data-dir sidecar,
-//  4. tell the client to expect a restart, then exit so systemd restarts us
+//  4. tell the client to expect a restart, then exit so the supervisor restarts us
 //     cleanly against the restored files.
 
 const (
@@ -527,8 +527,8 @@ func preflightRestoredJWTSecretPersistence(cfgPath, dbPath, secret string) error
 }
 
 // scheduleRestart exits the process shortly after, giving the HTTP response time
-// to flush. systemd Restart=always brings
-// the panel back up against whatever is now on disk.
+// to flush. systemd Restart=always or Docker restart=unless-stopped brings the
+// panel back up against whatever is now on disk (including a successful exit).
 //
 // Overridable so tests can assert a restart was requested without the test
 // binary calling os.Exit on itself.

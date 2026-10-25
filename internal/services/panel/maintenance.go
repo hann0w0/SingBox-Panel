@@ -154,6 +154,9 @@ func latestPanelRelease(refresh bool) (string, error) {
 // this host. Non-systemd systems get a reason string the UI shows instead of
 // the update button.
 func selfUpdateSupported() (bool, string) {
+	if panelDeployment() == "docker" {
+		return false, "Docker 部署请更新镜像并重建容器；数据卷会保留，升级前请先下载备份"
+	}
 	if runtime.GOOS != "linux" {
 		return false, "仅 Linux 二进制部署支持面板自更新"
 	}
@@ -175,6 +178,15 @@ func selfUpdateSupported() (bool, string) {
 	return true, ""
 }
 
+// The official image declares its deployment mode explicitly. Do not infer it
+// from cgroups: those formats vary across container runtimes and host versions.
+func panelDeployment() string {
+	if strings.EqualFold(strings.TrimSpace(os.Getenv("SINGBOX_PANEL_DEPLOYMENT")), "docker") {
+		return "docker"
+	}
+	return "binary"
+}
+
 // GET /api/admin/maintenance/info — running version, latest release, and
 // whether in-place self-update is available on this host.
 func (a *App) maintenanceInfo(c *gin.Context) {
@@ -185,6 +197,7 @@ func (a *App) maintenanceInfo(c *gin.Context) {
 		driver = "sqlite"
 	}
 	resp := gin.H{
+		"deployment":          panelDeployment(),
 		"current_version":     a.version,
 		"update_supported":    supported,
 		"reinstall_supported": supported,
@@ -528,11 +541,11 @@ func backupManifest(version, baseURL string) string {
 		"  backup.json       — 数据库版本、完整性和多用户节点凭据校验信息",
 		"",
 		"迁移到新服务器:",
-		"  1. 用 install.sh 安装二进制版面板",
-		"  2. 停止面板服务",
-		"  3. 用本备份里的 singbox-panel.db 覆盖新机数据目录下的同名文件",
-		"  4. 把 jwt_secret 写入 panel.yaml 的 jwt_secret 字段（或数据目录的 .jwt_secret）",
-		"  5. 启动面板；把原域名解析/反代指到新机",
+		"  1. 用 Docker Compose 或 install.sh 安装同版本或更新版本的面板",
+		"  2. 登录新面板，在设置的恢复页面上传本备份；面板会校验并导入数据库及密钥",
+		"  3. Docker 需使用 restart: unless-stopped 或 always，让恢复后的进程自动重启",
+		"  4. 把原域名解析/反代指到新机，核对登录、节点连接及订阅",
+		"  Docker 数据目录为 /app/data；请保留整个数据卷，不要执行 docker compose down -v。",
 		"  只要域名不变，被控 Agent 会用库里保存的 token 自动重连，无需重装。",
 		"",
 	}, "\n")

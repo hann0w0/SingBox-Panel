@@ -457,6 +457,7 @@ export const syncCustomNodeSubscription = (id: number) =>
 
 // ---- admin: panel maintenance（面板设置：版本更新 + 数据备份）----
 export interface MaintenanceInfo {
+  deployment?: 'binary' | 'docker'
   current_version: string
   update_supported: boolean
   reinstall_supported?: boolean

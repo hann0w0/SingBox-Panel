@@ -4,7 +4,26 @@
 
 ## 安装
 
-需要 Linux x86_64 或 arm64、systemd、已解析到面板服务器的域名，以及支持 WebSocket 的 HTTPS 反向代理。
+面板推荐使用 Docker Compose 部署；节点 Agent 和 sing-box 仍以原生 systemd 服务运行。
+
+面板服务器需要 Docker Engine、Docker Compose，以及支持 WebSocket 的 HTTPS 反向代理和域名。镜像支持 Linux x86_64、arm64。
+
+```bash
+git clone https://github.com/hann0w0/SingBox-Panel.git
+cd SingBox-Panel
+cp .env.example .env
+chmod 600 .env
+# 编辑 .env：设置 PANEL_BASE_URL、PANEL_ADMIN、PANEL_ADMIN_PASSWORD
+docker compose up -d --build
+```
+
+默认只向宿主机的 `127.0.0.1:8080` 提供服务，由反向代理对外提供 HTTPS。首次登录成功后可清空 `.env` 中的初始密码，再重建容器；现有账号密码不会被重置。
+
+数据保存在独立的 `panel-data` 卷中。**不要用 `docker compose down -v` 卸载日常服务，该命令会删除数据卷。** 镜像更新、反向代理、备份恢复和原生部署迁移详见 [Docker 部署说明](docs/docker.md)。
+
+### 原生面板安装（可选）
+
+原生方式需要 Linux x86_64 或 arm64、systemd，以及支持 WebSocket 的 HTTPS 反向代理和域名。
 
 ```bash
 curl -fsSL https://github.com/hann0w0/SingBox-Panel/releases/latest/download/install.sh | sudo bash
@@ -13,6 +32,14 @@ curl -fsSL https://github.com/hann0w0/SingBox-Panel/releases/latest/download/ins
 安装脚本支持非交互安装（`--base-url`、`--admin`、`--password`、`--non-interactive`），用 `--version vX.Y.Z` 可指定版本。安装完成后在面板中创建服务器，并在目标 VPS 上执行该节点详情页生成的 Agent 安装命令。
 
 ## 卸载
+
+Docker 部署停止并删除容器，同时保留数据卷：
+
+```bash
+docker compose down
+```
+
+原生面板卸载：
 
 ```bash
 # 保留配置与数据库

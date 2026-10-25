@@ -48,6 +48,7 @@ const VIEWS = [
 export default function Settings() {
   const [view, setView] = useState<SettingsView>('version')
   const [info, setInfo] = useState<MaintenanceInfo | null>(null)
+  const dockerDeployment = info?.deployment === 'docker'
   const [loading, setLoading] = useState(false)
   const [updating, setUpdating] = useState(false)
   const [releases, setReleases] = useState<PanelRelease[] | null>(null)
@@ -326,9 +327,9 @@ export default function Settings() {
     releasesRequest.current.controller?.abort()
   }, [])
   useEffect(() => {
-    if (view === 'version' && info && releases === null && !releasesLoading) loadReleases()
+    if (view === 'version' && info && !dockerDeployment && releases === null && !releasesLoading) loadReleases()
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [view, !!info])
+  }, [view, !!info, dockerDeployment])
 
   // Installs any published release: newer = update, same = reinstall, older = rollback.
   const installVersion = (target: string) => {
@@ -438,6 +439,7 @@ export default function Settings() {
         <div className="ui-card settings-card">
           <dl className="ui-kv">
             <div><dt>当前版本</dt><dd className="mono">{info.current_version}</dd></div>
+            {dockerDeployment && <div><dt>部署方式</dt><dd>Docker</dd></div>}
             <div>
               <dt>最新版本</dt>
               <dd className="settings-version-latest">
@@ -451,7 +453,7 @@ export default function Settings() {
           </dl>
           {(() => {
             const note = !info.has_update && !info.latest_version ? info.latest_error : undefined
-            const showUpdate = !!info.has_update
+            const showUpdate = !!info.has_update && !dockerDeployment
             if (!note && !showUpdate) return null
             return (
               <div className="settings-card-foot">
@@ -464,7 +466,11 @@ export default function Settings() {
               </div>
             )
           })()}
-          {(
+          {dockerDeployment ? (
+            <div className="settings-card-foot">
+              <Alert type="info" showIcon message="通过 Docker 更新面板" description={info.update_reason || '更新镜像并重建容器即可升级。请保留数据卷，并在升级前下载备份。'} />
+            </div>
+          ) : (
             <div className="settings-card-foot settings-release-picker">
               <span className="settings-release-label">安装指定版本</span>
               <div className="settings-actions">

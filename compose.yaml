@@ -1,0 +1,33 @@
+services:
+  panel:
+    image: ${PANEL_IMAGE:-singbox-panel:local}
+    build:
+      context: .
+      args:
+        VERSION: ${PANEL_VERSION:-dev}
+    restart: unless-stopped
+    stop_grace_period: 30s
+    ports:
+      # Put an HTTPS reverse proxy on this host in front of the panel.
+      - "${PANEL_BIND:-127.0.0.1}:${PANEL_PORT:-8080}:8080"
+    environment:
+      SINGBOX_PANEL_BASE_URL: ${PANEL_BASE_URL:?Set PANEL_BASE_URL to the public HTTPS origin}
+      SINGBOX_PANEL_ADMIN_EMAIL: ${PANEL_ADMIN:?Set PANEL_ADMIN to the initial admin account}
+      SINGBOX_PANEL_ADMIN_PASSWORD: ${PANEL_ADMIN_PASSWORD:-}
+    volumes:
+      - panel-data:/app/data
+    read_only: true
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,size=64m,mode=1777
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+volumes:
+  panel-data:

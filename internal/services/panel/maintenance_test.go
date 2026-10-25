@@ -40,6 +40,55 @@ func TestValidReleaseTag(t *testing.T) {
 	}
 }
 
+func TestDockerDeploymentRejectsBinaryMaintenance(t *testing.T) {
+	t.Setenv("SINGBOX_PANEL_DEPLOYMENT", "docker")
+	a := &App{version: "v1.0.7"}
+	r := gin.New()
+	r.POST("/update", a.selfUpdate)
+	for _, body := range []string{`{}`, `{"version":"v1.0.8"}`, `{"version":"v1.0.7","force":true}`} {
+		w := httptest.NewRecorder()
+		req := httptest.NewRequest(http.MethodPost, "/update", strings.NewReader(body))
+		req.Header.Set("Content-Type", "application/json")
+		r.ServeHTTP(w, req)
+		if w.Code != http.StatusBadRequest || !strings.Contains(w.Body.String(), "Docker") || !strings.Contains(w.Body.String(), "重建容器") {
+			t.Fatalf("binary maintenance was not rejected with Docker instructions: %d %s", w.Code, w.Body.String())
+		}
+	}
+	if !a.tryMaintenanceLock() {
+		t.Fatal("rejected Docker update left the maintenance lock held")
+	}
+	a.selfUpdating.Unlock()
+}
+
+func TestDockerMaintenanceInfo(t *testing.T) {
+	t.Setenv("SINGBOX_PANEL_DEPLOYMENT", "docker")
+	// Keep the capability test independent of external release availability.
+	panelReleaseMutex.Lock()
+	previousTag, previousAt := panelReleaseTag, panelReleaseAt
+	panelReleaseTag, panelReleaseAt = "v1.0.7", time.Now()
+	panelReleaseMutex.Unlock()
+	t.Cleanup(func() {
+		panelReleaseMutex.Lock()
+		panelReleaseTag, panelReleaseAt = previousTag, previousAt
+		panelReleaseMutex.Unlock()
+	})
+	a := &App{version: "v1.0.7", startedAt: time.Now()}
+	r := gin.New()
+	r.GET("/info", a.maintenanceInfo)
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/info", nil))
+	var got map[string]any
+	if err := json.Unmarshal(w.Body.Bytes(), &got); err != nil {
+		t.Fatal(err)
+	}
+	if w.Code != http.StatusOK || got["deployment"] != "docker" || got["update_supported"] != false || got["reinstall_supported"] != false {
+		t.Fatalf("incorrect Docker maintenance capabilities: %d %s", w.Code, w.Body.String())
+	}
+	if reason, _ := got["update_reason"].(string); !strings.Contains(reason, "Docker") || strings.Contains(reason, "install.sh") {
+		t.Fatalf("incorrect update instructions: %q", reason)
+	}
+}
+
 func TestLaunchSwapPassesScriptFileToSystemd(t *testing.T) {
 	root := t.TempDir()
 	argsPath := filepath.Join(root, "args")

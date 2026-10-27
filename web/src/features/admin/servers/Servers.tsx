@@ -459,7 +459,6 @@ export default function Servers() {
                 <span>↓ {s.online && s.traffic_available ? rate(s.traffic_download_rate ?? 0) : '—'}</span>
                 <span className="faint">↑ {s.online && s.traffic_available ? rate(s.traffic_upload_rate ?? 0) : '—'}</span>
               </div>
-              <div className="srv-inbounds"><span className="srv-label">入站 </span>{s.inbounds?.length ?? 0}</div>
               <div className="ui-row-actions">
                 <Button size="small" type="text" icon={<Pencil />} aria-label={`编辑 ${s.name}`} onClick={() => openEdit(s)} />
                 <Dropdown placement="bottomRight" menu={{ items: [

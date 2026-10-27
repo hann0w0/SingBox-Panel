@@ -28,6 +28,24 @@ beforeEach(() => {
 afterEach(() => { cleanup(); vi.unstubAllGlobals() })
 
 describe('server remarks', () => {
+  it('never shows an inbound count in the server list', async () => {
+    const serverWithInbounds = {
+      ...server,
+      inbounds: [
+        { id: 1, tag: 'ss-main' },
+        { id: 2, tag: 'snell-main' },
+        { id: 3, tag: 'trojan-main' },
+      ],
+    } as Server
+    vi.mocked(getServersMeta).mockResolvedValue(metadata([serverWithInbounds]))
+
+    render(<MemoryRouter><Servers /></MemoryRouter>)
+    const row = (await screen.findByText('Frankfurt')).closest('.srv-row')
+
+    expect(row).toBeTruthy()
+    expect(row?.textContent).not.toContain('入站')
+  })
+
   it('shows a saved remark in the server list and submits edits, including clearing it', async () => {
     render(<MemoryRouter><Servers /></MemoryRouter>)
     expect((await screen.findByText('Backup exit')).getAttribute('title')).toBe('Backup exit')

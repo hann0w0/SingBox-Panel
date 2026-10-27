@@ -89,6 +89,11 @@ func makeBackupArchive(t *testing.T, secret string, seed func(db *gorm.DB)) []by
 
 func uploadRestore(t *testing.T, a *App, archive []byte) *httptest.ResponseRecorder {
 	t.Helper()
+	return uploadRestoreWithPassphrase(t, a, archive, "")
+}
+
+func uploadRestoreWithPassphrase(t *testing.T, a *App, archive []byte, passphrase string) *httptest.ResponseRecorder {
+	t.Helper()
 	// Stub the restart so the test binary does not exit itself.
 	restarted := make(chan struct{}, 1)
 	orig := scheduleRestartFn
@@ -102,6 +107,11 @@ func uploadRestore(t *testing.T, a *App, archive []byte) *httptest.ResponseRecor
 
 	var body bytes.Buffer
 	mw := multipart.NewWriter(&body)
+	if passphrase != "" {
+		if err := mw.WriteField("passphrase", passphrase); err != nil {
+			t.Fatal(err)
+		}
+	}
 	fw, err := mw.CreateFormFile("file", "backup.tar.gz")
 	if err != nil {
 		t.Fatal(err)
@@ -897,5 +907,50 @@ func TestRecoverPendingRestoreRefusesDanglingSymlinkDatabase(t *testing.T) {
 	}
 	if _, statErr := os.Stat(dbPath + restoreMarkerSuffix); statErr != nil {
 		t.Fatalf("marker was removed after a failed recovery: %v", statErr)
+	}
+}
+
+func TestRestoreAcceptsEncryptedBackupWithPassphrase(t *testing.T) {
+	dir := t.TempDir()
+	dbPath := filepath.Join(dir, "singbox-panel.db")
+	cfgPath := filepath.Join(dir, "panel.yaml")
+	live := testDBAt(t, dbPath)
+	if err := live.Create(&model.Server{Name: "old", AgentToken: "old-tok"}).Error; err != nil {
+		t.Fatal(err)
+	}
+	os.WriteFile(cfgPath, []byte("jwt_secret: \""+testLiveJWTSecret+"\"\n"), 0o600)
+	archive := makeBackupArchive(t, testRestoredJWTSecret, func(db *gorm.DB) {
+		if err := db.Create(&model.Server{Name: "new", AgentToken: "new-tok"}).Error; err != nil {
+			t.Fatal(err)
+		}
+	})
+	var sealed bytes.Buffer
+	if err := encryptBackup(&sealed, bytes.NewReader(archive), testBackupPassphrase); err != nil {
+		t.Fatal(err)
+	}
+	cfg := config.PanelConfig{Database: config.DatabaseConfig{Driver: "sqlite", DSN: dbPath}}
+	a := &App{cfg: cfg, db: live, version: "v1.0.0", cfgPath: cfgPath}
+
+	if w := uploadRestore(t, a, sealed.Bytes()); w.Code != http.StatusBadRequest || !strings.Contains(w.Body.String(), "已加密") {
+		t.Fatalf("missing passphrase: status = %d body = %s", w.Code, w.Body.String())
+	}
+	if w := uploadRestoreWithPassphrase(t, a, sealed.Bytes(), "wrong passphrase!!"); w.Code != http.StatusBadRequest {
+		t.Fatalf("wrong passphrase: status = %d body = %s", w.Code, w.Body.String())
+	}
+	var names []string
+	live.Model(&model.Server{}).Pluck("name", &names)
+	if len(names) != 1 || names[0] != "old" {
+		t.Fatalf("failed restores changed the live DB: %v", names)
+	}
+
+	w := uploadRestoreWithPassphrase(t, a, sealed.Bytes(), testBackupPassphrase)
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d body = %s", w.Code, w.Body.String())
+	}
+	restored := testDBAt(t, dbPath)
+	names = nil
+	restored.Model(&model.Server{}).Pluck("name", &names)
+	if len(names) != 1 || names[0] != "new" {
+		t.Fatalf("restored servers = %v, want [new]", names)
 	}
 }

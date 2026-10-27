@@ -27,18 +27,22 @@ import (
 )
 
 const (
-	oneDriveSettingKey    = "onedrive_backup"
-	oneDriveBackupFolder  = "singbox-panel-backups"
-	oneDriveBackupName    = "singbox-panel-backup.tar.gz"
-	oneDriveScope         = "offline_access Files.ReadWrite"
-	oneDriveSyncInterval  = 1 * time.Hour
-	oneDriveRetryBase     = 15 * time.Minute
-	oneDriveRetryMax      = 6 * time.Hour
-	oneDriveOAuthClientID = "d50ca740-c83f-4d1b-b616-12c519384f0c"
-	oneDriveMaxListPages  = 100
-	oneDriveMaxJSONBody   = 4 << 20
-	oneDriveListTimeout   = 45 * time.Second
-	oneDriveStreamTimeout = 30 * time.Minute
+	oneDriveSettingKey   = "onedrive_backup"
+	oneDriveBackupFolder = "singbox-panel-backups"
+	oneDriveBackupName   = "singbox-panel-backup.tar.gz.enc"
+	// oneDriveLegacyBackupName is the plaintext archive written by earlier
+	// releases. It stays listable so it can still be restored, and is removed
+	// after the first successful encrypted upload.
+	oneDriveLegacyBackupName = "singbox-panel-backup.tar.gz"
+	oneDriveScope            = "offline_access Files.ReadWrite"
+	oneDriveSyncInterval     = 1 * time.Hour
+	oneDriveRetryBase        = 15 * time.Minute
+	oneDriveRetryMax         = 6 * time.Hour
+	oneDriveOAuthClientID    = "d50ca740-c83f-4d1b-b616-12c519384f0c"
+	oneDriveMaxListPages     = 100
+	oneDriveMaxJSONBody      = 4 << 20
+	oneDriveListTimeout      = 45 * time.Second
+	oneDriveStreamTimeout    = 30 * time.Minute
 )
 
 // These variables are replaceable in tests without changing the production
@@ -50,19 +54,23 @@ var (
 )
 
 type oneDriveStoredSettings struct {
-	ClientID         string     `json:"client_id"`
-	EncryptedRefresh string     `json:"refresh_token"`
-	AutoSync         bool       `json:"auto_sync"`
-	LastSyncAt       *time.Time `json:"last_sync_at,omitempty"`
-	LastAttemptAt    *time.Time `json:"last_attempt_at,omitempty"`
-	FailedAttempts   int        `json:"failed_attempts,omitempty"`
-	LastBackupName   string     `json:"last_backup_name,omitempty"`
-	LastError        string     `json:"last_error,omitempty"`
+	ClientID         string `json:"client_id"`
+	EncryptedRefresh string `json:"refresh_token"`
+	// EncryptedPassphrase protects cloud backups. It is sealed with the same
+	// jwt_secret-derived key as the refresh token.
+	EncryptedPassphrase string     `json:"backup_passphrase,omitempty"`
+	AutoSync            bool       `json:"auto_sync"`
+	LastSyncAt          *time.Time `json:"last_sync_at,omitempty"`
+	LastAttemptAt       *time.Time `json:"last_attempt_at,omitempty"`
+	FailedAttempts      int        `json:"failed_attempts,omitempty"`
+	LastBackupName      string     `json:"last_backup_name,omitempty"`
+	LastError           string     `json:"last_error,omitempty"`
 }
 
 type oneDriveSettings struct {
 	ClientID       string
 	RefreshToken   string
+	Passphrase     string
 	AutoSync       bool
 	LastSyncAt     *time.Time
 	LastAttemptAt  *time.Time
@@ -107,6 +115,7 @@ type oneDriveFile struct {
 	File                 *struct {
 		MimeType string `json:"mimeType"`
 	} `json:"file"`
+	Encrypted bool `json:"encrypted"`
 }
 
 type oneDriveFilePage struct {
@@ -138,6 +147,13 @@ func (a *App) loadOneDriveSettings() (oneDriveSettings, error) {
 	settings.FailedAttempts = stored.FailedAttempts
 	settings.LastBackupName = stored.LastBackupName
 	settings.LastError = stored.LastError
+	if stored.EncryptedPassphrase != "" {
+		passphrase, decryptErr := a.decryptOneDriveSecret(stored.EncryptedPassphrase)
+		if decryptErr != nil {
+			return settings, fmt.Errorf("读取 OneDrive 备份口令失败：%w", decryptErr)
+		}
+		settings.Passphrase = passphrase
+	}
 	if stored.EncryptedRefresh != "" {
 		refresh, decryptErr := a.decryptOneDriveSecret(stored.EncryptedRefresh)
 		if decryptErr != nil {
@@ -164,15 +180,24 @@ func (a *App) saveOneDriveSettings(settings oneDriveSettings) error {
 			return err
 		}
 	}
+	passphrase := ""
+	if settings.Passphrase != "" {
+		var err error
+		passphrase, err = a.encryptOneDriveSecret(settings.Passphrase)
+		if err != nil {
+			return err
+		}
+	}
 	value, err := json.Marshal(oneDriveStoredSettings{
-		ClientID:         strings.TrimSpace(settings.ClientID),
-		EncryptedRefresh: refresh,
-		AutoSync:         settings.AutoSync,
-		LastSyncAt:       settings.LastSyncAt,
-		LastAttemptAt:    settings.LastAttemptAt,
-		FailedAttempts:   settings.FailedAttempts,
-		LastBackupName:   settings.LastBackupName,
-		LastError:        settings.LastError,
+		ClientID:            strings.TrimSpace(settings.ClientID),
+		EncryptedRefresh:    refresh,
+		EncryptedPassphrase: passphrase,
+		AutoSync:            settings.AutoSync,
+		LastSyncAt:          settings.LastSyncAt,
+		LastAttemptAt:       settings.LastAttemptAt,
+		FailedAttempts:      settings.FailedAttempts,
+		LastBackupName:      settings.LastBackupName,
+		LastError:           settings.LastError,
 	})
 	if err != nil {
 		return fmt.Errorf("序列化 OneDrive 配置失败：%w", err)
@@ -375,6 +400,7 @@ func (a *App) oneDriveStatus(c *gin.Context) {
 	}
 	resp := gin.H{
 		"connected":        settings.RefreshToken != "",
+		"encrypted":        settings.Passphrase != "",
 		"auto_sync":        settings.AutoSync,
 		"interval_hours":   int(oneDriveSyncInterval / time.Hour),
 		"last_sync_at":     settings.LastSyncAt,
@@ -679,7 +705,8 @@ func (a *App) listOneDriveBackupsContext(ctx context.Context) ([]oneDriveFile, e
 		}
 		resp.Body.Close()
 		for _, file := range page.Value {
-			if file.File != nil && file.Name == oneDriveBackupName {
+			if file.File != nil && (file.Name == oneDriveBackupName || file.Name == oneDriveLegacyBackupName) {
+				file.Encrypted = file.Name == oneDriveBackupName
 				files = append(files, file)
 			}
 		}
@@ -835,16 +862,31 @@ func (a *App) syncOneDriveBackupLockedContext(ctx context.Context) (string, erro
 		return "", errors.New("请先连接 OneDrive")
 	}
 	attemptedAt := time.Now()
+	if settings.Passphrase == "" {
+		// Never upload a plaintext archive: it holds jwt_secret and every node
+		// credential, which is enough to take over the panel and all nodes.
+		err := errors.New("请先设置 OneDrive 备份加密口令")
+		a.recordOneDriveSyncFailure(attemptedAt, err)
+		return "", err
+	}
 	archivePath, _, cleanup, err := a.createBackupArchive()
 	if err != nil {
 		a.recordOneDriveSyncFailure(attemptedAt, err)
 		return "", err
 	}
 	defer cleanup()
-	if err := a.uploadOneDriveBackupContext(ctx, archivePath); err != nil {
+	encryptedPath, err := encryptBackupFile(archivePath, settings.Passphrase)
+	if err != nil {
+		err = fmt.Errorf("加密备份失败：%w", err)
 		a.recordOneDriveSyncFailure(attemptedAt, err)
 		return "", err
 	}
+	defer os.Remove(encryptedPath)
+	if err := a.uploadOneDriveBackupContext(ctx, encryptedPath); err != nil {
+		a.recordOneDriveSyncFailure(attemptedAt, err)
+		return "", err
+	}
+	a.removeLegacyOneDriveBackup(ctx)
 	now := time.Now()
 	if err := a.mutateOneDriveSettings(func(current *oneDriveSettings) error {
 		current.LastSyncAt = &now
@@ -1003,8 +1045,102 @@ func (a *App) restoreOneDriveBackup(c *gin.Context) {
 		c.JSON(http.StatusRequestEntityTooLarge, gin.H{"error": "OneDrive 备份文件过大"})
 		return
 	}
-	restartScheduled := a.restoreBackupReader(c, io.LimitReader(resp.Body, maxBackupUpload+1))
+	passphrase := ""
+	if file.Encrypted {
+		var req struct {
+			Passphrase string `json:"passphrase"`
+		}
+		if c.Request.ContentLength != 0 && !bindJSONLimit(c, &req, 4<<10) {
+			return
+		}
+		passphrase = req.Passphrase
+		if passphrase == "" {
+			// Same panel that wrote the backup: reuse the configured passphrase.
+			if settings, loadErr := a.loadOneDriveSettings(); loadErr == nil {
+				passphrase = settings.Passphrase
+			}
+		}
+	}
+	plain, _, err := backupPlainReader(io.LimitReader(resp.Body, maxBackupUpload+1), passphrase)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+	restartScheduled := a.restoreBackupReader(c, plain)
 	releaseMaintenanceLock = !restartScheduled
+}
+
+// PUT /api/admin/maintenance/onedrive/passphrase — set the passphrase that
+// encrypts every cloud backup. It is required before anything is uploaded.
+func (a *App) setOneDrivePassphrase(c *gin.Context) {
+	var req struct {
+		Passphrase string `json:"passphrase"`
+	}
+	if !bindJSONLimit(c, &req, 4<<10) {
+		return
+	}
+	if err := validateBackupPassphrase(req.Passphrase); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+	if err := a.mutateOneDriveSettings(func(settings *oneDriveSettings) error {
+		settings.Passphrase = req.Passphrase
+		// A sync that failed only because the passphrase was missing may retry now.
+		settings.FailedAttempts = 0
+		settings.LastAttemptAt = nil
+		return nil
+	}); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"ok": true})
+}
+
+// encryptBackupFile writes an encrypted copy of archivePath next to it.
+func encryptBackupFile(archivePath, passphrase string) (string, error) {
+	src, err := os.Open(archivePath)
+	if err != nil {
+		return "", err
+	}
+	defer src.Close()
+	encryptedPath := archivePath + ".enc"
+	dst, err := os.OpenFile(encryptedPath, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600)
+	if err != nil {
+		return "", err
+	}
+	if err := encryptBackup(dst, src, passphrase); err != nil {
+		_ = dst.Close()
+		_ = os.Remove(encryptedPath)
+		return "", err
+	}
+	if err := dst.Close(); err != nil {
+		_ = os.Remove(encryptedPath)
+		return "", err
+	}
+	return encryptedPath, nil
+}
+
+// removeLegacyOneDriveBackup deletes the plaintext archive left by earlier
+// releases once an encrypted replacement exists. Failure is only logged: the
+// encrypted backup already succeeded.
+func (a *App) removeLegacyOneDriveBackup(ctx context.Context) {
+	files, err := a.listOneDriveBackupsContext(ctx)
+	if err != nil {
+		log.Printf("OneDrive: 检查旧版明文备份失败: %v", err)
+		return
+	}
+	for _, file := range files {
+		if file.Encrypted {
+			continue
+		}
+		token, err := a.accessTokenOneDriveContext(ctx)
+		if err == nil {
+			err = oneDriveGraphJSON(ctx, http.MethodDelete, oneDriveGraphBaseURL+"/me/drive/items/"+url.PathEscape(file.ID), token, nil, nil)
+		}
+		if err != nil {
+			log.Printf("OneDrive: 删除旧版明文备份失败: %v", err)
+		}
+	}
 }
 
 // DELETE /api/admin/maintenance/onedrive/backups/:id

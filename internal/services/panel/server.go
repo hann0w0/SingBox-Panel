@@ -72,6 +72,10 @@ func (a *App) SetConfigPath(p string) { a.cfgPath = p }
 
 // NewApp wires the panel components and builds the router.
 func NewApp(cfg config.PanelConfig, db *gorm.DB) *App {
+	// Validate has already rejected malformed entries before NewApp runs.
+	if prefixes, err := cfg.TrustedProxyPrefixes(); err == nil && len(prefixes) > 0 {
+		configuredTrustedProxies = prefixes
+	}
 	hub := NewHub(db)
 	orch := NewOrchestrator(db, hub)
 	a := &App{
@@ -228,6 +232,7 @@ func (a *App) routes() *gin.Engine {
 		admin.GET("/maintenance/onedrive", a.oneDriveStatus)
 		admin.POST("/maintenance/onedrive/auth/start", a.startOneDriveAuth)
 		admin.POST("/maintenance/onedrive/auth/:sessionID/poll", a.pollOneDriveAuth)
+		admin.PUT("/maintenance/onedrive/passphrase", a.setOneDrivePassphrase)
 		admin.POST("/maintenance/onedrive/sync", a.syncOneDriveBackup)
 		admin.GET("/maintenance/onedrive/backups/:id/download", a.downloadOneDriveBackup)
 		admin.POST("/maintenance/onedrive/backups/:id/restore", a.restoreOneDriveBackup)

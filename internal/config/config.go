@@ -3,6 +3,7 @@ package config
 
 import (
 	"fmt"
+	"net/netip"
 	"net/url"
 	"os"
 	"strconv"
@@ -38,6 +39,12 @@ type PanelConfig struct {
 	// Server traffic and monthly reset cycles always use UTC.
 	// Defaults to Asia/Shanghai.
 	Timezone string `yaml:"timezone"`
+
+	// TrustedProxies lists the reverse-proxy addresses or CIDRs whose
+	// X-Real-IP header is believed. Empty keeps the default of any loopback,
+	// private or link-local peer; set it when other hosts or containers on that
+	// network could reach the panel directly and forge the header.
+	TrustedProxies []string `yaml:"trusted_proxies"`
 
 	Database     DatabaseConfig `yaml:"database"`
 	Admin        AdminBootstrap `yaml:"admin"`
@@ -150,6 +157,14 @@ func applyEnv(cfg *PanelConfig) error {
 	if v := firstEnv("SINGBOX_PANEL_TIMEZONE"); v != "" {
 		cfg.Timezone = v
 	}
+	if v := firstEnv("SINGBOX_PANEL_TRUSTED_PROXIES"); v != "" {
+		cfg.TrustedProxies = nil
+		for _, item := range strings.Split(v, ",") {
+			if item = strings.TrimSpace(item); item != "" {
+				cfg.TrustedProxies = append(cfg.TrustedProxies, item)
+			}
+		}
+	}
 	if v := firstEnv("SINGBOX_PANEL_DB_DRIVER"); v != "" {
 		cfg.Database.Driver = v
 	}
@@ -258,6 +273,33 @@ func (cfg PanelConfig) Location() *time.Location {
 	return time.UTC
 }
 
+// TrustedProxyPrefixes parses TrustedProxies. A bare address is a single-host
+// prefix. A nil result means "use the default private-network rule".
+func (cfg PanelConfig) TrustedProxyPrefixes() ([]netip.Prefix, error) {
+	var prefixes []netip.Prefix
+	for _, raw := range cfg.TrustedProxies {
+		raw = strings.TrimSpace(raw)
+		if raw == "" {
+			continue
+		}
+		if strings.Contains(raw, "/") {
+			prefix, err := netip.ParsePrefix(raw)
+			if err != nil {
+				return nil, fmt.Errorf("trusted_proxies entry %q is not a valid CIDR: %w", raw, err)
+			}
+			prefixes = append(prefixes, prefix.Masked())
+			continue
+		}
+		addr, err := netip.ParseAddr(raw)
+		if err != nil {
+			return nil, fmt.Errorf("trusted_proxies entry %q is not a valid IP address: %w", raw, err)
+		}
+		addr = addr.Unmap()
+		prefixes = append(prefixes, netip.PrefixFrom(addr, addr.BitLen()))
+	}
+	return prefixes, nil
+}
+
 // Validate checks settings that must be safe before the HTTP server starts.
 // TLS terminates at the configured reverse proxy, so the panel itself still
 // listens on HTTP internally; BaseURL is the externally reachable origin.
@@ -273,6 +315,9 @@ func (cfg PanelConfig) Validate() error {
 		if _, err := time.LoadLocation(tz); err != nil {
 			return fmt.Errorf("timezone %q is not a valid IANA zone: %w", tz, err)
 		}
+	}
+	if _, err := cfg.TrustedProxyPrefixes(); err != nil {
+		return err
 	}
 	env := strings.ToLower(strings.TrimSpace(cfg.Environment))
 	if env == "" {

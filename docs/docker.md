@@ -121,6 +121,8 @@ location / {
     proxy_pass http://127.0.0.1:32334;
     proxy_http_version 1.1;
     proxy_set_header Host $host;
+    # 必须用真实来源地址覆盖 X-Real-IP，否则客户端可自行伪造该头绕过登录限流
+    proxy_set_header X-Real-IP $remote_addr;
     proxy_set_header X-Forwarded-Proto $scheme;
     proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
     proxy_set_header Upgrade $http_upgrade;
@@ -132,6 +134,18 @@ location / {
 ```
 
 上传大小和超时设置用于较大的备份恢复。HTTPS 证书需覆盖 `SINGBOX_PANEL_BASE_URL` 中的域名。
+
+面板只从本机或内网的反向代理读取 `X-Real-IP`，用于登录限流和登录记录。反向代理**必须覆盖**这个头：Nginx 和 Caddy 默认都会把客户端自带的 `X-Real-IP` 原样转发，不覆盖时攻击者每次请求都能换一个"来源 IP"，让按 IP 的登录限流失效。Caddy 写法：
+
+```caddy
+panel.example.com {
+    reverse_proxy 127.0.0.1:32334 {
+        header_up X-Real-IP {remote_host}
+    }
+}
+```
+
+如果同一 Docker 网络或内网里还有其他不可信的容器/主机能直连面板，用 `SINGBOX_PANEL_TRUSTED_PROXIES`（逗号分隔的 IP 或 CIDR，原生安装对应 `panel.yaml` 的 `trusted_proxies` 列表）只信任反向代理本身，例如 `SINGBOX_PANEL_TRUSTED_PROXIES=172.18.0.2`。未设置时信任所有回环、私有和链路本地地址。
 
 反向代理本身也在 Docker 中时，可让两个服务加入同一个 Docker 网络，并将上游设为 `panel:8080`。反向代理容器内的 `127.0.0.1` 指向它自己，不能直接使用上面的宿主机上游地址。容器间仍使用内部端口 `8080`，无需为此将面板端口公开到公网。
 
@@ -150,6 +164,8 @@ Agent 不进入容器，sing-box 的安装、启停、更新、配置下发、�
 保持 Compose 项目名和数据卷一致；换目录或使用不同的 `-p` 项目名可能创建一个新卷，看起来像首次安装。可用 `docker compose volumes` 查看当前项目的数据卷。
 
 日常备份使用面板「设置 → 备份」下载 `.tar.gz`，或使用已有 OneDrive 备份。不要直接复制正在写入的 SQLite 文件。
+
+备份包含 `jwt_secret` 和全部节点密钥，拿到明文备份就能伪造管理员登录。因此 OneDrive 同步必须先在「设置 → 备份」设置备份口令（至少 12 个字符）：上传的是用该口令加密的 `singbox-panel-backup.tar.gz.enc`（Argon2id + AES-256-GCM），未设置口令时不会上传。旧版本留下的明文 `singbox-panel-backup.tar.gz` 会在第一次加密同步成功后自动删除。口令只以加密形式保存在面板数据库中，请另行妥善保管：在新主机恢复，或手动上传 `.enc` 文件恢复时都需要输入它，丢失后无法解密。
 
 恢复时在「设置 → 恢复」上传备份。面板完成校验和替换后会退出，由 `restart: unless-stopped` 自动启动并打开恢复后的数据库。不要改成 `on-failure`：恢复后的退出码是 0。恢复完成后重新登录并核对节点、用户和订阅。
 

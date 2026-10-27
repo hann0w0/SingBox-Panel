@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
-import { Alert, Button, Modal, Popconfirm, Select, Tooltip, Typography, Upload, message } from '../../../ui'
+import { Alert, Button, Input, Modal, Popconfirm, Select, Tooltip, Typography, Upload, message } from '../../../ui'
 import type { UploadFile } from '../../../ui'
 import { Trash2, Download, Inbox, Link, RotateCw } from 'lucide-react'
 import {
@@ -14,6 +14,7 @@ import {
   isCanceledRequest,
   restoreBackup,
   restoreOneDriveBackup,
+  setOneDrivePassphrase,
   selfUpdate,
   startOneDriveAuth,
   syncOneDriveBackup,
@@ -58,6 +59,9 @@ export default function Settings() {
   const [backing, setBacking] = useState(false)
   const [restoring, setRestoring] = useState(false)
   const [restoreFile, setRestoreFile] = useState<UploadFile | null>(null)
+  const [restorePassphrase, setRestorePassphrase] = useState('')
+  const [cloudPassphrase, setCloudPassphrase] = useState('')
+  const [cloudPassphraseSaving, setCloudPassphraseSaving] = useState(false)
   const [cloud, setCloud] = useState<OneDriveStatus | null>(null)
   const [cloudLoading, setCloudLoading] = useState(false)
   const [cloudSyncing, setCloudSyncing] = useState(false)
@@ -206,6 +210,24 @@ export default function Settings() {
     }
   }
 
+  const doSaveCloudPassphrase = async () => {
+    if ([...cloudPassphrase].length < 12) {
+      message.warning('备份口令至少 12 个字符')
+      return
+    }
+    setCloudPassphraseSaving(true)
+    try {
+      await setOneDrivePassphrase(cloudPassphrase)
+      setCloudPassphrase('')
+      message.success('备份口令已保存，请另行妥善保管：丢失后无法解密云端备份')
+      loadCloud()
+    } catch (e) {
+      message.error(errMsg(e))
+    } finally {
+      setCloudPassphraseSaving(false)
+    }
+  }
+
   const doCloudDownload = async (id: string, name: string) => {
     try {
       await downloadOneDriveBackup(id, name)
@@ -224,10 +246,24 @@ export default function Settings() {
     }
   }
 
-  const doCloudRestore = (id: string, name: string) => {
+  const doCloudRestore = (id: string, name: string, encrypted: boolean) => {
+    // Modal.confirm content is rendered once, so collect the value outside state.
+    let passphrase = ''
     Modal.confirm({
       title: '从 OneDrive 恢复备份',
-      content: <>将用 <b>{name}</b> 覆盖全部数据，完成后面板重启。</>,
+      content: (
+        <>
+          <p>将用 <b>{name}</b> 覆盖全部数据，完成后面板重启。</p>
+          {encrypted && (
+            <Input.Password
+              aria-label="备份口令"
+              placeholder="备份口令（留空则使用本面板已保存的口令）"
+              autoComplete="off"
+              onChange={(e) => { passphrase = e.target.value }}
+            />
+          )}
+        </>
+      ),
       okText: '确认恢复',
       okButtonProps: { danger: true },
       cancelText: '取消',
@@ -237,7 +273,7 @@ export default function Settings() {
         setCloudRestoring(true)
         let restarting = false
         try {
-          const result = await restoreOneDriveBackup(id)
+          const result = await restoreOneDriveBackup(id, passphrase || undefined)
           restarting = result.restarting
           message.success(result.message)
           if (result.restarting) {
@@ -284,9 +320,10 @@ export default function Settings() {
         restoreOperationRef.current = true
         setRestoring(true)
         try {
-          const r = await restoreBackup(file)
+          const r = await restoreBackup(file, restorePassphrase || undefined)
           message.success(r.message)
           setRestoreFile(null)
+          setRestorePassphrase('')
           if (r.restarting) {
             // The panel exits and systemd restarts it against the restored DB.
             // Sessions are only preserved if the imported jwt_secret was applied;
@@ -528,6 +565,7 @@ export default function Settings() {
           <div className="settings-row-main">
             <b>OneDrive</b>
             {cloud?.connected ? <Status tone="ok">已连接</Status> : <Status>未连接</Status>}
+            {cloud?.connected && (cloud.encrypted ? <Status tone="ok">已加密</Status> : <Status tone="warn">未设置口令</Status>)}
             {cloud?.connected && cloud.last_sync_at && (
               <span className="settings-row-meta">
                 {new Date(cloud.last_sync_at).toLocaleString()}
@@ -540,10 +578,31 @@ export default function Settings() {
               {cloud?.connected ? '重新连接' : '连接'}
             </Button>
             {cloud?.connected && (
-              <Button type="primary" loading={cloudSyncing} onClick={doCloudSync}>立即同步</Button>
+              <Button type="primary" loading={cloudSyncing} disabled={!cloud.encrypted} title={cloud.encrypted ? undefined : '请先设置备份口令'} onClick={doCloudSync}>立即同步</Button>
             )}
           </div>
         </div>
+        {cloud?.connected && (
+          <div className="settings-row">
+            <div className="settings-row-main">
+              <b>备份口令</b>
+              <span className="settings-row-meta">
+                {cloud.encrypted ? '云端备份已加密；更换口令后，旧备份仍需用旧口令恢复' : '备份含全部节点密钥和会话密钥，设置口令后才会上传'}
+              </span>
+            </div>
+            <div className="settings-actions">
+              <Input.Password
+                aria-label="新的备份口令"
+                placeholder={cloud.encrypted ? '新口令（至少 12 位）' : '设置口令（至少 12 位）'}
+                autoComplete="new-password"
+                value={cloudPassphrase}
+                onChange={(e) => setCloudPassphrase(e.target.value)}
+                onPressEnter={doSaveCloudPassphrase}
+              />
+              <Button loading={cloudPassphraseSaving} disabled={!cloudPassphrase} onClick={doSaveCloudPassphrase}>保存</Button>
+            </div>
+          </div>
+        )}
         {authPending && (
           <div className="settings-row settings-auth">
             <div className="settings-row-main">
@@ -556,6 +615,25 @@ export default function Settings() {
           </div>
         )}
       </div>
+
+      {cloud?.connected && !cloud.encrypted && (
+        <Alert
+          className="settings-alert"
+          type="warning"
+          showIcon
+          message="OneDrive 同步已暂停"
+          description="备份包含 jwt_secret 和所有节点密钥。为避免明文存放在云端，请先设置备份口令。"
+        />
+      )}
+      {cloud?.files?.some((file) => !file.encrypted) && (
+        <Alert
+          className="settings-alert"
+          type="warning"
+          showIcon
+          message="云端存在旧版明文备份"
+          description="下一次加密同步成功后会自动删除它；也可以现在手动删除。"
+        />
+      )}
 
       {cloudError && <Alert className="settings-alert" type="error" showIcon message={cloudError} />}
 
@@ -576,10 +654,11 @@ export default function Settings() {
               <div className="settings-file" key={file.id}>
                 <div className="settings-file-main">
                   <span className="settings-file-name mono">{file.name}</span>
+                  {!file.encrypted && <Status tone="warn">明文</Status>}
                   <span className="settings-row-meta">{formatBackupSize(file.size)} · {new Date(file.lastModifiedDateTime).toLocaleString()}</span>
                 </div>
                 <div className="ui-row-actions">
-                  <Button type="text" size="small" loading={cloudRestoring} disabled={restoring} onClick={() => doCloudRestore(file.id, file.name)}>恢复</Button>
+                  <Button type="text" size="small" loading={cloudRestoring} disabled={restoring} onClick={() => doCloudRestore(file.id, file.name, !!file.encrypted)}>恢复</Button>
                   <Tooltip title="下载">
                     <Button type="text" size="small" icon={<Download />} aria-label={`下载 ${file.name}`} onClick={() => doCloudDownload(file.id, file.name)} />
                   </Tooltip>
@@ -605,7 +684,7 @@ export default function Settings() {
     <div className="ui-card settings-card settings-restore">
       <Upload.Dragger
         className="settings-dragger"
-        accept=".gz,.tar.gz"
+        accept=".gz,.tar.gz,.enc"
         maxCount={1}
         multiple={false}
         beforeUpload={() => false /* 不自动上传，交给按钮统一提交 */}
@@ -616,8 +695,17 @@ export default function Settings() {
       >
         <p className="ui-upload-drag-icon"><Inbox /></p>
         <p className="ui-upload-text">点击或拖拽备份文件</p>
-        <p className="ui-upload-hint mono">.tar.gz</p>
+        <p className="ui-upload-hint mono">.tar.gz / .tar.gz.enc</p>
       </Upload.Dragger>
+      <Input.Password
+        className="settings-restore-passphrase"
+        aria-label="备份口令"
+        placeholder="备份口令（仅加密备份需要）"
+        autoComplete="off"
+        value={restorePassphrase}
+        onChange={(e) => setRestorePassphrase(e.target.value)}
+        disabled={restoring || cloudRestoring}
+      />
       <div className="settings-card-foot">
         <span className="settings-note">将覆盖全部数据并重启面板</span>
         <div className="settings-actions">

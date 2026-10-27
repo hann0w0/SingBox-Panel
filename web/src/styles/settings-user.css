@@ -53,6 +53,7 @@
 .settings-restore .ui-upload-wrapper .ui-upload-drag p.ui-upload-text { margin-bottom: 2px; font-size: 14px; color: var(--console-ink); }
 .settings-restore .ui-upload-wrapper .ui-upload-drag p.ui-upload-hint { color: var(--console-faint); }
 .settings-restore .settings-card-foot .settings-note { color: var(--console-muted); }
+.settings-restore .settings-restore-passphrase { margin: 0 20px 16px; width: calc(100% - 40px); }
 
 /* ---------- User subscription page ---------- */
 .sub-page { min-width: 0; }

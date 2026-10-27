@@ -2,6 +2,7 @@ package panel
 
 import (
 	"net"
+	"net/netip"
 	"sync"
 	"time"
 
@@ -177,6 +178,26 @@ func clientIP(c *gin.Context) string {
 	return host
 }
 
+// configuredTrustedProxies narrows which peers may set X-Real-IP. It is set
+// once from config in NewApp; nil keeps the private-network default.
+var configuredTrustedProxies []netip.Prefix
+
 func trustedProxyPeer(ip net.IP) bool {
-	return ip != nil && (ip.IsLoopback() || ip.IsPrivate() || ip.IsLinkLocalUnicast())
+	if ip == nil {
+		return false
+	}
+	if configuredTrustedProxies != nil {
+		addr, ok := netip.AddrFromSlice(ip)
+		if !ok {
+			return false
+		}
+		addr = addr.Unmap()
+		for _, prefix := range configuredTrustedProxies {
+			if prefix.Contains(addr) {
+				return true
+			}
+		}
+		return false
+	}
+	return ip.IsLoopback() || ip.IsPrivate() || ip.IsLinkLocalUnicast()
 }

@@ -41,6 +41,7 @@ docker run -d \
 - `SINGBOX_PANEL_BASE_URL`：面板对外公开访问的 HTTPS 根地址（节点 Agent 连接及订阅分发均依赖此地址）。
 - 管理员账号和初始密码仅在首次初始化数据库时使用。
 - 宿主机仅发布 `127.0.0.1:32334`，映射到容器内 `8080`，需由反向代理统一对外提供 HTTPS。
+- 反向代理必须用真实来源地址覆盖 `X-Real-IP`（Nginx：`proxy_set_header X-Real-IP $remote_addr;`），否则登录限流可被伪造的请求头绕过，详见 [Docker 部署说明](docs/docker.md#https-与-websocket-反向代理)。
 
 #### 方式二：Docker Compose
 

@@ -75,3 +75,30 @@ func TestDatabasePoolConfigRejectsInvalidEnvironmentValue(t *testing.T) {
 		t.Fatal("invalid pool duration was accepted")
 	}
 }
+
+func TestTrustedProxiesParseAndValidate(t *testing.T) {
+	t.Setenv("SINGBOX_PANEL_TRUSTED_PROXIES", "127.0.0.1, 172.18.0.0/16 ,::1")
+	cfg, err := Load("")
+	if err != nil {
+		t.Fatal(err)
+	}
+	prefixes, err := cfg.TrustedProxyPrefixes()
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []string{"127.0.0.1/32", "172.18.0.0/16", "::1/128"}
+	if len(prefixes) != len(want) {
+		t.Fatalf("prefixes = %v", prefixes)
+	}
+	for i, p := range prefixes {
+		if p.String() != want[i] {
+			t.Fatalf("prefix %d = %s, want %s", i, p, want[i])
+		}
+	}
+
+	cfg.BaseURL = "https://panel.example.com"
+	cfg.TrustedProxies = []string{"not-an-ip"}
+	if err := cfg.Validate(); err == nil {
+		t.Fatal("invalid trusted proxy accepted")
+	}
+}

@@ -109,6 +109,9 @@ func (a *App) restoreBackup(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "无效的 multipart 上传"})
 		return
 	}
+	// An encrypted backup needs its passphrase, which the client must send as a
+	// "passphrase" field before the file part because the upload is streamed.
+	passphrase := ""
 	for parts := 0; parts < 32; parts++ {
 		part, partErr := multipartReader.NextPart()
 		if partErr == io.EOF {
@@ -123,8 +126,24 @@ func (a *App) restoreBackup(c *gin.Context) {
 			c.JSON(http.StatusBadRequest, gin.H{"error": "读取上传失败：" + partErr.Error()})
 			return
 		}
+		if part.FormName() == "passphrase" && part.FileName() == "" {
+			raw, readErr := io.ReadAll(io.LimitReader(part, maxBackupPassphraseLen+1))
+			_ = part.Close()
+			if readErr != nil || len(raw) > maxBackupPassphraseLen {
+				c.JSON(http.StatusBadRequest, gin.H{"error": "备份口令无效"})
+				return
+			}
+			passphrase = string(raw)
+			continue
+		}
 		if part.FormName() == "file" && part.FileName() != "" {
-			restartScheduled := a.restoreBackupReader(c, io.LimitReader(part, maxBackupUpload+1))
+			plain, _, plainErr := backupPlainReader(io.LimitReader(part, maxBackupUpload+1), passphrase)
+			if plainErr != nil {
+				_ = part.Close()
+				c.JSON(http.StatusBadRequest, gin.H{"error": plainErr.Error()})
+				return
+			}
+			restartScheduled := a.restoreBackupReader(c, plain)
 			releaseMaintenanceLock = !restartScheduled
 			_ = part.Close()
 			return

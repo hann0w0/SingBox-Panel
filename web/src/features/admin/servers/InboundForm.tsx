@@ -5,18 +5,18 @@ import { applyWithToast } from '../../../configApply'
 import type { Inbound, InboundSettings, InboundType, RealityGuardSettings, RealitySettings } from '../../../types'
 import { randomBase64, randomHex, randomUUID, SHADOWSOCKS_METHODS, ss2022KeyLen } from '../../../util'
 import '../../../styles/forms.css'
-import { MODAL_MD } from '../../../ui/modal'
+import '../../../styles/inbound-editor.css'
 
-const TYPES: { value: InboundType; label: string }[] = [
-  { value: 'shadowsocks', label: 'Shadowsocks' },
-  { value: 'socks', label: 'SOCKS5' },
-  { value: 'snell', label: 'Snell' },
-  { value: 'vless', label: 'VLESS' },
-  { value: 'anytls', label: 'AnyTLS' },
-  { value: 'vmess', label: 'VMess' },
-  { value: 'tuic', label: 'TUIC' },
-  { value: 'trojan', label: 'Trojan' },
-  { value: 'hysteria2', label: 'Hysteria2' },
+export const TYPES: { value: InboundType; label: string }[] = [
+  { value: 'shadowsocks', label: 'ss' },
+  { value: 'snell', label: 'snell' },
+  { value: 'socks', label: 'socks' },
+  { value: 'tuic', label: 'tuic' },
+  { value: 'trojan', label: 'trojan' },
+  { value: 'anytls', label: 'anytls' },
+  { value: 'vless', label: 'vless' },
+  { value: 'vmess', label: 'vmess' },
+  { value: 'hysteria2', label: 'hysteria2' },
 ]
 
 const WS_TYPES = new Set<InboundType>(['vless', 'vmess', 'trojan'])
@@ -369,12 +369,18 @@ export function assembleSettings(base: InboundSettings, v: FormVals, type: Inbou
 export default function InboundForm({
   serverId,
   inbound,
+  prefill,
+  preview = false,
+  onPreview,
   open,
   onClose,
   onSaved,
 }: {
   serverId: number
   inbound: Inbound | null
+  prefill?: Record<string, any>
+  preview?: boolean
+  onPreview?: (body: Record<string, unknown>) => void
   open: boolean
   onClose: () => void
   onSaved: () => void
@@ -406,8 +412,8 @@ export default function InboundForm({
     // and without a reset those survive from the previously opened inbound —
     // 新增协议 would inherit the last one's tag and secrets.
     form.resetFields()
-    form.setFieldsValue(toForm(inbound))
-  }, [open, inbound])
+    form.setFieldsValue(prefill ?? toForm(inbound))
+  }, [form, open, inbound, prefill])
 
   const tlsModeOptions = (t: InboundType = type) => {
     const opts: { value: string; label: string }[] = []
@@ -419,16 +425,20 @@ export default function InboundForm({
     return opts
   }
 
+  const readValues = async (): Promise<FormVals> => {
+    return form.validateFields().catch((err) => {
+      scrollToFirstError(form, err)
+      throw err
+    })
+  }
+
   const submit = async () => {
     if (!open || submitLock.current) return
     submitLock.current = true
     const session = submitSessionRef.current
     setSubmitting(true)
     try {
-      const v = await form.validateFields().catch((err) => {
-        scrollToFirstError(form, err)
-        throw err
-      })
+      const v = await readValues()
       if (session !== submitSessionRef.current) return
       const settings = assembleSettings(inbound?.settings || {}, v, v.type)
       // An auto port must not land on the loopback port the guard reserved.
@@ -442,6 +452,10 @@ export default function InboundForm({
         // Inbounds are always active; remove one instead of pausing it.
         enabled: true,
         settings,
+      }
+      if (preview) {
+        onPreview?.(body)
+        return
       }
       const editing = inbound
       const saved = await applyWithToast(`inbound-${editing ? editing.id : 'new'}`, () =>
@@ -463,21 +477,26 @@ export default function InboundForm({
   const canMultiUser = supportsMultiUser(type, method)
   const hasCredentials = canMultiUser || UUID_TYPES.has(type) || PW_TYPES.has(type) || type === 'shadowsocks' || type === 'socks' || type === 'snell'
   const hasParams = type === 'vless' || type === 'vmess' || type === 'anytls' || type === 'tuic' || type === 'snell' || HAS_BANDWIDTH.has(type)
+  const jsonField = (key: string, value: unknown) => {
+    if (form.getFieldValue(key) === undefined) form.setFieldValue(key, value)
+  }
 
   return (
     <Modal
-      className="fm-modal"
-      title={<div className="ui-dialog-heading"><span>{inbound ? '编辑入站' : '新增入站'}</span><small>监听协议与访问认证</small></div>}
+      className="fm-modal inbound-compact"
+      title={<span className="inbound-compact-heading">{!preview && inbound ? '编辑入站' : '新增入站'}</span>}
       open={open}
       onOk={submit}
       onCancel={onClose}
       confirmLoading={submitting}
-      width={MODAL_MD}
+      okText="应用"
+      cancelText="取消"
+      width={680}
     >
-      <fieldset disabled={submitting} aria-busy={submitting} className="min-w-0 border-0 p-0 m-0">
-      <Form form={form} layout="vertical" className="fm-form">
-        <FormGroup title="基本">
-          <Form.Item name="type" label="协议" rules={[{ required: true }]}>
+      <fieldset disabled={submitting} aria-busy={submitting} className="inbound-compact-fieldset">
+      <Form form={form} layout="vertical" className="fm-form inbound-compact-form">
+        <FormGroup title="基本" panel="inbound">
+          <Form.Item name="type" label="协议" rules={[{ required: true }]} className="inbound-compact-type">
             <Select
               options={TYPES}
               disabled={!!inbound}
@@ -487,14 +506,27 @@ export default function InboundForm({
                 if (!allowed.includes(form.getFieldValue('tls_mode'))) {
                   form.setFieldValue('tls_mode', allowed[0])
                 }
+                jsonField('listen_port', randomPort())
+                jsonField('flow', 'xtls-rprx-vision')
+                jsonField('method', '2022-blake3-aes-128-gcm')
+                jsonField('vmess_security', 'auto')
+                jsonField('vmess_alter_id', 0)
+                jsonField('congestion_control', 'cubic')
+                jsonField('auth_timeout', '3s')
+                jsonField('heartbeat', '10s')
+                jsonField('transport_type', 'tcp')
+                jsonField('snell_version', 6)
+                jsonField('snell_obfs_mode', 'none')
+                jsonField('snell_mode', '')
+                jsonField('multi_user', false)
               }}
             />
           </Form.Item>
           <Form.Item name="listen_port" label="端口">
-            <InputNumber precision={0} min={1} max={65535} placeholder="随机" className="mono" />
+            <InputNumber precision={0} min={1} max={65535} className="mono" />
           </Form.Item>
-          <Form.Item name="tag" label="标签" className="fm-full">
-            <Input placeholder="留空自动生成" />
+          <Form.Item name="tag" label="标签">
+            <Input />
           </Form.Item>
           {type === 'shadowsocks' && (
             <Form.Item name="method" label="加密方式" rules={[{ required: true }]} className="fm-full">
@@ -509,7 +541,7 @@ export default function InboundForm({
         </FormGroup>
 
         {hasCredentials && (
-          <FormGroup title="认证">
+          <FormGroup title="认证" panel="inbound">
             {canMultiUser && (
               <div className="fm-switches">
                 <Form.Item name="multi_user" label="单端口多用户" valuePropName="checked" className="fm-switch">
@@ -525,7 +557,7 @@ export default function InboundForm({
               <Form.Item label="UUID" className="fm-full">
                 <Space.Compact>
                   <Form.Item name="uuid" noStyle>
-                    <Input placeholder="留空自动生成" className="mono" />
+                    <Input className="mono" />
                   </Form.Item>
                   <Button onClick={() => form.setFieldValue('uuid', randomUUID())}>随机</Button>
                 </Space.Compact>
@@ -535,7 +567,7 @@ export default function InboundForm({
               <Form.Item label="密码" className="fm-full">
                 <Space.Compact>
                   <Form.Item name="password" noStyle>
-                    <Input placeholder="留空自动生成" className="mono" />
+                    <Input className="mono" />
                   </Form.Item>
                   <Button onClick={() => form.setFieldValue('password', randomHex(16))}>随机</Button>
                 </Space.Compact>
@@ -545,7 +577,7 @@ export default function InboundForm({
               <Form.Item label="密码 / PSK" className="fm-full">
                 <Space.Compact>
                   <Form.Item name="ss_psk" noStyle>
-                    <Input placeholder="留空自动生成" className="mono" />
+                    <Input className="mono" />
                   </Form.Item>
                   <Button
                     onClick={() =>
@@ -561,7 +593,7 @@ export default function InboundForm({
               <Form.Item label="PSK" className="fm-full">
                 <Space.Compact>
                   <Form.Item name="snell_psk" noStyle>
-                    <Input placeholder="留空自动生成" className="mono" />
+                    <Input className="mono" />
                   </Form.Item>
                   <Button onClick={() => form.setFieldValue('snell_psk', randomHex(16))}>生成</Button>
                 </Space.Compact>
@@ -582,7 +614,7 @@ export default function InboundForm({
                     }),
                   ]}
                 >
-                  <Input placeholder="可选" autoComplete="off" />
+                  <Input autoComplete="off" />
                 </Form.Item>
                 <Form.Item
                   name="password"
@@ -597,7 +629,7 @@ export default function InboundForm({
                     }),
                   ]}
                 >
-                  <Input.Password placeholder="可选" autoComplete="new-password" />
+                  <Input.Password autoComplete="new-password" />
                 </Form.Item>
               </>
             )}
@@ -605,7 +637,7 @@ export default function InboundForm({
         )}
 
         {hasParams && (
-          <FormGroup title="协议参数">
+          <FormGroup title="协议参数" panel="inbound">
             {type === 'vless' && (
               <Form.Item name="flow" label="Flow" className="fm-full">
                 <Select
@@ -629,10 +661,10 @@ export default function InboundForm({
             {HAS_BANDWIDTH.has(type) && (
               <>
                 <Form.Item name="up_mbps" label="上行 Mbps">
-                  <InputNumber precision={0} min={0} placeholder="0" />
+                  <InputNumber precision={0} min={0} />
                 </Form.Item>
                 <Form.Item name="down_mbps" label="下行 Mbps">
-                  <InputNumber precision={0} min={0} placeholder="0" />
+                  <InputNumber precision={0} min={0} />
                 </Form.Item>
                 <Form.Item name="obfs_type" label="混淆类型" className={obfsType ? undefined : 'fm-full'}>
                   <Select placeholder="无" options={[
@@ -652,10 +684,10 @@ export default function InboundForm({
                       <Input.Password />
                     </Form.Item>
                     <Form.Item name="gecko_min_packet_size" label="最小包大小">
-                      <InputNumber min={512} precision={0} placeholder="默认" />
+                      <InputNumber min={512} precision={0} />
                     </Form.Item>
                     <Form.Item name="gecko_max_packet_size" label="最大包大小">
-                      <InputNumber min={512} precision={0} placeholder="默认" />
+                      <InputNumber min={512} precision={0} />
                     </Form.Item>
                   </>
                 )}
@@ -667,10 +699,10 @@ export default function InboundForm({
                   <Select options={['cubic', 'new_reno', 'bbr'].map((v) => ({ value: v, label: v }))} />
                 </Form.Item>
                 <Form.Item name="auth_timeout" label="认证超时" rules={[{ required: true }]}>
-                  <Input placeholder="3s" className="mono" />
+                  <Input className="mono" />
                 </Form.Item>
                 <Form.Item name="heartbeat" label="心跳间隔" rules={[{ required: true }]}>
-                  <Input placeholder="10s" className="mono" />
+                  <Input className="mono" />
                 </Form.Item>
               </>
             )}
@@ -732,7 +764,7 @@ export default function InboundForm({
         )}
 
         {showTransport && (
-          <FormGroup title="传输">
+          <FormGroup title="传输" panel="inbound">
             <Form.Item name="transport_type" label="传输层" className="fm-full">
               <Select options={[
                 { value: 'tcp', label: 'TCP' },
@@ -743,18 +775,18 @@ export default function InboundForm({
             {(transportType === 'ws' || transportType === 'httpupgrade') && (
               <>
                 <Form.Item name="ws_path" label="路径">
-                  <Input placeholder="/ws" className="mono" />
+                  <Input className="mono" />
                 </Form.Item>
                 <Form.Item name="ws_host" label="Host">
-                  <Input placeholder="example.com" className="mono" />
+                  <Input className="mono" />
                 </Form.Item>
                 {transportType === 'ws' && (
                   <>
                     <Form.Item name="max_early_data" label="Early Data 长度">
-                      <InputNumber min={0} precision={0} placeholder="0" />
+                      <InputNumber min={0} precision={0} />
                     </Form.Item>
                     <Form.Item name="early_data_header" label="Early Data 头">
-                      <Input placeholder="Sec-WebSocket-Protocol" className="mono" />
+                      <Input className="mono" />
                     </Form.Item>
                   </>
                 )}
@@ -764,7 +796,7 @@ export default function InboundForm({
         )}
 
         {type === 'trojan' && (
-          <FormGroup title="回落">
+          <FormGroup title="回落" panel="inbound">
             <Form.Item
               name="trojan_fallback_server"
               label="回落服务器"
@@ -777,7 +809,7 @@ export default function InboundForm({
                 }),
               ]}
             >
-              <Input placeholder="127.0.0.1" className="mono" />
+              <Input className="mono" />
             </Form.Item>
             <Form.Item
               name="trojan_fallback_port"
@@ -791,13 +823,13 @@ export default function InboundForm({
                 }),
               ]}
             >
-              <InputNumber min={1} max={65535} precision={0} placeholder="80" className="mono" />
+              <InputNumber min={1} max={65535} precision={0} className="mono" />
             </Form.Item>
           </FormGroup>
         )}
 
         {showTLS && (
-          <FormGroup title="TLS">
+          <FormGroup title="TLS" panel="inbound">
             <Form.Item name="tls_mode" label="模式" dependencies={['guard_enabled']} rules={[
               { required: true },
               ({ getFieldValue }) => ({
@@ -810,7 +842,7 @@ export default function InboundForm({
               <Select options={tlsModeOptions()} />
             </Form.Item>
             <Form.Item name="tls_alpn" label="ALPN">
-              <Input placeholder={type === 'tuic' ? 'h3' : 'h2, http/1.1'} className="mono" />
+              <Input className="mono" />
             </Form.Item>
             {tlsMode === 'reality' && (
               <>
@@ -819,13 +851,13 @@ export default function InboundForm({
                   label="握手域名"
                   rules={[{ required: true, whitespace: true, message: '请填写伪装目标域名' }]}
                 >
-                  <Input placeholder="www.apple.com" className="mono" />
+                  <Input className="mono" />
                 </Form.Item>
                 <Form.Item name="reality_handshake_port" label="握手端口">
-                  <InputNumber precision={0} min={1} max={65535} placeholder="443" className="mono" />
+                  <InputNumber precision={0} min={1} max={65535} className="mono" />
                 </Form.Item>
                 <Form.Item name="tls_server_name" label="SNI" extra="留空沿用握手域名">
-                  <Input placeholder="与握手域名一致" className="mono" />
+                  <Input className="mono" />
                 </Form.Item>
                 <Form.Item name="reality_max_time_difference" label="时间差限制" extra="留空不检查客户端时间差" rules={[
                   { validator: (_, value) => {
@@ -833,7 +865,7 @@ export default function InboundForm({
                     return error ? Promise.reject(new Error(error)) : Promise.resolve()
                   } },
                 ]}>
-                  <Input placeholder="例如 1m" className="mono" />
+                  <Input className="mono" />
                 </Form.Item>
                 {GUARD_TYPES.has(type) && (
                   <>
@@ -884,7 +916,7 @@ export default function InboundForm({
                               : '真实 VLESS 改在 127.0.0.1 的本地端口监听'
                           }
                         >
-                          <InputNumber precision={0} min={1} max={65535} placeholder="本地端口" className="mono" />
+                          <InputNumber precision={0} min={1} max={65535} className="mono" />
                         </Form.Item>
                         <Form.Item
                           name="guard_server_names"
@@ -900,7 +932,7 @@ export default function InboundForm({
                             }),
                           ]}
                         >
-                          <Input placeholder="留空沿用 SNI／握手域名" className="mono" />
+                          <Input className="mono" />
                         </Form.Item>
                         <Form.Item
                           name="guard_sniff_timeout"
@@ -916,7 +948,7 @@ export default function InboundForm({
                           ]}
                           extra="留空使用 sing-box 默认值（300ms）"
                         >
-                          <Input placeholder="300ms" className="mono" />
+                          <Input className="mono" />
                         </Form.Item>
 
                       </>
@@ -927,29 +959,29 @@ export default function InboundForm({
             )}
             {tlsMode === 'self' && (
               <Form.Item name="tls_server_name" label="SNI">
-                <Input placeholder="www.bing.com" className="mono" />
+                <Input className="mono" />
               </Form.Item>
             )}
             {tlsMode === 'tls' && (
               <>
                 <Form.Item name="tls_server_name" label="SNI">
-                  <Input placeholder="example.com" className="mono" />
+                  <Input className="mono" />
                 </Form.Item>
                 <Form.Item name="tls_cert_path" label="证书路径">
-                  <Input placeholder="/etc/ssl/example.crt" className="mono" />
+                  <Input className="mono" />
                 </Form.Item>
                 <Form.Item name="tls_key_path" label="私钥路径">
-                  <Input placeholder="/etc/ssl/example.key" className="mono" />
+                  <Input className="mono" />
                 </Form.Item>
               </>
             )}
             {tlsMode === 'acme' && (
               <>
                 <Form.Item name="acme_domain" label="ACME 域名" rules={[{ required: true }]}>
-                  <Input placeholder="example.com" className="mono" />
+                  <Input className="mono" />
                 </Form.Item>
                 <Form.Item name="acme_email" label="ACME 邮箱">
-                  <Input placeholder="you@example.com" />
+                  <Input />
                 </Form.Item>
               </>
             )}
@@ -976,16 +1008,21 @@ export default function InboundForm({
   )
 }
 
-export function FormGroup({ title, extra, children }: { title: ReactNode; extra?: ReactNode; children: ReactNode }) {
+export function FormGroup({ title, extra, panel, children }: {
+  title: ReactNode
+  extra?: ReactNode
+  panel?: 'inbound' | 'outbound'
+  children: ReactNode
+}) {
   if (title === '基本' || title === '动作') {
     return <section className="fm-group fm-group-basic">
       <h3 className="fm-group-title">{title}{extra && <small>{extra}</small>}</h3>
-      <div className="fm-grid">{children}</div>
+      <div className="fm-grid" data-panel={panel}>{children}</div>
     </section>
   }
-  return <details className="fm-group fm-group-fold" open={title === '认证' || title === 'TLS' || title === '匹配条件'}>
+  return <details className="fm-group fm-group-fold">
     <summary className="fm-group-title">{title}{extra && <small>{extra}</small>}</summary>
-    <div className="fm-grid">{children}</div>
+    <div className="fm-grid" data-panel={panel}>{children}</div>
   </details>
 }
 

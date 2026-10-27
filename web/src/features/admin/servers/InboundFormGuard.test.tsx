@@ -54,9 +54,26 @@ afterEach(() => {
   else Reflect.deleteProperty(Element.prototype, 'scrollIntoView')
 })
 
-const save = () => fireEvent.click(screen.getByRole('button', { name: '确定' }))
+const save = () => fireEvent.click(screen.getByRole('button', { name: '应用' }))
 
 describe('REALITY front SNI guard form', () => {
+  it('submits a preview payload without saving or closing the dialog', async () => {
+    const onClose = vi.fn(), onPreview = vi.fn()
+    render(<InboundForm serverId={1} inbound={realityInbound} preview open onClose={onClose} onSaved={vi.fn()} onPreview={onPreview} />)
+
+    save()
+
+    await waitFor(() => expect(onPreview).toHaveBeenCalledOnce())
+    expect(onPreview.mock.calls[0][0]).toMatchObject({
+      type: 'vless',
+      tag: 'reality',
+      listen_port: 443,
+      enabled: true,
+    })
+    expect(updateInbound).not.toHaveBeenCalled()
+    expect(onClose).not.toHaveBeenCalled()
+  })
+
   it('leaves the whitelist optional and saves the enabled filter', async () => {
     const onClose = vi.fn(), onSaved = vi.fn()
     render(<InboundForm serverId={1} inbound={realityInbound} open onClose={onClose} onSaved={onSaved} />)

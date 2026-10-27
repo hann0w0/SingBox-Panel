@@ -1335,6 +1335,9 @@ func sanitizeSurgeName(name string) string {
 		return r
 	}, name)
 	name = strings.Join(strings.Fields(name), " ")
+	// Surge splits "name = type, ..." at the first '=', so an '=' inside the
+	// name would shift the whole definition. Keep its look with U+FF1D.
+	name = strings.ReplaceAll(name, "=", "＝")
 	if name == "" {
 		name = "node"
 	}
@@ -1374,11 +1377,39 @@ func surgeALPN(alpn []string) string {
 }
 
 func surgeProxy(n node, name string) string {
-	line := surgeProxyUnchecked(n, name)
-	if strings.IndexFunc(line, unicode.IsControl) >= 0 {
+	line := surgeProxyUnchecked(n, sanitizeSurgeName(name))
+	if strings.IndexFunc(line, unicode.IsControl) >= 0 || surgeHasUnquotableValue(n) {
 		return ""
 	}
 	return line
+}
+
+// surgeValue renders one parameter value. Surge separates parameters with
+// commas, so a value containing one (possible in third-party passwords or
+// paths) is wrapped in double quotes, the form the manual uses for ALPN lists.
+func surgeValue(v string) string {
+	if strings.Contains(v, ",") {
+		return `"` + v + `"`
+	}
+	return v
+}
+
+// surgeHasUnquotableValue reports a free-form value containing a double quote,
+// which Surge's syntax cannot escape. Such a node is skipped (and reported)
+// rather than emitted in a form Surge would mis-parse.
+func surgeHasUnquotableValue(n node) bool {
+	st := n.settings
+	u := n.getUserIdentity()
+	for _, v := range []string{
+		n.server, st.Method, st.Username, st.Password, u.Password, u.UUID,
+		st.ObfsPassword, st.Transport.Path, st.Transport.Host(), sniOf(st, n.server),
+		singbox.SSClientPassword(st, u.Password), singbox.SnellClientPSK(st, u.Password),
+	} {
+		if strings.Contains(v, `"`) {
+			return true
+		}
+	}
+	return false
 }
 
 func surgeProxyUnchecked(n node, name string) string {
@@ -1389,49 +1420,49 @@ func surgeProxyUnchecked(n node, name string) string {
 	case "shadowsocks":
 		pass := singbox.SSClientPassword(st, u.Password)
 		return fmt.Sprintf("%s = ss, %s, %d, encrypt-method=%s, password=%s, udp-relay=%t",
-			name, n.server, n.port, st.Method, pass, n.udpEnabled())
+			name, n.server, n.port, surgeValue(st.Method), surgeValue(pass), n.udpEnabled())
 	case "socks":
 		line := fmt.Sprintf("%s = socks5, %s, %d", name, n.server, n.port)
 		if st.Username != "" {
-			line += ", username=" + st.Username
+			line += ", username=" + surgeValue(st.Username)
 		}
 		if st.Password != "" {
-			line += ", password=" + st.Password
+			line += ", password=" + surgeValue(st.Password)
 		}
 		return fmt.Sprintf("%s, udp-relay=%t", line, n.udpEnabled())
 	case "trojan":
 		line := fmt.Sprintf("%s = trojan, %s, %d, password=%s, tls=true, sni=%s, skip-cert-verify=%t",
-			name, n.server, n.port, u.Password, sni, st.TLS.ClientInsecure())
+			name, n.server, n.port, surgeValue(u.Password), surgeValue(sni), st.TLS.ClientInsecure())
 		line += surgeALPN(st.TLS.ALPN)
 		return fmt.Sprintf("%s, udp-relay=%t", line, n.udpEnabled())
 	case "anytls":
 		// Surge added AnyTLS support in iOS 5.17.0 / macOS 6.4.3; the shared TLS
 		// parameters (sni, skip-cert-verify, alpn) apply from iOS 5.20.0+.
 		line := fmt.Sprintf("%s = anytls, %s, %d, password=%s, sni=%s, skip-cert-verify=%t",
-			name, n.server, n.port, u.Password, sni, st.TLS.ClientInsecure())
+			name, n.server, n.port, surgeValue(u.Password), surgeValue(sni), st.TLS.ClientInsecure())
 		line += surgeALPN(st.TLS.ALPN)
 		return fmt.Sprintf("%s, udp-relay=%t", line, n.udpEnabled())
 	case "vmess":
 		if st.TLS.Reality.Enabled {
 			return ""
 		}
-		line := fmt.Sprintf("%s = vmess, %s, %d, username=%s, vmess-aead=%t", name, n.server, n.port, u.UUID, st.VMessAlterID == 0)
+		line := fmt.Sprintf("%s = vmess, %s, %d, username=%s, vmess-aead=%t", name, n.server, n.port, surgeValue(u.UUID), st.VMessAlterID == 0)
 		if nodeTLSOn(st) {
-			line += fmt.Sprintf(", tls=true, sni=%s", sni)
+			line += fmt.Sprintf(", tls=true, sni=%s", surgeValue(sni))
 			line += surgeALPN(st.TLS.ALPN)
 			if st.TLS.ClientInsecure() {
 				line += ", skip-cert-verify=true"
 			}
 		}
 		if st.Transport.Type == "ws" {
-			line += ", ws=true, ws-path=" + st.Transport.Path
+			line += ", ws=true, ws-path=" + surgeValue(st.Transport.Path)
 			if h := st.Transport.Host(); h != "" {
-				line += ", ws-headers=Host:" + h
+				line += ", ws-headers=" + surgeValue("Host:"+h)
 			}
 		}
 		return fmt.Sprintf("%s, udp-relay=%t", line, n.udpEnabled())
 	case "hysteria2":
-		line := fmt.Sprintf("%s = hysteria2, %s, %d, password=%s, sni=%s", name, n.server, n.port, u.Password, sni)
+		line := fmt.Sprintf("%s = hysteria2, %s, %d, password=%s, sni=%s", name, n.server, n.port, surgeValue(u.Password), surgeValue(sni))
 		line += surgeALPN(st.TLS.ALPN)
 		if st.DownMbps > 0 {
 			line += fmt.Sprintf(", download-bandwidth=%d", st.DownMbps)
@@ -1440,7 +1471,7 @@ func surgeProxyUnchecked(n node, name string) string {
 		// that field only for Salamander; Gecko is emitted by sing-box/Clash
 		// formats and must not be mislabeled as Salamander here.
 		if st.ObfsPassword != "" && (st.ObfsType == "" || st.ObfsType == "salamander") {
-			line += ", salamander-password=" + st.ObfsPassword
+			line += ", salamander-password=" + surgeValue(st.ObfsPassword)
 		}
 		if st.TLS.ClientInsecure() {
 			line += ", skip-cert-verify=true"
@@ -1449,7 +1480,7 @@ func surgeProxyUnchecked(n node, name string) string {
 	case "snell":
 		// Surge's native protocol: name = snell, host, port, psk=…, version=…
 		line := fmt.Sprintf("%s = snell, %s, %d, psk=%s", name, n.server, n.port,
-			singbox.SnellClientPSK(st, u.Password))
+			surgeValue(singbox.SnellClientPSK(st, u.Password)))
 		if st.SnellVersion > 0 {
 			line += fmt.Sprintf(", version=%d", st.SnellVersion)
 		}
@@ -1468,7 +1499,7 @@ func surgeProxyUnchecked(n node, name string) string {
 			alpn = "h3"
 		}
 		line := fmt.Sprintf("%s = tuic-v5, %s, %d, uuid=%s, password=%s, sni=%s, alpn=%s",
-			name, n.server, n.port, u.UUID, u.Password, sni, alpn)
+			name, n.server, n.port, surgeValue(u.UUID), surgeValue(u.Password), surgeValue(sni), alpn)
 		if st.TLS.ClientInsecure() {
 			line += ", skip-cert-verify=true"
 		}

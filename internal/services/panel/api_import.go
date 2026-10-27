@@ -212,6 +212,9 @@ func importedConfigMode(p *singbox.ParsedConfig, raw []byte) string {
 	if err != nil {
 		return model.ConfigModeRaw
 	}
+	// Configs written by an older panel carry the narrower loopback guard; treat
+	// it as the current one so they stay managed and receive it on next push.
+	raw = singbox.UpgradeLegacyLoopbackGuardJSON(raw)
 	if equivalentJSON(raw, generated) {
 		return model.ConfigModeManaged
 	}

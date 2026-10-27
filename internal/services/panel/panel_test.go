@@ -1165,3 +1165,93 @@ func TestFrontendOmitsPWAEntryPointsInLegacyBuilds(t *testing.T) {
 		t.Fatalf("status = %d, body = %q; want the SPA shell", w.Code, w.Body.String())
 	}
 }
+
+func TestPasswordChangeThrottlesWrongCurrentPassword(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	db := testDB(t)
+	hash, err := hashPassword("old-password")
+	if err != nil {
+		t.Fatal(err)
+	}
+	u := model.User{Email: "user", Password: hash, Role: model.RoleUser, Enabled: true, SubToken: "sub"}
+	if err := db.Create(&u).Error; err != nil {
+		t.Fatal(err)
+	}
+	auth := NewAuth("0123456789abcdef0123456789abcdef", db)
+	token, err := auth.Issue(&u, sessionTTL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	a := &App{db: db, auth: auth, login: newLoginGuard()}
+	r := gin.New()
+	r.POST("/change", auth.Middleware(), a.handleChangePassword)
+	attempt := func(old string) int {
+		body := bytes.NewBufferString(`{"old_password":"` + old + `","new_password":"new-password"}`)
+		req := httptest.NewRequest(http.MethodPost, "/change", body)
+		req.Header.Set("Authorization", "Bearer "+token)
+		req.Header.Set("Content-Type", "application/json")
+		w := httptest.NewRecorder()
+		r.ServeHTTP(w, req)
+		return w.Code
+	}
+	for i := 0; i < freeAttempts; i++ {
+		if got := attempt("wrong-password"); got != http.StatusBadRequest {
+			t.Fatalf("attempt %d status = %d", i+1, got)
+		}
+	}
+	if got := attempt("wrong-password"); got != http.StatusBadRequest {
+		t.Fatalf("first throttled failure status = %d", got)
+	}
+	// Now inside the backoff window: even the correct password must wait.
+	if got := attempt("old-password"); got != http.StatusTooManyRequests {
+		t.Fatalf("guess during backoff status = %d, want 429", got)
+	}
+}
+
+func TestImportKeepsConfigWithLegacyLoopbackGuardManaged(t *testing.T) {
+	current, err := singbox.BuildServerConfig(singbox.ServerConfigInput{
+		Inbounds: []singbox.InboundInput{{
+			Tag: "Snell", Type: "snell", ListenPort: 38376,
+			Settings: singbox.InboundSettings{SingleUser: true, SnellVersion: 5, SnellPSK: "secret"},
+		}},
+		Final:           "direct",
+		StatsController: protocol.LocalTrafficAddress,
+		StatsSecret:     statsSecret("agent-token"),
+		StatsAPI:        protocol.LocalStatsAPIAddress,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Rewrite the guard the way an older panel emitted it.
+	var root map[string]any
+	if err := json.Unmarshal(current, &root); err != nil {
+		t.Fatal(err)
+	}
+	rules := root["route"].(map[string]any)["rules"].([]any)
+	replaced := false
+	for i, rule := range rules {
+		if singbox.IsLoopbackGuardRule(rule.(map[string]any)) {
+			rules[i] = map[string]any{
+				"domain":        []any{"localhost"},
+				"domain_suffix": []any{".localhost"},
+				"ip_cidr":       []any{"127.0.0.0/8", "::1/128"},
+				"action":        "reject",
+			}
+			replaced = true
+		}
+	}
+	if !replaced {
+		t.Fatal("generated config has no loopback guard")
+	}
+	legacy, err := json.Marshal(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	parsed, err := singbox.ParseServerConfig(legacy)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := importedConfigMode(parsed, legacy); got != model.ConfigModeManaged {
+		t.Fatalf("legacy-guard config mode = %q, want managed", got)
+	}
+}

@@ -3,6 +3,7 @@ package panel
 import (
 	"errors"
 	"net/http"
+	"strconv"
 
 	"github.com/gin-gonic/gin"
 	"gorm.io/gorm"
@@ -90,11 +91,28 @@ func (a *App) handleChangePassword(c *gin.Context) {
 		c.JSON(http.StatusNotFound, gin.H{"error": "user not found"})
 		return
 	}
+	// Throttle guesses at the current password like logins are throttled.
+	// Otherwise a stolen session could recover the plaintext password (often
+	// reused elsewhere) at full bcrypt speed. Keyed by account, not address: the
+	// caller already holds this account's session.
+	guardKey := "chpw:" + strconv.FormatUint(uint64(u.ID), 10)
+	if a.login != nil {
+		if wait := a.login.retryAfter(guardKey); wait > 0 {
+			tooMany(c, wait)
+			return
+		}
+	}
 	if !checkPassword(u.Password, req.OldPassword) {
+		if a.login != nil {
+			a.login.fail(guardKey)
+		}
 		// The session is valid; only this form value is wrong. A 401 makes
 		// clients revoke the current session and discard the password dialog.
 		c.JSON(http.StatusBadRequest, gin.H{"error": "当前密码不正确"})
 		return
+	}
+	if a.login != nil {
+		a.login.succeed(guardKey)
 	}
 	hash, err := hashPassword(req.NewPassword)
 	if err != nil {

@@ -10,6 +10,7 @@ services:
       SINGBOX_PANEL_BASE_URL: ${PANEL_BASE_URL:?Set PANEL_BASE_URL to the public HTTPS origin}
       SINGBOX_PANEL_ADMIN_EMAIL: ${PANEL_ADMIN:?Set PANEL_ADMIN to the initial admin account}
       SINGBOX_PANEL_ADMIN_PASSWORD: ${PANEL_ADMIN_PASSWORD:-}
+      SINGBOX_PANEL_TRUSTED_PROXIES: ${PANEL_TRUSTED_PROXIES:-}
     volumes:
       - panel-data:/app/data
     read_only: true

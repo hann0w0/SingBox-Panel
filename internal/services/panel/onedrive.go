@@ -966,7 +966,11 @@ func (a *App) downloadOneDriveBackup(c *gin.Context) {
 	unlockMaintenance()
 	maintenanceLocked = false
 	c.Header("Content-Disposition", fmt.Sprintf(`attachment; filename="%s"`, file.Name))
-	c.Header("Content-Type", "application/gzip")
+	contentType := "application/gzip"
+	if file.Encrypted {
+		contentType = "application/octet-stream"
+	}
+	c.Header("Content-Type", contentType)
 	if resp.ContentLength >= 0 {
 		c.Header("Content-Length", strconv.FormatInt(resp.ContentLength, 10))
 	}

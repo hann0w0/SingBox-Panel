@@ -172,3 +172,38 @@ func TestSurgeSkipsControlCharactersInCredentials(t *testing.T) {
 		t.Fatalf("unsafe node was not reported as skipped: lines=%v skipped=%v", lines, skipped)
 	}
 }
+
+func TestSurgeQuotesCommaValuesAndNeutralisesEqualsInNames(t *testing.T) {
+	n := node{
+		name: "HK = ss, evil.example, 1", server: "example.com", port: 443, typ: "trojan",
+		settings: singbox.InboundSettings{TLS: singbox.TLSSettings{Enabled: true}},
+		user:     singbox.ProxyUser{Password: "pa,ss"},
+	}
+	lines, names, skipped := surgeProxies([]node{n})
+	if len(lines) != 1 || len(skipped) != 0 {
+		t.Fatalf("lines = %v skipped = %v", lines, skipped)
+	}
+	line := lines[0]
+	if strings.Contains(names[0], "=") {
+		t.Fatalf("name keeps '=': %q", names[0])
+	}
+	// Surge splits at the first '=': the rest must be this node's definition.
+	if _, def, ok := strings.Cut(line, "="); !ok || !strings.HasPrefix(def, " trojan, example.com, 443,") {
+		t.Fatalf("definition mis-parsed: %q", line)
+	}
+	if !strings.Contains(line, `password="pa,ss"`) {
+		t.Fatalf("comma password not quoted: %q", line)
+	}
+}
+
+func TestSurgeSkipsValuesWithDoubleQuotes(t *testing.T) {
+	n := node{
+		name: "quoted", server: "example.com", port: 443, typ: "trojan",
+		settings: singbox.InboundSettings{TLS: singbox.TLSSettings{Enabled: true}},
+		user:     singbox.ProxyUser{Password: `pa"ss`},
+	}
+	lines, _, skipped := surgeProxies([]node{n})
+	if len(lines) != 0 || len(skipped) != 1 {
+		t.Fatalf("unquotable value emitted: lines=%v skipped=%v", lines, skipped)
+	}
+}

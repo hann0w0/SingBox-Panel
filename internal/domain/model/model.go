@@ -418,7 +418,9 @@ type CustomNode struct {
 	Port       int      `json:"port"`
 	Params     JSONText `gorm:"type:text" json:"params"` // protocol-specific JSON (psk, version, obfs...)
 	Enabled    bool     `gorm:"index" json:"enabled"`
-	SortOrder  int      `json:"sort_order"`
+	// UserEnabled retains a managed node's own switch when its source is disabled.
+	UserEnabled bool `gorm:"not null;default:true" json:"-"`
+	SortOrder   int  `json:"sort_order"`
 	// HiddenBySubscriptionRule keeps a filtered subscription node in storage so
 	// removing the filter restores its stable row and per-user assignments.
 	// Manual nodes never set this field.

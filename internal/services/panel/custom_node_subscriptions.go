@@ -286,7 +286,7 @@ func (m *customNodeSubscriptionManager) sync(ctx context.Context, id uint) (cust
 				updates := map[string]any{
 					"name": want.Name, "source_name": want.SourceName, "group": want.Group, "link": want.Link,
 					"protocol": want.Protocol, "address": want.Address, "port": want.Port,
-					"params": want.Params, "enabled": want.Enabled, "sort_order": want.SortOrder,
+					"params": want.Params, "enabled": source.Enabled && current.UserEnabled, "sort_order": want.SortOrder,
 					"hidden_by_subscription_rule": want.HiddenBySubscriptionRule,
 				}
 				if err := tx.Model(current).Updates(updates).Error; err != nil {

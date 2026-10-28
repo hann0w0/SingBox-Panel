@@ -404,6 +404,53 @@ func TestExplicitCustomNodeAudienceMigrationPreservesLegacyMeaning(t *testing.T)
 	}
 }
 
+func TestManagedNodeSwitchMigrationPreservesKnownDisabledNodes(t *testing.T) {
+	db := testDB(t)
+	active := model.CustomNodeSubscription{Name: "active", URL: "https://example.com/active", Enabled: true}
+	paused := model.CustomNodeSubscription{Name: "paused", URL: "https://example.com/paused", Enabled: false}
+	for _, source := range []*model.CustomNodeSubscription{&active, &paused} {
+		wasEnabled := source.Enabled
+		if err := db.Create(source).Error; err != nil {
+			t.Fatal(err)
+		}
+		if !wasEnabled {
+			if err := db.Model(source).Update("enabled", false).Error; err != nil {
+				t.Fatal(err)
+			}
+		}
+	}
+	nodes := []model.CustomNode{
+		{Name: "individually disabled", SubscriptionID: &active.ID, SubscriptionKey: "active"},
+		{Name: "source disabled", SubscriptionID: &paused.ID, SubscriptionKey: "paused"},
+	}
+	for i := range nodes {
+		if err := db.Create(&nodes[i]).Error; err != nil {
+			t.Fatal(err)
+		}
+	}
+	var migration schemaMigration
+	for _, candidate := range applicationMigrations {
+		if candidate.version == 29 {
+			migration = candidate
+			break
+		}
+	}
+	if migration.version != 29 {
+		t.Fatal("v29 migration not found")
+	}
+	if err := migration.up(db); err != nil {
+		t.Fatal(err)
+	}
+	for i := range nodes {
+		if err := db.First(&nodes[i], nodes[i].ID).Error; err != nil {
+			t.Fatal(err)
+		}
+	}
+	if nodes[0].UserEnabled || !nodes[1].UserEnabled {
+		t.Fatalf("managed node preferences migrated incorrectly: active=%v paused=%v", nodes[0].UserEnabled, nodes[1].UserEnabled)
+	}
+}
+
 func TestNameRewriteMigrationBackfillsManagedSourceNames(t *testing.T) {
 	db := testDB(t)
 	source := model.CustomNodeSubscription{Name: "订阅", URL: "https://example.com/sub"}

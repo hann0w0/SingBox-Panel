@@ -170,7 +170,7 @@ func (a *App) updateCustomNodeSubscription(c *gin.Context) {
 		// Apply source-level presentation changes immediately, including a base
 		// sort offset, without waiting for a remote fetch.
 		if err := tx.Model(&model.CustomNode{}).Where("subscription_id = ?", id).Updates(map[string]any{
-			"group": group, "enabled": enabled,
+			"group": group, "enabled": gorm.Expr("user_enabled AND ?", enabled),
 		}).Error; err != nil {
 			return err
 		}

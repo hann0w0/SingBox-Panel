@@ -358,6 +358,21 @@ var applicationMigrations = []schemaMigration{
 		name:    "persistent inbound traffic tag identities",
 		up:      migrateInboundTrafficIdentities,
 	},
+	{
+		version: 29,
+		name:    "managed subscription node enabled preference",
+		up: func(tx *gorm.DB) error {
+			if err := tx.AutoMigrate(&model.CustomNode{}); err != nil {
+				return err
+			}
+			// An enabled source's disabled nodes were switched off individually.
+			// Disabled sources erased that distinction, so retain the old behavior
+			// of enabling those nodes when the source is turned on again.
+			return tx.Exec(`UPDATE custom_nodes SET user_enabled = false
+				WHERE enabled = false AND subscription_id IN
+				(SELECT id FROM custom_node_subscriptions WHERE enabled = true)`).Error
+		},
+	},
 }
 
 // migrationReplaySafe records whether an interrupted attempt of each migration
@@ -405,6 +420,7 @@ var migrationReplaySafe = map[uint]bool{
 	26: true,  // AutoMigrate of report receipts
 	27: true,  // AutoMigrate of subscription history index
 	28: true,  // AutoMigrate plus insert-only inbound traffic tag bindings
+	29: false, // backfill could overwrite a later change to an individual node switch
 }
 
 // runSchemaMigrations applies every pending migration in order. If any

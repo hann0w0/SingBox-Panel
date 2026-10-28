@@ -340,7 +340,17 @@ func (a *App) updateCustomNode(c *gin.Context) {
 		columns = append(columns, "AllUsers", "UserIDs", "ExcludedUserIDs")
 	}
 	if req.Enabled != nil {
+		node.UserEnabled = *req.Enabled
 		node.Enabled = *req.Enabled
+		if node.SubscriptionID != nil {
+			var source model.CustomNodeSubscription
+			if err := a.db.First(&source, *node.SubscriptionID).Error; err != nil {
+				c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+				return
+			}
+			node.Enabled = node.Enabled && source.Enabled
+			columns = append(columns, "UserEnabled")
+		}
 		columns = append(columns, "Enabled")
 	}
 	if req.SortOrder != nil {

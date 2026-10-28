@@ -51,6 +51,12 @@ export function buildCustomNodeParams(node: CustomNode | null, values: FormValue
     }
   }
 
+  if (protocol === 'hysteria2' && values.obfs === '' && (!sameProtocol || node?.params?.obfs !== '')) {
+    delete params.obfs_password
+    delete params.gecko_min_packet_size
+    delete params.gecko_max_packet_size
+  }
+
   // A cleared Host field must not fall back to the original headers object.
   // Leave repeated/case-preserved headers intact when the visible Host did not change.
   if (Object.prototype.hasOwnProperty.call(values, 'host') && values.host !== node?.params?.host && params.headers && typeof params.headers === 'object') {

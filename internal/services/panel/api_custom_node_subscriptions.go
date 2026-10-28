@@ -67,7 +67,20 @@ func (a *App) createCustomNodeSubscription(c *gin.Context) {
 		Enabled: enabled, AutoUpdate: autoUpdate, UpdateIntervalMinutes: normalizeCustomNodeSubscriptionInterval(req.UpdateIntervalMinutes),
 		BaseSortOrder: req.BaseSortOrder, NameRewriteRules: normalizedRules,
 	}
-	if err := a.db.Create(&row).Error; err != nil {
+	if err := a.db.Transaction(func(tx *gorm.DB) error {
+		if err := tx.Create(&row).Error; err != nil {
+			return err
+		}
+		// GORM applies default:true to zero-value bools during Create. Restore
+		// explicit false values before the row becomes visible to the scheduler.
+		row.Enabled, row.AutoUpdate = enabled, autoUpdate
+		if !enabled || !autoUpdate {
+			return tx.Model(&row).UpdateColumns(map[string]any{
+				"enabled": enabled, "auto_update": autoUpdate,
+			}).Error
+		}
+		return nil
+	}); err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}

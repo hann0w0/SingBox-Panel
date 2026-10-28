@@ -27,3 +27,20 @@ func TestSubscriptionExportsPreserveCaseInsensitiveHost(t *testing.T) {
 		})
 	}
 }
+
+func TestClashWebSocketExportPreservesCustomHeaders(t *testing.T) {
+	for _, transport := range []struct{ input, opts string }{{"ws", "ws-opts"}, {"httpupgrade", "http-upgrade-opts"}} {
+		t.Run(transport.input, func(t *testing.T) {
+			n := customNodeFromParams(t, "vmess", `{"uuid":"11111111-1111-4111-8111-111111111111","transport":"`+transport.input+`","path":"/proxy","headers":{"host":["cdn.example.com","backup.example.com"],"X-Access-Token":"required-token"}}`)
+			proxy := clashProxy(n, map[string]int{})
+			opts, ok := proxy[transport.opts].(map[string]any)
+			if !ok {
+				t.Fatalf("missing transport options: %+v", proxy)
+			}
+			headers, ok := opts["headers"].(map[string]any)
+			if !ok || headers["Host"] != "cdn.example.com" || headers["X-Access-Token"] != "required-token" || len(headers) != 2 {
+				t.Fatalf("Clash headers lost: %+v", opts)
+			}
+		})
+	}
+}

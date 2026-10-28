@@ -867,8 +867,17 @@ func clashProxy(n node, seen map[string]int) map[string]any {
 		if st.Transport.Path != "" {
 			o["path"] = st.Transport.Path
 		}
+		headers := map[string]any{}
+		for key, values := range st.Transport.HeaderValuesMap() {
+			if len(values) > 0 && !strings.EqualFold(key, "host") {
+				headers[key] = values[0]
+			}
+		}
 		if h := st.Transport.Host(); h != "" {
-			o["headers"] = map[string]any{"Host": h}
+			headers["Host"] = h
+		}
+		if len(headers) > 0 {
+			o["headers"] = headers
 		}
 		if st.Transport.MaxEarlyData > 0 {
 			o["max-early-data"] = st.Transport.MaxEarlyData

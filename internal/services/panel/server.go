@@ -33,6 +33,7 @@ type App struct {
 	wsLimiter           *wsHandshakeLimiter
 	wsLimiterMu         sync.Mutex
 	version             string
+	commit              string
 	cfgPath             string
 
 	// selfUpdating serializes panel self-update requests so two admins cannot
@@ -65,6 +66,10 @@ type App struct {
 // SetVersion records the running panel version (set from main via ldflags) so
 // the maintenance API can report it and compare against the latest release.
 func (a *App) SetVersion(v string) { a.version = v }
+
+// SetCommit records the source revision embedded at build time. Older or
+// locally modified builds without an exact SHA remain explicitly unknown.
+func (a *App) SetCommit(v string) { a.commit = normalizeCommitSHA(v) }
 
 // SetConfigPath records the panel.yaml path (from the --config flag) so the
 // restore flow can rewrite jwt_secret when importing a backup from another host.

@@ -15,9 +15,10 @@ COPY internal/ ./internal/
 ARG TARGETOS
 ARG TARGETARCH
 ARG VERSION=dev
+ARG COMMIT
 RUN --mount=type=cache,target=/root/.cache/go-build \
     CGO_ENABLED=0 GOOS=${TARGETOS:-linux} GOARCH=${TARGETARCH} \
-    go build -trimpath -buildvcs=false -ldflags "-s -w -X main.version=${VERSION}" \
+    go build -trimpath -buildvcs=false -ldflags "-s -w -X main.version=${VERSION} -X main.commit=${COMMIT}" \
     -o /out/singbox-panel ./cmd/panel
 # Every panel serves both architectures, regardless of its own architecture.
 # Agents still install as native systemd services on their target VPSes.

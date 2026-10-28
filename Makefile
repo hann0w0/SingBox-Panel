@@ -1,6 +1,7 @@
 VERSION ?= v1.0.8
+COMMIT ?= $(shell git rev-parse HEAD 2>/dev/null)
 AGENT_VERSION ?= $(shell cat cmd/agent/VERSION 2>/dev/null || echo "v1.0.8")
-PANEL_LDFLAGS := -s -w -X main.version=$(VERSION)
+PANEL_LDFLAGS := -s -w -X main.version=$(VERSION) -X main.commit=$(COMMIT)
 AGENT_LDFLAGS := -s -w -X main.version=$(AGENT_VERSION)
 DIST := dist
 

@@ -196,9 +196,13 @@ func (a *App) maintenanceInfo(c *gin.Context) {
 	if driver == "" {
 		driver = "sqlite"
 	}
+	refresh := c.Query("refresh") == "1" || strings.EqualFold(c.Query("refresh"), "true")
 	resp := gin.H{
 		"deployment":          panelDeployment(),
 		"current_version":     a.version,
+		"current_commit":      a.commit,
+		"source_branch":       "main",
+		"has_update":          false,
 		"update_supported":    supported,
 		"reinstall_supported": supported,
 		"instance_id":         a.startedAt.UTC().Format(time.RFC3339Nano),
@@ -215,7 +219,6 @@ func (a *App) maintenanceInfo(c *gin.Context) {
 	}
 	// The latest-release lookup is best-effort: a rate-limited or offline API
 	// must not blank out the version card.
-	refresh := c.Query("refresh") == "1" || strings.EqualFold(c.Query("refresh"), "true")
 	if latest, err := latestPanelRelease(refresh); err == nil {
 		resp["latest_version"] = latest
 		// A newer release is reported even where in-place update is unsupported;
@@ -223,6 +226,39 @@ func (a *App) maintenanceInfo(c *gin.Context) {
 		resp["has_update"] = latest != "" && compareVersions(latest, a.version) > 0
 	} else {
 		resp["latest_error"] = err.Error()
+	}
+	sourceHasUpdate := false
+	if source, err := latestPanelSourceCommit(refresh); err == nil {
+		resp["latest_source_commit"] = source.Commit
+		if source.Committed != "" {
+			resp["latest_source_committed_at"] = source.Committed
+		}
+		if source.Message != "" {
+			resp["latest_source_message"] = source.Message
+		}
+		if a.commit == source.Commit {
+			resp["source_status"] = "current"
+			resp["source_ahead"] = 0
+			resp["source_behind"] = 0
+			resp["source_has_update"] = false
+		} else if status, ahead, behind, err := comparePanelSource(c.Request.Context(), a.commit); err == nil {
+			resp["source_status"] = status
+			resp["source_ahead"] = ahead
+			resp["source_behind"] = behind
+			resp["source_has_update"] = status == "behind"
+			sourceHasUpdate = status == "behind"
+		} else {
+			resp["source_status"] = "unknown"
+			resp["source_error"] = err.Error()
+		}
+	} else {
+		resp["source_status"] = "unknown"
+		resp["source_error"] = err.Error()
+	}
+	// Existing update UI only consumes has_update. Treat a newer main commit as
+	// an available update even when the release tag itself has not changed.
+	if sourceHasUpdate {
+		resp["has_update"] = true
 	}
 	c.JSON(http.StatusOK, resp)
 }
@@ -720,7 +756,7 @@ func (a *App) selfUpdate(c *gin.Context) {
 	versionCtx, cancelVersionCheck := context.WithTimeout(c.Request.Context(), 10*time.Second)
 	out, versionErr := exec.CommandContext(versionCtx, stagedBin, "--version").CombinedOutput()
 	cancelVersionCheck()
-	if versionErr != nil || strings.TrimSpace(string(out)) != "singbox-panel "+target {
+	if versionErr != nil || !validPanelVersionOutput(string(out), target) {
 		c.JSON(http.StatusBadGateway, gin.H{"error": "新版二进制版本校验失败"})
 		return
 	}
@@ -797,6 +833,13 @@ func (a *App) selfUpdate(c *gin.Context) {
 		"version":      target,
 		"operation_id": operation.ID,
 	})
+}
+
+// validPanelVersionOutput accepts both the original "version" line and the
+// newer "version commit" form used by release builds.
+func validPanelVersionOutput(out, target string) bool {
+	fields := strings.Fields(out)
+	return len(fields) >= 2 && fields[0] == "singbox-panel" && fields[1] == target
 }
 
 // validReleaseTag allows only vX.Y.Z-style tags: digits, dots, dashes and a

@@ -268,10 +268,11 @@ cp .env.example .env
 # 编辑域名、管理员账号和初始密码，并改为：
 # PANEL_IMAGE=singbox-panel:local
 # PANEL_VERSION=dev
+PANEL_COMMIT=$(git rev-parse HEAD)
 docker compose -f compose.yaml -f compose.build.yaml up -d --build
 ```
 
-后续源码更新使用同样的两个 `-f` 参数重新构建；`PANEL_VERSION` 仅用于源码构建时的版本显示。不要让本地定制镜像占用官方 GHCR 镜像标签。
+后续源码更新使用同样的两个 `-f` 参数重新构建；`PANEL_VERSION` 仅用于源码构建时的版本显示，`PANEL_COMMIT` 记录这次构建对应的完整 Git 提交，供面板比较源码更新。不要把源码目录内嵌进镜像，也不要让本地定制镜像占用官方 GHCR 镜像标签。
 
 ```bash
 python3 scripts/test-docker-metadata.py

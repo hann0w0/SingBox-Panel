@@ -175,6 +175,23 @@ func TestLatestPanelReleaseExplicitRefreshBypassesCache(t *testing.T) {
 	}
 }
 
+func TestValidPanelVersionOutput(t *testing.T) {
+	for _, tc := range []struct {
+		out    string
+		target string
+		want   bool
+	}{
+		{"singbox-panel v1.0.8\n", "v1.0.8", true},
+		{"singbox-panel v1.0.8 0123456789abcdef0123456789abcdef01234567\n", "v1.0.8", true},
+		{"singbox-panel v1.0.7 0123456789abcdef0123456789abcdef01234567\n", "v1.0.8", false},
+		{"v1.0.8\n", "v1.0.8", false},
+	} {
+		if got := validPanelVersionOutput(tc.out, tc.target); got != tc.want {
+			t.Errorf("validPanelVersionOutput(%q, %q) = %v, want %v", tc.out, tc.target, got, tc.want)
+		}
+	}
+}
+
 // maintenanceInfo must always report db_driver and a non-negative uptime, even
 // on the SQLite default where the driver is left blank in config.
 func TestMaintenanceInfoReportsDriverAndUptime(t *testing.T) {

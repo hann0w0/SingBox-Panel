@@ -60,6 +60,9 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - name: Resolve checked-out commit
+        id: revision
+        run: echo "sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3
       - name: Build panel image
@@ -68,7 +71,9 @@ jobs:
           context: .
           load: true
           tags: singbox-panel:docker-test
-          build-args: VERSION=ci
+          build-args: |
+            VERSION=ci
+            COMMIT=${{ steps.revision.outputs.sha }}
           cache-from: type=gha,scope=panel-docker
           cache-to: type=gha,mode=max,scope=panel-docker
       - name: Verify Docker deployment and native Agent downloads

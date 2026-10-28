@@ -6,3 +6,4 @@ services:
       context: .
       args:
         VERSION: ${PANEL_VERSION:-dev}
+        COMMIT: ${PANEL_COMMIT:-}

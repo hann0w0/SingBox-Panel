@@ -7,6 +7,8 @@ import (
 	"fmt"
 	"log"
 	"os/signal"
+	"runtime/debug"
+	"strings"
 	"syscall"
 	_ "time/tzdata" // traffic day boundaries must not depend on the host zoneinfo
 
@@ -17,14 +19,25 @@ import (
 // version is set via -ldflags "-X main.version=x.y.z".
 var version = "v1.0.8"
 
+// commit is set via -ldflags "-X main.commit=<40-character SHA>".
+var commit string
+
 func main() {
 	cfgPath := flag.String("config", "", "path to panel config YAML")
 	showVer := flag.Bool("version", false, "print version and exit")
 	flag.Parse()
 
 	if *showVer {
-		fmt.Println("singbox-panel", version)
+		if commit != "" {
+			fmt.Println("singbox-panel", version, commit)
+		} else {
+			fmt.Println("singbox-panel", version)
+		}
 		return
+	}
+
+	if commit == "" {
+		commit = buildCommit()
 	}
 
 	cfg, err := loadRuntimeConfig(*cfgPath)
@@ -39,6 +52,7 @@ func main() {
 
 	app := panel.NewApp(cfg, db)
 	app.SetVersion(version)
+	app.SetCommit(commit)
 	app.SetConfigPath(*cfgPath)
 
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
@@ -49,6 +63,21 @@ func main() {
 		log.Fatalf("server: %v", err)
 	}
 	log.Println("singbox-panel stopped")
+}
+
+// buildCommit falls back to Go's VCS stamping for local builds. Release and
+// container builds inject it explicitly because they disable VCS stamping.
+func buildCommit() string {
+	info, ok := debug.ReadBuildInfo()
+	if !ok {
+		return ""
+	}
+	for _, setting := range info.Settings {
+		if setting.Key == "vcs.revision" {
+			return strings.ToLower(strings.TrimSpace(setting.Value))
+		}
+	}
+	return ""
 }
 
 func loadRuntimeConfig(path string) (config.PanelConfig, error) {

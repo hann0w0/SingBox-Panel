@@ -18,6 +18,7 @@ import { copyToClipboard } from '../../../util'
 import { VirtualList } from '../../../components/VirtualList'
 import { PageHeader } from '../../../ui/Page'
 import '../../../styles/traffic-logs.css'
+import { LogReplay, mergeLogSnapshot } from '../../../logReplay'
 
 
 const NOISE_PATTERNS = [
@@ -308,6 +309,9 @@ export default function Logs({ serverId }: { serverId?: number } = {}) {
   const liveSequenceRef = useRef(0)
   const liveEntriesRef = useRef<Array<{ sequence: number; entry: LogEntry }>>([])
   const liveFlushTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const replayRef = useRef<LogReplay | null>(null)
+  const streamStartPendingRef = useRef(false)
+  const streamActiveRef = useRef(false)
 
   useEffect(() => {
     if (serverId !== undefined) {
@@ -368,7 +372,9 @@ export default function Logs({ serverId }: { serverId?: number } = {}) {
       const arrivedDuringLoad = liveEntriesRef.current
         .filter((item) => item.sequence > liveSequenceAtStart)
         .map((item) => item.entry)
-      const merged = [...entries, ...arrivedDuringLoad]
+      const merged = mergeLogSnapshot(entries.map((entry) => entry.raw), arrivedDuringLoad.map((entry) => entry.raw))
+        .map((raw) => ({ ...parseLogLine(raw), id: nextLogIDRef.current++ }))
+      if (!streamActiveRef.current) replayRef.current = new LogReplay(entries.map((entry) => entry.raw))
       setLogEntries(merged.length > MAX_LIVE_LINES ? merged.slice(merged.length - MAX_LIVE_LINES) : merged)
       setLastUpdatedAt(Date.now())
       scrollToLatest()
@@ -393,16 +399,15 @@ export default function Logs({ serverId }: { serverId?: number } = {}) {
     pendingLiveLinesRef.current = []
     liveEntriesRef.current = []
     liveSequenceRef.current = 0
+    replayRef.current = null
   }, [])
 
   // SSE live log streaming: connect to the same SSE endpoint and filter for
   // kind === "log" messages. The agent-side native log follower is started/stopped
   // via the streamLogs API call below.
   const liveUrl = sid ? `/api/admin/servers/${sid}/traffic/live` : ''
-  const onSSEMessage = useCallback((msg: SSEMessage) => {
-    if (msg.kind !== 'log' || !msg.data) return
-    const logEvt = msg.data as { level: string; msg: string }
-    pendingLiveLinesRef.current.push(...logEvt.msg.split('\n').filter((raw) => raw.trim().length > 0))
+  const flushLiveLines = useCallback(() => {
+    if (streamStartPendingRef.current) return
     if (liveFlushTimerRef.current) return
     // Batch bursts from the native log follower so parsing/filtering/rendering happens at
     // most ten times per second instead of once per log line.
@@ -410,7 +415,9 @@ export default function Logs({ serverId }: { serverId?: number } = {}) {
       liveFlushTimerRef.current = null
       const pending = pendingLiveLinesRef.current.splice(0)
       if (!pending.length) return
-      const additions = pending.map((raw) => ({ ...parseLogLine(raw), id: nextLogIDRef.current++ }))
+      const fresh = replayRef.current?.consume(pending) ?? pending
+      const additions = fresh.map((raw) => ({ ...parseLogLine(raw), id: nextLogIDRef.current++ }))
+      if (!additions.length) return
       for (const entry of additions) {
         liveEntriesRef.current.push({ sequence: ++liveSequenceRef.current, entry })
       }
@@ -433,6 +440,12 @@ export default function Logs({ serverId }: { serverId?: number } = {}) {
       })
     }, 100)
   }, [])
+  const onSSEMessage = useCallback((msg: SSEMessage) => {
+    if (msg.kind !== 'log' || !msg.data) return
+    const logEvt = msg.data as { level: string; msg: string }
+    pendingLiveLinesRef.current.push(...logEvt.msg.split('\n').filter((raw) => raw.trim().length > 0))
+    flushLiveLines()
+  }, [flushLiveLines])
   const { connected: sseConnected } = useSSE(liveUrl, live && !!sid, onSSEMessage)
 
   // Start one exact server's native log stream and always stop that same
@@ -450,13 +463,18 @@ export default function Logs({ serverId }: { serverId?: number } = {}) {
       ?? `lg-${Date.now()}-${Math.random().toString(36).slice(2)}`
     let disposed = false
     let renewTimer: ReturnType<typeof setInterval> | null = null
+    streamStartPendingRef.current = true
 
     void streamLogs(streamServerID, { enable: true, lines: streamLines, session_id: sessionID })
-      .then(() => {
+      .then((response) => {
         if (disposed) {
           void streamLogs(streamServerID, { enable: false, session_id: sessionID }).catch(() => {})
           return
         }
+        if (response.output === 'joined existing log stream') replayRef.current = null
+        streamStartPendingRef.current = false
+        streamActiveRef.current = true
+        flushLiveLines()
         renewTimer = setInterval(() => {
           void streamLogs(streamServerID, { enable: true, lines: streamLines, session_id: sessionID })
             .catch((error) => {
@@ -468,19 +486,23 @@ export default function Logs({ serverId }: { serverId?: number } = {}) {
       })
       .catch((e) => {
         if (disposed) return
+        streamStartPendingRef.current = false
+        pendingLiveLinesRef.current = []
         message.error(errMsg(e))
         setLive(false)
       })
 
     return () => {
       disposed = true
+      streamStartPendingRef.current = false
+      streamActiveRef.current = false
       if (renewTimer) clearInterval(renewTimer)
       void streamLogs(streamServerID, { enable: false, session_id: sessionID }).catch(() => {})
     }
     // The line count only takes effect when live mode is enabled. Changing it
     // is handled by the reload effect below, which first turns live mode off.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [live, sid])
+  }, [live, sid, flushLiveLines])
 
   // When switching servers or line count, stop live and reload.
   useEffect(() => {
@@ -488,6 +510,7 @@ export default function Logs({ serverId }: { serverId?: number } = {}) {
     pendingLiveLinesRef.current = []
     liveEntriesRef.current = []
     liveSequenceRef.current = 0
+    replayRef.current = null
     if (liveFlushTimerRef.current) clearTimeout(liveFlushTimerRef.current)
     liveFlushTimerRef.current = null
     setLogEntries([])
@@ -543,6 +566,7 @@ export default function Logs({ serverId }: { serverId?: number } = {}) {
   }
 
   const handleLiveChange = (checked: boolean) => {
+    if (checked && !live) replayRef.current = new LogReplay(logEntries.slice(-lines).map((entry) => entry.raw))
     setLive(checked)
     if (checked) scrollToLatest()
   }

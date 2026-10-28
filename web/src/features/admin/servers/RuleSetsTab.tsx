@@ -6,6 +6,9 @@ import { showConfigApplyResult } from '../../../configApply'
 import type { Outbound, RuleSet } from '../../../types'
 import { MODAL_SM } from '../../../ui/modal'
 
+// Keep the empty API value out of the selector without colliding with string tags.
+const DEFAULT_DOWNLOAD_DETOUR = 0
+
 interface RuleSetsTabProps {
   serverId: number
   ruleSets: RuleSet[]
@@ -47,7 +50,7 @@ export const RuleSetsTab: React.FC<RuleSetsTabProps> = ({ serverId, ruleSets, ou
       url: rs.url || '',
       path: rs.path || '',
       update_interval: rs.update_interval || '1d',
-      download_detour: rs.download_detour || 'direct',
+      download_detour: rs.download_detour ?? '',
     })
     setModalOpen(true)
   }
@@ -198,9 +201,15 @@ export const RuleSetsTab: React.FC<RuleSetsTabProps> = ({ serverId, ruleSets, ou
                 <Input placeholder="1d" />
               </Form.Item>
 
-              <Form.Item name="download_detour" label="下载出站">
+              <Form.Item
+                name="download_detour"
+                label="下载出站"
+                getValueProps={(value: string | undefined) => ({ value: value || DEFAULT_DOWNLOAD_DETOUR })}
+                getValueFromEvent={(value: string | typeof DEFAULT_DOWNLOAD_DETOUR) => value === DEFAULT_DOWNLOAD_DETOUR ? '' : value}
+              >
                 <Select
                   options={[
+                    { value: DEFAULT_DOWNLOAD_DETOUR, label: '跟随默认出站' },
                     { value: 'direct', label: 'direct' },
                     ...outbounds.filter((outbound) => outbound.tag !== 'direct').map((outbound) => ({
                       value: outbound.tag,

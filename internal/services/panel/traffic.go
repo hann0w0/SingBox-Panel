@@ -315,8 +315,8 @@ func applyServerTraffic(db *gorm.DB, serverID uint, snapshot *protocol.TrafficSn
 		if !hasBaseline || (len(snapshot.Ports) == 0 && len(snapshot.Users) == 0) {
 			return nil
 		}
-		var inbounds []model.Inbound
-		if err := tx.Select("id", "tag", "type", "settings").Where("server_id = ?", serverID).Find(&inbounds).Error; err != nil {
+		inbounds, err := loadTrafficInbounds(tx, serverID)
+		if err != nil {
 			return err
 		}
 		inboundIDs := make(map[string]uint, len(inbounds))

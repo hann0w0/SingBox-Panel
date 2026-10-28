@@ -77,8 +77,8 @@ func recordTimestampedTraffic(db *gorm.DB, serverID uint, snapshot *protocol.Tra
 		// Agent keeps running with newer, already acknowledged sequence numbers.
 		// Missing historical batches cannot be recovered from that Agent, but
 		// they must not prevent its subsequent usage from being accepted.
-		var inbounds []model.Inbound
-		if err := tx.Select("id", "tag", "type", "settings").Where("server_id = ?", serverID).Find(&inbounds).Error; err != nil {
+		inbounds, err := loadTrafficInbounds(tx, serverID)
+		if err != nil {
 			return err
 		}
 		inboundIDs := make(map[string]uint, len(inbounds))

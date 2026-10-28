@@ -99,6 +99,9 @@ func (a *App) validateInboundIdentity(db *gorm.DB, serverID, excludeID uint, tag
 	if n > 0 {
 		return fmt.Errorf("入站标签 %q 已存在", tag)
 	}
+	if err := checkInboundTrafficTag(db, serverID, excludeID, tag); err != nil {
+		return err
+	}
 	q = db.Model(&model.Inbound{}).Where("server_id = ? AND listen_port = ?", serverID, port)
 	if excludeID != 0 {
 		q = q.Where("id <> ?", excludeID)

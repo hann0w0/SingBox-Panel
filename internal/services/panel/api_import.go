@@ -3,6 +3,7 @@ package panel
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net"
 	"net/http"
@@ -117,7 +118,11 @@ func (a *App) importRemoteConfig(c *gin.Context) {
 	// server's own config file is untouched — importing only teaches the panel
 	// what is already running there.
 	if err := a.applyImport(&srv, parsed, []byte(raw)); err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		status := http.StatusInternalServerError
+		if errors.Is(err, errInboundTrafficTagReserved) {
+			status = http.StatusBadRequest
+		}
+		c.JSON(status, gin.H{"error": err.Error()})
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"ok": true, "summary": sum})
@@ -173,6 +178,9 @@ func (a *App) applyImportUnlocked(srv *model.Server, p *singbox.ParsedConfig, ra
 	defer a.userAccessMu.Unlock()
 	mode := importedConfigMode(p, raw)
 	return a.db.Transaction(func(tx *gorm.DB) error {
+		if err := validateImportedInboundTrafficTags(tx, srv.ID, raw); err != nil {
+			return err
+		}
 		if err := syncImportedInbounds(tx, srv.ID, p.Inbounds); err != nil {
 			return err
 		}
@@ -358,6 +366,9 @@ func syncImportedInbounds(tx *gorm.DB, serverID uint, parsed []singbox.ParsedInb
 	}
 	byTag := make(map[string]*model.Inbound, len(existing))
 	for i := range existing {
+		if err := rememberInboundTrafficTag(tx, &existing[i]); err != nil {
+			return err
+		}
 		byTag[existing[i].Tag] = &existing[i]
 	}
 	keepIDs := make([]uint, 0, len(parsed))
@@ -373,6 +384,9 @@ func syncImportedInbounds(tx *gorm.DB, serverID uint, parsed []singbox.ParsedInb
 				return err
 			}
 			byTag[in.Tag] = row
+		}
+		if err := rememberInboundTrafficTag(tx, row); err != nil {
+			return err
 		}
 		if err := tx.Model(row).Updates(map[string]any{
 			"type":        model.InboundType(in.Type),

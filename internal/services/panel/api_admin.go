@@ -867,6 +867,14 @@ func (a *App) applyRawConfig(c *gin.Context) {
 	// have the slower request overwrite the database view with config A.
 	unlock := a.orch.lockServer(id)
 	defer unlock()
+	if err := validateImportedInboundTrafficTags(a.db, id, raw); err != nil {
+		status := http.StatusInternalServerError
+		if errors.Is(err, errInboundTrafficTagReserved) {
+			status = http.StatusBadRequest
+		}
+		c.JSON(status, gin.H{"error": err.Error()})
+		return
+	}
 	res, err := a.orch.applyRawConfigUnlocked(ctx, id, raw)
 	if err != nil {
 		c.JSON(http.StatusBadGateway, gin.H{"error": err.Error(), "output": res.Output})
@@ -1023,8 +1031,17 @@ func (a *App) createInbound(c *gin.Context) {
 		Remark:     remark,
 		Enabled:    enabled,
 	}
-	if err := a.db.Create(ib).Error; err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+	if err := a.db.Transaction(func(tx *gorm.DB) error {
+		if err := tx.Create(ib).Error; err != nil {
+			return err
+		}
+		return rememberInboundTrafficTag(tx, ib)
+	}); err != nil {
+		status := http.StatusInternalServerError
+		if errors.Is(err, errInboundTrafficTagReserved) {
+			status = http.StatusBadRequest
+		}
+		c.JSON(status, gin.H{"error": err.Error()})
 		return
 	}
 	a.applyConfigAndRespond(c, id, gin.H{"inbound": ib})
@@ -1128,6 +1145,17 @@ func (a *App) updateInbound(c *gin.Context) {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": tx.Error.Error()})
 		return
 	}
+	for _, tag := range []string{oldTag, ib.Tag} {
+		if err := rememberInboundTrafficTag(tx, &model.Inbound{ID: ib.ID, ServerID: sid, Tag: tag}); err != nil {
+			tx.Rollback()
+			status := http.StatusInternalServerError
+			if errors.Is(err, errInboundTrafficTagReserved) {
+				status = http.StatusBadRequest
+			}
+			c.JSON(status, gin.H{"error": err.Error()})
+			return
+		}
+	}
 	if oldTag != ib.Tag {
 		if err := renameInboundRuleRefs(tx, sid, oldTag, ib.Tag); err != nil {
 			tx.Rollback()
@@ -1177,6 +1205,9 @@ func (a *App) deleteInbound(c *gin.Context) {
 	}
 	a.userAccessMu.Lock()
 	err = a.db.Transaction(func(tx *gorm.DB) error {
+		if err := rememberInboundTrafficTag(tx, &ib); err != nil {
+			return err
+		}
 		if err := tx.Delete(&ib).Error; err != nil {
 			return err
 		}

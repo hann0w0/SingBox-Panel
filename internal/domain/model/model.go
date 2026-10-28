@@ -459,7 +459,7 @@ type CustomNodeSubscription struct {
 func AllModels() []any {
 	return []any{
 		&User{}, &UserNodeOrder{}, &Server{}, &Inbound{}, &Outbound{}, &RouteRule{}, &RuleSet{}, &Setting{}, &TrafficRecord{},
-		&CustomNodeSubscription{}, &CustomNode{}, &TrafficHourly{}, &SubscriptionFetch{}, &TrafficUserHourly{}, &UserTrafficIdentity{}, &TrafficReportCursor{},
+		&CustomNodeSubscription{}, &CustomNode{}, &TrafficHourly{}, &SubscriptionFetch{}, &TrafficUserHourly{}, &UserTrafficIdentity{}, &TrafficReportCursor{}, &InboundTrafficIdentity{},
 	}
 }
 

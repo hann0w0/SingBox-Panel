@@ -2,6 +2,7 @@ package panel
 
 import (
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"strconv"
 	"strings"
@@ -61,6 +62,10 @@ func (a *App) serverNodeFormats(c *gin.Context) {
 		var st singbox.InboundSettings
 		if len(ib.Settings) > 0 {
 			_ = json.Unmarshal(ib.Settings, &st)
+		}
+		if err := st.ValidateMultiUser(string(ib.Type)); err != nil {
+			c.JSON(http.StatusUnprocessableEntity, gin.H{"error": fmt.Sprintf("inbound %q settings: %v", ib.Tag, err)})
+			return
 		}
 		settings[ib.ID] = st
 		if st.UseMultiUser(string(ib.Type)) {

@@ -159,6 +159,14 @@ func BuildInbound(in InboundInput) (json.RawMessage, error) {
 	if err := in.Settings.Validate(in.Type); err != nil {
 		return nil, err
 	}
+	if !in.Settings.SingleUser && len(in.Users) > 0 {
+		// Imported wire-mode inputs can carry users without the panel opt-in.
+		multiSettings := in.Settings
+		multiSettings.MultiUser = true
+		if err := multiSettings.ValidateMultiUser(in.Type); err != nil {
+			return nil, err
+		}
+	}
 	m := map[string]any{
 		"type":        in.Type,
 		"tag":         in.Tag,
@@ -236,7 +244,7 @@ func BuildInbound(in InboundInput) (json.RawMessage, error) {
 		if in.Settings.SingleUser {
 			// Single credential: the server PSK IS the password, no users[].
 			m["password"] = in.Settings.SSServerPSK
-		} else if IsSS2022(method) {
+		} else if SupportsMultiUser(in.Type, in.Settings) {
 			m["password"] = in.Settings.SSServerPSK
 			us := make([]map[string]any, 0, len(eff))
 			for _, u := range eff {
@@ -247,7 +255,7 @@ func BuildInbound(in InboundInput) (json.RawMessage, error) {
 			}
 			m["users"] = us
 		} else {
-			// Legacy methods: single shared password, no per-user accounting.
+			// Legacy and SS2022 ChaCha methods use one shared password.
 			m["password"] = in.Settings.SSServerPSK
 		}
 

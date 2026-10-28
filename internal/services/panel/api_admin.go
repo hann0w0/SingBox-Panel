@@ -997,6 +997,10 @@ func (a *App) createInbound(c *gin.Context) {
 			return
 		}
 	}
+	if err := st.ValidateMultiUser(req.Type); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
 	if err := fillInboundSecrets(req.Type, &st); err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
@@ -1118,6 +1122,10 @@ func (a *App) updateInbound(c *gin.Context) {
 			}
 		}
 		// Preserve previously-generated secrets when the new payload omits them.
+		if err := st.ValidateMultiUser(string(ib.Type)); err != nil {
+			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+			return
+		}
 		if err := fillInboundSecrets(string(ib.Type), &st); err != nil {
 			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 			return
@@ -1135,6 +1143,10 @@ func (a *App) updateInbound(c *gin.Context) {
 			c.JSON(http.StatusBadRequest, gin.H{"error": "invalid settings: " + err.Error()})
 			return
 		}
+	}
+	if err := nextSettings.ValidateMultiUser(string(ib.Type)); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
 	}
 	if err := a.validateInboundConfiguration(a.db, sid, ib.ID, ib.Tag, string(ib.Type), ib.ListenPort, nextSettings); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})

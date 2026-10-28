@@ -164,6 +164,9 @@ func (a *App) gatherNodesWithError(user *model.User) ([]node, error) {
 				if len(ib.Settings) > 0 {
 					_ = json.Unmarshal(ib.Settings, &st)
 				}
+				if err := st.ValidateMultiUser(string(ib.Type)); err != nil {
+					return nil, fmt.Errorf("inbound %q settings: %w", ib.Tag, err)
+				}
 				var identity singbox.ProxyUser
 				if st.UseMultiUser(string(ib.Type)) {
 					st.SingleUser = false

@@ -28,6 +28,8 @@ const HAS_BANDWIDTH = new Set<InboundType>(['hysteria2'])
 const UUID_TYPES = new Set<InboundType>(['vless', 'vmess', 'tuic'])
 const PW_TYPES = new Set<InboundType>(['trojan', 'hysteria2', 'anytls', 'tuic'])
 const MULTI_USER_TYPES = new Set<InboundType>(['shadowsocks', 'vless', 'anytls', 'vmess', 'tuic', 'trojan', 'hysteria2'])
+const SS2022_CHACHA_METHOD = '2022-blake3-chacha20-poly1305'
+const SS_MULTI_USER_ERROR = '此加密方式不支持多用户，请关闭“单端口多用户”或改用 SS2022 AES 加密方式'
 // Front SNI filter: only the plain TCP VLESS REALITY inbound can put a sniffing
 // `direct` relay in front of it without changing the client protocol.
 const GUARD_TYPES = new Set<InboundType>(['vless'])
@@ -113,7 +115,7 @@ function randomPort(): number {
 
 function supportsMultiUser(type: InboundType, method?: string): boolean {
   if (!MULTI_USER_TYPES.has(type)) return false
-  if (type === 'shadowsocks') return (method || '').startsWith('2022-')
+  if (type === 'shadowsocks') return method === '2022-blake3-aes-128-gcm' || method === '2022-blake3-aes-256-gcm'
   return true
 }
 
@@ -159,7 +161,8 @@ export function toForm(ib: Inbound | null): FormVals {
     tag: ib.tag,
     listen_port: ib.listen_port,
     enabled: ib.enabled,
-    multi_user: supportsMultiUser(ib.type, s.method) && !!s.multi_user,
+    // Keep invalid ChaCha opt-ins visible until the administrator fixes them.
+    multi_user: !!s.multi_user && (supportsMultiUser(ib.type, s.method) || (ib.type === 'shadowsocks' && s.method === SS2022_CHACHA_METHOD)),
     username: s.username ?? '',
     uuid: s.uuid ?? '',
     password: s.password ?? '',
@@ -396,7 +399,9 @@ export default function InboundForm({
   const snellVersion = Form.useWatch('snell_version', form)
   const obfsType = Form.useWatch('obfs_type', form)
   const method = Form.useWatch('method', form)
-  const multiUser = !!Form.useWatch('multi_user', form) && supportsMultiUser(type, method)
+  const requestedMultiUser = !!Form.useWatch('multi_user', form)
+  const multiUser = requestedMultiUser && supportsMultiUser(type, method)
+  const invalidSSMultiUser = type === 'shadowsocks' && method === SS2022_CHACHA_METHOD && requestedMultiUser
   const guardEnabled = !!Form.useWatch('guard_enabled', form)
   const guardPort = Form.useWatch('guard_internal_port', form)
 
@@ -530,11 +535,21 @@ export default function InboundForm({
             <Input />
           </Form.Item>
           {type === 'shadowsocks' && (
-            <Form.Item name="method" label="加密方式" rules={[{ required: true }]} className="fm-full">
+            <Form.Item
+              name="method"
+              label="加密方式"
+              rules={[{ required: true }]}
+              className="fm-full"
+              extra={method === SS2022_CHACHA_METHOD ? (
+                invalidSSMultiUser
+                  ? <span className="fm-warn">当前多用户配置无效：{SS_MULTI_USER_ERROR}</span>
+                  : '仅支持单用户共享密码，切换到此加密方式会关闭多用户'
+              ) : undefined}
+            >
               <Select
                 options={SHADOWSOCKS_METHODS.map((m) => ({ value: m, label: m }))}
                 onChange={(value: string) => {
-                  if (!value.startsWith('2022-')) form.setFieldValue('multi_user', false)
+                  if (value !== method && !supportsMultiUser('shadowsocks', value)) form.setFieldValue('multi_user', false)
                 }}
               />
             </Form.Item>
@@ -543,9 +558,20 @@ export default function InboundForm({
 
         {hasCredentials && (
           <FormGroup title="认证" panel="inbound">
-            {canMultiUser && (
+            {(canMultiUser || invalidSSMultiUser) && (
               <div className="fm-switches">
-                <Form.Item name="multi_user" label="单端口多用户" valuePropName="checked" className="fm-switch">
+                <Form.Item
+                  name="multi_user"
+                  label="单端口多用户"
+                  valuePropName="checked"
+                  className="fm-switch"
+                  dependencies={['method']}
+                  rules={[{
+                    validator: (_, value) => !value || canMultiUser
+                      ? Promise.resolve()
+                      : Promise.reject(new Error(SS_MULTI_USER_ERROR)),
+                  }]}
+                >
                   <Switch />
                 </Form.Item>
                 {multiUser && inbound && !inbound.settings?.multi_user && (

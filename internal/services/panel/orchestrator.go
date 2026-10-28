@@ -82,6 +82,9 @@ func (o *Orchestrator) BuildServerConfig(srv *model.Server) ([]byte, error) {
 				return nil, fmt.Errorf("inbound %q settings: %w", ib.Tag, err)
 			}
 		}
+		if err := st.ValidateMultiUser(string(ib.Type)); err != nil {
+			return nil, fmt.Errorf("inbound %q settings: %w", ib.Tag, err)
+		}
 		var users []singbox.ProxyUser
 		if st.UseMultiUser(string(ib.Type)) {
 			st.SingleUser = false

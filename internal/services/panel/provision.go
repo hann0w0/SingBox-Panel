@@ -47,6 +47,9 @@ func genSSPSK(method string) string {
 //   - REALITY: generate the X25519 keypair + a short_id when absent
 //   - Shadowsocks: generate the server PSK when absent
 func fillInboundSecrets(typ string, s *singbox.InboundSettings) error {
+	if err := s.ValidateMultiUser(typ); err != nil {
+		return err
+	}
 	if typ == "socks" {
 		normalizeLegacySOCKSSettings(s)
 	}

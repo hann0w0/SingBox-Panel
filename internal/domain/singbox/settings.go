@@ -318,13 +318,13 @@ type InboundSettings struct {
 // fixed-PSK mode despite its newer schema exposing users[]: clients authenticate
 // with the top-level PSK, and the panel does not provision per-user Snell keys.
 // SOCKS and legacy Shadowsocks ciphers also use shared credentials in the panel;
-// Shadowsocks 2022 is the multi-user variant.
+// Only the AES variants of Shadowsocks 2022 support multi-user mode.
 func SupportsMultiUser(typ string, s InboundSettings) bool {
 	switch typ {
 	case "vless", "vmess", "trojan", "hysteria2", "tuic", "anytls":
 		return true
 	case "shadowsocks":
-		return IsSS2022(s.Method)
+		return s.Method == "2022-blake3-aes-128-gcm" || s.Method == "2022-blake3-aes-256-gcm"
 	default:
 		return false
 	}
@@ -333,6 +333,16 @@ func SupportsMultiUser(typ string, s InboundSettings) bool {
 // UseMultiUser is true only for an explicit opt-in on a capable protocol.
 func (s InboundSettings) UseMultiUser(typ string) bool {
 	return s.MultiUser && SupportsMultiUser(typ, s)
+}
+
+// ValidateMultiUser runs before shared-credential normalization so invalid
+// ChaCha opt-ins fail rather than silently replacing per-user credentials.
+// Legacy protocols retain their existing shared-credential migration behavior.
+func (s InboundSettings) ValidateMultiUser(typ string) error {
+	if typ == "shadowsocks" && s.MultiUser && s.Method == "2022-blake3-chacha20-poly1305" {
+		return fmt.Errorf("shadowsocks: %s does not support multi-user mode; disable multi_user or use 2022-blake3-aes-128-gcm / 2022-blake3-aes-256-gcm", s.Method)
+	}
+	return nil
 }
 
 // VMessSecurityValue returns the documented VMess client cipher default.
@@ -509,10 +519,10 @@ func (s InboundSettings) ValidateClientOutbound(typ string) error {
 }
 
 // SSClientPassword returns the client-side shadowsocks password. Single-user
-// and legacy inbounds present the server PSK verbatim; multi-user 2022 inbounds
-// present serverPSK:userPSK.
+// and non-multi-user-capable inbounds present the server PSK verbatim;
+// multi-user AES 2022 inbounds present serverPSK:userPSK.
 func SSClientPassword(s InboundSettings, userPassword string) string {
-	if s.SingleUser || !IsSS2022(s.Method) {
+	if s.SingleUser || !SupportsMultiUser("shadowsocks", s) {
 		return s.SSServerPSK
 	}
 	return s.SSServerPSK + ":" + DeriveSSUserKey(userPassword, s.Method)
@@ -531,7 +541,8 @@ func SS2022KeyLen(method string) int {
 	}
 }
 
-// IsSS2022 reports whether method is a Shadowsocks 2022 method (multi-user capable).
+// IsSS2022 reports whether method belongs to Shadowsocks 2022, including the
+// single-user-only ChaCha20 variant. Use SupportsMultiUser for user capability.
 func IsSS2022(method string) bool { return SS2022KeyLen(method) > 0 }
 
 // DeriveSSUserKey deterministically derives a user's SS2022 password (base64 of
@@ -730,6 +741,9 @@ func (t TLSSettings) validateInbound() error {
 // `sing-box check`. Client outbounds use ValidateClientOutbound because their
 // TLS object does not carry server certificate material.
 func (s InboundSettings) Validate(typ string) error {
+	if err := s.ValidateMultiUser(typ); err != nil {
+		return err
+	}
 	if err := s.validateProtocol(typ); err != nil {
 		return err
 	}

@@ -105,6 +105,9 @@ func buildClientTLS(t TLSSettings, server, nodeType string) map[string]any {
 
 // BuildClientOutbound renders a sing-box client outbound for the given node.
 func BuildClientOutbound(n ClientNode) (json.RawMessage, error) {
+	if err := n.Settings.ValidateMultiUser(n.Type); err != nil {
+		return nil, err
+	}
 	base := map[string]any{
 		"type":        n.Type,
 		"tag":         n.Name,
@@ -287,6 +290,9 @@ func BuildClientOutbound(n ClientNode) (json.RawMessage, error) {
 // BuildShareLink renders a scheme URI (vless://, vmess://, trojan://, ss://,
 // hysteria2://, tuic://) for plain-text share-link subscriptions.
 func BuildShareLink(n ClientNode) (string, error) {
+	if err := n.Settings.ValidateMultiUser(n.Type); err != nil {
+		return "", err
+	}
 	host := strings.Trim(n.Server, "[]")
 	port := strconv.Itoa(n.ServerPort)
 	hostPort := net.JoinHostPort(host, port)

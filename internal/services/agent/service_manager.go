@@ -48,7 +48,11 @@ func currentServiceManager() (serviceManager, error) {
 	case serviceKindSystemd:
 		return systemdServiceManager{run: run}, nil
 	case serviceKindOpenRC:
-		return openRCServiceManager{run: run}, nil
+		clock, err := readProcessClockAt("/proc", time.Now)
+		if err != nil {
+			return nil, err
+		}
+		return openRCServiceManager{run: run, clock: clock}, nil
 	default:
 		return nil, fmt.Errorf("unsupported service manager %q", kind)
 	}

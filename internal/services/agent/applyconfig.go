@@ -155,6 +155,13 @@ func ApplyConfig(ctx context.Context, configBytes []byte) (string, error) {
 		applyErr = fmt.Errorf("prepare %s service: %w: %s", manager.Kind(), err, out)
 	}
 	if applyErr == nil {
+		if gate, ok := manager.(interface{ waitForConfigStart(context.Context) error }); ok {
+			if err := gate.waitForConfigStart(ctx); err != nil {
+				applyErr = fmt.Errorf("wait for process clock boundary: %w", err)
+			}
+		}
+	}
+	if applyErr == nil {
 		action := configApplyServiceAction(previousState)
 		if out, err := manager.Action(ctx, action); err != nil {
 			applyErr = fmt.Errorf("%s %s: %w: %s", manager.Kind(), action, err, out)

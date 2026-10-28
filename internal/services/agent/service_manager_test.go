@@ -175,21 +175,20 @@ func TestReadProcessStartTimeAt(t *testing.T) {
 	}
 	fields[len(fields)-1] = "12345"
 	writeTestFile(t, filepath.Join(procRoot, "321", "stat"), "321 (sing box) "+strings.Join(fields, " ")+"\n")
-	writeTestFile(t, filepath.Join(procRoot, "stat"), "cpu 1 2 3 4\nbtime 1700000000\n")
-
-	got, err := readProcessStartTimeAt(procRoot, 321)
+	bootLower := time.Unix(1700000000, 900000000)
+	got, err := readProcessStartTimeAt(procRoot, 321, bootLower)
 	if err != nil {
 		t.Fatal(err)
 	}
-	want := time.Unix(1700000000, 0).Add(12345 * 10 * time.Millisecond)
+	want := bootLower.Add(12345 * 10 * time.Millisecond)
 	if !got.Equal(want) {
 		t.Fatalf("process start = %s; want %s", got, want)
 	}
 	if ticks, err := parseProcessStartTicks("321 (sing box) " + strings.Join(fields, " ")); err != nil || ticks != 12345 {
 		t.Fatalf("parse start ticks = %d, err=%v", ticks, err)
 	}
-	if _, err := parseBootTime("cpu 1 2\n"); err == nil {
-		t.Fatal("missing btime was accepted")
+	if _, err := readProcessStartTimeAt(procRoot, 321, time.Time{}); err == nil {
+		t.Fatal("missing boot-time lower bound was accepted")
 	}
 }
 

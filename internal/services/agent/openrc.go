@@ -21,6 +21,7 @@ const (
 type openRCServiceManager struct {
 	run          commandRunner
 	runlevelRoot string
+	clock        processStartClock
 }
 
 func (m openRCServiceManager) Kind() serviceKind { return serviceKindOpenRC }
@@ -88,7 +89,21 @@ func (m openRCServiceManager) MainPID(context.Context) (int, error) {
 }
 
 func (m openRCServiceManager) StartedAt(_ context.Context, pid int) (time.Time, error) {
-	return readProcessStartTimeAt("/proc", pid)
+	return readProcessStartTimeAt("/proc", pid, m.clock.bootLower)
+}
+
+func (m openRCServiceManager) waitForConfigStart(ctx context.Context) error {
+	if m.clock.bootLower.IsZero() || m.clock.uncertainty <= 0 {
+		return errors.New("OpenRC process clock is unavailable")
+	}
+	timer := time.NewTimer(m.clock.uncertainty)
+	defer timer.Stop()
+	select {
+	case <-timer.C:
+		return nil
+	case <-ctx.Done():
+		return ctx.Err()
+	}
 }
 
 func (m openRCServiceManager) LogCommand(lines int, follow bool) (string, []string) {
@@ -289,7 +304,43 @@ func splitNULTerminated(raw []byte) []string {
 	return args
 }
 
-func readProcessStartTimeAt(procRoot string, pid int) (time.Time, error) {
+const processClockTick = 10 * time.Millisecond
+
+type processStartClock struct {
+	bootLower   time.Time
+	uncertainty time.Duration
+}
+
+// /proc/stat btime loses up to a second. Bound boot time with a wall-clock
+// sample around /proc/uptime instead, accounting for its centisecond rounding.
+// Reuse this anchor throughout an apply so process identity stays stable.
+func readProcessClockAt(procRoot string, now func() time.Time) (processStartClock, error) {
+	before := now().Round(0)
+	raw, err := os.ReadFile(filepath.Join(procRoot, "uptime"))
+	after := now().Round(0)
+	if err != nil {
+		return processStartClock{}, fmt.Errorf("read system uptime: %w", err)
+	}
+	fields := strings.Fields(string(raw))
+	if len(fields) == 0 {
+		return processStartClock{}, errors.New("system uptime is missing")
+	}
+	uptime, err := time.ParseDuration(fields[0] + "s")
+	if err != nil || uptime < 0 || after.Before(before) {
+		return processStartClock{}, errors.New("invalid system uptime clock sample")
+	}
+	return processStartClock{
+		bootLower: before.Add(-uptime - processClockTick),
+		// Both uptime and process start ticks round down. Waiting this long
+		// after writing the config keeps a new process's lower bound newer too.
+		uncertainty: after.Sub(before) + 2*processClockTick,
+	}, nil
+}
+
+func readProcessStartTimeAt(procRoot string, pid int, bootLower time.Time) (time.Time, error) {
+	if bootLower.IsZero() {
+		return time.Time{}, errors.New("system boot-time lower bound is missing")
+	}
 	stat, err := os.ReadFile(filepath.Join(procRoot, strconv.Itoa(pid), "stat"))
 	if err != nil {
 		return time.Time{}, fmt.Errorf("read process stat: %w", err)
@@ -298,16 +349,11 @@ func readProcessStartTimeAt(procRoot string, pid int) (time.Time, error) {
 	if err != nil {
 		return time.Time{}, err
 	}
-	procStat, err := os.ReadFile(filepath.Join(procRoot, "stat"))
-	if err != nil {
-		return time.Time{}, fmt.Errorf("read system boot time: %w", err)
-	}
-	boot, err := parseBootTime(string(procStat))
-	if err != nil {
-		return time.Time{}, err
-	}
 	// Linux exposes /proc stat timestamps in USER_HZ, which is fixed at 100.
-	return boot.Add(time.Duration(ticks) * 10 * time.Millisecond), nil
+	if ticks > uint64((1<<63-1)/processClockTick) {
+		return time.Time{}, errors.New("process start time exceeds duration range")
+	}
+	return bootLower.Add(time.Duration(ticks) * processClockTick), nil
 }
 
 func parseProcessStartTicks(raw string) (uint64, error) {
@@ -337,19 +383,4 @@ func parseProcessState(raw string) (string, error) {
 		return "", errors.New("process stat is missing state")
 	}
 	return fields[0], nil
-}
-
-func parseBootTime(raw string) (time.Time, error) {
-	for _, line := range strings.Split(raw, "\n") {
-		fields := strings.Fields(line)
-		if len(fields) != 2 || fields[0] != "btime" {
-			continue
-		}
-		seconds, err := strconv.ParseInt(fields[1], 10, 64)
-		if err != nil || seconds <= 0 {
-			return time.Time{}, fmt.Errorf("invalid system boot time %q", fields[1])
-		}
-		return time.Unix(seconds, 0), nil
-	}
-	return time.Time{}, errors.New("system boot time is missing from /proc/stat")
 }

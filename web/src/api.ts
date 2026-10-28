@@ -493,6 +493,7 @@ export interface MaintenanceInfo {
   update_reason?: string
   latest_version?: string
   has_update?: boolean
+  source_has_update?: boolean
   latest_error?: string
   db_driver: string
   uptime_seconds: number

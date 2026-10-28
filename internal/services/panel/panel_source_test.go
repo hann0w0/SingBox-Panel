@@ -49,7 +49,7 @@ func sourceTestServer(t *testing.T, headStatus int, headBody string) (*httptest.
 		case strings.Contains(r.URL.Path, "/compare/"):
 			compareRequests.Add(1)
 			w.Header().Set("Content-Type", "application/json")
-			_, _ = w.Write([]byte(`{"status":"behind","ahead_by":4,"behind_by":2}`))
+			_, _ = w.Write([]byte(`{"status":"ahead","ahead_by":2,"behind_by":0}`))
 		default:
 			http.NotFound(w, r)
 		}
@@ -122,7 +122,7 @@ func TestComparePanelSource(t *testing.T) {
 		case "ahead":
 			_, _ = w.Write([]byte(`{"status":"ahead","ahead_by":2,"behind_by":0}`))
 		case "diverged":
-			_, _ = w.Write([]byte(`{"status":"diverged","ahead_by":2,"behind_by":5}`))
+			_, _ = w.Write([]byte(`{"status":"diverged","ahead_by":5,"behind_by":2}`))
 		default:
 			_, _ = w.Write([]byte(`{"status":"identical","ahead_by":0,"behind_by":0}`))
 		}
@@ -138,9 +138,9 @@ func TestComparePanelSource(t *testing.T) {
 		wantRequested bool
 	}{
 		{status: "identical", wantStatus: "current", wantRequested: true},
-		{status: "behind", wantStatus: "behind", wantBehind: 4, wantRequested: true},
-		{status: "ahead", wantStatus: "ahead", wantAhead: 2, wantRequested: true},
-		{status: "diverged", wantStatus: "behind", wantAhead: 5, wantBehind: 2, wantRequested: true},
+		{status: "behind", wantStatus: "ahead", wantAhead: 4, wantRequested: true},
+		{status: "ahead", wantStatus: "behind", wantBehind: 2, wantRequested: true},
+		{status: "diverged", wantStatus: "behind", wantAhead: 2, wantBehind: 5, wantRequested: true},
 		{status: "not-found", wantStatus: "unknown", wantRequested: true},
 	} {
 		t.Run(tc.status, func(t *testing.T) {
@@ -195,8 +195,8 @@ func TestMaintenanceInfoReportsSourceStatus(t *testing.T) {
 		got["source_behind"] != float64(2) || got["source_branch"] != "main" {
 		t.Fatalf("source maintenance fields = %+v", got)
 	}
-	if got["latest_version"] != "v1.0.7" || got["has_update"] != true {
-		t.Fatalf("source update was not reported through has_update: %+v", got)
+	if got["latest_version"] != "v1.0.7" || got["has_update"] != false {
+		t.Fatalf("source-only changes must not offer an older release: %+v", got)
 	}
 }
 

@@ -488,6 +488,11 @@ export default function Settings() {
             <div><dt>数据库</dt><dd className="mono">{info.db_driver}</dd></div>
             <div><dt>已运行</dt><dd>{formatDuration(info.uptime_seconds)}</dd></div>
           </dl>
+          {info.source_has_update && !info.has_update && (
+            <div className="settings-card-foot">
+              <span className="settings-note">主分支已有新提交，尚无可安装的新版本；请等待下一版发布。</span>
+            </div>
+          )}
           {(() => {
             const note = !info.has_update && !info.latest_version ? info.latest_error : undefined
             const showUpdate = !!info.has_update && !dockerDeployment

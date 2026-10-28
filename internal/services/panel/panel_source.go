@@ -123,15 +123,14 @@ func comparePanelSource(ctx context.Context, current string) (status string, ahe
 	switch result.Status {
 	case "identical":
 		return "current", 0, 0, nil
-	case "behind", "diverged":
-		if result.Status == "behind" {
-			return "behind", result.AheadBy, result.BehindBy, nil
-		}
-		// GitHub orders a diverged comparison the other way around: the current
-		// commit is ahead of main by AheadBy and main is behind by BehindBy.
-		return "behind", result.BehindBy, result.AheadBy, nil
 	case "ahead":
-		return "ahead", result.AheadBy, result.BehindBy, nil
+		// The comparison is current...main: GitHub's ahead_by counts
+		// commits on main that are not in the running build.
+		return "behind", result.BehindBy, result.AheadBy, nil
+	case "behind":
+		return "ahead", result.BehindBy, result.AheadBy, nil
+	case "diverged":
+		return "behind", result.BehindBy, result.AheadBy, nil
 	default:
 		return "unknown", 0, 0, nil
 	}

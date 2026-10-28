@@ -227,7 +227,6 @@ func (a *App) maintenanceInfo(c *gin.Context) {
 	} else {
 		resp["latest_error"] = err.Error()
 	}
-	sourceHasUpdate := false
 	if source, err := latestPanelSourceCommit(refresh); err == nil {
 		resp["latest_source_commit"] = source.Commit
 		if source.Committed != "" {
@@ -246,7 +245,6 @@ func (a *App) maintenanceInfo(c *gin.Context) {
 			resp["source_ahead"] = ahead
 			resp["source_behind"] = behind
 			resp["source_has_update"] = status == "behind"
-			sourceHasUpdate = status == "behind"
 		} else {
 			resp["source_status"] = "unknown"
 			resp["source_error"] = err.Error()
@@ -254,11 +252,6 @@ func (a *App) maintenanceInfo(c *gin.Context) {
 	} else {
 		resp["source_status"] = "unknown"
 		resp["source_error"] = err.Error()
-	}
-	// Existing update UI only consumes has_update. Treat a newer main commit as
-	// an available update even when the release tag itself has not changed.
-	if sourceHasUpdate {
-		resp["has_update"] = true
 	}
 	c.JSON(http.StatusOK, resp)
 }

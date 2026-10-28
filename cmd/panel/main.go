@@ -27,22 +27,10 @@ func main() {
 		return
 	}
 
-	cfg, err := config.Load(*cfgPath)
+	cfg, err := loadRuntimeConfig(*cfgPath)
 	if err != nil {
 		log.Fatalf("config: %v", err)
 	}
-	if err := cfg.Validate(); err != nil {
-		log.Fatalf("config security validation: %v", err)
-	}
-	if err := panel.RecoverPendingRestore(cfg, *cfgPath); err != nil {
-		log.Fatalf("pending restore recovery: %v", err)
-	}
-
-	secret, err := panel.ResolveJWTSecret(cfg)
-	if err != nil {
-		log.Fatalf("jwt secret: %v", err)
-	}
-	cfg.JWTSecret = secret
 
 	db, err := panel.InitDB(cfg)
 	if err != nil {
@@ -61,4 +49,32 @@ func main() {
 		log.Fatalf("server: %v", err)
 	}
 	log.Println("singbox-panel stopped")
+}
+
+func loadRuntimeConfig(path string) (config.PanelConfig, error) {
+	cfg, err := config.Load(path)
+	if err != nil {
+		return cfg, err
+	}
+	if err := cfg.Validate(); err != nil {
+		return cfg, fmt.Errorf("security validation: %w", err)
+	}
+	if err := panel.RecoverPendingRestore(cfg, path); err != nil {
+		return cfg, fmt.Errorf("pending restore recovery: %w", err)
+	}
+	// Recovery can rewrite the YAML signing key in either the finish or rollback
+	// path. Resolve secrets from the recovered configuration, not the old copy.
+	cfg, err = config.Load(path)
+	if err != nil {
+		return cfg, err
+	}
+	if err := cfg.Validate(); err != nil {
+		return cfg, fmt.Errorf("recovered config security validation: %w", err)
+	}
+	secret, err := panel.ResolveJWTSecret(cfg)
+	if err != nil {
+		return cfg, fmt.Errorf("jwt secret: %w", err)
+	}
+	cfg.JWTSecret = secret
+	return cfg, nil
 }

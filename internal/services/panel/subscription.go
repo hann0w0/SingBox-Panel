@@ -1395,11 +1395,45 @@ func surgeALPN(alpn []string) string {
 }
 
 func surgeProxy(n node, name string) string {
+	if n.typ == "shadowsocks" && n.settings.SSPlugin != "" {
+		_, host, ok := surgeSSObfs(n.settings.SSPlugin)
+		if !ok || strings.Contains(host, `"`) {
+			return ""
+		}
+	}
 	line := surgeProxyUnchecked(n, sanitizeSurgeName(name))
 	if strings.IndexFunc(line, unicode.IsControl) >= 0 || surgeHasUnquotableValue(n) {
 		return ""
 	}
 	return line
+}
+
+func surgeSSObfs(plugin string) (mode, host string, ok bool) {
+	name, opts := singbox.ShadowsocksPluginFields(plugin)
+	if name != "obfs-local" {
+		return "", "", false
+	}
+	for _, part := range strings.Split(opts, ";") {
+		key, value, found := strings.Cut(part, "=")
+		if !found {
+			return "", "", false
+		}
+		switch key {
+		case "obfs":
+			if mode != "" {
+				return "", "", false
+			}
+			mode = value
+		case "obfs-host":
+			if host != "" {
+				return "", "", false
+			}
+			host = value
+		default:
+			return "", "", false
+		}
+	}
+	return mode, host, mode == "http" || mode == "tls"
 }
 
 // surgeValue renders one parameter value. Surge separates parameters with
@@ -1437,8 +1471,16 @@ func surgeProxyUnchecked(n node, name string) string {
 	switch n.typ {
 	case "shadowsocks":
 		pass := singbox.SSClientPassword(st, u.Password)
-		return fmt.Sprintf("%s = ss, %s, %d, encrypt-method=%s, password=%s, udp-relay=%t",
+		line := fmt.Sprintf("%s = ss, %s, %d, encrypt-method=%s, password=%s, udp-relay=%t",
 			name, n.server, n.port, surgeValue(st.Method), surgeValue(pass), n.udpEnabled())
+		if st.SSPlugin != "" {
+			mode, host, _ := surgeSSObfs(st.SSPlugin)
+			line += ", obfs=" + mode
+			if host != "" {
+				line += ", obfs-host=" + surgeValue(host)
+			}
+		}
+		return line
 	case "socks":
 		line := fmt.Sprintf("%s = socks5, %s, %d", name, n.server, n.port)
 		if st.Username != "" {

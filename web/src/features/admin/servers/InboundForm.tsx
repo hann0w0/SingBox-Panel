@@ -270,8 +270,9 @@ export function assembleSettings(base: InboundSettings, v: FormVals, type: Inbou
   if (type === 'snell') {
     s.snell_version = v.snell_version || 5
     s.snell_psk = v.snell_psk || ''
-    s.snell_obfs_mode = v.snell_obfs_mode || 'none'
-    s.snell_mode = v.snell_mode || ''
+    // Hidden fields remain in the form when switching versions.
+    s.snell_obfs_mode = s.snell_version === 5 ? (v.snell_obfs_mode || 'none') : 'none'
+    s.snell_mode = s.snell_version === 6 ? (v.snell_mode || '') : ''
   }
   if (type === 'socks') {
     s.username = typeof v.username === 'string' ? v.username.trim() : ''

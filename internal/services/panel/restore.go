@@ -279,16 +279,19 @@ func (a *App) restoreBackupReader(c *gin.Context, src io.Reader) (restartSchedul
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "恢复前检查 jwt_secret 持久化失败：" + err.Error()})
 		return
 	}
-	if currentCloud.RefreshToken != "" {
-		stagedApp := &App{cfg: a.cfg, db: staged}
-		stagedApp.cfg.JWTSecret = runtimeSecret
-		if err := stagedApp.saveOneDriveSettings(currentCloud); err != nil {
-			if sqlDB, closeErr := staged.DB(); closeErr == nil {
-				_ = sqlDB.Close()
-			}
-			c.JSON(http.StatusBadRequest, gin.H{"error": "保留 OneDrive 授权失败：" + err.Error()})
-			return
+	cloudWarning, err := a.restoreOneDriveSettings(staged, currentCloud, importedSecret, runtimeSecret)
+	if err != nil {
+		if sqlDB, closeErr := staged.DB(); closeErr == nil {
+			_ = sqlDB.Close()
 		}
+		c.JSON(http.StatusBadRequest, gin.H{"error": "恢复 OneDrive 配置失败：" + err.Error()})
+		return
+	}
+	if cloudWarning != "" {
+		if secretWarning != "" {
+			secretWarning += "；"
+		}
+		secretWarning += cloudWarning
 	}
 	if sqlDB, err := staged.DB(); err == nil {
 		_ = sqlDB.Close()
@@ -436,6 +439,28 @@ func (a *App) restoreBackupReader(c *gin.Context, src io.Reader) (restartSchedul
 	restartScheduled = true
 	a.scheduleRestart()
 	return
+}
+
+func (a *App) restoreOneDriveSettings(staged *gorm.DB, current oneDriveSettings, importedSecret, runtimeSecret string) (string, error) {
+	target := &App{cfg: a.cfg, db: staged}
+	target.cfg.JWTSecret = runtimeSecret
+	if current.RefreshToken != "" {
+		return "", target.saveOneDriveSettings(current)
+	}
+	// Archived ciphertext belongs to the archived key, even when an environment
+	// override keeps a different runtime key on the destination host.
+	source := &App{cfg: target.cfg, db: staged}
+	if importedSecret = strings.TrimSpace(importedSecret); importedSecret != "" {
+		source.cfg.JWTSecret = importedSecret
+	}
+	archived, err := source.loadOneDriveSettings()
+	if err != nil {
+		log.Printf("restore: discard unreadable archived OneDrive authorization: %v", err)
+		// A broken cloud credential must not block data recovery or prevent a
+		// subsequent device-code login from replacing it.
+		return "备份中的 OneDrive 配置无法解密，已清除；请重新连接并设置备份口令", target.saveOneDriveSettings(defaultOneDriveSettings())
+	}
+	return "", target.saveOneDriveSettings(archived)
 }
 
 func validateRestoredAdministrators(db *gorm.DB) error {

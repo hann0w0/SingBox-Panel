@@ -215,6 +215,12 @@ func comparePanelVersions(left, right string) (int, error) {
 			return 1, nil
 		}
 	}
+	// Main images append a commit hash, which has no chronological ordering.
+	// Within the same release triplet, the schema ledger remains the restore
+	// compatibility boundary for edge builds (including edge/stable restores).
+	if isPanelEdgeBuild(leftPre) || isPanelEdgeBuild(rightPre) {
+		return 0, nil
+	}
 	if leftPre == rightPre {
 		return 0, nil
 	}
@@ -225,4 +231,13 @@ func comparePanelVersions(left, right string) (int, error) {
 		return -1, nil
 	}
 	return strings.Compare(leftPre, rightPre), nil
+}
+
+func isPanelEdgeBuild(prerelease string) bool {
+	hash, ok := strings.CutPrefix(prerelease, "edge.")
+	if !ok || len(hash) != 12 {
+		return false
+	}
+	_, err := hex.DecodeString(hash)
+	return err == nil
 }

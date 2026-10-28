@@ -982,6 +982,12 @@ func clashProxy(n node, seen map[string]int) map[string]any {
 		base["udp"] = n.udpEnabled()
 	case "mixed": // Clash has no mixed type; clients dial it as SOCKS5
 		base["type"] = "socks5"
+		if u.Username == "" {
+			u.Username = st.Username
+		}
+		if u.Password == "" {
+			u.Password = st.Password
+		}
 		if u.Username != "" {
 			base["username"] = u.Username
 		}

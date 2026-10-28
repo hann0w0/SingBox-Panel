@@ -119,6 +119,7 @@ type connectionEvent struct {
 type streamConnection struct {
 	ID            string
 	Inbound       string
+	InboundType   string
 	User          string
 	CreatedAt     int64 // unix milliseconds
 	ClosedAt      int64 // unix milliseconds, 0 while open
@@ -190,6 +191,8 @@ func decodeStreamConnection(b []byte) (streamConnection, error) {
 			out.ID = string(value)
 		case num == 2 && typ == protowire.BytesType:
 			out.Inbound = string(value)
+		case num == 3 && typ == protowire.BytesType:
+			out.InboundType = string(value)
 		case num == 10 && typ == protowire.BytesType:
 			out.User = string(value)
 		case num == 12 && typ == protowire.VarintType:
@@ -379,6 +382,8 @@ func (st *statsStream) subscribeOnce(ctx context.Context) error {
 	}
 	body := bufio.NewReaderSize(res.Body, 64<<10)
 	session := newStreamSession(subscribedAt)
+	session.guardInbounds = parseRealityGuardInbounds(raw)
+	defer st.sampler.setStatsStreamAvailable(false)
 	for {
 		payload, trailer, err := readGRPCWebFrame(body)
 		if err != nil {
@@ -397,6 +402,7 @@ func (st *statsStream) subscribeOnce(ctx context.Context) error {
 		if err != nil {
 			return fmt.Errorf("decode connection events: %w", err)
 		}
+		st.sampler.setStatsStreamAvailable(true)
 		st.sampler.applyStreamEvents(session, events, st.now())
 	}
 }
@@ -404,8 +410,9 @@ func (st *statsStream) subscribeOnce(ctx context.Context) error {
 // streamSession is the per-subscription view needed to turn UPDATE deltas
 // into cumulative totals for the shared ledger.
 type streamSession struct {
-	subscribedAt time.Time
-	totals       map[string][2]uint64
+	subscribedAt  time.Time
+	totals        map[string][2]uint64
+	guardInbounds map[string]bool
 }
 
 func newStreamSession(subscribedAt time.Time) *streamSession {
@@ -427,6 +434,7 @@ func nonNegative(v int64) uint64 {
 func (s *trafficSampler) applyStreamEvents(session *streamSession, events connectionEvents, now time.Time) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	s.activateConnectionAccounting(session.guardInbounds)
 	var active map[string]bool
 	if events.Reset {
 		active = make(map[string]bool, len(events.Events))
@@ -448,7 +456,8 @@ func (s *trafficSampler) applyStreamEvents(session *streamSession, events connec
 			}
 			totals := streamTotals(connection)
 			baseline := time.UnixMilli(connection.CreatedAt).Before(s.startedAt)
-			s.observeConnection(id, connection.Inbound, connection.User, totals, baseline, now)
+			s.observeConnectionFrom(id, connection.Inbound, connection.InboundType, connection.User, totals, baseline,
+				time.UnixMilli(connection.CreatedAt), now, session.guardInbounds)
 			if connection.ClosedAt != 0 {
 				// A recently closed connection replayed by a new subscription.
 				s.closeConnection(id)
@@ -472,8 +481,8 @@ func (s *trafficSampler) applyStreamEvents(session *streamSession, events connec
 				// A final snapshot can arrive without its NEW event. Apply the
 				// same startup cutoff as NEW replays when its ledger entry is absent.
 				baseline := time.UnixMilli(event.Connection.CreatedAt).Before(s.startedAt)
-				s.observeConnection(id, event.Connection.Inbound, event.Connection.User,
-					streamTotals(event.Connection), baseline, now)
+				s.observeConnectionFrom(id, event.Connection.Inbound, event.Connection.InboundType, event.Connection.User,
+					streamTotals(event.Connection), baseline, time.UnixMilli(event.Connection.CreatedAt), now, session.guardInbounds)
 			} else if totals, known := session.totals[id]; known {
 				s.observeConnection(id, "", "", totals, false, now)
 			}

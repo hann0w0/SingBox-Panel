@@ -23,8 +23,14 @@ const maxUnassignedTrafficHours = 24
 // observed total that has not been counted yet, so whichever source sees a
 // byte first counts it and the other never counts it again.
 type ledgerEntry struct {
-	inbound string
-	user    string
+	inbound           string
+	user              string
+	guardOuter        bool
+	inboundType       string
+	guardClassified   bool
+	unclassifiedTotal [2]uint64
+	nodeObserved      bool
+	nodeCounted       [2]uint64
 	// counted is the highest observed total; baseline is the part of it that
 	// predates the first successful node sample and is never attributed.
 	counted  [2]uint64
@@ -76,6 +82,10 @@ func (entry *ledgerEntry) pruneUnassigned(now time.Time) {
 // baseline marks a connection first seen with history that predates the
 // accounting window. Callers hold s.mu.
 func (s *trafficSampler) observeConnection(id, inbound, user string, total [2]uint64, baseline bool, now time.Time) {
+	s.observeConnectionFrom(id, inbound, "", user, total, baseline, time.Time{}, now, nil)
+}
+
+func (s *trafficSampler) observeConnectionFrom(id, inbound, inboundType, user string, total [2]uint64, baseline bool, createdAt, now time.Time, guards map[string]bool) {
 	entry := s.ledger[id]
 	if entry == nil {
 		entry = s.tombstones[id]
@@ -91,9 +101,26 @@ func (s *trafficSampler) observeConnection(id, inbound, user string, total [2]ui
 	if entry.inbound == "" {
 		entry.inbound = inbound
 	}
+	if entry.inboundType == "" {
+		entry.inboundType = inboundType
+	}
+	if !entry.guardClassified && entry.inbound != "" && entry.inboundType != "" && (entry.inboundType != "direct" || guards != nil) {
+		entry.guardOuter = entry.inboundType == "direct" && guards[entry.inbound]
+		entry.guardClassified = true
+	}
 	if entry.user == "" {
 		entry.user = user
 	}
+	for i := range total {
+		total[i] = max(total[i], entry.unclassifiedTotal[i])
+	}
+	if entry.inboundType == "direct" && !entry.guardClassified && s.haveSample {
+		// A source without a captured layout cannot decide whether this is a
+		// redundant outer leg. Wait for a classified cumulative observation.
+		entry.unclassifiedTotal = total
+		return
+	}
+	entry.unclassifiedTotal = [2]uint64{}
 	var delta [2]uint64
 	for i := range total {
 		if total[i] > entry.counted[i] {
@@ -107,10 +134,16 @@ func (s *trafficSampler) observeConnection(id, inbound, user string, total [2]ui
 			}
 		}
 	}
+	if entry.inbound != "" {
+		s.observeNodeTraffic(entry, createdAt, now)
+	}
 	if !s.haveSample {
 		return
 	}
 	if entry.inbound == "" {
+		return
+	}
+	if entry.guardOuter {
 		return
 	}
 	if delta[0] > 0 || delta[1] > 0 {

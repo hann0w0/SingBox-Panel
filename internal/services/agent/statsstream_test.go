@@ -17,6 +17,7 @@ import (
 
 type testConn struct {
 	id, inbound, user string
+	inboundType       string
 	createdAt, closed int64
 	up, down          int64
 }
@@ -27,8 +28,12 @@ func encodeTestConnection(c testConn) []byte {
 	b = protowire.AppendString(b, c.id)
 	b = protowire.AppendTag(b, 2, protowire.BytesType)
 	b = protowire.AppendString(b, c.inbound)
-	b = protowire.AppendTag(b, 3, protowire.BytesType) // inboundType, ignored
-	b = protowire.AppendString(b, "vless")
+	b = protowire.AppendTag(b, 3, protowire.BytesType)
+	inboundType := c.inboundType
+	if inboundType == "" {
+		inboundType = "vless"
+	}
+	b = protowire.AppendString(b, inboundType)
 	if c.user != "" {
 		b = protowire.AppendTag(b, 10, protowire.BytesType)
 		b = protowire.AppendString(b, c.user)
@@ -130,7 +135,7 @@ func TestDecodeConnectionEventsRoundTrip(t *testing.T) {
 		t.Fatalf("events = %+v", events)
 	}
 	first := events.Events[0]
-	if first.Connection == nil || first.Connection.User != "alice" || first.Connection.Inbound != "in" ||
+	if first.Connection == nil || first.Connection.User != "alice" || first.Connection.Inbound != "in" || first.Connection.InboundType != "vless" ||
 		first.Connection.DownlinkTotal != 1<<40 || first.Connection.CreatedAt != 1700000000123 {
 		t.Fatalf("first = %+v / %+v", first, first.Connection)
 	}

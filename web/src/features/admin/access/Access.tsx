@@ -1187,12 +1187,13 @@ export function CustomNodesPanel({ nodes, loading, error, onNodesChange }: {
       sort_order: editingNode?.sort_order ?? 0,
     }
       if (normalizedNodeLink) {
+        const sameLink = editingNode?.link === normalizedNodeLink
         Object.assign(body, {
         link: normalizedNodeLink,
-        protocol: '',
-        address: '',
-        port: undefined,
-        params: null,
+        protocol: sameLink ? editingNode.protocol : '',
+        address: sameLink ? editingNode.address : '',
+        port: sameLink ? editingNode.port : undefined,
+        params: sameLink ? editingNode.params : null,
         })
       } else {
         Object.assign(body, {

@@ -26,10 +26,19 @@ func matchSubscriptionNodeKeys(existing []model.CustomNode, desired map[string]m
 				return identity{}, fmt.Errorf("节点 %q 参数无法识别: %w", name, err)
 			}
 		}
-		// Structured fields contain the connection identity; equivalent share-link
-		// spelling and local display-name rewrites must not create a new endpoint.
+		// Older URI edits could clear the imported structured fields. Recover the
+		// same canonical definition before matching so existing grants survive.
 		if item.Protocol == "" || item.Address == "" || item.Port == 0 {
-			item.Link = row.Link
+			if row.Link != "" {
+				parsed, err := singbox.ParseSubscription([]byte(row.Link))
+				if err == nil && len(parsed.Nodes) == 1 && len(parsed.Skipped) == 0 {
+					item = parsed.Nodes[0]
+					item.Name = name
+					item.Link = ""
+				} else {
+					item.Link = row.Link
+				}
+			}
 		}
 		group, err := customNodeSubscriptionBaseKey(item)
 		if err != nil {

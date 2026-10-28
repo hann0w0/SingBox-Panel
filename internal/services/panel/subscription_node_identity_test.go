@@ -75,3 +75,36 @@ func TestSubscriptionIdentityPreservesDuplicateNodeAudiences(t *testing.T) {
 		t.Fatal("unique-name endpoint rotation lost its existing row")
 	}
 }
+
+func TestSubscriptionIdentityRecoversLegacyURIEdit(t *testing.T) {
+	parsed, err := singbox.ParseSubscription([]byte("socks5://alice:secret@edge.example.com:1080#same-name\nsocks5://alice:secret@edge.example.com:2080#same-name"))
+	if err != nil || len(parsed.Nodes) != 2 {
+		t.Fatalf("parse URI nodes: %v, %+v", err, parsed)
+	}
+	source := model.CustomNodeSubscription{ID: 1, Enabled: true}
+	desired := make(map[string]model.CustomNode)
+	order := make([]string, 0, 2)
+	for index, item := range parsed.Nodes {
+		row, key, err := subscriptionCustomNode(source, item, index, index, nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		desired[key] = row
+		order = append(order, key)
+	}
+	legacy := desired[order[0]]
+	legacy.ID, legacy.UserIDs = 42, []uint{7}
+	legacy.Protocol, legacy.Address, legacy.Port, legacy.Params = "", "", 0, nil
+	second := desired[order[1]]
+	second.ID, second.UserIDs = 43, []uint{8}
+	matched, matchedOrder, err := matchSubscriptionNodeKeys([]model.CustomNode{legacy, second}, desired, []string{order[1], order[0]})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(matchedOrder) != 2 || matchedOrder[0] != second.SubscriptionKey || matchedOrder[1] != legacy.SubscriptionKey {
+		t.Fatalf("URI edit or reorder transferred a grant: got %v, want %v", matchedOrder, []string{second.SubscriptionKey, legacy.SubscriptionKey})
+	}
+	if matched[legacy.SubscriptionKey].Port != 1080 || matched[second.SubscriptionKey].Port != 2080 {
+		t.Fatalf("same-name endpoints were swapped: %+v", matched)
+	}
+}

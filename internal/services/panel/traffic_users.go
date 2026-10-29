@@ -79,8 +79,8 @@ func multiUserTrafficDeltas(serverID uint, inbounds []model.Inbound, users []pro
 }
 
 // resolveUserDeltas accepts only identities previously bound to this inbound.
-// Legacy login names remain bound to their original account, while new configs
-// report immutable names. Unknown or deleted identities are never reassigned.
+// Login names and internal names remain bound to their original account across
+// credential rotations. Unknown or deleted identities are never reassigned.
 func (w *trafficWriter) resolveUserDeltas(deltas []userTrafficDelta, _ time.Time) (map[userBucketKey]userBucketValue, error) {
 	type identityKey struct {
 		serverID, inboundID uint
@@ -100,26 +100,23 @@ func (w *trafficWriter) resolveUserDeltas(deltas []userTrafficDelta, _ time.Time
 	}
 	ids := make(map[identityKey]uint, len(deltas))
 	if len(names) > 0 {
-		var bindings []model.UserTrafficIdentity
-		if err := w.db.Where("name IN ? AND server_id IN ? AND inbound_id IN ?", names, normalizedIDs(serverIDs), normalizedIDs(inboundIDs)).Find(&bindings).Error; err != nil {
+		var bindings []struct {
+			ServerID, InboundID, UserID uint
+			Name, UserKey               string
+			ProxyToken, SubToken        string
+		}
+		// One statement gives the binding and its account seed the same snapshot,
+		// even when a reset commits while these rows are being processed.
+		if err := w.db.Table("user_traffic_identities AS identities").
+			Select("identities.server_id, identities.inbound_id, identities.name, identities.user_id, identities.user_key, users.proxy_token, users.sub_token").
+			Joins("JOIN users ON users.id = identities.user_id").
+			Where("identities.name IN ? AND identities.server_id IN ? AND identities.inbound_id IN ?", names, normalizedIDs(serverIDs), normalizedIDs(inboundIDs)).
+			Find(&bindings).Error; err != nil {
 			return nil, fmt.Errorf("resolve traffic identities: %w", err)
 		}
-		userIDs := make([]uint, 0, len(bindings))
 		for _, binding := range bindings {
-			userIDs = append(userIDs, binding.UserID)
-		}
-		var users []model.User
-		if len(userIDs) > 0 {
-			if err := w.db.Select("id", "proxy_token", "sub_token").Where("id IN ?", normalizedIDs(userIDs)).Find(&users).Error; err != nil {
-				return nil, fmt.Errorf("resolve traffic users: %w", err)
-			}
-		}
-		keys := make(map[uint]string, len(users))
-		for i := range users {
-			keys[users[i].ID] = proxyTrafficName(&users[i])
-		}
-		for _, binding := range bindings {
-			if key := keys[binding.UserID]; key != "" && key == binding.UserKey {
+			user := model.User{ID: binding.UserID, ProxyToken: binding.ProxyToken, SubToken: binding.SubToken}
+			if proxyTrafficName(&user) == binding.UserKey {
 				ids[identityKey{binding.ServerID, binding.InboundID, binding.Name}] = binding.UserID
 			}
 		}

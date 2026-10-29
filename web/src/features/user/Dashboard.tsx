@@ -3,9 +3,10 @@ import { Button, Grid, Modal, Typography, message } from '../../ui'
 import { ChevronRight } from 'lucide-react'
 import { QRCodeSVG } from 'qrcode.react'
 import { errMsg, getMe, getUserNodes, resetSub } from '../../api'
-import type { UserNode } from '../../api'
+import type { SubscriptionSyncResult, UserNode } from '../../api'
 import type { User } from '../../types'
 import { SubscriptionLinks } from './SubscriptionLinks'
+import { SubscriptionSyncStatus } from './SubscriptionSyncStatus'
 import { useAuth } from '../../store'
 import { CONTINENT_ORDER, continentOf, type Continent } from '../../continents'
 import regionData from '../../assets/regions.json'
@@ -29,6 +30,7 @@ export default function Dashboard() {
   const setUser = useAuth((s) => s.setUser)
   const [user, setLocalUser] = useState<User | null>(null)
   const [subUrl, setSubUrl] = useState('')
+  const [resetSync, setResetSync] = useState<SubscriptionSyncResult>()
   const [nodes, setNodes] = useState<UserNode[]>([])
   const [continentNodes, setContinentNodes] = useState<Partial<Record<Continent, UserNode[]>>>({})
   const [seg, setSeg] = useState<Continent>('亚洲')
@@ -105,10 +107,11 @@ export default function Dashboard() {
       try {
         const result = await resetSub()
         setSubUrl(result.subscription_url)
+        setResetSync(result.sync)
         setSelectedNode(null)
         setNodes([])
         load()
-        message.success('订阅链接已重置，节点凭证正在同步，请更新客户端订阅')
+        message.success('订阅链接已重置，请更新客户端订阅')
       } catch (error) {
         message.error(errMsg(error))
         throw error
@@ -157,6 +160,7 @@ export default function Dashboard() {
           <div className="sub-actions">
             <Button onClick={doReset}>重置链接</Button>
           </div>
+          <SubscriptionSyncStatus key={subUrl} initial={resetSync} />
         </Section>
 
         <Section title="节点">

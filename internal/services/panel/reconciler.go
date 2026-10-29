@@ -45,6 +45,15 @@ func (r *Reconciler) Run(ctx context.Context) {
 
 func (r *Reconciler) tick() {
 	now := time.Now()
+	// Durable resets survive exhausted short retries and panel restarts. A
+	// successful Agent acknowledgement settles the captured revision.
+	var pending []uint
+	if err := r.db.Model(&model.Server{}).
+		Where("proxy_sync_revision > proxy_sync_applied_revision").Pluck("id", &pending).Error; err != nil {
+		log.Printf("reconciler: load pending credential synchronization: %v", err)
+	} else if len(pending) > 0 && r.onAccessChange != nil {
+		r.onAccessChange(pending)
+	}
 	if now.Sub(r.lastPrune) >= 10*time.Minute {
 		r.lastPrune = now
 		if err := pruneTrafficRecords(r.db, now); err != nil {

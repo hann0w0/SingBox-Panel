@@ -199,6 +199,12 @@ type Server struct {
 	// config after the administrator deletes the last structured record.
 	ConfigInitialized bool `gorm:"default:false" json:"-"`
 
+	// A subscription reset queues a durable credential revision in the same
+	// transaction as the new seeds. Only an Agent acknowledgement can settle it.
+	ProxySyncRevision        uint64 `gorm:"not null;default:0" json:"-"`
+	ProxySyncAppliedRevision uint64 `gorm:"not null;default:0" json:"-"`
+	ProxySyncFailed          bool   `gorm:"not null;default:false" json:"-"`
+
 	// AgentURL is the endpoint reported by the running Agent. It makes migrations
 	// from an IP address to the panel domain visible and verifiable in the UI.
 	AgentURL string `gorm:"size:512" json:"agent_url"`

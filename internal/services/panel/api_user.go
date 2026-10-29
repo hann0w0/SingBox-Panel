@@ -64,8 +64,14 @@ func (a *App) handleUserNodes(c *gin.Context) {
 // handleResetSub revokes both the subscription URL and per-user proxy credentials.
 func (a *App) handleResetSub(c *gin.Context) {
 	var user model.User
+	var syncServerIDs []uint
 	err := a.db.Transaction(func(tx *gorm.DB) error {
 		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).First(&user, currentUID(c)).Error; err != nil {
+			return err
+		}
+		var err error
+		syncServerIDs, err = subscriptionSyncServerIDs(tx, &user)
+		if err != nil {
 			return err
 		}
 		oldTrafficKey := proxyTrafficName(&user)
@@ -78,9 +84,18 @@ func (a *App) handleResetSub(c *gin.Context) {
 		}
 		// Keep delayed usage and historical logs attached to this same account,
 		// without reviving bindings left behind by a deleted/recreated account.
-		return tx.Model(&model.UserTrafficIdentity{}).
+		if err := tx.Model(&model.UserTrafficIdentity{}).
 			Where("user_id = ? AND user_key = ?", user.ID, oldTrafficKey).
-			Update("user_key", proxyTrafficName(&user)).Error
+			Update("user_key", proxyTrafficName(&user)).Error; err != nil {
+			return err
+		}
+		if len(syncServerIDs) == 0 {
+			return nil
+		}
+		return tx.Model(&model.Server{}).Where("id IN ?", syncServerIDs).Updates(map[string]any{
+			"proxy_sync_revision": gorm.Expr("proxy_sync_revision + 1"),
+			"proxy_sync_failed":   false,
+		}).Error
 	})
 	if errors.Is(err, gorm.ErrRecordNotFound) {
 		c.JSON(http.StatusNotFound, gin.H{"error": "user not found"})
@@ -90,8 +105,13 @@ func (a *App) handleResetSub(c *gin.Context) {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "reset failed"})
 		return
 	}
-	a.refreshUserProxyAccess(user.ServerIDs)
-	c.JSON(http.StatusOK, gin.H{"sub_token": user.SubToken, "subscription_url": a.subURL(user.SubToken)})
+	a.refreshUserProxyAccess(syncServerIDs)
+	status := subscriptionSyncStatus{ApplyState: ConfigApplied, PendingServers: len(syncServerIDs)}
+	if len(syncServerIDs) > 0 {
+		// The reset has committed, but no Agent acknowledgement is implied.
+		status.ApplyState = ConfigPending
+	}
+	c.JSON(http.StatusOK, gin.H{"sub_token": user.SubToken, "subscription_url": a.subURL(user.SubToken), "sync": status})
 }
 
 type changePasswordReq struct {

@@ -2,7 +2,7 @@ import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testi
 import { createMemoryRouter, RouterProvider, useLocation, useNavigate } from 'react-router-dom'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import App from '../../../App'
-import { getMe, getUser, getUserAccess, getUserNodes, listUsers, listServers, listCustomNodes, resetSub, updateUserAccess, updateUser } from '../../../api'
+import { getMe, getSubscriptionSync, getUser, getUserAccess, getUserNodes, listUsers, listServers, listCustomNodes, resetSub, updateUserAccess, updateUser } from '../../../api'
 import type { CustomNode, UserAccess } from '../../../api'
 import { TooltipProvider } from '../../../components/ui/tooltip'
 import { ThemePreferenceProvider } from '../../../themePreference'
@@ -14,7 +14,7 @@ const NativeRequest = globalThis.Request
 vi.mock('../../../api', async (importOriginal) => ({
   ...await importOriginal<typeof import('../../../api')>(),
   listUsers: vi.fn(), listServers: vi.fn(), listCustomNodes: vi.fn(), getMe: vi.fn(), getUserNodes: vi.fn(),
-  getUser: vi.fn(), getUserAccess: vi.fn(), resetSub: vi.fn(), updateUserAccess: vi.fn(), updateUser: vi.fn(),
+  getUser: vi.fn(), getUserAccess: vi.fn(), resetSub: vi.fn(), updateUserAccess: vi.fn(), updateUser: vi.fn(), getSubscriptionSync: vi.fn(),
 }))
 vi.mock('../../../util', async (importOriginal) => ({ ...await importOriginal<typeof import('../../../util')>(), copyToClipboard: vi.fn() }))
 const admin = { id: 1, email: 'admin', role: 'admin', enabled: true, server_ids: [], inbound_ids: [] } as unknown as User
@@ -63,7 +63,8 @@ beforeEach(() => {
   vi.mocked(listCustomNodes).mockResolvedValue([external])
   vi.mocked(getMe).mockResolvedValue({ user: admin, subscription_url: 'https://panel.example/sub/test' })
   vi.mocked(getUserNodes).mockResolvedValue([])
-  vi.mocked(resetSub).mockResolvedValue({ subscription_url: 'https://panel.example/sub/reset' })
+  vi.mocked(resetSub).mockResolvedValue({ subscription_url: 'https://panel.example/sub/reset', sync: { apply_state: 'pending', pending_servers: 1, failed_servers: 0 } })
+  vi.mocked(getSubscriptionSync).mockResolvedValue({ apply_state: 'applied', pending_servers: 0, failed_servers: 0 })
   vi.mocked(getUser).mockImplementation(async (id) => ({ user: id === 1 ? admin : alice, subscription_url: `https://panel.example/sub/user-${id}` }))
   vi.mocked(getUserAccess).mockResolvedValue(structuredClone(access))
   vi.mocked(updateUserAccess).mockImplementation(async (id, body) => ({ ...body, user_id: id, server_wide: false }))

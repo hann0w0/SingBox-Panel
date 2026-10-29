@@ -1,7 +1,7 @@
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import Dashboard from './Dashboard'
-import { getMe, getUserNodes, resetSub } from '../../api'
+import { getMe, getSubscriptionSync, getUserNodes, resetSub } from '../../api'
 import type { UserNode } from '../../api'
 import type { User } from '../../types'
 import { useAuth } from '../../store'
@@ -11,7 +11,7 @@ import { DialogHost, Modal } from '../../ui/dialogs'
 
 vi.mock('../../api', async (importOriginal) => ({
   ...await importOriginal<typeof import('../../api')>(),
-  getMe: vi.fn(), getUserNodes: vi.fn(), resetSub: vi.fn(),
+  getMe: vi.fn(), getUserNodes: vi.fn(), resetSub: vi.fn(), getSubscriptionSync: vi.fn(),
 }))
 vi.mock('../../util', async (importOriginal) => ({
   ...await importOriginal<typeof import('../../util')>(), copyToClipboard: vi.fn(),
@@ -31,7 +31,8 @@ beforeEach(() => {
   useAuth.setState({ token: 'test-token', user })
   vi.mocked(getMe).mockResolvedValue({ user, subscription_url: 'https://panel.example/sub/test' })
   vi.mocked(getUserNodes).mockResolvedValue([node])
-  vi.mocked(resetSub).mockResolvedValue({ subscription_url: nextUrl })
+  vi.mocked(resetSub).mockResolvedValue({ subscription_url: nextUrl, sync: { apply_state: 'pending', pending_servers: 1, failed_servers: 0 } })
+  vi.mocked(getSubscriptionSync).mockResolvedValue({ apply_state: 'applied', pending_servers: 0, failed_servers: 0 })
   vi.mocked(copyToClipboard).mockResolvedValue(undefined)
 })
 afterEach(() => {

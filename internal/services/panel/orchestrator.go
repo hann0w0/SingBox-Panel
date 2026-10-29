@@ -253,10 +253,22 @@ func (o *Orchestrator) pushConfigUnlocked(ctx context.Context, serverID uint) er
 		return err
 	}
 	raw, err := o.BuildServerConfig(&srv)
-	if err != nil {
-		return err
+	if err == nil {
+		_, err = o.hub.SendCommand(ctx, serverID, protocol.CmdApplyConfig, protocol.ApplyConfigCmd{Config: raw})
 	}
-	_, err = o.hub.SendCommand(ctx, serverID, protocol.CmdApplyConfig, protocol.ApplyConfigCmd{Config: raw})
+	if srv.ProxySyncRevision > srv.ProxySyncAppliedRevision {
+		updates := map[string]any{"proxy_sync_failed": err != nil && !errors.Is(err, ErrAgentOffline)}
+		if err == nil {
+			updates["proxy_sync_applied_revision"] = srv.ProxySyncRevision
+		}
+		// A newer reset may commit while this config is in flight. Its revision
+		// must remain pending even when this older command succeeds.
+		if saveErr := o.db.Model(&model.Server{}).
+			Where("id = ? AND proxy_sync_revision = ?", serverID, srv.ProxySyncRevision).
+			Updates(updates).Error; saveErr != nil {
+			return errors.Join(err, fmt.Errorf("record credential synchronization: %w", saveErr))
+		}
+	}
 	return err
 }
 

@@ -2,6 +2,7 @@ import { useCallback, useEffect, useState } from 'react'
 import { Link, useBeforeUnload, useBlocker, useNavigate, useParams } from 'react-router-dom'
 import { ArrowLeft, History, Pencil, Trash2 } from 'lucide-react'
 import { deleteUser, errMsg, getUser, resetSub } from '../../../api'
+import type { SubscriptionSyncResult } from '../../../api'
 import { RequestState } from '../../../components/RequestState'
 import { useAuth } from '../../../store'
 import type { User } from '../../../types'
@@ -10,6 +11,7 @@ import { PageHeader, Section } from '../../../ui/Page'
 import { MODAL_SM } from '../../../ui/modal'
 import { UserAccessEditor } from '../access/Access'
 import { SubscriptionLinks } from '../../user/SubscriptionLinks'
+import { SubscriptionSyncStatus } from '../../user/SubscriptionSyncStatus'
 import { SubscriptionHistory, UserAccountDialog } from './UserDialogs'
 import '../../../styles/users.css'
 
@@ -17,6 +19,7 @@ function Detail({ id }: { id: number }) {
   const navigate = useNavigate()
   const currentUser = useAuth((state) => state.user)
   const [data, setData] = useState<{ user: User; subscription_url: string } | null>(null)
+  const [resetSync, setResetSync] = useState<SubscriptionSyncResult>()
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const [retry, setRetry] = useState(0)
@@ -59,7 +62,8 @@ function Detail({ id }: { id: number }) {
     onOk: async () => {
       const result = await resetSub()
       setData((current) => current ? { ...current, subscription_url: result.subscription_url } : current)
-      message.success('订阅链接已重置，节点凭证正在同步，请更新客户端订阅')
+      setResetSync(result.sync)
+      message.success('订阅链接已重置，请更新客户端订阅')
     },
   })
   const savedAccount = (user: User) => {
@@ -83,6 +87,7 @@ function Detail({ id }: { id: number }) {
         </>} />
         <Section title="订阅链接" actions={currentUser?.id === id ? <Button size="small" type="text" onClick={resetOwnSubscription}>重置链接</Button> : undefined}>
           <SubscriptionLinks url={data.subscription_url} pending={draft.dirty} />
+          {currentUser?.id === id && <SubscriptionSyncStatus key={data.subscription_url} initial={resetSync} />}
         </Section>
         <Section title="节点分配"><UserAccessEditor userId={id} onStateChange={setDraft} /></Section>
         {editing && <UserAccountDialog user={data.user} onClose={() => setEditing(false)} onSaved={savedAccount} />}

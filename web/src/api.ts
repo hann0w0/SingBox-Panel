@@ -89,8 +89,16 @@ export interface UserNode {
 export const getUserNodes = (signal?: AbortSignal) =>
   http.get<{ nodes: UserNode[] }>('/api/user/nodes', { signal }).then((r) => r.data.nodes)
 
+export interface SubscriptionSyncResult {
+  apply_state: ConfigApplyResult['apply_state']
+  pending_servers: number
+  failed_servers: number
+}
+export const getSubscriptionSync = (signal?: AbortSignal) =>
+  http.get<SubscriptionSyncResult>('/api/user/subscription-sync', { signal }).then((r) => r.data)
+
 export const resetSub = () =>
-  http.post<{ subscription_url: string }>('/api/user/reset-sub').then((r) => r.data)
+  http.post<{ subscription_url: string; sync: SubscriptionSyncResult }>('/api/user/reset-sub').then((r) => r.data)
 
 // ---- admin: overview ----
 export const getOverview = (signal?: AbortSignal) =>

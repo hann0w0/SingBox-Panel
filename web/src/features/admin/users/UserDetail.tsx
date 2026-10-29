@@ -55,11 +55,11 @@ function Detail({ id }: { id: number }) {
     })
   }
   const resetOwnSubscription = () => Modal.confirm({
-    title: '重置订阅链接？', content: '旧链接将立即失效。', okText: '重置', okType: 'danger',
+    title: '重置订阅链接？', content: '旧链接将立即失效，并更换你在多用户节点上的连接凭证。旧节点配置在同步后失效；离线节点将在重连后同步，请更新客户端订阅。', okText: '重置', okType: 'danger',
     onOk: async () => {
       const result = await resetSub()
       setData((current) => current ? { ...current, subscription_url: result.subscription_url } : current)
-      message.success('已重置订阅链接')
+      message.success('订阅链接已重置，节点凭证正在同步，请更新客户端订阅')
     },
   })
   const savedAccount = (user: User) => {

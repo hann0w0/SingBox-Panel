@@ -2,7 +2,7 @@ import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testi
 import { createMemoryRouter, RouterProvider, useLocation, useNavigate } from 'react-router-dom'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import App from '../../../App'
-import { getMe, getUser, getUserAccess, getUserNodes, listUsers, listServers, listCustomNodes, updateUserAccess, updateUser } from '../../../api'
+import { getMe, getUser, getUserAccess, getUserNodes, listUsers, listServers, listCustomNodes, resetSub, updateUserAccess, updateUser } from '../../../api'
 import type { CustomNode, UserAccess } from '../../../api'
 import { TooltipProvider } from '../../../components/ui/tooltip'
 import { ThemePreferenceProvider } from '../../../themePreference'
@@ -14,7 +14,7 @@ const NativeRequest = globalThis.Request
 vi.mock('../../../api', async (importOriginal) => ({
   ...await importOriginal<typeof import('../../../api')>(),
   listUsers: vi.fn(), listServers: vi.fn(), listCustomNodes: vi.fn(), getMe: vi.fn(), getUserNodes: vi.fn(),
-  getUser: vi.fn(), getUserAccess: vi.fn(), updateUserAccess: vi.fn(), updateUser: vi.fn(),
+  getUser: vi.fn(), getUserAccess: vi.fn(), resetSub: vi.fn(), updateUserAccess: vi.fn(), updateUser: vi.fn(),
 }))
 vi.mock('../../../util', async (importOriginal) => ({ ...await importOriginal<typeof import('../../../util')>(), copyToClipboard: vi.fn() }))
 const admin = { id: 1, email: 'admin', role: 'admin', enabled: true, server_ids: [], inbound_ids: [] } as unknown as User
@@ -63,6 +63,7 @@ beforeEach(() => {
   vi.mocked(listCustomNodes).mockResolvedValue([external])
   vi.mocked(getMe).mockResolvedValue({ user: admin, subscription_url: 'https://panel.example/sub/test' })
   vi.mocked(getUserNodes).mockResolvedValue([])
+  vi.mocked(resetSub).mockResolvedValue({ subscription_url: 'https://panel.example/sub/reset' })
   vi.mocked(getUser).mockImplementation(async (id) => ({ user: id === 1 ? admin : alice, subscription_url: `https://panel.example/sub/user-${id}` }))
   vi.mocked(getUserAccess).mockResolvedValue(structuredClone(access))
   vi.mocked(updateUserAccess).mockImplementation(async (id, body) => ({ ...body, user_id: id, server_wide: false }))
@@ -127,6 +128,20 @@ describe('user detail navigation', () => {
 })
 
 describe('editing a selected user subscription', () => {
+  it('warns about credential rotation when resetting the admin own subscription and copies the new URL', async () => {
+    mount('/admin/users/1')
+    fireEvent.click(await screen.findByRole('button', { name: '重置链接' }))
+    const dialog = screen.getByRole('alertdialog', { name: '重置订阅链接？' })
+    expect(dialog.textContent).toContain('多用户节点上的连接凭证')
+    expect(dialog.textContent).toContain('离线节点将在重连后同步')
+    fireEvent.click(within(dialog).getByRole('button', { name: '重置' }))
+    await waitFor(() => expect(screen.queryByRole('alertdialog')).toBeNull())
+    fireEvent.click(screen.getByRole('button', { name: '复制 Surge 订阅链接' }))
+    await waitFor(() => expect(copyToClipboard).toHaveBeenCalledWith('https://panel.example/sub/reset?target=surge'))
+    expect(resetSub).toHaveBeenCalledTimes(1)
+    expect(useAuth.getState().user).toEqual(admin)
+  })
+
   it('copies the selected user URL in each format without switching the admin session', async () => {
     mount('/admin/users/2')
     await screen.findByRole('heading', { name: 'alice' })

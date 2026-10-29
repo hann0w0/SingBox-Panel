@@ -88,9 +88,9 @@ type User struct {
 	// account is disabled or the URL is reset from another device. The reset
 	// endpoint returns the new token explicitly instead.
 	SubToken string `gorm:"uniqueIndex;size:64" json:"-"`
-	// ProxyToken is an independent, stable seed for deterministic per-inbound
-	// credentials. Resetting a subscription URL or changing a login password
-	// therefore never breaks already-issued proxy credentials.
+	// ProxyToken independently seeds deterministic per-inbound credentials.
+	// Resetting a subscription rotates this seed too; changing a login password
+	// leaves proxy credentials unchanged.
 	ProxyToken string `gorm:"size:64" json:"-"`
 	// TokenVersion revokes every previously-issued JWT when it changes. Password
 	// changes, account disabling and other security-sensitive updates increment it.

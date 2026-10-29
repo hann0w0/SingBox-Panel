@@ -97,7 +97,7 @@ export default function Dashboard() {
 
   const doReset = () => Modal.confirm({
     title: '重置订阅链接？',
-    content: '旧链接将立即失效。',
+    content: '旧链接将立即失效，并更换你在多用户节点上的连接凭证。旧节点配置在同步后失效；离线节点将在重连后同步，请更新客户端订阅。',
     okText: '重置',
     okButtonProps: { danger: true },
     cancelText: '取消',
@@ -105,7 +105,10 @@ export default function Dashboard() {
       try {
         const result = await resetSub()
         setSubUrl(result.subscription_url)
-        message.success('已重置')
+        setSelectedNode(null)
+        setNodes([])
+        load()
+        message.success('订阅链接已重置，节点凭证正在同步，请更新客户端订阅')
       } catch (error) {
         message.error(errMsg(error))
         throw error

@@ -51,15 +51,16 @@ func (r *logUserResolver) resolve(ctx context.Context, text string) string {
 func (r *logUserResolver) load(ctx context.Context) error {
 	var rows []struct {
 		Name       string
+		UserKey    string
 		UserID     uint
 		Email      string
 		ProxyToken string
 		SubToken   string
 	}
 	if err := r.db.WithContext(ctx).Table("user_traffic_identities AS identities").
-		Select("DISTINCT identities.name, users.id AS user_id, users.email, users.proxy_token, users.sub_token").
+		Select("DISTINCT identities.name, identities.user_key, users.id AS user_id, users.email, users.proxy_token, users.sub_token").
 		Joins("JOIN users ON users.id = identities.user_id").
-		Where("identities.server_id = ? AND identities.name = identities.user_key", r.serverID).
+		Where("identities.server_id = ?", r.serverID).
 		Scan(&rows).Error; err != nil {
 		return err
 	}
@@ -68,7 +69,7 @@ func (r *logUserResolver) load(ctx context.Context) error {
 		user := model.User{ID: row.UserID, Email: row.Email, ProxyToken: row.ProxyToken, SubToken: row.SubToken}
 		// A deleted/restored numeric ID alone is not proof of ownership. Keep
 		// unknown or obsolete identities intact instead of labelling a new owner.
-		if row.Name != proxyTrafficName(&user) {
+		if row.UserKey != proxyTrafficName(&user) {
 			continue
 		}
 		name := user.Email

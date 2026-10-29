@@ -7,6 +7,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"gorm.io/gorm"
+	"gorm.io/gorm/clause"
 
 	"github.com/hann0w0/singbox-panel/internal/domain/model"
 )
@@ -60,15 +61,37 @@ func (a *App) handleUserNodes(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"nodes": nodes})
 }
 
-// handleResetSub regenerates the user's subscription token.
+// handleResetSub revokes both the subscription URL and per-user proxy credentials.
 func (a *App) handleResetSub(c *gin.Context) {
-	uid := currentUID(c)
-	token := randHex(16)
-	if err := a.db.Model(&model.User{}).Where("id = ?", uid).Update("sub_token", token).Error; err != nil {
+	var user model.User
+	err := a.db.Transaction(func(tx *gorm.DB) error {
+		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).First(&user, currentUID(c)).Error; err != nil {
+			return err
+		}
+		oldTrafficKey := proxyTrafficName(&user)
+		user.SubToken = randHex(16)
+		user.ProxyToken = randHex(32)
+		if err := tx.Model(&user).Updates(map[string]any{
+			"sub_token": user.SubToken, "proxy_token": user.ProxyToken,
+		}).Error; err != nil {
+			return err
+		}
+		// Keep delayed usage and historical logs attached to this same account,
+		// without reviving bindings left behind by a deleted/recreated account.
+		return tx.Model(&model.UserTrafficIdentity{}).
+			Where("user_id = ? AND user_key = ?", user.ID, oldTrafficKey).
+			Update("user_key", proxyTrafficName(&user)).Error
+	})
+	if errors.Is(err, gorm.ErrRecordNotFound) {
+		c.JSON(http.StatusNotFound, gin.H{"error": "user not found"})
+		return
+	}
+	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "reset failed"})
 		return
 	}
-	c.JSON(http.StatusOK, gin.H{"sub_token": token, "subscription_url": a.subURL(token)})
+	a.refreshUserProxyAccess(user.ServerIDs)
+	c.JSON(http.StatusOK, gin.H{"sub_token": user.SubToken, "subscription_url": a.subURL(user.SubToken)})
 }
 
 type changePasswordReq struct {

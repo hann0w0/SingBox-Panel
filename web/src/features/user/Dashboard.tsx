@@ -1,8 +1,8 @@
 import { useEffect, useRef, useState } from 'react'
-import { Button, Form, Grid, Input, Modal, Typography, message } from '../../ui'
+import { Button, Grid, Modal, Typography, message } from '../../ui'
 import { ChevronRight } from 'lucide-react'
 import { QRCodeSVG } from 'qrcode.react'
-import { changePassword, errMsg, getMe, getUserNodes, resetSub } from '../../api'
+import { errMsg, getMe, getUserNodes, resetSub } from '../../api'
 import type { UserNode } from '../../api'
 import type { User } from '../../types'
 import { SubscriptionLinks } from './SubscriptionLinks'
@@ -12,9 +12,9 @@ import regionData from '../../assets/regions.json'
 import { VirtualList } from '../../components/VirtualList'
 import { RequestState } from '../../components/RequestState'
 import { RegionFlag } from '../../components/RegionFlag'
-import { PageHeader, PageToolbar, Pills, Section } from '../../ui/Page'
+import { Pills, Section } from '../../ui/Page'
 import '../../styles/settings-user.css'
-import { MODAL_MD, MODAL_SM } from '../../ui/modal'
+import { MODAL_MD } from '../../ui/modal'
 
 type RegionInfo = { geo: string; coord: [number, number]; label: string }
 const REGIONS = regionData as unknown as Record<string, RegionInfo>
@@ -23,10 +23,9 @@ const userNodeKey = (node: UserNode) => `${node.type}:${node.name}:${node.server
 // Chinese label for an ISO region code (HK → 香港), falls back to the code.
 const labelOf = (code: string): string => REGIONS[code]?.label || (code === 'Other' ? '其他' : code)
 
-export default function Dashboard({ embedded = false }: { embedded?: boolean }) {
+export default function Dashboard() {
   const screens = Grid.useBreakpoint()
   const isMobile = !screens.md
-  const setAuth = useAuth((s) => s.setAuth)
   const setUser = useAuth((s) => s.setUser)
   const [user, setLocalUser] = useState<User | null>(null)
   const [subUrl, setSubUrl] = useState('')
@@ -34,13 +33,11 @@ export default function Dashboard({ embedded = false }: { embedded?: boolean }) 
   const [continentNodes, setContinentNodes] = useState<Partial<Record<Continent, UserNode[]>>>({})
   const [seg, setSeg] = useState<Continent>('亚洲')
   const [selectedNode, setSelectedNode] = useState<UserNode | null>(null)
-  const [pwdOpen, setPwdOpen] = useState(false)
   const [loading, setLoading] = useState(true)
   const [loadError, setLoadError] = useState<string | null>(null)
   const [nodesLoading, setNodesLoading] = useState(true)
   const [nodesError, setNodesError] = useState<string | null>(null)
   const loadRef = useRef<{ generation: number; controllers: AbortController[] }>({ generation: 0, controllers: [] })
-  const [pwdForm] = Form.useForm()
 
   const load = () => {
     loadRef.current.controllers.forEach((controller) => controller.abort())
@@ -115,19 +112,6 @@ export default function Dashboard({ embedded = false }: { embedded?: boolean }) 
       }
     },
   })
-  const doChangePwd = async () => {
-    const v = await pwdForm.validateFields()
-    try {
-      const result = await changePassword(v.old_password, v.new_password)
-      setAuth(result.token, user)
-      message.success('密码已修改')
-      setPwdOpen(false)
-      pwdForm.resetFields()
-    } catch (e) {
-      message.error(errMsg(e))
-    }
-  }
-
   // Only show continents that actually have nodes; keep the current segment
   // valid if it becomes empty after a refresh.
   const segOptions = CONTINENT_ORDER
@@ -162,20 +146,14 @@ export default function Dashboard({ embedded = false }: { embedded?: boolean }) 
     </div>
   )
 
-  const headerProps = {
-    meta: <><span>{user.email}</span><span>{nodes.length} 个节点</span></>,
-    actions: <>
-      <Button onClick={doReset}>重置链接</Button>
-      <Button onClick={() => setPwdOpen(true)}>修改密码</Button>
-    </>,
-  }
   return (
     <RequestState loading={loading} error={loadError} hasData onRetry={load}>
       <div className="sub-page">
-        {embedded ? <PageToolbar {...headerProps} /> : <PageHeader title="订阅" {...headerProps} />}
-
         <Section title="订阅链接">
           <SubscriptionLinks url={subUrl} />
+          <div className="sub-actions">
+            <Button onClick={doReset}>重置链接</Button>
+          </div>
         </Section>
 
         <Section title="节点">
@@ -234,13 +212,6 @@ export default function Dashboard({ embedded = false }: { embedded?: boolean }) 
               )}
             </div>
           )}
-        </Modal>
-
-        <Modal title="修改密码" open={pwdOpen} onOk={doChangePwd} onCancel={() => setPwdOpen(false)} width={MODAL_SM}>
-          <Form form={pwdForm} layout="vertical">
-            <Form.Item name="old_password" label="当前密码" rules={[{ required: true }]}><Input.Password /></Form.Item>
-            <Form.Item name="new_password" label="新密码" rules={[{ required: true, message: '请输入新密码' }, { max: 72 }]}><Input.Password /></Form.Item>
-          </Form>
         </Modal>
       </div>
     </RequestState>

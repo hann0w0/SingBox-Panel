@@ -116,7 +116,7 @@ describe('user detail navigation', () => {
     useAuth.setState({ user })
     vi.mocked(getMe).mockResolvedValue({ user, subscription_url: 'https://panel.example/sub/test' })
     mount(path)
-    await screen.findByRole('heading', { name: '订阅' })
+    await screen.findByRole('heading', { name: '订阅链接' })
     expect(screen.queryByRole('tab', { name: '用户管理' })).toBeNull()
     expect(screen.queryByRole('navigation', { name: '主导航' })).toBeNull()
     expect(screen.getByTestId('location').textContent).toBe('/dashboard')

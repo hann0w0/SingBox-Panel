@@ -57,6 +57,7 @@
 
 /* ---------- User subscription page ---------- */
 .sub-page { min-width: 0; }
+.sub-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin-top: 12px; }
 .sub-clients { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; }
 .sub-client { display: flex; align-items: center; gap: 12px; min-width: 0; height: 64px; padding: 0 16px; border: 1px solid var(--console-border); border-radius: var(--app-radius); background: var(--console-container); color: var(--console-ink); font: inherit; text-align: left; cursor: pointer; transition: border-color .15s ease, background-color .15s ease; }
 .sub-client:hover { border-color: var(--console-border-strong); background: var(--console-surface); }

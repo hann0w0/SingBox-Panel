@@ -92,9 +92,6 @@ export const getUserNodes = (signal?: AbortSignal) =>
 export const resetSub = () =>
   http.post<{ subscription_url: string }>('/api/user/reset-sub').then((r) => r.data)
 
-export const changePassword = (old_password: string, new_password: string) =>
-  http.post<{ ok: boolean; token: string }>('/api/user/change-password', { old_password, new_password }).then((r) => r.data)
-
 // ---- admin: overview ----
 export const getOverview = (signal?: AbortSignal) =>
   http.get<Overview>('/api/admin/overview', { signal }).then((r) => r.data)

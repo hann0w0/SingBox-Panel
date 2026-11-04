@@ -811,7 +811,7 @@ func parseLinkLines(raw []byte) (SubscriptionParseResult, error) {
 		}
 		cn, err := ParseShareLink(line)
 		if err != nil {
-			result.Skipped = append(result.Skipped, ImportIssue{Input: truncateImportInput(line), Error: err.Error()})
+			result.Skipped = append(result.Skipped, ImportIssue{Input: truncateImportInput(line), SourceName: shareLinkSourceName(line), Error: err.Error()})
 			continue
 		}
 		if cn.Name == "" {

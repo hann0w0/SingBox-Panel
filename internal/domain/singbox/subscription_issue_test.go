@@ -1,6 +1,9 @@
 package singbox
 
-import "testing"
+import (
+	"encoding/base64"
+	"testing"
+)
 
 func TestSubscriptionIssuesIdentifyOnlyUnambiguousSourceNames(t *testing.T) {
 	for _, tc := range []struct{ name, raw, sourceName string }{
@@ -10,7 +13,11 @@ func TestSubscriptionIssuesIdentifyOnlyUnambiguousSourceNames(t *testing.T) {
 		{"quantumult", "[server_local]\nhttp = proxy.example.com:8080, tag=valid\nsocks5 = proxy.example.com:1080, username=user, tag=broken", "broken"},
 		{"sip008", `{"servers":[{"remarks":"valid","server":"proxy.example.com","server_port":8080,"method":"aes-256-gcm","password":"secret"},{"remarks":"broken","server":"proxy.example.com","server_port":8080,"method":"aes-256-gcm"}]}`, "broken"},
 		{"unnamed clash error", `proxies: [{name: valid, type: http, server: proxy.example.com, port: 8080}, {type: socks5, server: proxy.example.com, port: 1080, username: user}]`, ""},
-		{"URI diagnostic is not a name", "http://proxy.example.com:8080#valid\nunsupported://proxy.example.com:8080#broken", ""},
+		{"URI fragment identifies unsupported protocol", "http://proxy.example.com:8080#valid\nunsupported://proxy.example.com:8080#broken", "broken"},
+		{"URI fragment identifies unsupported transport", "http://proxy.example.com:8080#valid\nvless://11111111-1111-4111-8111-111111111111@proxy.example.com:443?type=xhttp#HK%20%E8%8A%82%E7%82%B9+1", "HK 节点+1"},
+		{"unnamed URI failure", "http://proxy.example.com:8080#valid\nvless://11111111-1111-4111-8111-111111111111@proxy.example.com:443?type=xhttp", ""},
+		{"VMess metadata identifies unsupported transport", "http://proxy.example.com:8080#valid\nvmess://" + base64.StdEncoding.EncodeToString([]byte(`{"ps":"broken-vmess","add":"proxy.example.com","port":"443","id":"11111111-1111-4111-8111-111111111111","net":"xhttp"}`)), "broken-vmess"},
+		{"invalid VMess metadata stays unidentified", "http://proxy.example.com:8080#valid\nvmess://not-base64", ""},
 		{"V2Ray tag cannot identify derived users", `{"outbounds":[{"tag":"valid","protocol":"http","settings":{"servers":[{"address":"proxy.example.com","port":8080}]}},{"tag":"broken","protocol":"vless","settings":{"vnext":[{"address":"proxy.example.com","port":443,"users":[{}]}]}}]}`, ""},
 	} {
 		t.Run(tc.name, func(t *testing.T) {

@@ -2,6 +2,7 @@ package panel
 
 import (
 	"context"
+	"encoding/base64"
 	"fmt"
 	"net/url"
 	"reflect"
@@ -315,5 +316,91 @@ func TestSubscriptionSyncSameNameFailureKeepsAssignments(t *testing.T) {
 	}
 	if !keptA || !keptB {
 		t.Fatalf("same-name row identities lost: a=%v b=%v", keptA, keptB)
+	}
+}
+
+func TestSubscriptionSyncNamedURIFailures(t *testing.T) {
+	const uuid = "12345678-1234-1234-1234-123456789012"
+	for _, encoded := range []bool{false, true} {
+		t.Run(fmt.Sprintf("base64=%v", encoded), func(t *testing.T) {
+			var initial, links []string
+			for i := 0; i < 17; i++ {
+				name, address := fmt.Sprintf("source-valid-%02d", i), fmt.Sprintf("valid-%02d.example.com", i)
+				if i < 16 {
+					initial = append(initial, fmt.Sprintf("  - {name: %q, type: vless, server: %q, port: 443, uuid: %q, tls: true}", name, address, uuid))
+				}
+				links = append(links, fmt.Sprintf("vless://%s@%s:443?security=tls&type=tcp#%s", uuid, address, url.PathEscape(name)))
+			}
+			for i := 0; i < 14; i++ {
+				name := fmt.Sprintf("source-xhttp %02d + 亚洲", i)
+				initial = append(initial, subscriptionReconcileProxy(name, fmt.Sprintf("previous-%02d.example.com", i)))
+				links = append(links, fmt.Sprintf("vless://%s@xhttp-%02d.example.com:443?security=tls&type=xhttp#%s", uuid, i, url.PathEscape(name)))
+			}
+			initial = append(initial, subscriptionReconcileProxy("source-stale", "stale.example.com"))
+			f := newSubscriptionReconcileFixture(t, initial...)
+			var failed model.CustomNode
+			for _, row := range f.nodes(t) {
+				if row.SourceName == "source-xhttp 00 + 亚洲" {
+					failed = row
+				}
+			}
+			f.grantPartialAndOrder(t, failed)
+			if err := f.db.First(&failed, failed.ID).Error; err != nil {
+				t.Fatal(err)
+			}
+			f.body = strings.Join(links, "\n")
+			if encoded {
+				f.body = base64.StdEncoding.EncodeToString([]byte(f.body))
+			}
+			for round := 0; round < 2; round++ {
+				result, err := f.manager.sync(context.Background(), f.source.ID)
+				if err != nil {
+					t.Fatalf("31 named URI entries should partially sync: %v", err)
+				}
+				if result.Created != 1-round || result.Updated != 16+round || result.Deleted != 1-round || result.Total != 31 || result.Skipped != 14 {
+					t.Fatalf("round %d URI reconciliation = %+v", round, result)
+				}
+				rows := f.nodes(t)
+				if len(rows) != 31 {
+					t.Fatalf("round %d stored %d nodes, want 17 valid + 14 retained", round, len(rows))
+				}
+				for _, row := range rows {
+					if row.SourceName == "source-stale" {
+						t.Fatal("unrelated deleted node was retained")
+					}
+					if row.SourceName == "source-valid-16" && (!row.HasUser(f.whole.ID) || row.HasUser(f.partial.ID)) {
+						t.Fatalf("new valid URI node inherited wrong grants: %v", row.UserIDs)
+					}
+				}
+				var retained model.CustomNode
+				if err := f.db.First(&retained, failed.ID).Error; err != nil || !reflect.DeepEqual(retained, failed) {
+					t.Fatalf("named xhttp failure lost saved node or audience: %+v, %v", retained, err)
+				}
+				if orders := f.order(t); len(orders) != 1 || orders[0].NodeID != failed.ID || orders[0].CustomName != "my selected node" {
+					t.Fatalf("failed URI node lost user order: %+v", orders)
+				}
+			}
+		})
+	}
+}
+
+func TestSubscriptionSyncUnnamedURIFailureIsAtomic(t *testing.T) {
+	const valid = "vless://12345678-1234-1234-1234-123456789012@valid.example.com:443?security=tls&type=tcp#source-added"
+	for _, encoded := range []bool{false, true} {
+		t.Run(fmt.Sprintf("base64=%v", encoded), func(t *testing.T) {
+			f := newSubscriptionReconcileFixture(t, subscriptionReconcileProxy("source-old", "old.example.com"))
+			f.grantPartialAndOrder(t, f.nodes(t)[0])
+			beforeNodes, beforeOrder := f.nodes(t), f.order(t)
+			f.body = valid + "\nvless://broken\n"
+			if encoded {
+				f.body = base64.StdEncoding.EncodeToString([]byte(f.body))
+			}
+			if _, err := f.manager.sync(context.Background(), f.source.ID); err == nil {
+				t.Fatal("unnamed damaged URI should reject the entire refresh")
+			}
+			if !reflect.DeepEqual(f.nodes(t), beforeNodes) || !reflect.DeepEqual(f.order(t), beforeOrder) {
+				t.Fatal("unnamed damaged URI changed saved nodes, grants or user order")
+			}
+		})
 	}
 }

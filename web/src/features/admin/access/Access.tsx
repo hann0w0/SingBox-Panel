@@ -73,9 +73,13 @@ const nodeTypeLabel: Record<string, string> = {
   shadowsocks: 'SS',
   trojan: 'Trojan',
   hysteria2: 'Hysteria2',
+  hy2: 'Hysteria2',
   hysteria: 'Hysteria',
+  hy1: 'Hysteria',
   tuic: 'TUIC',
   anytls: 'AnyTLS',
+  http: 'HTTP',
+  https: 'HTTPS',
   socks: 'SOCKS',
   socks5: 'SOCKS5',
   snell: 'Snell',
@@ -108,6 +112,10 @@ function formatProtocolDisplayName(typ: string): string {
       return 'Shadowsocks'
     case 'socks':
       return 'SOCKS5'
+    case 'http':
+      return 'HTTP'
+    case 'https':
+      return 'HTTPS'
     case 'vless':
       return 'VLESS'
     case 'vmess':
@@ -834,7 +842,8 @@ export function UserAccessEditor({ userId, onStateChange }: {
 
 const HAS_UUID = ['vless', 'vmess', 'tuic']
 const HAS_PASSWORD = ['trojan', 'anytls', 'tuic', 'hysteria2', 'hysteria', 'shadowsocks']
-const HAS_TLS = ['vless', 'vmess', 'trojan', 'anytls', 'tuic', 'hysteria2', 'hysteria']
+const HAS_AUTH = ['http', 'socks', 'mixed']
+const HAS_TLS = ['vless', 'vmess', 'trojan', 'anytls', 'tuic', 'hysteria2', 'hysteria', 'http']
 const TLS_REALITY = ['vless', 'vmess', 'trojan']
 const HAS_TRANSPORT = ['vless', 'vmess', 'trojan']
 const HAS_BANDWIDTH = ['hysteria2', 'hysteria']
@@ -854,6 +863,7 @@ const detailParamLabels: Record<string, string> = {
   udp_relay_mode: 'UDP Relay', udp_over_stream: 'UDP over Stream', ss_plugin: 'Plugin',
   obfs: '混淆', obfs_password: '混淆密码', up_mbps: '上行 Mbps', down_mbps: '下行 Mbps',
   version: '版本', obfs_mode: '混淆模式', mode: '模式', security: '加密', alter_id: 'AlterId',
+  http_path: 'HTTP Path', http_headers: 'HTTP Headers',
 }
 
 function nodeDisplayName(node: CustomNode) {
@@ -1136,7 +1146,7 @@ export function CustomNodesPanel({ nodes, loading, error, onNodesChange }: {
       password: p.password,
       method: p.method,
       flow: p.flow,
-      tls_mode: p.tls ?? 'tls',
+      tls_mode: p.tls ?? (n.protocol === 'http' ? 'none' : 'tls'),
       sni: p.sni,
       pbk: p.pbk,
       sid: p.sid,
@@ -1745,7 +1755,7 @@ export function CustomNodesPanel({ nodes, loading, error, onNodesChange }: {
           </Form.Item>
           <Form.Item name="link" label="URI 链接">
             <Input.TextArea
-              placeholder="vless://..."
+              placeholder="支持 vless://、http:// 等节点 URI"
               autoSize={{ minRows: 2, maxRows: 4 }}
               spellCheck={false}
             />
@@ -1755,6 +1765,10 @@ export function CustomNodesPanel({ nodes, loading, error, onNodesChange }: {
               <Form.Item name="protocol" label="协议" rules={[{ required: true, message: '请选择协议' }]}>
                 <Select
                   placeholder="选择协议"
+                  onChange={(protocol) => {
+                    if (protocol === 'http') nodeForm.setFieldValue('tls_mode', 'none')
+                    else if (nodeProtocol === 'http' && !['vless', 'vmess'].includes(protocol)) nodeForm.setFieldValue('tls_mode', 'tls')
+                  }}
                   options={[
                     { value: 'vless', label: 'VLESS' },
                     { value: 'vmess', label: 'VMess' },
@@ -1764,6 +1778,8 @@ export function CustomNodesPanel({ nodes, loading, error, onNodesChange }: {
                     { value: 'tuic', label: 'TUIC' },
                     { value: 'hysteria2', label: 'Hysteria2' },
                     { value: 'hysteria', label: 'Hysteria' },
+                    { value: 'http', label: 'HTTP / HTTPS' },
+                    { value: 'socks', label: 'SOCKS5' },
                     { value: 'snell', label: 'Snell' },
                     { value: 'mixed', label: 'Mixed (HTTP+SOCKS5)' },
                   ]}
@@ -1789,6 +1805,16 @@ export function CustomNodesPanel({ nodes, loading, error, onNodesChange }: {
                 <Form.Item name="password" label={nodeProtocol === 'shadowsocks' ? '密码 / PSK' : '密码'} rules={[{ required: true, message: '请填写密码' }]}>
                   <Input.Password />
                 </Form.Item>
+              )}
+              {HAS_AUTH.includes(nodeProtocol) && (
+                <>
+                  <Form.Item name="username" label="用户名">
+                    <Input autoComplete="off" />
+                  </Form.Item>
+                  <Form.Item name="password" label="密码">
+                    <Input.Password autoComplete="new-password" />
+                  </Form.Item>
+                </>
               )}
               {nodeProtocol === 'shadowsocks' && (
                 <Form.Item name="method" label="加密方式">
@@ -1852,16 +1878,21 @@ export function CustomNodesPanel({ nodes, loading, error, onNodesChange }: {
                               { value: 'tls', label: 'TLS' },
                               { value: 'reality', label: 'REALITY' },
                             ]
-                          : [
-                              { value: 'tls', label: 'TLS' },
-                            ]
+                          : nodeProtocol === 'http'
+                            ? [
+                                { value: 'none', label: '无' },
+                                { value: 'tls', label: 'TLS' },
+                              ]
+                            : [
+                                { value: 'tls', label: 'TLS' },
+                              ]
                       }
                     />
                   </Form.Item>
                   <Form.Item name="sni" label="SNI">
                     <Input placeholder="example.com" />
                   </Form.Item>
-                  {(nodeProtocol === 'vless' || nodeProtocol === 'vmess' || nodeProtocol === 'trojan') && (
+                  {(nodeProtocol === 'vless' || nodeProtocol === 'vmess' || nodeProtocol === 'trojan' || nodeProtocol === 'http') && (
                     <>
                       <Form.Item name="alpn" label="ALPN">
                         <Input placeholder="h2, http/1.1" />
@@ -1997,16 +2028,6 @@ export function CustomNodesPanel({ nodes, loading, error, onNodesChange }: {
                       </>
                     )}
                   </div>
-                </>
-              )}
-              {nodeProtocol === 'mixed' && (
-                <>
-                  <Form.Item name="username" label="用户名">
-                    <Input />
-                  </Form.Item>
-                  <Form.Item name="password" label="密码">
-                    <Input.Password />
-                  </Form.Item>
                 </>
               )}
             </>

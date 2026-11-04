@@ -10,6 +10,7 @@ import (
 	"gorm.io/gorm"
 
 	"github.com/hann0w0/singbox-panel/internal/domain/model"
+	"github.com/hann0w0/singbox-panel/internal/domain/singbox"
 )
 
 const (
@@ -88,20 +89,7 @@ func normalizeNameRuleAction(action string) string {
 }
 
 func normalizeSubscriptionProtocol(protocol string) string {
-	switch strings.ToLower(strings.TrimSpace(protocol)) {
-	case "ss", "shadowsocks":
-		return "shadowsocks"
-	case "socks", "socks5":
-		return "socks"
-	case "hy2", "hysteria2":
-		return "hysteria2"
-	case "hy", "hysteria":
-		return "hysteria"
-	case "tuic", "tuic-v4", "tuic-v5":
-		return "tuic"
-	default:
-		return strings.ToLower(strings.TrimSpace(protocol))
-	}
+	return singbox.NormalizeProtocol(protocol)
 }
 
 func splitRuleParameters(raw string) []string {

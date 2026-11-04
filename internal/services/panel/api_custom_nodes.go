@@ -67,7 +67,8 @@ func validateCustomNode(req *customNodeReq) (parsedName string, err error) {
 		}
 		return cn.Name, nil
 	}
-	req.Protocol = strings.ToLower(strings.TrimSpace(req.Protocol))
+	protocol := strings.ToLower(strings.TrimSpace(req.Protocol))
+	req.Protocol = singbox.NormalizeProtocol(protocol)
 	req.Address = strings.TrimSpace(req.Address)
 	if req.Protocol == "" || req.Address == "" || req.Port < 1 || req.Port > 65535 {
 		return "", errors.New("请填写协议、地址和端口（1-65535）")
@@ -76,6 +77,16 @@ func validateCustomNode(req *customNodeReq) (parsedName string, err error) {
 	if len(req.Params) > 0 {
 		if err := json.Unmarshal(req.Params, &raw); err != nil {
 			return "", errors.New("参数格式错误")
+		}
+	}
+	if protocol == "https" {
+		if raw == nil {
+			raw = map[string]json.RawMessage{}
+		}
+		raw["tls"] = json.RawMessage(`"tls"`)
+		req.Params, err = json.Marshal(raw)
+		if err != nil {
+			return "", err
 		}
 	}
 	stringParam := func(name string) string {
@@ -124,6 +135,8 @@ func validateCustomNode(req *customNodeReq) (parsedName string, err error) {
 		if err := settings.ValidateClientOutbound("snell"); err != nil {
 			return "", errors.New("Snell 参数无效: " + err.Error())
 		}
+	case "http":
+		// HTTP Basic authentication permits an empty username or password.
 	case "socks", "mixed":
 		if (strings.TrimSpace(stringParam("username")) == "") != (strings.TrimSpace(stringParam("password")) == "") {
 			return "", errors.New("用户名和密码必须同时填写或同时留空")

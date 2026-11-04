@@ -203,6 +203,13 @@ func (a *App) applyImportUnlocked(srv *model.Server, p *singbox.ParsedConfig, ra
 }
 
 func importedConfigMode(p *singbox.ParsedConfig, raw []byte) string {
+	// Subscription parsers can understand more client types than the managed
+	// server editor. Keep those whole-server imports editable as raw JSON.
+	for _, outbound := range p.Outbounds {
+		if !supportedOutboundTypes[outbound.Type] {
+			return model.ConfigModeRaw
+		}
+	}
 	// The real orchestrator adds panel statistics services even when they were
 	// absent in the imported JSON. Do not promote a gate that occupies those
 	// reserved ports: the raw configuration may work but managed pushes cannot.

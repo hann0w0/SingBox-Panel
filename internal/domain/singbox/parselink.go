@@ -12,7 +12,7 @@ import (
 )
 
 // ParseShareLink parses a standard share URI (vless://, vmess://, ss://,
-// trojan://, hysteria2://, hysteria://, tuic://, anytls://, socks5://) into a
+// trojan://, hysteria2://, hysteria://, tuic://, anytls://, socks5://, http://, https://) into a
 // ClientNode. It is the inverse of BuildShareLink and lets the panel adopt a
 // hand-shared external node (e.g. a friend's server the admin does not control)
 // into a subscription without touching the managed sing-box configuration.
@@ -36,6 +36,8 @@ func ParseShareLink(uri string) (ClientNode, error) {
 		return parseTUIC(uri)
 	case strings.HasPrefix(lower, "anytls://"):
 		return parseAnyTLS(uri)
+	case strings.HasPrefix(lower, "http://"), strings.HasPrefix(lower, "https://"):
+		return parseHTTP(uri)
 	case strings.HasPrefix(lower, "socks5://"), strings.HasPrefix(lower, "socks://"):
 		return parseSocks(uri)
 	default:
@@ -509,6 +511,40 @@ func parseAnyTLS(uri string) (ClientNode, error) {
 	}
 	if v := q.Get("udp_over_stream"); v == "1" || strings.EqualFold(v, "true") {
 		cn.Settings.AnyTLSUDPOverStream = true
+	}
+	return cn, nil
+}
+
+// parseHTTP consumes an explicitly supplied proxy URI. A resource URL is not a
+// proxy endpoint: fetching subscriptions remains the caller's responsibility.
+func parseHTTP(uri string) (ClientNode, error) {
+	u, err := url.Parse(uri)
+	if err != nil {
+		return ClientNode{}, fmt.Errorf("invalid HTTP proxy link: %w", err)
+	}
+	if u.Path != "" && u.Path != "/" {
+		return ClientNode{}, fmt.Errorf("HTTP proxy link must not contain a resource path")
+	}
+	host, port, err := shareHostPort(u)
+	if err != nil {
+		return ClientNode{}, err
+	}
+	secure := strings.EqualFold(u.Scheme, "https")
+	if u.Port() == "" && !secure {
+		port = 80
+	}
+	cn := ClientNode{Name: shareName(u), Server: host, ServerPort: port, Type: "http"}
+	if u.User != nil {
+		cn.Settings.Username = u.User.Username()
+		cn.Settings.Password, _ = u.User.Password()
+	}
+	q := u.Query()
+	cn.Settings.TLS = TLSSettings{
+		Enabled: secure, ServerName: firstQueryValue(q, "sni", "peer"),
+		Insecure: insecureFromQuery(q), Fingerprint: q.Get("fp"),
+	}
+	if alpn := q.Get("alpn"); alpn != "" {
+		cn.Settings.TLS.ALPN = splitList(alpn)
 	}
 	return cn, nil
 }

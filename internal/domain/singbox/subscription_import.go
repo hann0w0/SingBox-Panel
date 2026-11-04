@@ -170,6 +170,7 @@ var surgeProxyTypes = map[string]bool{
 	"tuic": true, "tuic-v4": true, "tuic-v5": true,
 	"anytls": true,
 	"socks5": true, "socks": true,
+	"http": true, "https": true,
 	"snell": true,
 }
 
@@ -528,12 +529,12 @@ func parseV2RayOutbound(m map[string]any) ([]ClientNode, []ImportIssue) {
 			}
 			addNode(getString(server, "address", "server", "host"), getInt(server, "port", "server-port", "server_port"), suffix, nodeSettings, ProxyUser{Password: password})
 		}
-	case "socks":
+	case "socks", "http":
 		servers := yamlList(getAny(settings, "servers"))
 		for index, rawServer := range servers {
 			server := yamlMap(rawServer)
 			if server == nil {
-				issues = append(issues, ImportIssue{Input: tag, Error: "socks servers 条目不是对象"})
+				issues = append(issues, ImportIssue{Input: tag, Error: protocol + " servers 条目不是对象"})
 				continue
 			}
 			users := yamlList(getAny(server, "users"))
@@ -543,7 +544,7 @@ func parseV2RayOutbound(m map[string]any) ([]ClientNode, []ImportIssue) {
 			for userIndex, rawUser := range users {
 				user := yamlMap(rawUser)
 				if user == nil {
-					issues = append(issues, ImportIssue{Input: tag, Error: "socks users 条目不是对象"})
+					issues = append(issues, ImportIssue{Input: tag, Error: protocol + " users 条目不是对象"})
 					continue
 				}
 				suffix := ""
@@ -914,7 +915,7 @@ func parseClashProxy(m map[string]any) (ImportedNode, error) {
 	if typ == "" {
 		return ImportedNode{}, fmt.Errorf("缺少代理类型")
 	}
-	if typ == "http" || typ == "wireguard" || typ == "socks4" {
+	if typ == "wireguard" || typ == "socks4" {
 		return ImportedNode{}, fmt.Errorf("暂不支持 Clash 代理类型 %q", typ)
 	}
 	server := strings.TrimSpace(getString(m, "server", "address", "host"))
@@ -941,9 +942,9 @@ func parseClashProxy(m map[string]any) (ImportedNode, error) {
 
 	// Common TLS fields. Trojan and the QUIC protocols are TLS by definition
 	// unless a profile explicitly disables it (Clash normally omits the field).
-	tls := getBool(m, "tls", "tls-enabled")
+	tls := getBool(m, "tls", "tls-enabled") || strings.EqualFold(strings.TrimSpace(getString(m, "type")), "https")
 	if _, present := lookupMapValue(m, "tls", "tls-enabled"); !present {
-		tls = typ == "trojan" || typ == "hysteria2" || typ == "hysteria" || typ == "tuic" || typ == "anytls"
+		tls = tls || typ == "trojan" || typ == "hysteria2" || typ == "hysteria" || typ == "tuic" || typ == "anytls"
 	}
 	sni := getString(m, "sni", "servername", "server-name", "server_name", "peer")
 	if sni == "" {
@@ -1041,6 +1042,11 @@ func parseClashProxy(m map[string]any) (ImportedNode, error) {
 				}
 			}
 		}
+	case "http":
+		cn.Settings.HTTPPath = getString(m, "path", "http-path", "http_path")
+		cn.Settings.HTTPHeaders = stringValuesMap(yamlMap(getAny(m, "headers", "http-headers", "http_headers")))
+		cn.Settings.Username = getString(m, "username", "user")
+		cn.Settings.Password = getString(m, "password", "passwd")
 	case "socks":
 		cn.Settings.Username = getString(m, "username", "user")
 		cn.Settings.Password = getString(m, "password", "passwd")
@@ -1137,7 +1143,7 @@ func parseClashProxy(m map[string]any) (ImportedNode, error) {
 		return ImportedNode{}, err
 	}
 	node := importedNodeFromClient(cn, "", false)
-	node.Params["udp"] = getBoolDefault(m, true, "udp", "udp-relay")
+	node.Params["udp"] = typ != "http" && getBoolDefault(m, true, "udp", "udp-relay")
 	if cn.Settings.PacketEncoding != "" {
 		node.Params["packet_encoding"] = cn.Settings.PacketEncoding
 	}
@@ -1205,7 +1211,10 @@ func parseSurgeSubscription(raw []byte) (SubscriptionParseResult, error) {
 			}
 			if k, v, ok := strings.Cut(field, "="); ok {
 				m[strings.TrimSpace(k)] = strings.Trim(strings.TrimSpace(v), "\"")
-			} else {
+			} else if isSurgeBareOption(field) {
+				// Positional credentials are parsed below; inserting arbitrary
+				// tokens as map keys confuses usernames such as "user" with a
+				// named credential and passwords such as "password" with a flag.
 				m[field] = true
 			}
 		}
@@ -1230,7 +1239,7 @@ func parseSurgeSubscription(raw []byte) (SubscriptionParseResult, error) {
 			}
 		}
 		typ := normalizeProtocol(getString(m, "type"))
-		if typ == "socks" {
+		if typ == "socks" || typ == "http" {
 			if x, ok := m["username"]; ok {
 				m["username"] = x
 				delete(m, "uuid")
@@ -1297,7 +1306,7 @@ func normalizeSurgePositionalFields(m map[string]any, extraFields []string) bool
 		if getString(m, "password", "passwd") != "" {
 			return false
 		}
-	case "socks":
+	case "socks", "http":
 		if getString(m, "username", "user") != "" {
 			return false
 		}
@@ -1342,7 +1351,7 @@ func normalizeSurgePositionalFields(m map[string]any, extraFields []string) bool
 		put("uuid", positional[0])
 	case "trojan":
 		put("password", positional[0])
-	case "socks":
+	case "socks", "http":
 		put("username", positional[0])
 		if len(positional) >= 2 {
 			put("password", positional[1])
@@ -1355,7 +1364,7 @@ func normalizeSurgePositionalFields(m map[string]any, extraFields []string) bool
 
 func isSurgeBareOption(field string) bool {
 	switch strings.ToLower(strings.TrimSpace(strings.Trim(field, "\""))) {
-	case "tls", "ws", "tfo", "fast-open", "udp", "udp-relay", "skip-cert-verify":
+	case "tls", "ws", "tfo", "fast-open", "udp", "udp-relay", "skip-cert-verify", "reuse", "udp-over-stream":
 		return true
 	default:
 		return false
@@ -1422,7 +1431,7 @@ func importedNodeFromClient(cn ClientNode, link string, preserveLink bool) Impor
 // latter would expose server-only certificate/private-key fields in an admin
 // response and would not match the structured-node API's stable names.
 func clientParams(cn ClientNode) map[string]any {
-	p := map[string]any{"udp": true}
+	p := map[string]any{"udp": cn.Type != "http"}
 	st := cn.Settings
 	if cn.User.UUID != "" {
 		p["uuid"] = cn.User.UUID
@@ -1436,7 +1445,7 @@ func clientParams(cn ClientNode) map[string]any {
 	if cn.Type == "shadowsocks" && st.SSServerPSK != "" {
 		p["password"] = st.SSServerPSK
 	}
-	if cn.Type == "socks" {
+	if cn.Type == "socks" || cn.Type == "http" {
 		if st.Username != "" {
 			p["username"] = st.Username
 		}
@@ -1444,6 +1453,15 @@ func clientParams(cn ClientNode) map[string]any {
 			p["password"] = st.Password
 		}
 	}
+	if cn.Type == "http" {
+		if st.HTTPPath != "" {
+			p["http_path"] = st.HTTPPath
+		}
+		if len(st.HTTPHeaders) > 0 {
+			p["http_headers"] = st.HTTPHeaders
+		}
+	}
+
 	if st.Method != "" {
 		p["method"] = st.Method
 	}
@@ -1560,15 +1578,20 @@ func clientParams(cn ClientNode) map[string]any {
 	return p
 }
 
-func normalizeProtocol(v string) string {
+// NormalizeProtocol maps subscription and UI aliases to the sing-box client
+// protocol name. HTTPS is HTTP with TLS; callers must preserve its TLS flag.
+// Unknown values remain unchanged so each boundary can reject unsupported types.
+func NormalizeProtocol(v string) string {
 	switch strings.ToLower(strings.TrimSpace(v)) {
 	case "ss", "shadowsocks":
 		return "shadowsocks"
 	case "socks", "socks5":
 		return "socks"
+	case "http", "https":
+		return "http"
 	case "hy2", "hysteria2":
 		return "hysteria2"
-	case "hy", "hysteria":
+	case "hy", "hy1", "hysteria", "hysteria1":
 		return "hysteria"
 	case "tuic", "tuic-v4", "tuic-v5":
 		return "tuic"
@@ -1578,6 +1601,8 @@ func normalizeProtocol(v string) string {
 		return strings.ToLower(strings.TrimSpace(v))
 	}
 }
+
+func normalizeProtocol(v string) string { return NormalizeProtocol(v) }
 
 func normalizeImportKey(k string) string {
 	k = strings.ToLower(strings.TrimSpace(k))

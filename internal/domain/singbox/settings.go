@@ -301,10 +301,13 @@ type InboundSettings struct {
 	// SingleUser so old rows and API clients remain single-credential by default;
 	// imported raw configs still describe their observed wire shape with
 	// SingleUser without being silently adopted as panel-managed multi-user.
-	MultiUser bool   `json:"multi_user,omitempty"`
-	Username  string `json:"username,omitempty"` // socks5 username
-	UUID      string `json:"uuid,omitempty"`     // vless / vmess / tuic single-user id
-	Password  string `json:"password,omitempty"` // trojan / hy2 / hysteria / naive / anytls / tuic / shadowtls / snell
+	MultiUser   bool                `json:"multi_user,omitempty"`
+	HTTPPath    string              `json:"http_path,omitempty"`
+	HTTPHeaders map[string][]string `json:"http_headers,omitempty"`
+
+	Username string `json:"username,omitempty"` // socks5 / http username
+	UUID     string `json:"uuid,omitempty"`     // vless / vmess / tuic single-user id
+	Password string `json:"password,omitempty"` // trojan / hy2 / hysteria / naive / anytls / tuic / shadowtls / snell
 
 	// anytls
 	AnyTLSUDPOverStream bool `json:"anytls_udp_over_stream,omitempty"` // udp_over_stream=1 client option

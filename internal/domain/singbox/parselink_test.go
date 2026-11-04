@@ -167,7 +167,7 @@ func TestParseShareLinkRoundTrip(t *testing.T) {
 }
 
 func TestParseShareLinkErrors(t *testing.T) {
-	for _, uri := range []string{"", "http://example.com", "vless://", "vmess://not-base64", "ss://bad"} {
+	for _, uri := range []string{"", "http://example.com/subscription", "vless://", "vmess://not-base64", "ss://bad"} {
 		if _, err := ParseShareLink(uri); err == nil {
 			t.Errorf("ParseShareLink(%q) should fail", uri)
 		}

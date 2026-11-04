@@ -135,12 +135,8 @@ func validateCustomNode(req *customNodeReq) (parsedName string, err error) {
 		if err := settings.ValidateClientOutbound("snell"); err != nil {
 			return "", errors.New("Snell 参数无效: " + err.Error())
 		}
-	case "http":
-		// HTTP Basic authentication permits an empty username or password.
-	case "socks", "mixed":
-		if (strings.TrimSpace(stringParam("username")) == "") != (strings.TrimSpace(stringParam("password")) == "") {
-			return "", errors.New("用户名和密码必须同时填写或同时留空")
-		}
+	case "http", "socks", "mixed":
+		// External proxy credentials are optional and must be preserved as supplied.
 	case "vless", "vmess":
 		if err := need("uuid"); err != nil {
 			return "", err

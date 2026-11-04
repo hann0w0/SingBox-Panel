@@ -441,26 +441,37 @@ type CustomNode struct {
 	UpdatedAt       time.Time `json:"updated_at"`
 }
 
+// SubscriptionSyncStatus records whether the last refresh applied all, some,
+// or none of the subscription snapshot.
+type SubscriptionSyncStatus string
+
+const (
+	SubscriptionSyncSuccess SubscriptionSyncStatus = "success"
+	SubscriptionSyncPartial SubscriptionSyncStatus = "partial"
+	SubscriptionSyncFailed  SubscriptionSyncStatus = "failed"
+)
+
 // CustomNodeSubscription is a saved HTTP(S) subscription whose generated
 // CustomNode rows are reconciled on a schedule. Failed refreshes only update
 // the status fields; they never remove the last known-good node set.
 type CustomNodeSubscription struct {
-	ID                    uint              `gorm:"primaryKey" json:"id"`
-	Name                  string            `gorm:"size:128;not null" json:"name"`
-	URL                   string            `gorm:"size:2048;not null" json:"url"`
-	Group                 string            `gorm:"size:64;index" json:"group"`
-	Enabled               bool              `gorm:"index;not null;default:true" json:"enabled"`
-	AutoUpdate            bool              `gorm:"index;not null;default:true" json:"auto_update"`
-	UpdateIntervalMinutes int               `gorm:"not null;default:60" json:"update_interval_minutes"`
-	BaseSortOrder         int               `json:"base_sort_order"`
-	NameRewriteRules      []NameRewriteRule `gorm:"serializer:json;type:text" json:"name_rewrite_rules"`
-	LastSyncAt            *time.Time        `json:"last_sync_at"`
-	LastSuccessAt         *time.Time        `json:"last_success_at"`
-	LastError             string            `gorm:"type:text" json:"last_error"`
-	SourceType            string            `gorm:"size:32" json:"source_type"`
-	NodeCount             int               `json:"node_count"`
-	CreatedAt             time.Time         `json:"created_at"`
-	UpdatedAt             time.Time         `json:"updated_at"`
+	ID                    uint                   `gorm:"primaryKey" json:"id"`
+	Name                  string                 `gorm:"size:128;not null" json:"name"`
+	URL                   string                 `gorm:"size:2048;not null" json:"url"`
+	Group                 string                 `gorm:"size:64;index" json:"group"`
+	Enabled               bool                   `gorm:"index;not null;default:true" json:"enabled"`
+	AutoUpdate            bool                   `gorm:"index;not null;default:true" json:"auto_update"`
+	UpdateIntervalMinutes int                    `gorm:"not null;default:60" json:"update_interval_minutes"`
+	BaseSortOrder         int                    `json:"base_sort_order"`
+	NameRewriteRules      []NameRewriteRule      `gorm:"serializer:json;type:text" json:"name_rewrite_rules"`
+	LastSyncAt            *time.Time             `json:"last_sync_at"`
+	LastSuccessAt         *time.Time             `json:"last_success_at"`
+	LastSyncStatus        SubscriptionSyncStatus `gorm:"size:16;not null;default:''" json:"last_sync_status"`
+	LastError             string                 `gorm:"type:text" json:"last_error"`
+	SourceType            string                 `gorm:"size:32" json:"source_type"`
+	NodeCount             int                    `json:"node_count"`
+	CreatedAt             time.Time              `json:"created_at"`
+	UpdatedAt             time.Time              `json:"updated_at"`
 }
 
 // AllModels lists every entity for AutoMigrate.

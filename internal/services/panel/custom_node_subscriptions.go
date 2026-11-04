@@ -181,8 +181,9 @@ func (m *customNodeSubscriptionManager) sync(ctx context.Context, id uint) (cust
 	markFailure := func(err error) error {
 		message := trimRunes(err.Error(), 1000)
 		if dbErr := m.db.Model(&model.CustomNodeSubscription{}).Where("id = ?", id).Updates(map[string]any{
-			"last_sync_at": &now,
-			"last_error":   message,
+			"last_sync_at":     &now,
+			"last_error":       message,
+			"last_sync_status": model.SubscriptionSyncFailed,
 		}).Error; dbErr != nil {
 			return fmt.Errorf("%v; save sync error: %w", err, dbErr)
 		}
@@ -346,12 +347,14 @@ func (m *customNodeSubscriptionManager) sync(ctx context.Context, id uint) (cust
 		result.Total = int(actualVisible)
 		lastError := ""
 		updates := map[string]any{
-			"last_sync_at": &now,
-			"last_error":   lastError,
-			"source_type":  parsed.SourceType,
-			"node_count":   actualVisible,
+			"last_sync_at":     &now,
+			"last_error":       lastError,
+			"last_sync_status": model.SubscriptionSyncSuccess,
+			"source_type":      parsed.SourceType,
+			"node_count":       actualVisible,
 		}
 		if partial {
+			updates["last_sync_status"] = model.SubscriptionSyncPartial
 			updates["last_error"] = fmt.Sprintf("有 %d 个节点解析失败，保留 %d 个仍在源中的旧节点", len(parsed.Skipped), retained)
 		} else {
 			updates["last_success_at"] = &now

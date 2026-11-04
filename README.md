@@ -143,7 +143,7 @@ HTTP 与 HTTPS 代理统一使用 `http` 类型，通过 TLS 开关区分。Clas
 
 订阅内容支持明文/Base64 URI 列表、Clash/Mihomo YAML、Surge/Loon、Quantumult X 的 `server_local`、sing-box JSON、V2Ray/Xray JSON 和 SIP008。各格式按可表达的协议与字段导入；V2Ray/Xray JSON 支持 VLESS、VMess、Trojan、Shadowsocks、SOCKS 和 HTTP，SIP008 仅包含 Shadowsocks。仅提取节点，不导入规则或递归下载配置中的其他订阅引用。
 
-同步会清理源中已删除或更名的旧节点。部分节点解析失败时，只保留能按源名称定位到的对应旧节点，其余节点仍按当前订阅更新；无法定位失败条目或超出节点数量限制时，整轮保留上次结果，避免旧节点持续累积。部分同步以警告提示，并显示当前实际节点总数。
+同步会清理源中已删除或更名的旧节点。部分节点解析失败时，只保留能按源名称定位到的对应旧节点，其余节点仍按当前订阅更新；无法定位失败条目或超出节点数量限制时，整轮保留上次结果，避免旧节点持续累积。部分同步以警告提示，列表显示黄色「部分成功」及当前实际节点总数；整轮失败才显示红色「同步失败」。旧版本历史状态会在下次同步后更新。
 
 HTTP 代理的 TLS、SNI、证书验证设置、认证和自定义请求头会保留；自定义 CONNECT 路径可通过 sing-box JSON 保存与输出。URI、Clash、Surge 无法完整表达的 HTTP 参数不会被静默删除后输出，客户端应选用能够保留这些参数的订阅格式。VLESS/VMess/Trojan 传输仍限 TCP、WebSocket 和 HTTPUpgrade。
 

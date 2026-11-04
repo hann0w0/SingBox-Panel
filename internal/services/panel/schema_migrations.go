@@ -378,6 +378,11 @@ var applicationMigrations = []schemaMigration{
 		name:    "durable subscription credential synchronization",
 		up:      func(tx *gorm.DB) error { return tx.AutoMigrate(&model.Server{}) },
 	},
+	{
+		version: 31,
+		name:    "explicit external subscription sync status",
+		up:      func(tx *gorm.DB) error { return tx.AutoMigrate(&model.CustomNodeSubscription{}) },
+	},
 }
 
 // migrationReplaySafe records whether an interrupted attempt of each migration
@@ -427,6 +432,7 @@ var migrationReplaySafe = map[uint]bool{
 	28: true,  // AutoMigrate plus insert-only inbound traffic tag bindings
 	29: false, // backfill could overwrite a later change to an individual node switch
 	30: true,  // AutoMigrate of durable credential synchronization revisions
+	31: true,  // AutoMigrate of external subscription sync status
 }
 
 // runSchemaMigrations applies every pending migration in order. If any

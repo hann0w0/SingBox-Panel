@@ -1,6 +1,7 @@
 package panel
 
 import (
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -34,6 +35,9 @@ type node struct {
 }
 
 func (n node) udpEnabled() bool {
+	if n.typ == "http" {
+		return false
+	}
 	return n.udp == nil || *n.udp
 }
 
@@ -287,6 +291,8 @@ func (a *App) customNodeToNode(c *model.CustomNode) (node, bool) {
 		UUID                  string         `json:"uuid"`
 		Password              string         `json:"password"`
 		Username              string         `json:"username"`
+		HTTPPath              string         `json:"http_path"`
+		HTTPHeaders           map[string]any `json:"http_headers"`
 		Method                string         `json:"method"`
 		SSPlugin              string         `json:"ss_plugin"`
 		Plugin                string         `json:"plugin"`
@@ -337,16 +343,9 @@ func (a *App) customNodeToNode(c *model.CustomNode) (node, bool) {
 			return node{}, false
 		}
 	}
-	protocol := strings.ToLower(strings.TrimSpace(c.Protocol))
-	switch protocol {
-	case "ss":
-		protocol = "shadowsocks"
-	case "socks5":
-		protocol = "socks"
-	case "hy2":
-		protocol = "hysteria2"
-	case "hy1":
-		protocol = "hysteria"
+	protocol := singbox.NormalizeProtocol(c.Protocol)
+	if strings.EqualFold(strings.TrimSpace(c.Protocol), "https") {
+		p.TLS = "tls"
 	}
 	name := c.Name
 	if name == "" {
@@ -493,6 +492,16 @@ func (a *App) customNodeToNode(c *model.CustomNode) (node, bool) {
 		}
 		st.SnellObfsHost = strings.TrimSpace(p.ObfsHost)
 		st.SnellMode = p.Mode
+	case "http":
+		st.Username, st.Password = p.Username, p.Password
+		st.HTTPPath = p.HTTPPath
+		if len(p.HTTPHeaders) > 0 {
+			st.HTTPHeaders = make(map[string][]string, len(p.HTTPHeaders))
+			for key, value := range p.HTTPHeaders {
+				st.HTTPHeaders[key] = headerValues(value)
+			}
+		}
+		buildTLS()
 	case "socks", "mixed":
 		st.Username = p.Username
 		st.Password = p.Password
@@ -621,6 +630,8 @@ func formatProtocolDisplayName(typ string) string {
 		return "Shadowsocks"
 	case "socks":
 		return "SOCKS5"
+	case "http":
+		return "HTTP"
 	case "vless":
 		return "VLESS"
 	case "vmess":
@@ -992,6 +1003,51 @@ func clashProxy(n node, seen map[string]int) map[string]any {
 			base["password"] = st.Password
 		}
 		base["udp"] = n.udpEnabled()
+	case "http":
+		base["type"] = "http"
+		if st.Username != "" {
+			base["username"] = st.Username
+		}
+		if st.Password != "" {
+			base["password"] = st.Password
+		}
+		if st.HTTPPath != "" {
+			// Clash HTTP proxies have no CONNECT path option.
+			return nil
+		}
+		headers := map[string]any{}
+		hasAuthorization := false
+		for key, values := range st.HTTPHeaders {
+			if len(values) == 1 {
+				headers[key] = values[0]
+				hasAuthorization = hasAuthorization || strings.EqualFold(key, "Proxy-Authorization")
+			} else if len(values) > 1 {
+				// Mihomo HTTP headers are map[string]string. Keep repeated
+				// headers in sing-box instead of emitting an invalid YAML proxy.
+				return nil
+			}
+		}
+		if !hasAuthorization && (st.Username == "") != (st.Password == "") {
+			// Mihomo only creates Basic auth when both fields are nonempty.
+			// An explicit header keeps one-sided credentials from becoming anonymous.
+			headers["Proxy-Authorization"] = "Basic " + base64.StdEncoding.EncodeToString([]byte(st.Username+":"+st.Password))
+		}
+		if len(headers) > 0 {
+			base["headers"] = headers
+		}
+		if tlsOn {
+			base["tls"] = true
+			base["sni"] = sni
+			if st.TLS.ClientInsecure() {
+				base["skip-cert-verify"] = true
+			}
+			if len(st.TLS.ALPN) > 0 {
+				base["alpn"] = st.TLS.ALPN
+			}
+			if st.TLS.Fingerprint != "" {
+				base["client-fingerprint"] = st.TLS.Fingerprint
+			}
+		}
 	case "mixed": // Clash has no mixed type; clients dial it as SOCKS5
 		base["type"] = "socks5"
 		if u.Username == "" {
@@ -1228,7 +1284,7 @@ func nodeParams(n node) map[string]string {
 	case "shadowsocks":
 		p["加密方式"] = st.Method
 		p["密码"] = singbox.SSClientPassword(st, u.Password)
-	case "socks":
+	case "http", "socks":
 		if st.Username != "" {
 			p["用户名"] = st.Username
 		}
@@ -1237,6 +1293,16 @@ func nodeParams(n node) map[string]string {
 		}
 		if st.Username == "" && st.Password == "" {
 			p["认证"] = "无需认证"
+		}
+		if n.typ == "http" {
+			p["安全"] = "none"
+			if nodeTLSOn(st) {
+				p["安全"] = "tls"
+				p["SNI"] = sni
+			}
+			if st.HTTPPath != "" {
+				p["Path"] = st.HTTPPath
+			}
 		}
 	case "hysteria2":
 		p["密码"] = u.Password
@@ -1490,6 +1556,30 @@ func surgeProxyUnchecked(n node, name string) string {
 			line += ", password=" + surgeValue(st.Password)
 		}
 		return fmt.Sprintf("%s, udp-relay=%t", line, n.udpEnabled())
+	case "http":
+		if st.HTTPPath != "" || len(st.HTTPHeaders) > 0 {
+			return ""
+		}
+		typ := "http"
+		if nodeTLSOn(st) {
+			typ = "https"
+		}
+		line := fmt.Sprintf("%s = %s, %s, %d", name, typ, n.server, n.port)
+		if st.Username != "" || st.Password != "" {
+			username, password := surgeValue(st.Username), surgeValue(st.Password)
+			if username == "" {
+				username = `""`
+			}
+			if password == "" {
+				password = `""`
+			}
+			line += ", username=" + username + ", password=" + password
+		}
+		if nodeTLSOn(st) {
+			line += fmt.Sprintf(", sni=%s, skip-cert-verify=%t", surgeValue(sni), st.TLS.ClientInsecure())
+			line += surgeALPN(st.TLS.ALPN)
+		}
+		return line
 	case "trojan":
 		line := fmt.Sprintf("%s = trojan, %s, %d, password=%s, tls=true, sni=%s, skip-cert-verify=%t",
 			name, n.server, n.port, surgeValue(u.Password), surgeValue(sni), st.TLS.ClientInsecure())

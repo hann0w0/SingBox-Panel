@@ -12,6 +12,7 @@ const PARAM_FIELDS: Record<string, readonly string[]> = {
   hysteria: ['password', 'obfs', 'obfs_password', 'up_mbps', 'down_mbps'],
   shadowsocks: ['password', 'method', 'ss_plugin'],
   snell: ['psk', 'snell_version', 'snell_obfs_mode', 'snell_obfs_host', 'snell_mode'],
+  http: ['username', 'password', 'alpn', 'fingerprint'],
   socks: ['username', 'password'],
   mixed: ['username', 'password'],
 }
@@ -28,7 +29,7 @@ export function buildCustomNodeParams(node: CustomNode | null, values: FormValue
   const sameProtocol = node?.protocol === protocol && !node.link?.trim()
   const params: Record<string, unknown> = sameProtocol ? JSON.parse(JSON.stringify(node.params ?? {})) : {}
   const fields = [...(PARAM_FIELDS[protocol] ?? [])]
-  if (['vless', 'vmess', 'trojan', 'anytls', 'tuic', 'hysteria2', 'hysteria'].includes(protocol)) {
+  if (['vless', 'vmess', 'trojan', 'anytls', 'tuic', 'hysteria2', 'hysteria', 'http'].includes(protocol)) {
     fields.push('tls_mode', 'sni', 'insecure')
   }
   if (['vless', 'vmess', 'trojan'].includes(protocol)) {

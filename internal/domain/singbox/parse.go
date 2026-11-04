@@ -343,7 +343,7 @@ func parseOutbound(m map[string]any) (ParsedOutbound, bool) {
 		return ParsedOutbound{}, false
 	}
 	switch typ {
-	case "vless", "vmess", "trojan", "shadowsocks", "hysteria2", "tuic", "anytls", "snell", "socks":
+	case "vless", "vmess", "trojan", "shadowsocks", "hysteria2", "hysteria", "tuic", "anytls", "snell", "socks", "http":
 	default:
 		return ParsedOutbound{}, false
 	}
@@ -388,6 +388,19 @@ func parseOutbound(m map[string]any) (ParsedOutbound, bool) {
 			s.GeckoMinPacketSize = mInt(obfs, "min_packet_size")
 			s.GeckoMaxPacketSize = mInt(obfs, "max_packet_size")
 		}
+	case "hysteria":
+		out.Password = mStr(m, "auth_str")
+		// The binary auth form is base64-encoded; normalize to the string
+		// credential emitted by BuildClientOutbound.
+		if out.Password == "" {
+			if auth, err := base64.StdEncoding.DecodeString(mStr(m, "auth")); err == nil {
+				out.Password = string(auth)
+			}
+		}
+		s.UpMbps = mInt(m, "up_mbps")
+		s.DownMbps = mInt(m, "down_mbps")
+		s.ObfsPassword = mStr(m, "obfs")
+
 	case "snell":
 		out.Password = mStr(m, "psk")
 		s.SnellVersion = mInt(m, "version")
@@ -398,6 +411,11 @@ func parseOutbound(m map[string]any) (ParsedOutbound, bool) {
 		s.SnellObfsHost = mStr(m, "obfs_host")
 		s.SnellMode = mStr(m, "mode")
 		s.SingleUser = true
+	case "http":
+		s.HTTPPath = mStr(m, "path")
+		s.HTTPHeaders = stringValuesMap(mMap(m, "headers"))
+		s.Username = out.Username
+		s.Password = out.Password
 	case "socks":
 		s.Username = out.Username
 		s.Password = out.Password

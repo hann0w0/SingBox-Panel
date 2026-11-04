@@ -135,6 +135,16 @@ SNI 白名单留空时沿用 Reality 的 SNI／握手域名，可填写多个完
 
 管理员查看记录时，面板后端按需向 GeoJS 查询公网 IP 的大致位置和网络归属，仅发送待查询的 IP，不发送用户名、订阅凭证或客户端信息；内网与保留地址不会发送。结果在进程内缓存 24 小时，查询失败不会阻塞订阅下载或隐藏拉取记录。位置不是精确定位，数据保留期为 30 天。
 
+## 外部节点与订阅源
+
+「外部节点」可手动填写连接参数、粘贴单条节点 URI，或添加 HTTP(S) 订阅源定期同步。支持 VLESS、VMess、Trojan、AnyTLS、Shadowsocks、TUIC、Hysteria 1/2、Snell 4/5/6、SOCKS5、HTTP/HTTPS 和 Mixed；Snell 使用结构化配置导入，Mixed 对客户端输出为 SOCKS5。
+
+HTTP 与 HTTPS 代理统一使用 `http` 类型，通过 TLS 开关区分。Clash 中的 `type: http`、`tls: true` 会保留为 HTTPS 代理，用户名和密码各自可选，包括仅填写用户名、密码为空的节点。URI 示例：`https://user:password@proxy.example.com:8443#HTTPS`。节点 URI 不会触发订阅下载，带资源路径的 HTTP(S) 地址应填写到「订阅源」。
+
+订阅内容支持明文/Base64 URI 列表、Clash/Mihomo YAML、Surge/Loon、Quantumult X 的 `server_local`、sing-box JSON、V2Ray/Xray JSON 和 SIP008。各格式按可表达的协议与字段导入；V2Ray/Xray JSON 支持 VLESS、VMess、Trojan、Shadowsocks、SOCKS 和 HTTP，SIP008 仅包含 Shadowsocks。仅提取节点，不导入规则或递归下载配置中的其他订阅引用。
+
+HTTP 代理的 TLS、SNI、证书验证设置、认证和自定义请求头会保留；自定义 CONNECT 路径可通过 sing-box JSON 保存与输出。URI、Clash、Surge 无法完整表达的 HTTP 参数不会被静默删除后输出，客户端应选用能够保留这些参数的订阅格式。VLESS/VMess/Trojan 传输仍限 TCP、WebSocket 和 HTTPUpgrade。
+
 ## 导入出站
 
 在「服务器 → 出站 → 新增出站」中，可手动填写，或解析一条节点 URI。解析后确认协议、地址和端口，填写出站标签并保存；出站会按现有配置下发流程应用到服务器。

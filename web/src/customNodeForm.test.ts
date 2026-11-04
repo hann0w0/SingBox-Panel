@@ -61,4 +61,19 @@ describe('buildCustomNodeParams', () => {
     expect(buildCustomNodeParams(legacy, { protocol: 'hysteria2', password: 'secret' })).toEqual(legacy.params)
     expect(buildCustomNodeParams(legacy, { protocol: 'hysteria2', obfs: '' })).toEqual({ password: 'secret', obfs: '' })
   })
+
+  it('keeps hidden HTTP request fields while editing proxy settings', () => {
+    const node = {
+      ...importedNode,
+      protocol: 'http',
+      params: {
+        username: 'old-user', password: 'old-password', tls: 'tls', sni: 'proxy.example.com',
+        http_path: '/connect', http_headers: { 'X-Test': ['one', 'two'] },
+      },
+    }
+    expect(buildCustomNodeParams(node, { protocol: 'http', username: 'new-user', tls_mode: 'none', alpn: 'http/1.1', fingerprint: 'firefox' })).toEqual({
+      username: 'new-user', password: 'old-password', tls: 'none', sni: 'proxy.example.com',
+      http_path: '/connect', http_headers: { 'X-Test': ['one', 'two'] }, alpn: 'http/1.1', fingerprint: 'firefox',
+    })
+  })
 })

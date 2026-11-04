@@ -246,7 +246,18 @@ func BuildClientOutbound(n ClientNode) (json.RawMessage, error) {
 		if n.Settings.SnellVersion == 6 && n.Settings.SnellMode != "" && n.Settings.SnellMode != "default" {
 			base["mode"] = n.Settings.SnellMode
 		}
-	case "socks":
+	case "http", "socks":
+		if n.Type == "http" {
+			if tls != nil {
+				base["tls"] = tls
+			}
+			if n.Settings.HTTPPath != "" {
+				base["path"] = n.Settings.HTTPPath
+			}
+			if len(n.Settings.HTTPHeaders) > 0 {
+				base["headers"] = n.Settings.HTTPHeaders
+			}
+		}
 		user := n.User.Username
 		if user == "" {
 			user = n.Settings.Username
@@ -260,6 +271,23 @@ func BuildClientOutbound(n ClientNode) (json.RawMessage, error) {
 		}
 		if pw != "" {
 			base["password"] = pw
+		}
+		if n.Type == "http" && user == "" && pw != "" {
+			// sing-box only derives Basic auth when username is nonempty.
+			// Keep password-only credentials meaningful through an explicit
+			// header, without changing the caller's settings or header map.
+			headers := make(map[string][]string, len(n.Settings.HTTPHeaders)+1)
+			hasAuthorization := false
+			for key, values := range n.Settings.HTTPHeaders {
+				headers[key] = values
+				if strings.EqualFold(key, "Proxy-Authorization") {
+					hasAuthorization = true
+				}
+			}
+			if !hasAuthorization {
+				headers["Proxy-Authorization"] = []string{"Basic " + base64.StdEncoding.EncodeToString([]byte(":"+pw))}
+			}
+			base["headers"] = headers
 		}
 	case "mixed": // client dials it as SOCKS5 (HTTP is a server-side convenience)
 		base["type"] = "socks"
@@ -433,6 +461,40 @@ func BuildShareLink(n ClientNode) (string, error) {
 			return fmt.Sprintf("ss://%s@%s/?%s#%s", userinfo, hostPort, q.Encode(), name), nil
 		}
 		return fmt.Sprintf("ss://%s@%s#%s", userinfo, hostPort, name), nil
+
+	case "http":
+		if n.Settings.HTTPPath != "" || len(n.Settings.HTTPHeaders) > 0 {
+			return "", fmt.Errorf("HTTP proxy path/headers require a structured subscription format")
+		}
+		username, password := n.User.Username, n.User.Password
+		if username == "" {
+			username = n.Settings.Username
+		}
+		if password == "" {
+			password = n.Settings.Password
+		}
+		u := url.URL{Scheme: "http", Host: hostPort, Fragment: n.Name}
+		if username != "" || password != "" {
+			u.User = url.UserPassword(username, password)
+		}
+		if t.tlsEnabled() {
+			u.Scheme = "https"
+			q := url.Values{}
+			if t.ServerName != "" {
+				q.Set("sni", t.ServerName)
+			}
+			if t.ClientInsecure() {
+				q.Set("insecure", "1")
+			}
+			if len(t.ALPN) > 0 {
+				q.Set("alpn", strings.Join(t.ALPN, ","))
+			}
+			if t.Fingerprint != "" {
+				q.Set("fp", t.Fingerprint)
+			}
+			u.RawQuery = q.Encode()
+		}
+		return u.String(), nil
 
 	case "socks":
 		username := n.User.Username

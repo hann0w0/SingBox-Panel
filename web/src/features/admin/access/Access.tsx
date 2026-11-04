@@ -1086,6 +1086,8 @@ export function CustomNodesPanel({ nodes, loading, error, onNodesChange }: {
         const result = await createCustomNodeSubscription(body)
         if (result.sync_error) {
           message.warning(`订阅已保存，首次同步失败：${result.sync_error}`)
+        } else if (result.sync.skipped) {
+          message.warning(`订阅已保存，部分同步失败：${result.subscription.last_error}`)
         } else {
           message.success(`订阅已保存并同步 ${result.sync.total} 个节点${result.sync.filtered ? `，过滤 ${result.sync.filtered} 个` : ''}`)
         }
@@ -1105,7 +1107,9 @@ export function CustomNodesPanel({ nodes, loading, error, onNodesChange }: {
     setSyncingSubscriptionID(subscription.id)
     try {
       const result = await syncCustomNodeSubscription(subscription.id)
-      message.success(`同步完成：新增 ${result.sync.created}，更新 ${result.sync.updated}，删除 ${result.sync.deleted}${result.sync.filtered ? `，过滤 ${result.sync.filtered}` : ''}`)
+      const summary = `当前 ${result.sync.total} 个节点，新增 ${result.sync.created}，更新 ${result.sync.updated}，删除 ${result.sync.deleted}${result.sync.filtered ? `，过滤 ${result.sync.filtered}` : ''}`
+      if (result.sync.skipped) message.warning(`部分同步完成：${summary}；${result.subscription.last_error}`)
+      else message.success(`同步完成：${summary}`)
       loadSubscriptions()
       onNodesChange()
     } catch (e) {

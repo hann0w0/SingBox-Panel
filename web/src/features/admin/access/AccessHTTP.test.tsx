@@ -1,7 +1,8 @@
 import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { createCustomNode, listCustomNodeSubscriptions, updateCustomNode } from '../../../api'
-import type { CustomNode } from '../../../api'
+import { createCustomNode, listCustomNodeSubscriptions, syncCustomNodeSubscription, updateCustomNode } from '../../../api'
+import type { CustomNode, CustomNodeSubscription } from '../../../api'
+import { message } from '../../../ui'
 import { CustomNodesPanel } from './Access'
 
 vi.mock('../../../api', async (importOriginal) => ({
@@ -9,6 +10,7 @@ vi.mock('../../../api', async (importOriginal) => ({
   createCustomNode: vi.fn(),
   updateCustomNode: vi.fn(),
   listCustomNodeSubscriptions: vi.fn(),
+  syncCustomNodeSubscription: vi.fn(),
 }))
 
 const node: CustomNode = {
@@ -26,6 +28,36 @@ beforeEach(() => {
   vi.mocked(listCustomNodeSubscriptions).mockResolvedValue([])
   vi.mocked(createCustomNode).mockResolvedValue(node)
   vi.mocked(updateCustomNode).mockResolvedValue(node)
+})
+
+describe('subscription sync feedback', () => {
+  it.each([0, 1])('reports skipped=%s without showing a false success', async (skipped) => {
+    const source: CustomNodeSubscription = {
+      id: 1, name: 'Source', url: 'https://provider.example.com/sub', group: '',
+      enabled: true, auto_update: true, update_interval_minutes: 60, base_sort_order: 0,
+      name_rewrite_rules: [], node_count: 81, last_error: '', source_type: 'clash-yaml',
+      created_at: '', updated_at: '',
+    }
+    vi.mocked(listCustomNodeSubscriptions).mockResolvedValue([source])
+    const last_error = skipped ? '有 1 个节点解析失败，保留 1 个仍在源中的旧节点' : ''
+    vi.mocked(syncCustomNodeSubscription).mockResolvedValue({
+      subscription: { ...source, node_count: 29, last_error },
+      sync: { created: 0, updated: 28, deleted: 52, total: 29, skipped, filtered: 0 },
+    })
+    const warning = vi.spyOn(message, 'warning')
+    const success = vi.spyOn(message, 'success')
+    render(<CustomNodesPanel nodes={[]} loading={false} onNodesChange={vi.fn()} />)
+    fireEvent.click(await screen.findByRole('button', { name: '同步 Source' }))
+    await waitFor(() => expect(syncCustomNodeSubscription).toHaveBeenCalledWith(1))
+    if (skipped) {
+      await waitFor(() => expect(warning).toHaveBeenCalledWith(expect.stringContaining('部分同步完成：当前 29 个节点')))
+      expect(warning).toHaveBeenCalledWith(expect.stringContaining(last_error))
+      expect(success).not.toHaveBeenCalled()
+    } else {
+      await waitFor(() => expect(success).toHaveBeenCalledWith(expect.stringContaining('同步完成：当前 29 个节点')))
+      expect(warning).not.toHaveBeenCalled()
+    }
+  })
 })
 afterEach(() => {
   cleanup()

@@ -52,6 +52,10 @@ type ImportedNode struct {
 type ImportIssue struct {
 	Input string `json:"input"`
 	Error string `json:"error"`
+	// SourceName is set only when the failed entry has an unambiguous original
+	// node name. Input may instead be a URI or truncated text and cannot identify
+	// a stored node during subscription reconciliation.
+	SourceName string `json:"source_name,omitempty"`
 }
 
 // SubscriptionParseResult is the result of ParseSubscription.
@@ -334,12 +338,12 @@ func parseSingBoxSubscription(raw []byte) (SubscriptionParseResult, error) {
 		ob, ok := parseOutbound(m)
 		if !ok {
 			result.Skipped = append(result.Skipped, ImportIssue{
-				Input: mStr(m, "tag"), Error: fmt.Sprintf("无法导入的出站类型 %q", mStr(m, "type")),
+				Input: mStr(m, "tag"), SourceName: mStr(m, "tag"), Error: fmt.Sprintf("无法导入的出站类型 %q", mStr(m, "type")),
 			})
 			continue
 		}
 		if strings.TrimSpace(ob.Server) == "" || ob.ServerPort < 1 || ob.ServerPort > 65535 {
-			result.Skipped = append(result.Skipped, ImportIssue{Input: ob.Tag, Error: "地址或端口无效"})
+			result.Skipped = append(result.Skipped, ImportIssue{Input: ob.Tag, SourceName: ob.Tag, Error: "地址或端口无效"})
 			continue
 		}
 		cn := ClientNode{
@@ -348,7 +352,7 @@ func parseSingBoxSubscription(raw []byte) (SubscriptionParseResult, error) {
 			User:     ProxyUser{Username: ob.Username, UUID: ob.UUID, Password: ob.Password},
 		}
 		if err := cn.Settings.ValidateClientOutbound(cn.Type); err != nil {
-			result.Skipped = append(result.Skipped, ImportIssue{Input: ob.Tag, Error: err.Error()})
+			result.Skipped = append(result.Skipped, ImportIssue{Input: ob.Tag, SourceName: ob.Tag, Error: err.Error()})
 			continue
 		}
 		result.Nodes = append(result.Nodes, importedNodeFromClient(cn, "", false))
@@ -727,7 +731,7 @@ func parseQuantumultSubscription(raw []byte) (SubscriptionParseResult, error) {
 		}
 		node, parseErr := parseClashProxy(m)
 		if parseErr != nil {
-			result.Skipped = append(result.Skipped, ImportIssue{Input: getString(m, "name"), Error: parseErr.Error()})
+			result.Skipped = append(result.Skipped, ImportIssue{Input: getString(m, "name"), SourceName: getString(m, "name"), Error: parseErr.Error()})
 			continue
 		}
 		result.Nodes = append(result.Nodes, node)
@@ -770,7 +774,7 @@ func parseSIP008Subscription(raw []byte) (SubscriptionParseResult, error) {
 		server := getString(m, "server")
 		port := getInt(m, "server_port")
 		if method == "" || password == "" || server == "" || port < 1 || port > 65535 {
-			result.Skipped = append(result.Skipped, ImportIssue{Input: getString(m, "remarks", "name", "id"), Error: "SIP008 server 缺少有效的 server/server_port/method/password"})
+			result.Skipped = append(result.Skipped, ImportIssue{Input: getString(m, "remarks", "name", "id"), SourceName: getString(m, "remarks", "name", "id"), Error: "SIP008 server 缺少有效的 server/server_port/method/password"})
 			continue
 		}
 		settings := InboundSettings{Method: method, SSServerPSK: password, SingleUser: true}
@@ -899,7 +903,7 @@ func parseClashSubscription(raw []byte) (SubscriptionParseResult, error) {
 		}
 		node, err := parseClashProxy(m)
 		if err != nil {
-			result.Skipped = append(result.Skipped, ImportIssue{Input: getString(m, "name"), Error: err.Error()})
+			result.Skipped = append(result.Skipped, ImportIssue{Input: getString(m, "name", "ps"), SourceName: getString(m, "name", "ps"), Error: err.Error()})
 			continue
 		}
 		result.Nodes = append(result.Nodes, node)
@@ -1187,7 +1191,7 @@ func parseSurgeSubscription(raw []byte) (SubscriptionParseResult, error) {
 		name := strings.TrimSpace(line[:i])
 		fields := splitSurgeFields(line[i+1:])
 		if len(fields) < 3 {
-			result.Skipped = append(result.Skipped, ImportIssue{Input: name, Error: "Surge 代理字段不足"})
+			result.Skipped = append(result.Skipped, ImportIssue{Input: name, SourceName: name, Error: "Surge 代理字段不足"})
 			continue
 		}
 		// Some exporters fold the port into the host field ("1.2.3.4:8388").
@@ -1265,7 +1269,7 @@ func parseSurgeSubscription(raw []byte) (SubscriptionParseResult, error) {
 		}
 		node, err := parseClashProxy(m)
 		if err != nil {
-			result.Skipped = append(result.Skipped, ImportIssue{Input: name, Error: err.Error()})
+			result.Skipped = append(result.Skipped, ImportIssue{Input: name, SourceName: name, Error: err.Error()})
 			continue
 		}
 		result.Nodes = append(result.Nodes, node)

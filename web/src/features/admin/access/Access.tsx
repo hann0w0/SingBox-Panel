@@ -86,10 +86,11 @@ const nodeTypeLabel: Record<string, string> = {
   mixed: 'Mixed',
 }
 
-const MAX_VISIBLE_SUBSCRIPTIONS = 5
+const MAX_VISIBLE_SUBSCRIPTIONS = 15
+const MAX_VISIBLE_MOBILE_SUBSCRIPTIONS = 5
 const MAX_VISIBLE_MOBILE_NODES = 5
 const MANAGEMENT_TABLE_ROW_HEIGHT = 41
-const SUBSCRIPTION_TABLE_SCROLL_HEIGHT = MAX_VISIBLE_SUBSCRIPTIONS * MANAGEMENT_TABLE_ROW_HEIGHT
+const SUBSCRIPTION_TABLE_SCROLL_HEIGHT = (MAX_VISIBLE_SUBSCRIPTIONS + 1) * MANAGEMENT_TABLE_ROW_HEIGHT
 const subscriptionKey = (subscription: CustomNodeSubscription) => subscription.id
 const customNodeKey = (node: CustomNode) => node.id
 
@@ -1446,7 +1447,7 @@ export function CustomNodesPanel({ nodes, loading, error, onNodesChange }: {
 
   const mobileSubscriptionList = (
     <VirtualList
-      className={`virtual-list um-vlist${subscriptions.length > MAX_VISIBLE_SUBSCRIPTIONS ? ' is-scrollable' : ''}`}
+      className={`virtual-list um-vlist${subscriptions.length > MAX_VISIBLE_MOBILE_SUBSCRIPTIONS ? ' is-scrollable' : ''}`}
       items={subscriptions}
       getKey={subscriptionKey}
       estimatedItemHeight={104}

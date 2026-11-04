@@ -52,6 +52,7 @@
 .um-mcard-meta { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 12px; margin-top: 6px; color: var(--console-muted); font-size: 12.5px; }
 .um-mcard-addr { margin-top: 4px; color: var(--console-faint); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .um-mcard-error { margin-top: 6px; color: var(--console-error-text); font-size: 12px; overflow-wrap: anywhere; }
+.um-mcard-error.is-warning { color: var(--console-warning); }
 
 /* ---------- Modals ---------- */
 .um-group { padding: 16px 0 4px; }

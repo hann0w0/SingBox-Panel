@@ -438,6 +438,7 @@ export interface CustomNodeSubscription {
   name_rewrite_rules: NameRewriteRule[]
   last_sync_at?: string | null
   last_success_at?: string | null
+  last_sync_status?: '' | 'success' | 'partial' | 'failed'
   last_error: string
   source_type: string
   node_count: number

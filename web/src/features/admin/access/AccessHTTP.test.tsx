@@ -1,7 +1,8 @@
 import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { createCustomNode, listCustomNodeSubscriptions, updateCustomNode } from '../../../api'
-import type { CustomNode } from '../../../api'
+import { createCustomNode, listCustomNodeSubscriptions, syncCustomNodeSubscription, updateCustomNode } from '../../../api'
+import type { CustomNode, CustomNodeSubscription } from '../../../api'
+import { message } from '../../../ui'
 import { CustomNodesPanel } from './Access'
 
 vi.mock('../../../api', async (importOriginal) => ({
@@ -9,6 +10,7 @@ vi.mock('../../../api', async (importOriginal) => ({
   createCustomNode: vi.fn(),
   updateCustomNode: vi.fn(),
   listCustomNodeSubscriptions: vi.fn(),
+  syncCustomNodeSubscription: vi.fn(),
 }))
 
 const node: CustomNode = {
@@ -26,6 +28,71 @@ beforeEach(() => {
   vi.mocked(listCustomNodeSubscriptions).mockResolvedValue([])
   vi.mocked(createCustomNode).mockResolvedValue(node)
   vi.mocked(updateCustomNode).mockResolvedValue(node)
+})
+
+describe('subscription sync feedback', () => {
+  it.each([true, false])('shows partial synchronization as a warning on desktop=%s', async (desktop) => {
+    vi.stubGlobal('innerWidth', desktop ? 1024 : 390)
+    const source: CustomNodeSubscription = {
+      id: 1, name: 'Partial source', url: 'https://provider.example.com/sub', group: '',
+      enabled: true, auto_update: true, update_interval_minutes: 60, base_sort_order: 0,
+      name_rewrite_rules: [], node_count: 28, last_error: '有 1 个节点解析失败，保留 0 个仍在源中的旧节点',
+      last_sync_status: 'partial', source_type: 'clash-yaml', created_at: '', updated_at: '',
+    }
+    vi.mocked(listCustomNodeSubscriptions).mockResolvedValue([source])
+    const { container } = render(<CustomNodesPanel nodes={[]} loading={false} onNodesChange={vi.fn()} />)
+    const label = await screen.findByText('部分成功')
+    expect(label.className).toContain('is-warn')
+    expect(screen.queryByText('同步失败')).toBeNull()
+    expect(label.closest('[title]')?.getAttribute('title')).toBe(source.last_error)
+    if (!desktop) expect(container.querySelector('.um-mcard-error.is-warning')?.textContent).toBe(source.last_error)
+  })
+
+  it.each([
+    { status: 'success', error: '', lastSync: '2026-11-04T00:00:00Z', label: '正常', tone: 'is-ok' },
+    { status: 'failed', error: '订阅下载失败', lastSync: '2026-11-04T00:00:00Z', label: '同步失败', tone: 'is-error' },
+    { status: '', error: '旧版本错误', lastSync: '2026-11-04T00:00:00Z', label: '同步失败', tone: 'is-error' },
+    { status: '', error: '', lastSync: '2026-11-04T00:00:00Z', label: '正常', tone: 'is-ok' },
+    { status: '', error: '', lastSync: null, label: '待同步', tone: 'is-off' },
+  ] as const)('shows $label for status=$status with legacy compatibility', async ({ status, error, lastSync, label, tone }) => {
+    const source: CustomNodeSubscription = {
+      id: 1, name: 'Source', url: 'https://provider.example.com/sub', group: '',
+      enabled: true, auto_update: true, update_interval_minutes: 60, base_sort_order: 0,
+      name_rewrite_rules: [], node_count: 28, last_error: error, last_sync_status: status,
+      last_sync_at: lastSync, source_type: 'clash-yaml', created_at: '', updated_at: '',
+    }
+    vi.mocked(listCustomNodeSubscriptions).mockResolvedValue([source])
+    render(<CustomNodesPanel nodes={[]} loading={false} onNodesChange={vi.fn()} />)
+    expect((await screen.findByText(label)).className).toContain(tone)
+  })
+
+  it.each([0, 1])('reports skipped=%s without showing a false success', async (skipped) => {
+    const source: CustomNodeSubscription = {
+      id: 1, name: 'Source', url: 'https://provider.example.com/sub', group: '',
+      enabled: true, auto_update: true, update_interval_minutes: 60, base_sort_order: 0,
+      name_rewrite_rules: [], node_count: 81, last_error: '', source_type: 'clash-yaml',
+      created_at: '', updated_at: '',
+    }
+    vi.mocked(listCustomNodeSubscriptions).mockResolvedValue([source])
+    const last_error = skipped ? '有 1 个节点解析失败，保留 1 个仍在源中的旧节点' : ''
+    vi.mocked(syncCustomNodeSubscription).mockResolvedValue({
+      subscription: { ...source, node_count: 29, last_error },
+      sync: { created: 0, updated: 28, deleted: 52, total: 29, skipped, filtered: 0 },
+    })
+    const warning = vi.spyOn(message, 'warning')
+    const success = vi.spyOn(message, 'success')
+    render(<CustomNodesPanel nodes={[]} loading={false} onNodesChange={vi.fn()} />)
+    fireEvent.click(await screen.findByRole('button', { name: '同步 Source' }))
+    await waitFor(() => expect(syncCustomNodeSubscription).toHaveBeenCalledWith(1))
+    if (skipped) {
+      await waitFor(() => expect(warning).toHaveBeenCalledWith(expect.stringContaining('部分同步完成：当前 29 个节点')))
+      expect(warning).toHaveBeenCalledWith(expect.stringContaining(last_error))
+      expect(success).not.toHaveBeenCalled()
+    } else {
+      await waitFor(() => expect(success).toHaveBeenCalledWith(expect.stringContaining('同步完成：当前 29 个节点')))
+      expect(warning).not.toHaveBeenCalled()
+    }
+  })
 })
 afterEach(() => {
   cleanup()

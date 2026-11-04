@@ -168,7 +168,7 @@ func parseVLESS(uri string) (ClientNode, error) {
 	return cn, nil
 }
 
-func parseVMess(uri string) (ClientNode, error) {
+func parseVMessPayload(uri string) (map[string]any, error) {
 	raw := uri[len("vmess://"):]
 	var data []byte
 	var err error
@@ -181,11 +181,37 @@ func parseVMess(uri string) (ClientNode, error) {
 		}
 	}
 	if err != nil {
-		return ClientNode{}, fmt.Errorf("vmess link is not valid base64")
+		return nil, fmt.Errorf("vmess link is not valid base64")
 	}
 	var obj map[string]any
 	if err := json.Unmarshal(data, &obj); err != nil {
-		return ClientNode{}, fmt.Errorf("vmess link payload is not valid JSON: %w", err)
+		return nil, fmt.Errorf("vmess link payload is not valid JSON: %w", err)
+	}
+	return obj, nil
+}
+
+// shareLinkSourceName recovers naming metadata without accepting connection
+// settings that failed parsing. It lets subscription sync retain only the
+// corresponding old node when a URI uses an unsupported transport.
+func shareLinkSourceName(uri string) string {
+	if strings.HasPrefix(strings.ToLower(uri), "vmess://") {
+		obj, err := parseVMessPayload(uri)
+		if err != nil {
+			return ""
+		}
+		return strings.TrimSpace(strOf(obj, "ps"))
+	}
+	u, err := url.Parse(uri)
+	if err != nil || u.Scheme == "" {
+		return ""
+	}
+	return shareName(u)
+}
+
+func parseVMess(uri string) (ClientNode, error) {
+	obj, err := parseVMessPayload(uri)
+	if err != nil {
+		return ClientNode{}, err
 	}
 	host := strOf(obj, "add")
 	port := intOf(obj, "port")

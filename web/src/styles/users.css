@@ -42,17 +42,6 @@
 .um-quick-group { width: 240px; }
 .um-quick-group-actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 8px; }
 
-/* Mobile cards (virtualised lists) */
-.um-vlist.is-scrollable { max-height: 560px; overflow-y: auto; overscroll-behavior: contain; }
-.um-mcard { box-sizing: border-box; min-width: 0; padding: 12px 14px; border: 1px solid var(--console-border); border-radius: var(--app-radius); background: var(--console-container); }
-.um-mcard.is-clickable { cursor: pointer; }
-.um-mcard-top { display: flex; align-items: center; justify-content: space-between; gap: 8px; min-width: 0; }
-.um-mcard-name { min-width: 0; font-weight: 500; color: var(--console-ink); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.um-mcard-name .custom-node-name { display: inline-flex; align-items: center; gap: 6px; min-width: 0; }
-.um-mcard-meta { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 12px; margin-top: 6px; color: var(--console-muted); font-size: 12.5px; }
-.um-mcard-addr { margin-top: 4px; color: var(--console-faint); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.um-mcard-error { margin-top: 6px; color: var(--console-error-text); font-size: 12px; overflow-wrap: anywhere; }
-
 /* ---------- Modals ---------- */
 .um-group { padding: 16px 0 4px; }
 .um-group + .um-group { margin-top: 12px; border-top: 1px solid var(--console-border); }

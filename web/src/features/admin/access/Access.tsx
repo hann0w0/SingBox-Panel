@@ -86,10 +86,14 @@ const nodeTypeLabel: Record<string, string> = {
   mixed: 'Mixed',
 }
 
-const MAX_VISIBLE_SUBSCRIPTIONS = 5
+const MAX_VISIBLE_SUBSCRIPTIONS = 6
 const MAX_VISIBLE_MOBILE_NODES = 5
-const MANAGEMENT_TABLE_ROW_HEIGHT = 41
-const SUBSCRIPTION_TABLE_SCROLL_HEIGHT = MAX_VISIBLE_SUBSCRIPTIONS * MANAGEMENT_TABLE_ROW_HEIGHT
+// Measured heights: action buttons set the row content at 29px, so with the
+// 12px cell padding a row is 53px and the sticky header 42px. The scroll cap
+// has to include the header or fewer rows than MAX_VISIBLE_SUBSCRIPTIONS show.
+const MANAGEMENT_TABLE_ROW_HEIGHT = 53
+const MANAGEMENT_TABLE_HEAD_HEIGHT = 42
+const SUBSCRIPTION_TABLE_SCROLL_HEIGHT = MANAGEMENT_TABLE_HEAD_HEIGHT + MAX_VISIBLE_SUBSCRIPTIONS * MANAGEMENT_TABLE_ROW_HEIGHT
 const subscriptionKey = (subscription: CustomNodeSubscription) => subscription.id
 const customNodeKey = (node: CustomNode) => node.id
 

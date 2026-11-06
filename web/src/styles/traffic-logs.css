@@ -74,11 +74,35 @@
 .lg-viewer-shell { position: relative; min-width: 0; }
 .lg-viewer, .lg-empty { height: clamp(380px, calc(calc(100 * var(--dvh)) - 340px), 760px); }
 .lg-viewer {
-  position: relative; padding: 6px 0; color: var(--console-ink);
+  position: relative; padding: 0 0 6px; color: var(--console-ink);
   font-family: var(--app-mono); font-size: 12.5px; line-height: 1.7; font-variant-numeric: tabular-nums;
   scrollbar-color: var(--console-border-strong) transparent; scrollbar-width: thin; overscroll-behavior: contain;
 }
 .lg-empty { display: grid; place-items: center; color: var(--console-faint); font-size: 13px; }
+
+/* One column template shared by the header and every row, so labels sit over
+   their data. Only the last (copy) column is fixed. */
+/* Every track has a fixed maximum so the header and the rows resolve to the
+   exact same widths; only the detail column absorbs the remaining space. */
+.lg-thead, .lg-line-compact {
+  display: grid; align-items: first baseline; column-gap: 12px;
+  grid-template-columns:
+    62px 44px 64px minmax(0, 150px) minmax(0, 128px)
+    minmax(0, 200px) minmax(0, 1fr) 22px;
+  padding: 0 14px; box-sizing: border-box;
+}
+/* VirtualList renders the header inside a wrapper; that wrapper is what sticks,
+   since a sticky child cannot leave a zero-height parent. */
+.lg-viewer > .vl-header { position: sticky; top: 0; z-index: 3; }
+.lg-thead {
+  align-items: center; min-height: 34px;
+  border-bottom: 1px solid var(--console-border); background: var(--console-container);
+  color: var(--console-faint); font-family: var(--app-font); font-size: 11.5px;
+  letter-spacing: .02em; user-select: none;
+}
+/* No justify-self anywhere: a self-aligned grid item is sized to its content,
+   which would drift the header cell away from the data column under it. */
+.lg-thead > span { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 
 .lg-line { position: relative; min-width: 100%; padding: 3px 14px; box-sizing: border-box; }
 .lg-line.is-band { background: var(--console-surface); }
@@ -87,34 +111,36 @@
 .lg-line-error { background: color-mix(in srgb, var(--console-error) 7%, transparent); box-shadow: inset 2px 0 0 var(--console-error); }
 .lg-line-warn:hover { background: color-mix(in srgb, var(--console-warning) 11%, transparent); }
 .lg-line-error:hover { background: color-mix(in srgb, var(--console-error) 12%, transparent); }
-.lg-line-compact {
-  display: grid; align-items: first baseline; column-gap: 12px;
-  grid-template-columns: 62px 22px minmax(150px, 300px) minmax(200px, 1fr) minmax(120px, auto) 22px;
-}
 .lg-line-raw { display: grid; grid-template-columns: minmax(0, 1fr) 22px; align-items: baseline; column-gap: 12px; }
+/* Every compact column is a single line, so rows keep a uniform height like a
+   connection list; the full text stays available on hover and in copy. */
 .lg-viewer.is-nowrap .lg-line { width: max-content; }
-.lg-viewer.is-nowrap :is(.lg-message, .lg-raw-text) { white-space: pre; }
-.lg-viewer.is-wrap :is(.lg-message, .lg-raw-text) { white-space: pre-wrap; overflow-wrap: anywhere; }
+.lg-viewer.is-nowrap :is(.lg-address, .lg-error, .lg-raw-text) { white-space: pre; }
+.lg-viewer.is-wrap :is(.lg-address, .lg-error) { white-space: nowrap; }
+.lg-viewer.is-wrap .lg-raw-text { white-space: pre-wrap; overflow-wrap: anywhere; }
 
 .lg-time { color: var(--console-faint); }
-.lg-level { font-size: 11px; font-weight: 600; letter-spacing: .3px; }
-.lg-level-trace, .lg-level-debug, .lg-level-unknown { color: var(--console-faint); }
-.lg-level-info { color: var(--console-muted); }
-.lg-level-warn { color: var(--console-warning-text); }
-.lg-level-error { color: var(--console-error-text); }
-.lg-direction { font-size: 10.5px; letter-spacing: .4px; color: var(--console-muted); }
-.lg-direction-inbound { color: var(--console-ink); }
-.lg-direction-none { color: var(--console-border-strong); }
-.lg-user, .lg-component, .lg-context { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.lg-user { justify-self: start; max-width: 100%; padding: 0 6px; border: 1px solid var(--console-border); border-radius: 4px; color: var(--console-muted); font-size: 11px; line-height: 18px; }
-.lg-user.is-empty { visibility: hidden; }
-.lg-component { color: var(--console-ink); font-weight: 500; }
-.lg-component-neutral { color: var(--console-muted); font-weight: 400; }
-.lg-context { display: inline-flex; align-items: baseline; gap: 4px; color: var(--console-faint); }
-.lg-context-id { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
-.lg-context-separator { color: var(--console-border-strong); }
-.lg-context-duration { color: var(--console-muted); }
-.lg-message, .lg-raw-text { min-width: 0; color: var(--console-ink); }
+.lg-dir { display: inline-grid; place-items: center; height: 18px; padding: 0 6px; border-radius: 4px; font-family: var(--app-font); font-size: 11px; font-weight: 600; line-height: 1; align-self: first baseline; white-space: nowrap; }
+.lg-dir-inbound { color: #1d4ed8; background: color-mix(in srgb, #3b82f6 14%, transparent); }
+.lg-dir-outbound { color: #15803d; background: color-mix(in srgb, #22c55e 16%, transparent); }
+.lg-dir-none { color: var(--console-faint); }
+:root[data-console-theme='dark'] .lg-dir-inbound { color: #93c5fd; background: color-mix(in srgb, #3b82f6 22%, transparent); }
+:root[data-console-theme='dark'] .lg-dir-outbound { color: #86efac; background: color-mix(in srgb, #22c55e 20%, transparent); }
+
+/* Each parameter is its own column: 协议 pill, 标签, 用户, 目标, 报错. */
+.lg-thead > span,
+.lg-line-compact > span { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.lg-tag { color: var(--console-ink); font-weight: 500; }
+.lg-user { color: var(--console-muted); font-size: 12px; }
+.lg-raw-text { min-width: 0; color: var(--console-ink); }
+.lg-address { color: var(--console-ink); font-weight: 500; }
+.lg-error { display: inline-flex; align-items: baseline; gap: 6px; color: var(--console-muted); }
+.lg-error.is-warn { color: var(--console-warning-text); }
+.lg-error.is-error { color: var(--console-error-text); }
+.lg-cell-empty { color: var(--console-border-strong); }
+.lg-badge { flex: none; padding: 0 5px; border-radius: 4px; font-family: var(--app-font); font-size: 10.5px; font-weight: 600; line-height: 17px; }
+.lg-badge-warn { color: var(--console-warning-text); background: color-mix(in srgb, var(--console-warning) 16%, transparent); }
+.lg-badge-error { color: var(--console-error-text); background: color-mix(in srgb, var(--console-error) 16%, transparent); }
 .lg-token-label { color: var(--console-muted); }
 .lg-token-endpoint { color: var(--console-ink); font-weight: 500; text-decoration: underline; text-decoration-color: var(--console-border-strong); text-underline-offset: 3px; }
 .lg-token-route { color: var(--console-muted); font-weight: 500; }
@@ -145,39 +171,23 @@
   .lg-statusbar { padding-left: 12px; }
   .lg-count { display: none; }
   .lg-viewer, .lg-empty { height: clamp(320px, calc(60 * var(--dvh)), 600px); }
+  /* The header strip is desktop-only; phones keep the two-line card rows. */
+  .lg-thead { display: none; }
   .lg-line { padding: 6px 12px; border-bottom: 1px solid var(--console-border); }
-  .lg-line-compact { grid-template-columns: auto auto minmax(0, 1fr) 22px; column-gap: 8px; row-gap: 2px; }
+  /* Two-line cards: time, direction, protocol/tag, user on the first line,
+     the target and its error text below. */
+  .lg-line-compact { grid-template-columns: auto auto minmax(0, 1fr) 22px; column-gap: 8px; row-gap: 2px; padding: 6px 12px; }
   .lg-line-compact .lg-time { grid-column: 1; grid-row: 1; }
   .lg-line-compact .lg-dir { grid-column: 2; grid-row: 1; }
-  .lg-line-compact .lg-subject { grid-column: 3; grid-row: 1; }
-  .lg-line-compact .lg-context { display: none; }
-  .lg-line-compact .lg-message { grid-column: 1 / 4; grid-row: 2; }
+  .lg-line-compact .lg-proto { grid-column: 3; grid-row: 1; justify-self: start; }
+  .lg-line-compact .lg-tag { display: none; }
+  .lg-line-compact .lg-user { grid-column: 3; grid-row: 1; justify-self: end; max-width: 40%; }
+  .lg-line-compact .lg-address { grid-column: 1 / 4; grid-row: 2; }
+  .lg-line-compact .lg-error { grid-column: 1 / 4; grid-row: 3; }
+  .lg-line-compact .lg-error.is-empty { display: none; }
   .lg-line-compact .lg-copy-button { grid-column: 4; grid-row: 1; align-self: start; }
   .lg-copy-button { opacity: .6; }
 }
 
-/* Readable compact rows: direction chip, subject, flow target, muted context. */
-.lg-dir { display: inline-grid; place-items: center; width: 20px; height: 18px; border-radius: 4px; font-family: var(--app-font); font-size: 11px; font-weight: 600; line-height: 1; align-self: first baseline; }
-.lg-dir-inbound { color: #1d4ed8; background: color-mix(in srgb, #3b82f6 14%, transparent); }
-.lg-dir-outbound { color: #15803d; background: color-mix(in srgb, #22c55e 16%, transparent); }
-.lg-dir-none { color: var(--console-faint); }
-:root[data-console-theme='dark'] .lg-dir-inbound { color: #93c5fd; background: color-mix(in srgb, #3b82f6 22%, transparent); }
-:root[data-console-theme='dark'] .lg-dir-outbound { color: #86efac; background: color-mix(in srgb, #22c55e 20%, transparent); }
-.lg-subject { display: inline-flex; align-items: baseline; gap: 6px; min-width: 0; overflow: hidden; white-space: nowrap; }
-.lg-subject .lg-component { flex: none; max-width: 140px; }
-.lg-subject .lg-user { flex: 0 1 auto; min-width: 0; padding: 0; border: 0; color: var(--console-muted); font-size: 12px; line-height: inherit; overflow: hidden; text-overflow: ellipsis; }
-.lg-subject .lg-user::before { content: '· '; color: var(--console-border-strong); }
-.lg-badge { flex: none; padding: 0 5px; border-radius: 4px; font-family: var(--app-font); font-size: 10.5px; font-weight: 600; line-height: 17px; }
-.lg-badge-warn { color: var(--console-warning-text); background: color-mix(in srgb, var(--console-warning) 16%, transparent); }
-.lg-badge-error { color: var(--console-error-text); background: color-mix(in srgb, var(--console-error) 16%, transparent); }
-.lg-arrow { margin-right: 6px; color: var(--console-faint); }
-.lg-target { color: var(--console-ink); font-weight: 600; }
-.lg-rest { color: var(--console-muted); }
-.lg-line-compact .lg-context { justify-self: end; font-size: 11.5px; }
-
-.lg-proto { flex: none; padding: 0 5px; border: 1px solid var(--console-border); border-radius: 4px; color: var(--console-muted); font-family: var(--app-font); font-size: 10.5px; font-weight: 600; line-height: 17px; }
-.lg-subject .lg-component { max-width: 160px; overflow: hidden; text-overflow: ellipsis; }
-.lg-subject .lg-user { flex: 0 1 auto; padding: 0 6px; border-radius: 4px; background: color-mix(in srgb, #8b5cf6 12%, transparent); color: #6d28d9; font-family: var(--app-font); font-size: 11.5px; font-weight: 500; line-height: 18px; }
-.lg-subject .lg-user::before { content: none; }
-:root[data-console-theme='dark'] .lg-subject .lg-user { background: color-mix(in srgb, #8b5cf6 24%, transparent); color: #c4b5fd; }
-.lg-source { color: var(--console-muted); }
+/* Protocol pill. */
+.lg-proto { justify-self: start; padding: 0 5px; border: 1px solid var(--console-border); border-radius: 4px; color: var(--console-muted); font-family: var(--app-font); font-size: 10.5px; font-weight: 600; line-height: 17px; }

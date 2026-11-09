@@ -94,6 +94,15 @@ func (o *Orchestrator) BuildServerConfig(srv *model.Server) ([]byte, error) {
 				return nil, fmt.Errorf("load users for inbound %q: %w", ib.Tag, loadErr)
 			}
 			users = loadedUsers
+			if err := rejectRoutingTagsInUse(o.db, []string{managedRoutingNodeTag(ib.ID)}, 0); errors.Is(err, errRoutingNodeInUse) {
+				identity, err := managedRoutingIdentity(srv, ib.ID)
+				if err != nil {
+					return nil, err
+				}
+				users = append(users, identity)
+			} else if err != nil {
+				return nil, err
+			}
 		} else {
 			st.MultiUser = false
 			st.SingleUser = true
@@ -156,7 +165,7 @@ func (o *Orchestrator) BuildServerConfig(srv *model.Server) ([]byte, error) {
 	if len(ruleSetTags) > 0 {
 		return nil, fmt.Errorf("路由引用不存在的全局规则集: %s", strings.Join(mapKeys(ruleSetTags), ", "))
 	}
-	nodeOutbounds, err := buildRoutingNodeOutbounds(o.db, nodeTags)
+	nodeOutbounds, err := buildRoutingNodeOutbounds(o.db, srv.ID, nodeTags)
 	if err != nil {
 		return nil, err
 	}
@@ -226,9 +235,15 @@ func (o *Orchestrator) ApplyDesiredConfig(ctx context.Context, serverID uint) Co
 	if err := o.db.Model(&model.Server{}).Where("id = ?", serverID).Update("config_initialized", true).Error; err != nil {
 		return ConfigApplyResult{ApplyState: ConfigFailed, ApplyError: "mark desired config initialized: " + err.Error()}
 	}
-	err := o.PushConfigWithTimeout(ctx, serverID, 55*time.Second)
+	applyCtx, cancel := context.WithTimeout(ctx, 55*time.Second)
+	defer cancel()
+	targets := o.applyManagedRoutingTargets(applyCtx, serverID)
+	if targets.ApplyState == ConfigFailed {
+		return targets
+	}
+	err := o.PushConfigWithTimeout(applyCtx, serverID, 55*time.Second)
 	if err == nil {
-		return ConfigApplyResult{ApplyState: ConfigApplied}
+		return targets
 	}
 	if errors.Is(err, ErrAgentOffline) {
 		return ConfigApplyResult{ApplyState: ConfigPending}

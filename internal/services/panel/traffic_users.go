@@ -64,7 +64,7 @@ func multiUserTrafficDeltas(serverID uint, inbounds []model.Inbound, users []pro
 	var out []userTrafficDelta
 	for _, user := range users {
 		inboundID := multiUser[user.Inbound]
-		if inboundID == 0 || user.User == "" || user.User == lockoutProxyUserName {
+		if inboundID == 0 || user.User == "" || (user.User == lockoutProxyUserName || user.User == managedRoutingProxyUserName) {
 			continue
 		}
 		if user.Upload == 0 && user.Download == 0 {

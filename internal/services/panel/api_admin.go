@@ -320,6 +320,13 @@ func (a *App) updateServer(c *gin.Context) {
 	if !bindJSON(c, &req) {
 		return
 	}
+	var before model.Server
+	if req.Address != nil {
+		if err := a.db.First(&before, id).Error; err != nil {
+			c.JSON(http.StatusNotFound, gin.H{"error": "server not found"})
+			return
+		}
+	}
 	updates := map[string]any{}
 	if req.Name != nil {
 		name := strings.TrimSpace(*req.Name)
@@ -354,8 +361,10 @@ func (a *App) updateServer(c *gin.Context) {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
-	// Server metadata and traffic cycles do not belong in the
-	// sing-box config, so editing a node must not restart its service.
+	// A connection address only affects other servers that use its inbounds.
+	if address, changed := updates["address"].(string); changed && address != before.Address {
+		go a.refreshManagedInboundReferences(id)
+	}
 	c.JSON(http.StatusOK, gin.H{"ok": true})
 }
 
@@ -379,6 +388,19 @@ func (a *App) deleteServer(c *gin.Context) {
 		c.JSON(http.StatusNotFound, gin.H{"error": "server not found"})
 		return
 	}
+	if err := rejectServerRoutingReferences(a.db, id, id); err != nil {
+		status := http.StatusInternalServerError
+		if errors.Is(err, errRoutingNodeInUse) {
+			status = http.StatusConflict
+		}
+		c.JSON(status, gin.H{"error": err.Error()})
+		return
+	}
+	previousRoutingTags, err := collectServerManagedRoutingTags(a.db, id)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
 	if a.hub != nil {
 		disconnectCtx, cancelDisconnect := context.WithTimeout(context.Background(), 10*time.Second)
 		disconnectErr := a.hub.DisconnectAndWait(disconnectCtx, id)
@@ -389,8 +411,8 @@ func (a *App) deleteServer(c *gin.Context) {
 		}
 	}
 
-	// Panel-only deletion: never send an Agent command here. In particular,
-	// this endpoint must not touch the VPS sing-box config, binary or service.
+	// The deleted server remains untouched. Other managed servers may need
+	// their dedicated routing credentials removed after the references disappear.
 	tx := a.db.Begin()
 	if tx.Error != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": tx.Error.Error()})
@@ -438,6 +460,7 @@ func (a *App) deleteServer(c *gin.Context) {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
+	go a.refreshManagedRoutingTags(previousRoutingTags...)
 	if a.hub != nil {
 		a.hub.traffic.dropServer(id)
 		for _, row := range []any{&model.TrafficRecord{}, &model.TrafficHourly{}, &model.TrafficUserHourly{}, &model.TrafficReportCursor{}} {
@@ -780,13 +803,20 @@ func (h *Hub) persistServerStatus(connection *agentConn, status protocol.StatusD
 	if !h.isCurrentConnection(connection.serverID, connection) {
 		return
 	}
-	persistServerStatus(h.db, connection.serverID, status)
+	var before model.Server
+	previousLoaded := h.db.Select("address", "public_ip").First(&before, connection.serverID).Error == nil
+	if err := persistServerStatus(h.db, connection.serverID, status); err != nil {
+		return
+	}
+	if ip, ok := normalizedIPv4(status.PublicIP); ok && previousLoaded && before.Address == "" && ip != before.PublicIP && h.AfterRoutingAddressChange != nil {
+		h.AfterRoutingAddressChange(connection.serverID)
+	}
 }
 
 // persistServerStatus stores a status snapshot explicitly requested by the
 // admin UI. Older Agents do not include host metrics in get_status, so only
 // replace those fields when the extended snapshot is actually present.
-func persistServerStatus(db *gorm.DB, serverID uint, status protocol.StatusData) {
+func persistServerStatus(db *gorm.DB, serverID uint, status protocol.StatusData) error {
 	now := time.Now()
 	updates := map[string]any{
 		"online":            true,
@@ -811,7 +841,7 @@ func persistServerStatus(db *gorm.DB, serverID uint, status protocol.StatusData)
 	if ip, ok := normalizedIPv4(status.PublicIP); ok {
 		updates["public_ip"] = ip
 	}
-	db.Model(&model.Server{}).Where("id = ?", serverID).Updates(updates)
+	return db.Model(&model.Server{}).Where("id = ?", serverID).Updates(updates).Error
 }
 
 // remoteConfig reads the sing-box config currently on the host (for viewing an
@@ -871,6 +901,14 @@ func (a *App) applyRawConfig(c *gin.Context) {
 		status := http.StatusInternalServerError
 		if errors.Is(err, errInboundTrafficTagReserved) {
 			status = http.StatusBadRequest
+		}
+		c.JSON(status, gin.H{"error": err.Error()})
+		return
+	}
+	if err := rejectManagedInboundRawImport(a.db, id); err != nil {
+		status := http.StatusInternalServerError
+		if errors.Is(err, errManagedInboundRoutingProtected) {
+			status = http.StatusConflict
 		}
 		c.JSON(status, gin.H{"error": err.Error()})
 		return
@@ -1074,6 +1112,17 @@ func (a *App) updateInbound(c *gin.Context) {
 	if !bindJSON(c, &req) {
 		return
 	}
+	before := ib
+	if req.Enabled != nil && !*req.Enabled {
+		if err := rejectInboundRoutingReferences(a.db, []uint{ib.ID}, 0); err != nil {
+			status := http.StatusInternalServerError
+			if errors.Is(err, errRoutingNodeInUse) {
+				status = http.StatusConflict
+			}
+			c.JSON(status, gin.H{"error": err.Error()})
+			return
+		}
+	}
 	nextTag := ib.Tag
 	if req.Tag != "" {
 		nextTag = strings.TrimSpace(req.Tag)
@@ -1184,6 +1233,11 @@ func (a *App) updateInbound(c *gin.Context) {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
+	if !managedInboundConfigChanged(before, ib) {
+		c.JSON(http.StatusOK, gin.H{"inbound": ib})
+		return
+	}
+	go a.pushManagedRoutingNodeChanges([]uint{ib.ID})
 	a.applyConfigAndRespond(c, sid, gin.H{"inbound": ib})
 }
 
@@ -1204,6 +1258,14 @@ func (a *App) deleteInbound(c *gin.Context) {
 	var ib model.Inbound
 	if err := a.db.Where("id = ? AND server_id = ?", iid, sid).First(&ib).Error; err != nil {
 		c.JSON(http.StatusNotFound, gin.H{"error": "inbound not found"})
+		return
+	}
+	if err := rejectInboundRoutingReferences(a.db, []uint{ib.ID}, 0); err != nil {
+		status := http.StatusInternalServerError
+		if errors.Is(err, errRoutingNodeInUse) {
+			status = http.StatusConflict
+		}
+		c.JSON(status, gin.H{"error": err.Error()})
 		return
 	}
 	referenced, err := a.inboundReferenced(a.db, sid, ib.Tag)

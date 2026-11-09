@@ -402,6 +402,11 @@ func (a *App) updateRule(c *gin.Context) {
 	if !bindJSON(c, &req) {
 		return
 	}
+	previousTargets, err := managedRoutingRuleTags(a.db, &r)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
 	nextMatch := json.RawMessage(r.Match)
 	if len(req.Match) > 0 {
 		nextMatch = req.Match
@@ -429,6 +434,7 @@ func (a *App) updateRule(c *gin.Context) {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
+	a.refreshManagedRoutingTags(previousTargets...)
 	a.applyConfigAndRespond(c, sid, gin.H{"rule": r})
 }
 
@@ -446,6 +452,16 @@ func (a *App) deleteRule(c *gin.Context) {
 	if !a.requireManagedMode(c, sid) {
 		return
 	}
+	var previous model.RouteRule
+	if err := a.db.Where("id = ? AND server_id = ?", rid, sid).First(&previous).Error; err != nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "rule not found"})
+		return
+	}
+	previousTargets, err := managedRoutingRuleTags(a.db, &previous)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
 	res := a.db.Where("id = ? AND server_id = ?", rid, sid).Delete(&model.RouteRule{})
 	if res.Error != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": res.Error.Error()})
@@ -455,6 +471,7 @@ func (a *App) deleteRule(c *gin.Context) {
 		c.JSON(http.StatusNotFound, gin.H{"error": "rule not found"})
 		return
 	}
+	a.refreshManagedRoutingTags(previousTargets...)
 	a.applyConfigAndRespond(c, sid, gin.H{"ok": true})
 }
 
@@ -621,6 +638,7 @@ func (a *App) createRuleSet(c *gin.Context) {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
+	a.refreshManagedRoutingTags(rs.DownloadDetour)
 	a.applyRuleSetAndRespond(c, []string{rs.Tag}, gin.H{"ruleset": rs})
 }
 
@@ -646,6 +664,10 @@ func (a *App) updateRuleSet(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
+	if err := a.validateRuleSetRoutingConsumers(rs.Tag, req.DownloadDetour); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
 	var duplicate int64
 	if err := a.db.Model(&model.RuleSet{}).
 		Where("server_id = ? AND tag = ? AND id <> ?", 0, req.Tag, rs.ID).
@@ -658,6 +680,7 @@ func (a *App) updateRuleSet(c *gin.Context) {
 		return
 	}
 	oldTag := rs.Tag
+	oldDetour := rs.DownloadDetour
 	rs.Tag = req.Tag
 	rs.Type = req.Type
 	rs.Format = req.Format
@@ -686,6 +709,7 @@ func (a *App) updateRuleSet(c *gin.Context) {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
+	a.refreshManagedRoutingTags(oldDetour, rs.DownloadDetour)
 	a.applyRuleSetAndRespond(c, []string{oldTag, rs.Tag}, gin.H{"ruleset": rs})
 }
 
@@ -712,6 +736,7 @@ func (a *App) deleteRuleSet(c *gin.Context) {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
+	a.refreshManagedRoutingTags(rs.DownloadDetour)
 	c.JSON(http.StatusOK, gin.H{"ok": true, "apply_state": ConfigApplied})
 }
 
@@ -739,6 +764,10 @@ func (a *App) setFinalOutbound(c *gin.Context) {
 	if final == "" {
 		final = "direct"
 	}
+	if err := validateManagedRoutingSource(a.db, id, final); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
 	exists, err := a.outboundExists(a.db, final)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
@@ -748,9 +777,15 @@ func (a *App) setFinalOutbound(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "final 出站不存在或不能作为默认出站"})
 		return
 	}
+	var previous model.Server
+	if err := a.db.First(&previous, id).Error; err != nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "server not found"})
+		return
+	}
 	if err := a.db.Model(&model.Server{}).Where("id = ?", id).Update("final_outbound", final).Error; err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
+	a.refreshManagedRoutingTags(previous.FinalOutbound)
 	a.applyConfigAndRespond(c, id, gin.H{"ok": true, "final_outbound": final})
 }

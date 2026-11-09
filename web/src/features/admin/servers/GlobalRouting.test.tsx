@@ -22,14 +22,14 @@ beforeEach(() => {
 afterEach(() => { cleanup(); vi.unstubAllGlobals(); vi.clearAllMocks() })
 
 describe('global routing data', () => {
-  it('shows the node name and saves its stable tag in a routing rule', async () => {
+  it.each(['node-42', 'inbound-42'])('shows the node name and saves its stable %s tag in a routing rule', async (tag) => {
     vi.mocked(createRule).mockResolvedValue({ apply_state: 'pending' } as Awaited<ReturnType<typeof createRule>>)
-    render(<RuleForm serverId={1} rule={null} routingNodes={[{ tag: 'node-42', name: '东京节点', type: 'socks' }]} inboundTags={[]} open onClose={vi.fn()} onSaved={vi.fn()} />)
+    render(<RuleForm serverId={1} rule={null} routingNodes={[{ tag, name: '东京节点', type: 'socks' }]} inboundTags={[]} open onClose={vi.fn()} onSaved={vi.fn()} />)
     fireEvent.click(await screen.findByLabelText(/目标出站/))
     fireEvent.click(await screen.findByRole('option', { name: '东京节点' }))
     expect(screen.getByLabelText(/目标出站/).textContent).toBe('东京节点')
     fireEvent.click(screen.getByRole('button', { name: '创建' }))
-    await waitFor(() => expect(createRule).toHaveBeenCalledWith(1, expect.objectContaining({ outbound: 'node-42' })))
+    await waitFor(() => expect(createRule).toHaveBeenCalledWith(1, expect.objectContaining({ outbound: tag })))
   })
 
   it('shows a loading error and retries global data', async () => {

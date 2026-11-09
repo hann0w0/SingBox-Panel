@@ -121,6 +121,8 @@ func (a *App) importRemoteConfig(c *gin.Context) {
 		status := http.StatusInternalServerError
 		if errors.Is(err, errInboundTrafficTagReserved) {
 			status = http.StatusBadRequest
+		} else if errors.Is(err, errRoutingNodeInUse) || errors.Is(err, errManagedInboundRoutingProtected) {
+			status = http.StatusConflict
 		}
 		c.JSON(status, gin.H{"error": err.Error()})
 		return
@@ -177,7 +179,23 @@ func (a *App) applyImportUnlocked(srv *model.Server, p *singbox.ParsedConfig, ra
 	a.userAccessMu.Lock()
 	defer a.userAccessMu.Unlock()
 	mode := importedConfigMode(p, raw)
-	return a.db.Transaction(func(tx *gorm.DB) error {
+	var changedInboundIDs []uint
+	var routingTags []string
+	err := a.db.Transaction(func(tx *gorm.DB) error {
+		previousTags, err := collectServerManagedRoutingTags(tx, srv.ID)
+		if err != nil {
+			return err
+		}
+		routingTags = previousTags
+		var previous []model.Inbound
+		if err := tx.Where("server_id = ?", srv.ID).Find(&previous).Error; err != nil {
+			return err
+		}
+		if mode == model.ConfigModeRaw {
+			if err := rejectManagedInboundRawImport(tx, srv.ID); err != nil {
+				return err
+			}
+		}
 		if err := validateImportedInboundTrafficTags(tx, srv.ID, raw); err != nil {
 			return err
 		}
@@ -204,8 +222,36 @@ func (a *App) applyImportUnlocked(srv *model.Server, p *singbox.ParsedConfig, ra
 		if err := promoteServerOutbounds(tx, srv.ID); err != nil {
 			return err
 		}
-		return migrateGlobalRuleSets(tx)
+		if err := migrateGlobalRuleSets(tx); err != nil {
+			return err
+		}
+		currentTags, err := collectServerManagedRoutingTags(tx, srv.ID)
+		if err != nil {
+			return err
+		}
+		routingTags = append(routingTags, currentTags...)
+		var current []model.Inbound
+		if err := tx.Where("server_id = ?", srv.ID).Find(&current).Error; err != nil {
+			return err
+		}
+		before := make(map[uint]model.Inbound, len(previous))
+		for _, inbound := range previous {
+			before[inbound.ID] = inbound
+		}
+		for _, inbound := range current {
+			if old, exists := before[inbound.ID]; exists && managedInboundConfigChanged(old, inbound) {
+				changedInboundIDs = append(changedInboundIDs, inbound.ID)
+			}
+		}
+		return nil
 	})
+	if err == nil {
+		go a.refreshManagedRoutingTags(routingTags...)
+		if len(changedInboundIDs) > 0 {
+			go a.pushManagedRoutingNodeChanges(changedInboundIDs)
+		}
+	}
+	return err
 }
 
 func importedConfigMode(p *singbox.ParsedConfig, raw []byte) string {
@@ -414,6 +460,9 @@ func syncImportedInbounds(tx *gorm.DB, serverID uint, parsed []singbox.ParsedInb
 		if !keep[row.ID] {
 			removedIDs = append(removedIDs, row.ID)
 		}
+	}
+	if err := rejectInboundRoutingReferences(tx, removedIDs, 0); err != nil {
+		return err
 	}
 	if err := deleteUserNodeOrderRefs(tx, userNodeTypeManaged, removedIDs); err != nil {
 		return err

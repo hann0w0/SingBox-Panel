@@ -40,6 +40,8 @@ type Hub struct {
 	// AfterRegister, if set, runs when an agent (re)registers — used to push the
 	// latest config so a reconnecting server converges automatically.
 	AfterRegister func(serverID uint)
+	// AfterRoutingAddressChange refreshes peers using this server as an outbound.
+	AfterRoutingAddressChange func(serverID uint)
 	// AfterStatsCapabilityChange, if set, runs when a heartbeat reports a
 	// sing-box version that crosses the stats API threshold (e.g. after an
 	// in-place upgrade to 1.14), so the config can enable or drop the service.
@@ -415,10 +417,20 @@ func (h *Hub) onRegister(ac *agentConn, e protocol.RegisterEvt) {
 		"singbox_version":   e.SingboxVersion,
 		"agent_url":         e.PanelURL,
 	}
+	addressChanged := false
 	if ip, ok := normalizedIPv4(e.PublicIP); ok {
+		var before model.Server
+		if h.db.Select("address", "public_ip").First(&before, serverID).Error == nil {
+			addressChanged = before.Address == "" && before.PublicIP != ip
+		}
 		updates["public_ip"] = ip
 	}
-	h.db.Model(&model.Server{}).Where("id = ?", serverID).Updates(updates)
+	if err := h.db.Model(&model.Server{}).Where("id = ?", serverID).Updates(updates).Error; err != nil {
+		return
+	}
+	if addressChanged && h.AfterRoutingAddressChange != nil {
+		h.AfterRoutingAddressChange(serverID)
+	}
 	if h.AfterRegister != nil {
 		h.AfterRegister(serverID)
 	}

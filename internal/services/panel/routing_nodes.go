@@ -31,6 +31,15 @@ func routingNodeID(tag string) (uint, error) {
 }
 
 func (a *App) listRoutingNodes(c *gin.Context) {
+	var sourceID uint
+	if value, present := c.GetQuery("server_id"); present {
+		id, err := strconv.ParseUint(value, 10, strconv.IntSize)
+		if err != nil || id == 0 {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "无效的服务器 ID"})
+			return
+		}
+		sourceID = uint(id)
+	}
 	var rows []model.CustomNode
 	if err := a.db.Where("enabled = ? AND hidden_by_subscription_rule = ?", true, false).Order("sort_order, id").Find(&rows).Error; err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
@@ -52,6 +61,14 @@ func (a *App) listRoutingNodes(c *gin.Context) {
 		}
 		nodes = append(nodes, routingNode{routingNodeTag(rows[i].ID), rows[i].Name, n.typ})
 	}
+	managed, err := listManagedRoutingNodes(a.db, sourceID)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+	for _, n := range managed {
+		nodes = append(nodes, routingNode{n.tag, n.name, n.typ})
+	}
 	c.JSON(http.StatusOK, gin.H{"nodes": nodes})
 }
 
@@ -67,6 +84,13 @@ func rejectReferencedRoutingNodes(db *gorm.DB, ids []uint) error {
 	for i, id := range ids {
 		tags[i] = routingNodeTag(id)
 	}
+	return rejectRoutingTagsInUse(db, tags, 0)
+}
+
+func rejectRoutingTagsInUse(db *gorm.DB, tags []string, excludedServerID uint) error {
+	if len(tags) == 0 {
+		return nil
+	}
 	for _, query := range []struct {
 		model  any
 		column string
@@ -74,7 +98,16 @@ func rejectReferencedRoutingNodes(db *gorm.DB, ids []uint) error {
 		{&model.RouteRule{}, "outbound"}, {&model.Server{}, "final_outbound"}, {&model.RuleSet{}, "download_detour"},
 	} {
 		var count int64
-		if err := db.Model(query.model).Where(query.column+" IN ?", tags).Count(&count).Error; err != nil {
+		q := db.Model(query.model).Where(query.column+" IN ?", tags)
+		if excludedServerID != 0 {
+			switch query.model.(type) {
+			case *model.Server:
+				q = q.Where("id <> ?", excludedServerID)
+			case *model.RouteRule:
+				q = q.Where("server_id <> ?", excludedServerID)
+			}
+		}
+		if err := q.Count(&count).Error; err != nil {
 			return err
 		}
 		if count > 0 {
@@ -102,6 +135,13 @@ func routingNodeAffectedServers(db *gorm.DB, ids []uint) ([]uint, error) {
 	tags := make([]string, len(ids))
 	for i, id := range ids {
 		tags[i] = routingNodeTag(id)
+	}
+	return routingTagsAffectedServers(db, tags)
+}
+
+func routingTagsAffectedServers(db *gorm.DB, tags []string) ([]uint, error) {
+	if len(tags) == 0 {
+		return nil, nil
 	}
 	affected := map[uint]bool{}
 	var servers []model.Server
@@ -185,7 +225,7 @@ func (o *Orchestrator) pushRoutingNodeChanges(ids []uint) {
 	}
 }
 
-func buildRoutingNodeOutbounds(db *gorm.DB, tags map[string]bool) ([]json.RawMessage, error) {
+func buildRoutingNodeOutbounds(db *gorm.DB, sourceID uint, tags map[string]bool) ([]json.RawMessage, error) {
 	ordered := make([]string, 0, len(tags))
 	for tag := range tags {
 		ordered = append(ordered, tag)
@@ -194,6 +234,25 @@ func buildRoutingNodeOutbounds(db *gorm.DB, tags map[string]bool) ([]json.RawMes
 	out := make([]json.RawMessage, 0, len(ordered))
 	for _, tag := range ordered {
 		if tag == "" || tag == "direct" {
+			continue
+		}
+		if strings.HasPrefix(tag, "inbound-") {
+			id, err := managedRoutingNodeID(tag)
+			if err != nil {
+				return nil, err
+			}
+			client, serverID, err := loadManagedRoutingClient(db, id)
+			if err != nil {
+				return nil, err
+			}
+			if serverID == sourceID {
+				return nil, fmt.Errorf("目标出站不能选择当前服务器自身的节点")
+			}
+			raw, err := singbox.BuildClientOutbound(client)
+			if err != nil {
+				return nil, err
+			}
+			out = append(out, raw)
 			continue
 		}
 		id, err := routingNodeID(tag)

@@ -226,6 +226,18 @@ func (a *App) outboundExists(db *gorm.DB, tag string) (bool, error) {
 	case "direct", "block", "reject", "sniff", "hijack-dns":
 		return true, nil
 	}
+	if strings.HasPrefix(tag, "inbound-") {
+		id, err := managedRoutingNodeID(tag)
+		if err != nil {
+			return false, nil
+		}
+		client, _, err := loadManagedRoutingClient(db, id)
+		if err != nil {
+			return false, err
+		}
+		_, err = singbox.BuildClientOutbound(client)
+		return err == nil, err
+	}
 	id, err := routingNodeID(tag)
 	if err != nil {
 		return false, nil
@@ -246,6 +258,9 @@ func stringSet(values []string) map[string]bool {
 func (a *App) validateRule(db *gorm.DB, serverID uint, raw json.RawMessage, outbound string) error {
 	if strings.TrimSpace(outbound) == "" {
 		return fmt.Errorf("目标出站必填")
+	}
+	if err := validateManagedRoutingSource(db, serverID, outbound); err != nil {
+		return err
 	}
 	ok, err := a.outboundExists(db, outbound)
 	if err != nil {
@@ -311,6 +326,17 @@ func (a *App) validateRule(db *gorm.DB, serverID uint, raw json.RawMessage, outb
 	var ruleSets []string
 	if err := db.Model(&model.RuleSet{}).Where("server_id = ?", 0).Pluck("tag", &ruleSets).Error; err != nil {
 		return err
+	}
+	if len(rule.RuleSet) > 0 {
+		var detours []string
+		if err := db.Model(&model.RuleSet{}).Where("server_id = 0 AND tag IN ?", rule.RuleSet).Pluck("download_detour", &detours).Error; err != nil {
+			return err
+		}
+		for _, detour := range detours {
+			if err := validateManagedRoutingSource(db, serverID, detour); err != nil {
+				return fmt.Errorf("规则集下载出站: %w", err)
+			}
+		}
 	}
 	ruleSetSet := stringSet(ruleSets)
 	for _, tag := range rule.RuleSet {

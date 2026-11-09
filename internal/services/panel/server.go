@@ -106,6 +106,9 @@ func NewApp(cfg config.PanelConfig, db *gorm.DB) *App {
 		go orch.PushConfigIfManaged(serverID)
 		go a.resumeLogStream(serverID)
 	}
+	hub.AfterRoutingAddressChange = func(serverID uint) {
+		go a.refreshManagedInboundReferences(serverID)
+	}
 	hub.AfterStatsCapabilityChange = func(serverID uint) {
 		go orch.PushConfigIfManaged(serverID)
 	}

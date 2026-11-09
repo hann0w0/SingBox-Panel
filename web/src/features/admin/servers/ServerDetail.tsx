@@ -174,7 +174,7 @@ export default function ServerDetail() {
       setInstall(d.install_command)
       setPublicURL(d.public_url)
       const [nodeRows, ruleRows, ruleSetRows] = await Promise.allSettled([
-        listRoutingNodes(controller.signal),
+        listRoutingNodes(controller.signal, targetSID),
         listRules(targetSID, controller.signal),
         listRuleSets(controller.signal),
       ])

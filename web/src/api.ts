@@ -242,8 +242,8 @@ export interface RuleSetBody {
   download_detour?: string
   update_interval?: string
 }
-export const listRoutingNodes = (signal?: AbortSignal) =>
-  http.get<{ nodes: RoutingNode[] }>('/api/admin/routing-nodes', { signal }).then((r) => r.data.nodes)
+export const listRoutingNodes = (signal?: AbortSignal, serverId?: number) =>
+  http.get<{ nodes: RoutingNode[] }>('/api/admin/routing-nodes', { signal, params: serverId ? { server_id: serverId } : undefined }).then((r) => r.data.nodes)
 export const listRuleSets = (signal?: AbortSignal) =>
   http.get<{ rulesets: RuleSet[] }>('/api/admin/rulesets', { signal }).then((r) => r.data.rulesets)
 export const createRuleSet = (body: RuleSetBody) =>

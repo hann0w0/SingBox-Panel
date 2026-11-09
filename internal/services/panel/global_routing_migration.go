@@ -39,6 +39,27 @@ func promoteServerOutbounds(tx *gorm.DB, serverID uint) error {
 			if err != nil {
 				return fmt.Errorf("server %d outbound %q: %w", serverID, row.Tag, err)
 			}
+			if id, err := managedRoutingNodeID(row.Tag); err == nil {
+				client, ownerID, err := loadManagedRoutingClient(tx, id)
+				if err != nil {
+					return err
+				}
+				if ownerID == serverID {
+					return fmt.Errorf("目标出站不能选择当前服务器自身的节点")
+				}
+				matches, err := clientNodeDefinitionMatches(client, node)
+				if err != nil {
+					return err
+				}
+				if !matches {
+					return fmt.Errorf("自有节点 %q 的连接信息与目标服务器不一致，请先更新目标节点", row.Tag)
+				}
+				targets[row.Tag] = row.Tag
+				if err := tx.Delete(&row).Error; err != nil {
+					return err
+				}
+				continue
+			}
 			// Repeated config imports reuse an identical global node, including configs
 			// exported with the stable node-ID tag.
 			if id, err := routingNodeID(row.Tag); err == nil {
@@ -244,6 +265,10 @@ func globalNodeDefinitionMatches(candidate, wanted model.CustomNode) (bool, erro
 	}
 	client := n.clientNode()
 	client.Name = routingNodeTag(candidate.ID)
+	return clientNodeDefinitionMatches(client, wanted)
+}
+
+func clientNodeDefinitionMatches(client singbox.ClientNode, wanted model.CustomNode) (bool, error) {
 	raw, err := singbox.BuildClientOutbound(client)
 	if err != nil {
 		return false, err

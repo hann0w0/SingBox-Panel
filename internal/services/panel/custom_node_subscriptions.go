@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"log"
+	"net/url"
 	"strings"
 	"sync"
 	"time"
@@ -29,6 +30,7 @@ type customNodeSubscriptionManager struct {
 	audienceMu sync.Mutex
 	// syncSource overrides the per-source sync in tests; nil means m.sync.
 	syncSource func(ctx context.Context, id uint) error
+	fetch      func(context.Context, *url.URL) ([]byte, error)
 }
 
 type customNodeSubscriptionSyncResult struct {
@@ -41,7 +43,7 @@ type customNodeSubscriptionSyncResult struct {
 }
 
 func newCustomNodeSubscriptionManager(db *gorm.DB) *customNodeSubscriptionManager {
-	return &customNodeSubscriptionManager{db: db, locks: newKeyedMutex[uint]()}
+	return &customNodeSubscriptionManager{db: db, locks: newKeyedMutex[uint](), fetch: fetchRemoteSubscription}
 }
 
 // subscriptionManager keeps focused handler tests and other lightweight App
@@ -179,8 +181,9 @@ func (m *customNodeSubscriptionManager) sync(ctx context.Context, id uint) (cust
 	markFailure := func(err error) error {
 		message := trimRunes(err.Error(), 1000)
 		if dbErr := m.db.Model(&model.CustomNodeSubscription{}).Where("id = ?", id).Updates(map[string]any{
-			"last_sync_at": &now,
-			"last_error":   message,
+			"last_sync_at":     &now,
+			"last_error":       message,
+			"last_sync_status": model.SubscriptionSyncFailed,
 		}).Error; dbErr != nil {
 			return fmt.Errorf("%v; save sync error: %w", err, dbErr)
 		}
@@ -195,7 +198,7 @@ func (m *customNodeSubscriptionManager) sync(ctx context.Context, id uint) (cust
 	if !ok {
 		return customNodeSubscriptionSyncResult{}, markFailure(errors.New("保存的订阅地址无效"))
 	}
-	raw, err := fetchRemoteSubscription(ctx, u)
+	raw, err := m.fetch(ctx, u)
 	if err != nil {
 		return customNodeSubscriptionSyncResult{}, markFailure(err)
 	}
@@ -205,6 +208,16 @@ func (m *customNodeSubscriptionManager) sync(ctx context.Context, id uint) (cust
 	}
 	if len(parsed.Nodes) == 0 {
 		return customNodeSubscriptionSyncResult{}, markFailure(errors.New("订阅没有返回可用节点，已保留上次同步结果"))
+	}
+	failedNames := make(map[string]bool, len(parsed.Skipped))
+	for _, issue := range parsed.Skipped {
+		if strings.TrimSpace(issue.SourceName) == "" {
+			// An unidentified or truncated entry cannot establish which old rows
+			// are still in the source. Keep the previous snapshot intact rather
+			// than inserting new rows while retaining every unmatched old row.
+			return customNodeSubscriptionSyncResult{}, markFailure(errors.New("订阅存在无法定位的解析失败条目或超出节点限制，已保留上次同步结果"))
+		}
+		failedNames[normalizeSubscriptionSourceName(issue.SourceName)] = true
 	}
 
 	desired := make(map[string]model.CustomNode, len(parsed.Nodes))
@@ -304,20 +317,26 @@ func (m *customNodeSubscriptionManager) sync(ctx context.Context, id uint) (cust
 			}
 			result.Created++
 		}
-		// A parser can recover some nodes from a damaged provider response. Updating
-		// those rows is safe, but deleting every unmatched old row is not: the
-		// skipped item may be exactly that node. Only a complete parse may perform
-		// destructive reconciliation.
-		if !partial {
-			for _, stale := range byKey {
-				if err := tx.Delete(stale).Error; err != nil {
-					return err
-				}
-				if err := deleteUserNodeOrderRefs(tx, userNodeTypeCustom, []uint{stale.ID}); err != nil {
-					return err
-				}
-				result.Deleted++
+		// Only entries that actually failed in this snapshot may retain their
+		// old definitions. One malformed node must not keep every deleted or
+		// renamed node from all previous refreshes.
+		retained := 0
+		for _, stale := range byKey {
+			sourceName := stale.SourceName
+			if sourceName == "" {
+				sourceName = stale.Name
 			}
+			if failedNames[normalizeSubscriptionSourceName(sourceName)] {
+				retained++
+				continue
+			}
+			if err := tx.Delete(stale).Error; err != nil {
+				return err
+			}
+			if err := deleteUserNodeOrderRefs(tx, userNodeTypeCustom, []uint{stale.ID}); err != nil {
+				return err
+			}
+			result.Deleted++
 		}
 		var actualVisible int64
 		if err := tx.Model(&model.CustomNode{}).
@@ -328,13 +347,15 @@ func (m *customNodeSubscriptionManager) sync(ctx context.Context, id uint) (cust
 		result.Total = int(actualVisible)
 		lastError := ""
 		updates := map[string]any{
-			"last_sync_at": &now,
-			"last_error":   lastError,
-			"source_type":  parsed.SourceType,
-			"node_count":   actualVisible,
+			"last_sync_at":     &now,
+			"last_error":       lastError,
+			"last_sync_status": model.SubscriptionSyncSuccess,
+			"source_type":      parsed.SourceType,
+			"node_count":       actualVisible,
 		}
 		if partial {
-			updates["last_error"] = fmt.Sprintf("有 %d 个节点解析失败，已保留未匹配的旧节点", len(parsed.Skipped))
+			updates["last_sync_status"] = model.SubscriptionSyncPartial
+			updates["last_error"] = fmt.Sprintf("有 %d 个节点解析失败，保留 %d 个仍在源中的旧节点", len(parsed.Skipped), retained)
 		} else {
 			updates["last_success_at"] = &now
 		}

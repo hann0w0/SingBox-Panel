@@ -1042,6 +1042,8 @@ export function CustomNodesPanel({ nodes, loading, error, onNodesChange }: {
         const result = await createCustomNodeSubscription(body)
         if (result.sync_error) {
           message.warning(`订阅已保存，首次同步失败：${result.sync_error}`)
+        } else if (result.sync.skipped) {
+          message.warning(`订阅已保存，部分同步失败：${result.subscription.last_error}`)
         } else {
           message.success(`订阅已保存并同步 ${result.sync.total} 个节点${result.sync.filtered ? `，过滤 ${result.sync.filtered} 个` : ''}`)
         }
@@ -1061,7 +1063,9 @@ export function CustomNodesPanel({ nodes, loading, error, onNodesChange }: {
     setSyncingSubscriptionID(subscription.id)
     try {
       const result = await syncCustomNodeSubscription(subscription.id)
-      message.success(`同步完成：新增 ${result.sync.created}，更新 ${result.sync.updated}，删除 ${result.sync.deleted}${result.sync.filtered ? `，过滤 ${result.sync.filtered}` : ''}`)
+      const summary = `当前 ${result.sync.total} 个节点，新增 ${result.sync.created}，更新 ${result.sync.updated}，删除 ${result.sync.deleted}${result.sync.filtered ? `，过滤 ${result.sync.filtered}` : ''}`
+      if (result.sync.skipped) message.warning(`部分同步完成：${summary}；${result.subscription.last_error}`)
+      else message.success(`同步完成：${summary}`)
       loadSubscriptions()
       onNodesChange()
     } catch (e) {
@@ -1383,13 +1387,18 @@ export function CustomNodesPanel({ nodes, loading, error, onNodesChange }: {
     </span>
   )
 
-  const subscriptionStatus = (subscription: CustomNodeSubscription) => subscription.last_error
-    ? <span title={subscription.last_error}><Status tone="error">同步失败</Status></span>
-    : !subscription.enabled
-      ? <Status tone="off">已停用</Status>
-      : subscription.last_success_at || subscription.last_sync_at
-        ? <Status tone="ok">正常</Status>
-        : <Status tone="off">待同步</Status>
+  const subscriptionStatus = (subscription: CustomNodeSubscription) => {
+    if (subscription.last_sync_status === 'partial') {
+      return <span title={subscription.last_error}><Status tone="warn">部分成功</Status></span>
+    }
+    if (subscription.last_sync_status === 'failed' || (!subscription.last_sync_status && subscription.last_error)) {
+      return <span title={subscription.last_error}><Status tone="error">同步失败</Status></span>
+    }
+    if (!subscription.enabled) return <Status tone="off">已停用</Status>
+    return subscription.last_success_at || subscription.last_sync_at
+      ? <Status tone="ok">正常</Status>
+      : <Status tone="off">待同步</Status>
+  }
 
   const nodeFilters = (
     <>

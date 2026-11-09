@@ -621,13 +621,6 @@ func (s InboundSettings) validateProtocol(typ string) error {
 			s.SnellMode != "unshaped" && s.SnellMode != "unsafe-raw" {
 			return fmt.Errorf("snell: unsupported v6 mode %q", s.SnellMode)
 		}
-	case "socks":
-		if s.MultiUser && (s.Username == "" || s.Password == "") {
-			return fmt.Errorf("socks: legacy multi-user settings must be migrated to shared credentials")
-		}
-		if (s.Username == "") != (s.Password == "") {
-			return fmt.Errorf("socks: username and password must both be set or both be empty")
-		}
 	}
 	if typ == "hysteria2" && s.ObfsType != "" && s.ObfsType != "salamander" && s.ObfsType != "gecko" {
 		return fmt.Errorf("hysteria2: unsupported obfs type %q", s.ObfsType)
@@ -749,6 +742,17 @@ func (s InboundSettings) Validate(typ string) error {
 	}
 	if err := s.validateProtocol(typ); err != nil {
 		return err
+	}
+	// The panel requires paired credentials for its own SOCKS listeners.
+	// External SOCKS outbounds retain the provider's independently optional
+	// username/password fields instead of inheriting this server-side rule.
+	if typ == "socks" {
+		if s.MultiUser && (s.Username == "" || s.Password == "") {
+			return fmt.Errorf("socks: legacy multi-user settings must be migrated to shared credentials")
+		}
+		if (s.Username == "") != (s.Password == "") {
+			return fmt.Errorf("socks: username and password must both be set or both be empty")
+		}
 	}
 	if err := s.validateRealityGuard(typ); err != nil {
 		return err

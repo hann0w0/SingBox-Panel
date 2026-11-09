@@ -281,6 +281,7 @@ export interface RuleMatch {
   method?: 'default' | 'drop'
   network?: string
   rule_set?: string[]
+  rule_set_ip_cidr_match_source?: boolean
 }
 
 export interface RouteRule {

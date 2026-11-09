@@ -729,7 +729,7 @@ export default function ServerDetail() {
   const matchChips = (r: RouteRule) => {
     const m = r.match || {}
     const groups: [string, (string | number)[] | undefined][] = [
-      ['规则集', m.rule_set], ['入站', m.inbound], ['域名', m.domain], ['后缀', m.domain_suffix],
+      [m.rule_set_ip_cidr_match_source ? '来源 IP 规则集' : '规则集', m.rule_set], ['入站', m.inbound], ['域名', m.domain], ['后缀', m.domain_suffix],
       ['关键词', m.domain_keyword], ['目标 IP', m.ip_cidr], ['来源 IP', m.source_ip_cidr],
       ['端口', m.port], ['协议', m.protocol], ['网络', m.network ? [m.network.toUpperCase()] : undefined],
     ]
@@ -741,7 +741,7 @@ export default function ServerDetail() {
   const ruleTarget = (r: RouteRule) => {
     const v = r.outbound
     const act = (r.match?.action as string) || (v === 'block' ? 'reject' : v)
-    if (act === 'reject' || v === 'block' || v === 'reject') return 'reject'
+    if (act === 'reject' || v === 'block' || v === 'reject') return r.match?.method === 'drop' ? '静默丢弃' : '快速拒绝'
     if (act === 'sniff' || v === 'sniff') return 'sniff'
     if (act === 'hijack-dns' || v === 'hijack-dns') return 'hijack-dns'
     return routingNodes.find((node) => node.tag === v)?.name || v

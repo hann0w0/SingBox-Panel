@@ -308,6 +308,9 @@ func (a *App) validateRule(db *gorm.DB, serverID uint, raw json.RawMessage, outb
 	if rule.Network != "" && rule.Network != "tcp" && rule.Network != "udp" && rule.Network != "icmp" {
 		return fmt.Errorf("network 只能是 tcp、udp 或 icmp")
 	}
+	if rule.RuleSetIPCIDRMatchSource && len(rule.RuleSet) == 0 {
+		return fmt.Errorf("规则集匹配来源 IP 时必须选择规则集")
+	}
 	for _, port := range rule.Port {
 		if port < 1 || port > 65535 {
 			return fmt.Errorf("规则端口必须在 1-65535 之间")

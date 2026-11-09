@@ -45,7 +45,8 @@ describe('subscription sync feedback', () => {
     expect(label.className).toContain('is-warn')
     expect(screen.queryByText('同步失败')).toBeNull()
     expect(label.closest('[title]')?.getAttribute('title')).toBe(source.last_error)
-    if (!desktop) expect(container.querySelector('.um-mcard-error.is-warning')?.textContent).toBe(source.last_error)
+    expect(container.querySelector('.um-table')).not.toBeNull()
+    expect(container.querySelector('.um-mcard')).toBeNull()
   })
 
   it.each([

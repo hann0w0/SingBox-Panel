@@ -4,7 +4,6 @@ import {
   Button,
   Checkbox,
   Form,
-  Grid,
   Input,
   InputNumber,
   Modal,
@@ -50,7 +49,6 @@ import {
 import type { CustomNode, CustomNodeSubscription, NameRewriteRule, UserNodeOrderItem } from '../../../api'
 import type { Inbound, Server } from '../../../types'
 import { RegionFlag, regionCodeFromFlag, removeRegionFlag } from '../../../components/RegionFlag'
-import { VirtualList } from '../../../components/VirtualList'
 import { SHADOWSOCKS_METHODS } from '../../../util'
 import { RequestState } from '../../../components/RequestState'
 import { buildCustomNodeParams } from '../../../customNodeForm'
@@ -87,12 +85,10 @@ const nodeTypeLabel: Record<string, string> = {
 }
 
 const MAX_VISIBLE_SUBSCRIPTIONS = 15
-const MAX_VISIBLE_MOBILE_SUBSCRIPTIONS = 5
-const MAX_VISIBLE_MOBILE_NODES = 5
-const MANAGEMENT_TABLE_ROW_HEIGHT = 41
-const SUBSCRIPTION_TABLE_SCROLL_HEIGHT = (MAX_VISIBLE_SUBSCRIPTIONS + 1) * MANAGEMENT_TABLE_ROW_HEIGHT
-const subscriptionKey = (subscription: CustomNodeSubscription) => subscription.id
-const customNodeKey = (node: CustomNode) => node.id
+// Measured heights include the action buttons, cell padding and sticky header.
+const MANAGEMENT_TABLE_ROW_HEIGHT = 53
+const MANAGEMENT_TABLE_HEAD_HEIGHT = 42
+const SUBSCRIPTION_TABLE_SCROLL_HEIGHT = MANAGEMENT_TABLE_HEAD_HEIGHT + MAX_VISIBLE_SUBSCRIPTIONS * MANAGEMENT_TABLE_ROW_HEIGHT
 
 type AccessKind = 'managed' | 'custom'
 
@@ -885,57 +881,12 @@ function detailValue(value: unknown): string {
   return String(value)
 }
 
-const MobileNodeCard = memo(function MobileNodeCard({
-  node,
-  onDetail,
-  onEdit,
-  onRemove,
-}: {
-  node: CustomNode
-  onDetail: (node: CustomNode) => void
-  onEdit: (node: CustomNode) => void
-  onRemove: (node: CustomNode) => void
-}) {
-  const protocol = node.link?.trim() ? protocolOf(node.link) : node.protocol
-  const type = nodeTypeLabel[protocol]
-  const group = node.group?.trim() || '未分组'
-  const address = node.detail?.address || node.address
-  const port = node.detail?.port || node.port
-
-  return (
-    <div
-      className="um-mcard is-clickable"
-      onClick={(event) => {
-        const target = event.target as HTMLElement
-        if (target.closest('button, input')) return
-        onDetail(node)
-      }}
-    >
-      <div className="um-mcard-top">
-        <span className="um-mcard-name">{nodeDisplayName(node)}</span>
-        <span className="ui-row-actions">
-          <Button size="small" type="text" icon={<Pencil />} aria-label={`编辑 ${node.name || '节点'}`} onClick={() => onEdit(node)} />
-          <Button size="small" type="text" icon={<Trash2 />} aria-label={`删除 ${node.name || '节点'}`} onClick={() => onRemove(node)} />
-        </span>
-      </div>
-      <div className="um-mcard-meta">
-        <span className="ui-tag">{type || protocol || '-'}</span>
-        <span>{group}</span>
-        {!node.enabled ? <span>停用</span> : null}
-      </div>
-      {address ? <div className="um-mcard-addr mono">{address}{port ? `:${port}` : ''}</div> : null}
-    </div>
-  )
-})
-
 export function CustomNodesPanel({ nodes, loading, error, onNodesChange }: {
   nodes: CustomNode[]
   loading: boolean
   error?: string | null
   onNodesChange: () => void
 }) {
-  const screens = Grid.useBreakpoint()
-  const isMobile = !screens.md
   const [nodeOpen, setNodeOpen] = useState(false)
   const [nodeSaving, setNodeSaving] = useState(false)
   const [editingNode, setEditingNode] = useState<CustomNode | null>(null)
@@ -1445,51 +1396,6 @@ export function CustomNodesPanel({ nodes, loading, error, onNodesChange }: {
       : <Status tone="off">待同步</Status>
   }
 
-  const mobileSubscriptionList = (
-    <VirtualList
-      className={`virtual-list um-vlist${subscriptions.length > MAX_VISIBLE_MOBILE_SUBSCRIPTIONS ? ' is-scrollable' : ''}`}
-      items={subscriptions}
-      getKey={subscriptionKey}
-      estimatedItemHeight={104}
-      gap={8}
-      renderItem={(subscription) => (
-        <div className="um-mcard" key={subscription.id}>
-          <div className="um-mcard-top">
-            <span className="um-mcard-name">{subscription.name}</span>
-            {subscriptionActions(subscription)}
-          </div>
-          <div className="um-mcard-meta">
-            {subscriptionStatus(subscription)}
-            <span><span className="mono">{subscription.node_count}</span> 个节点</span>
-            <span>{syncLabel(subscription)}</span>
-          </div>
-          {subscription.last_error ? <div className={`um-mcard-error${subscription.last_sync_status === 'partial' ? ' is-warning' : ''}`}>{subscription.last_error}</div> : null}
-        </div>
-      )}
-    />
-  )
-
-  const mobileNodeList = filteredNodes.length === 0 ? (
-    <div className="ui-empty">{nodeSearch.trim() || selectedGroup ? '没有匹配的节点' : '暂无节点'}</div>
-  ) : (
-    <VirtualList
-      className={`virtual-list um-vlist${filteredNodes.length > MAX_VISIBLE_MOBILE_NODES ? ' is-scrollable' : ''}`}
-      items={filteredNodes}
-      getKey={customNodeKey}
-      estimatedItemHeight={96}
-      gap={8}
-      renderItem={(node) => (
-        <MobileNodeCard
-          key={node.id}
-          node={node}
-          onDetail={setDetailNode}
-          onEdit={openNodeEdit}
-          onRemove={removeNode}
-        />
-      )}
-    />
-  )
-
   const nodeFilters = (
     <>
       {selectedGroup || nodeSearch.trim() ? <span className="um-filter-count mono">{filteredNodes.length} / {nodes.length}</span> : null}
@@ -1534,7 +1440,7 @@ export function CustomNodesPanel({ nodes, loading, error, onNodesChange }: {
       />
       {section === 'subscriptions' ? (
         <RequestState loading={subscriptionsLoading} error={subscriptionsError} hasData={subscriptions.length > 0} empty={!subscriptionsLoading && !subscriptionsError && subscriptions.length === 0} emptyDescription="暂无订阅源" onRetry={loadSubscriptions}>
-          {isMobile ? mobileSubscriptionList : <Table<CustomNodeSubscription>
+          <Table<CustomNodeSubscription>
             rowKey="id"
             className="um-table"
             dataSource={subscriptions}
@@ -1586,11 +1492,11 @@ export function CustomNodesPanel({ nodes, loading, error, onNodesChange }: {
               },
             ]}
             locale={{ emptyText: '暂无订阅源' }}
-          />}
+          />
         </RequestState>
       ) : (
         <RequestState loading={loading} error={error} hasData={nodes.length > 0} empty={!loading && !error && nodes.length === 0} emptyDescription="暂无节点" onRetry={onNodesChange}>
-          {isMobile ? mobileNodeList : <Table<CustomNode>
+          <Table<CustomNode>
             rowKey="id"
             className="um-table"
             dataSource={filteredNodes}
@@ -1607,7 +1513,7 @@ export function CustomNodesPanel({ nodes, loading, error, onNodesChange }: {
               },
             })}
             locale={{ emptyText: nodeSearch.trim() || selectedGroup ? '没有匹配的节点' : '暂无节点' }}
-          />}
+          />
         </RequestState>
       )}
 

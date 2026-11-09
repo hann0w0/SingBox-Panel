@@ -4,7 +4,7 @@ import { afterEach, beforeEach, expect, it, vi } from 'vitest'
 import { listServers, serverLogs, streamLogs } from '../../../api'
 import { useSSE } from '../../../useSSE'
 import type { SSEMessage } from '../../../useSSE'
-import Logs from './Logs'
+import Logs, { splitAddress } from './Logs'
 
 vi.mock('../../../api', async (importOriginal) => ({
   ...await importOriginal<typeof import('../../../api')>(),
@@ -22,6 +22,17 @@ beforeEach(() => {
   vi.mocked(streamLogs).mockResolvedValue({ ok: true, output: '' })
 })
 afterEach(() => { cleanup(); Reflect.deleteProperty(HTMLElement.prototype, 'scrollTo'); vi.unstubAllGlobals() })
+
+it('splits a log message into its address column and remaining detail', () => {
+  expect(splitAddress('connection to example.com:443')).toEqual({ address: 'example.com:443', detail: '' })
+  expect(splitAddress('connection from 10.0.0.5:51234')).toEqual({ address: '10.0.0.5:51234', detail: '' })
+  // The sentence's own full stop must not be read as part of the host.
+  expect(splitAddress('exchanged A api.telegram.org. UDP 149.154.167.220:53 in 84ms')).toEqual({
+    address: 'api.telegram.org',
+    detail: 'exchanged A UDP 149.154.167.220:53 in 84ms',
+  })
+  expect(splitAddress('connection reset by peer')).toEqual({ address: '', detail: 'connection reset by peer' })
+})
 
 it('displays the initial snapshot once when the live follower replays it', async () => {
   render(<MemoryRouter initialEntries={['/admin/logs?server=1']}><Logs /></MemoryRouter>)

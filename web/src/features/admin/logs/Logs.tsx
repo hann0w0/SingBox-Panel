@@ -215,40 +215,29 @@ function renderSemanticText(value: string, keyword: string): ReactNode {
   return parts.length ? parts : highlightText(value, keyword)
 }
 
-function renderContext(value: string, keyword: string): ReactNode {
-  if (!value) return ''
-  const splitAt = value.lastIndexOf(' ')
-  if (splitAt === -1) return <span className="lg-context-id">#{highlightText(value, keyword)}</span>
-
-  return (
-    <>
-      <span className="lg-context-id">#{highlightText(value.slice(0, splitAt), keyword)}</span>
-      <span className="lg-context-separator">·</span>
-      <span className="lg-context-duration">{highlightText(value.slice(splitAt + 1), keyword)}</span>
-    </>
-  )
-}
-
 const PROTOCOL_LABELS: Record<string, string> = {
   anytls: 'AnyTLS', snell: 'Snell', shadowsocks: 'SS', ss: 'SS', vless: 'VLESS', vmess: 'VMess', trojan: 'Trojan',
   hysteria2: 'Hy2', hysteria: 'Hysteria', tuic: 'TUIC', socks: 'SOCKS', http: 'HTTP', mixed: 'Mixed',
   direct: 'direct', block: 'block', dns: 'dns', selector: 'select', urltest: 'urltest', wireguard: 'WG',
 }
 
-/** Splits "inbound/snell[Hawaii]" into a short protocol label and the user-defined tag. */
-function compactComponent(value: string, direction: LogDirection): { proto: string; tag: string } {
+/**
+ * Splits "inbound/snell[Hawaii]" into the protocol and the user-defined tag.
+ * The tag is empty when it merely repeats the type ("direct[direct]"), so each
+ * half can own its own column without one of them sitting empty.
+ */
+export function compactComponent(value: string, direction: LogDirection): { proto: string; tag: string } {
   let result = value
   if (direction) {
     const prefix = `${direction}/`
     if (result.toLowerCase().startsWith(prefix)) result = result.slice(prefix.length)
   }
   const match = result.match(/^([^[]+)\[([^\]]+)]$/)
-  if (!match) return { proto: '', tag: result }
+  if (!match) return { proto: result, tag: '' }
   const type = match[1].trim().toLowerCase()
   const tag = match[2].trim()
   const proto = PROTOCOL_LABELS[type] ?? match[1].trim()
-  // "direct[direct]" or "anytls[anytls]" carry no extra name.
-  if (tag.toLowerCase() === type || tag === proto) return { proto: '', tag: proto }
+  if (tag.toLowerCase() === type || tag === proto) return { proto, tag: '' }
   return { proto, tag }
 }
 
@@ -263,17 +252,34 @@ function connectionId(context: string) {
   return space === -1 ? context : context.slice(0, space)
 }
 
-/** "connection to host:port" → arrow + emphasised target; other text unchanged. */
-function renderFlow(message: string, keyword: string): ReactNode {
-  const match = message.match(/^connection (to|from) (\S+)(.*)$/i)
-  if (!match) return renderSemanticText(message, keyword)
-  const [, way, target, rest] = match
-  const incoming = way.toLowerCase() === 'from'
-  return <>
-    <span className="lg-arrow">{incoming ? '← 来自' : '→'}</span>
-    <span className={incoming ? 'lg-source' : 'lg-target'}>{highlightText(target, keyword)}</span>
-    {rest ? <span className="lg-rest">{renderSemanticText(rest, keyword)}</span> : null}
-  </>
+const HOST_PATTERN = /(?:\d{1,3}\.){3}\d{1,3}(?::\d{1,5})?|(?:[a-zA-Z0-9](?:[a-zA-Z0-9-]*[a-zA-Z0-9])?\.)+[a-zA-Z]{2,}(?::\d{1,5})?/
+
+/**
+ * Separates the address a log line is about from the rest of its text, so the
+ * address can get its own column. Inbound rows show the connection address,
+ * outbound rows the destination:
+ *   "connection to example.com:443"        → example.com:443
+ *   "exchanged A api.telegram.org. UDP …"  → api.telegram.org / UDP …
+ */
+export function splitAddress(message: string): { address: string; detail: string } {
+  const connection = message.match(/^connection (?:to|from) (\S+)(.*)$/i)
+  if (connection) {
+    return { address: connection[1], detail: connection[2].trim() }
+  }
+  const host = message.match(HOST_PATTERN)
+  if (host?.index !== undefined) {
+    // Trailing dots belong to the sentence ("…api.telegram.org. UDP …"), not
+    // to the host, so they are stripped before the remainder is rebuilt.
+    const trailingDot = host[0].match(/\.+$/)
+    const address = host[0].slice(0, host[0].length - (trailingDot?.[0].length ?? 0))
+    const before = message.slice(0, host.index)
+    const after = message.slice(host.index + address.length + (trailingDot?.[0].length ?? 0))
+    const detail = `${before.trimEnd()} ${after.replace(/^[.\s]+/, '')}`
+      .replace(/\s+/g, ' ')
+      .trim()
+    return { address, detail }
+  }
+  return { address: '', detail: message }
 }
 
 function formatUpdatedAt(value: number | null) {
@@ -680,30 +686,53 @@ export default function Logs({ serverId }: { serverId?: number } = {}) {
               onScroll={handleScroll}
               role="log"
               ariaLabel="sing-box 日志内容"
+              header={displayMode === 'compact' ? (
+                <div className="lg-thead" aria-hidden="true">
+                  <span>时间</span>
+                  <span>方向</span>
+                  <span>协议</span>
+                  <span>标签</span>
+                  <span>用户</span>
+                  <span>目标</span>
+                  <span>报错</span>
+                  <span />
+                </div>
+              ) : undefined}
               renderItem={(line) => {
                 const compact = displayMode === 'compact' && line.parsed
                 const componentText = compactComponent(line.component || 'sing-box', line.direction)
-                const messageText = compactMessage(line.message, line.direction)
+                const { address, detail } = splitAddress(compactMessage(line.message, line.direction))
+                const tone = levelClass(line.level)
                 return (
                   <div
-                    className={`lg-line ${compact ? 'lg-line-compact' : 'lg-line-raw'} lg-line-${levelClass(line.level)}${connectionBands.get(line.id) ? ' is-band' : ''}`}
+                    className={`lg-line ${compact ? 'lg-line-compact' : 'lg-line-raw'} lg-line-${tone}${connectionBands.get(line.id) ? ' is-band' : ''}`}
                     title={compact ? line.raw : undefined}
                   >
                     {compact ? (
                       <>
                         <span className="lg-time">{line.time || '--:--:--'}</span>
                         <span className={`lg-dir lg-dir-${line.direction || 'none'}`}>
-                          {line.direction === 'inbound' ? '入' : line.direction === 'outbound' ? '出' : '·'}
+                          {line.direction === 'inbound' ? '入站' : line.direction === 'outbound' ? '出站' : '·'}
                         </span>
-                        <span className="lg-subject">
-                          {['warn', 'error'].includes(levelClass(line.level)) ? <span className={`lg-badge lg-badge-${levelClass(line.level)}`}>{line.level}</span> : null}
-                          {componentText.proto ? <span className="lg-proto">{componentText.proto}</span> : null}
-                          <span className={`lg-component lg-component-${line.direction || 'neutral'}`} title={line.component}>{highlightText(componentText.tag, keyword)}</span>
-                          {line.user ? <span className="lg-user" title={`用户 ${line.user}`}>{highlightText(line.user, keyword)}</span> : null}
+                        <span className="lg-proto" title={line.component}>
+                          {componentText.proto ? highlightText(componentText.proto, keyword) : <span className="lg-cell-empty">—</span>}
                         </span>
-                        <span className="lg-message">{renderFlow(messageText, keyword)}</span>
-                        <span className="lg-context" title={line.context}>
-                          {renderContext(line.context, keyword)}
+                        <span className="lg-tag" title={line.component}>
+                          {componentText.tag ? highlightText(componentText.tag, keyword) : <span className="lg-cell-empty">—</span>}
+                        </span>
+                        <span className="lg-user" title={line.user ? `用户 ${line.user}` : undefined}>
+                          {line.user ? highlightText(line.user, keyword) : <span className="lg-cell-empty">—</span>}
+                        </span>
+                        <span className="lg-address" title={address || undefined}>
+                          {address ? highlightText(address, keyword) : <span className="lg-cell-empty">—</span>}
+                        </span>
+                        <span className={`lg-error${tone === 'warn' || tone === 'error' ? ' is-' + tone : ''}${detail ? '' : ' is-empty'}`} title={detail || undefined}>
+                          {tone === 'warn' || tone === 'error' || tone === 'unknown' ? (
+                            <>
+                              <span className={`lg-badge lg-badge-${tone === 'unknown' ? 'error' : tone}`}>{line.level || 'INFO'}</span>
+                              {detail ? renderSemanticText(detail, keyword) : null}
+                            </>
+                          ) : detail ? renderSemanticText(detail, keyword) : <span className="lg-cell-empty">—</span>}
                         </span>
                       </>
                     ) : (

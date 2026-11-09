@@ -128,6 +128,25 @@ func (a *App) updateCustomNodeSubscription(c *gin.Context) {
 		if err := tx.First(&row, id).Error; err != nil {
 			return err
 		}
+		var sourceNodes []model.CustomNode
+		if err := tx.Where("subscription_id = ?", id).Find(&sourceNodes).Error; err != nil {
+			return err
+		}
+		for _, node := range sourceNodes {
+			hide := false
+			if req.NameRewriteRules != nil {
+				sourceName := node.SourceName
+				if sourceName == "" {
+					sourceName = node.Name
+				}
+				_, hide = applySubscriptionNodeRules(sourceName, node.Protocol, compiledRules)
+			}
+			if hide || (req.Enabled != nil && !*req.Enabled) {
+				if err := rejectReferencedRoutingNodes(tx, []uint{node.ID}); err != nil {
+					return err
+				}
+			}
+		}
 		oldBaseSortOrder := row.BaseSortOrder
 		autoUpdate := row.AutoUpdate
 		if req.AutoUpdate != nil {
@@ -183,6 +202,10 @@ func (a *App) updateCustomNodeSubscription(c *gin.Context) {
 		}
 		return nil
 	})
+	if errors.Is(err, errRoutingNodeInUse) {
+		c.JSON(http.StatusConflict, gin.H{"error": err.Error()})
+		return
+	}
 	if errors.Is(err, gorm.ErrRecordNotFound) {
 		c.JSON(http.StatusNotFound, gin.H{"error": "subscription not found"})
 		return
@@ -191,6 +214,9 @@ func (a *App) updateCustomNodeSubscription(c *gin.Context) {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
+	var changedIDs []uint
+	a.db.Model(&model.CustomNode{}).Where("subscription_id = ?", id).Pluck("id", &changedIDs)
+	a.pushRoutingNodeChanges(changedIDs)
 	a.db.First(&row, id)
 	row.NameRewriteRules = nonNilNameRewriteRules(row.NameRewriteRules)
 	c.JSON(http.StatusOK, gin.H{"subscription": row})
@@ -214,6 +240,9 @@ func (a *App) deleteCustomNodeSubscription(c *gin.Context) {
 		if err := tx.Model(&model.CustomNode{}).Where("subscription_id = ?", id).Pluck("id", &nodeIDs).Error; err != nil {
 			return err
 		}
+		if err := rejectReferencedRoutingNodes(tx, nodeIDs); err != nil {
+			return err
+		}
 		if err := tx.Where("subscription_id = ?", id).Delete(&model.CustomNode{}).Error; err != nil {
 			return err
 		}
@@ -222,6 +251,10 @@ func (a *App) deleteCustomNodeSubscription(c *gin.Context) {
 		}
 		return tx.Delete(&row).Error
 	})
+	if errors.Is(err, errRoutingNodeInUse) {
+		c.JSON(http.StatusConflict, gin.H{"error": err.Error()})
+		return
+	}
 	if errors.Is(err, gorm.ErrRecordNotFound) {
 		c.JSON(http.StatusNotFound, gin.H{"error": "subscription not found"})
 		return

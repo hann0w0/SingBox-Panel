@@ -9,6 +9,7 @@ import (
 	"errors"
 	"fmt"
 	"log"
+	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -106,32 +107,14 @@ func (o *Orchestrator) BuildServerConfig(srv *model.Server) ([]byte, error) {
 		})
 	}
 
-	// Outbounds (direct + landing proxies).
-	var obRows []model.Outbound
-	if err := o.db.Where("server_id = ?", srv.ID).Order("sort").Find(&obRows).Error; err != nil {
-		return nil, fmt.Errorf("load outbounds for server %d: %w", srv.ID, err)
-	}
-	obs := make([]singbox.OutboundInput, 0, len(obRows))
-	for _, ob := range obRows {
-		var os outboundStoredSettings
-		if len(ob.Settings) > 0 {
-			if err := json.Unmarshal(ob.Settings, &os); err != nil {
-				return nil, fmt.Errorf("outbound %q settings: %w", ob.Tag, err)
-			}
-		}
-		obs = append(obs, singbox.OutboundInput{
-			Tag: ob.Tag, Type: ob.Type,
-			Server: os.Server, ServerPort: os.ServerPort,
-			Username: os.Username, UUID: os.UUID, Password: os.Password, Settings: os.Settings,
-		})
-	}
-
 	// Route rules.
 	var ruleRows []model.RouteRule
 	if err := o.db.Where("server_id = ? AND enabled = ?", srv.ID, true).Order("sort").Find(&ruleRows).Error; err != nil {
 		return nil, fmt.Errorf("load route rules for server %d: %w", srv.ID, err)
 	}
 	rules := make([]singbox.RuleInput, 0, len(ruleRows))
+	nodeTags := map[string]bool{srv.FinalOutbound: true}
+	ruleSetTags := map[string]bool{}
 	for _, r := range ruleRows {
 		var ri singbox.RuleInput
 		if len(r.Match) > 0 {
@@ -141,24 +124,44 @@ func (o *Orchestrator) BuildServerConfig(srv *model.Server) ([]byte, error) {
 		}
 		ri.Outbound = r.Outbound
 		rules = append(rules, ri)
+		if ri.Action == "" || ri.Action == "route" {
+			switch r.Outbound {
+			case "block", "reject", "sniff", "hijack-dns":
+			default:
+				nodeTags[r.Outbound] = true
+			}
+		}
+		for _, tag := range ri.RuleSet {
+			ruleSetTags[tag] = true
+		}
 	}
 
 	// Rule-sets.
 	var rsRows []model.RuleSet
-	if err := o.db.Where("server_id = ?", srv.ID).Find(&rsRows).Error; err != nil {
+	if err := o.db.Where("server_id = 0 AND tag IN ?", mapKeys(ruleSetTags)).Order("tag").Find(&rsRows).Error; err != nil {
 		return nil, fmt.Errorf("load rule sets for server %d: %w", srv.ID, err)
 	}
 	rsets := make([]singbox.RuleSetInput, 0, len(rsRows))
 	for _, rs := range rsRows {
+		delete(ruleSetTags, rs.Tag)
+		if rs.Type != "local" {
+			nodeTags[rs.DownloadDetour] = true
+		}
 		rsets = append(rsets, singbox.RuleSetInput{
 			Tag: rs.Tag, Type: rs.Type, URL: rs.URL, Path: rs.Path, Format: rs.Format,
 			DownloadDetour: rs.DownloadDetour, UpdateInterval: rs.UpdateInterval,
 		})
 	}
 
-	return singbox.BuildServerConfig(singbox.ServerConfigInput{
+	if len(ruleSetTags) > 0 {
+		return nil, fmt.Errorf("路由引用不存在的全局规则集: %s", strings.Join(mapKeys(ruleSetTags), ", "))
+	}
+	nodeOutbounds, err := buildRoutingNodeOutbounds(o.db, nodeTags)
+	if err != nil {
+		return nil, err
+	}
+	raw, err := singbox.BuildServerConfig(singbox.ServerConfigInput{
 		Inbounds:        ins,
-		Outbounds:       obs,
 		Rules:           rules,
 		RuleSets:        rsets,
 		Final:           srv.FinalOutbound,
@@ -166,6 +169,10 @@ func (o *Orchestrator) BuildServerConfig(srv *model.Server) ([]byte, error) {
 		StatsSecret:     statsSecret(srv.AgentToken),
 		StatsAPI:        statsAPIAddress(srv, inbounds),
 	})
+	if err != nil {
+		return nil, err
+	}
+	return appendRoutingNodeOutbounds(raw, nodeOutbounds)
 }
 
 // statsSecret derives the per-node secret protecting the loopback stats
@@ -408,20 +415,20 @@ func (o *Orchestrator) serverIsManaged(serverID uint) (bool, error) {
 	if n > 0 {
 		return true, nil
 	}
-	if err := o.db.Model(&model.Outbound{}).Where("server_id = ?", serverID).Count(&n).Error; err != nil {
-		return false, err
-	}
-	if n > 0 {
-		return true, nil
-	}
 	if err := o.db.Model(&model.RouteRule{}).Where("server_id = ?", serverID).Count(&n).Error; err != nil {
 		return false, err
 	}
 	if n > 0 {
 		return true, nil
 	}
-	if err := o.db.Model(&model.RuleSet{}).Where("server_id = ?", serverID).Count(&n).Error; err != nil {
-		return false, err
+	return false, nil
+}
+
+func mapKeys(values map[string]bool) []string {
+	keys := make([]string, 0, len(values))
+	for key := range values {
+		keys = append(keys, key)
 	}
-	return n > 0, nil
+	sort.Strings(keys)
+	return keys
 }

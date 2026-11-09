@@ -69,6 +69,25 @@ func TestOutboundImportPreservesClientWireConfig(t *testing.T) {
 			if !reflect.DeepEqual(got, want) {
 				t.Fatalf("wire config changed: got=%v want=%v", got, want)
 			}
+			migrated, err := globalNodeFromOutbound(model.Outbound{Tag: body.Tag, Type: body.Type, Settings: model.JSONText(body.Settings)})
+			if err != nil {
+				t.Fatal(err)
+			}
+			n, ok := (&App{}).customNodeToNode(&migrated)
+			if !ok {
+				t.Fatal("migrated node cannot be rendered")
+			}
+			migratedRaw, err := singbox.BuildClientOutbound(n.clientNode())
+			if err != nil {
+				t.Fatal(err)
+			}
+			var migratedWire map[string]any
+			if err := json.Unmarshal(migratedRaw, &migratedWire); err != nil {
+				t.Fatal(err)
+			}
+			if !reflect.DeepEqual(migratedWire, want) {
+				t.Fatalf("migration changed protocol fields: got=%v want=%v", migratedWire, want)
+			}
 		})
 	}
 }

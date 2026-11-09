@@ -31,6 +31,7 @@ type customNodeSubscriptionManager struct {
 	// syncSource overrides the per-source sync in tests; nil means m.sync.
 	syncSource func(ctx context.Context, id uint) error
 	fetch      func(context.Context, *url.URL) ([]byte, error)
+	onChanged  func([]uint)
 }
 
 type customNodeSubscriptionSyncResult struct {
@@ -40,6 +41,7 @@ type customNodeSubscriptionSyncResult struct {
 	Total    int `json:"total"`
 	Skipped  int `json:"skipped"`
 	Filtered int `json:"filtered"`
+	Retained int `json:"retained"`
 }
 
 func newCustomNodeSubscriptionManager(db *gorm.DB) *customNodeSubscriptionManager {
@@ -54,7 +56,9 @@ func (a *App) subscriptionManager() *customNodeSubscriptionManager {
 	if a.customSubscriptions != nil {
 		return a.customSubscriptions
 	}
-	return newCustomNodeSubscriptionManager(a.db)
+	m := newCustomNodeSubscriptionManager(a.db)
+	m.onChanged = a.pushRoutingNodeChanges
+	return m
 }
 
 func normalizeCustomNodeSubscriptionInterval(minutes int) int {
@@ -266,6 +270,7 @@ func (m *customNodeSubscriptionManager) sync(ctx context.Context, id uint) (cust
 		Total: visibleCount, Skipped: len(parsed.Skipped), Filtered: len(desired) - visibleCount,
 	}
 	partial := len(parsed.Skipped) > 0
+	changedIDs := []uint{}
 	unlockAudience := m.lockAudience()
 	defer unlockAudience()
 	err = m.db.Transaction(func(tx *gorm.DB) error {
@@ -296,6 +301,20 @@ func (m *customNodeSubscriptionManager) sync(ctx context.Context, id uint) (cust
 		for _, key := range matchedOrder {
 			want := matchedDesired[key]
 			if current := byKey[key]; current != nil {
+				if want.HiddenBySubscriptionRule || !source.Enabled || !current.UserEnabled {
+					referenced, err := routingNodeReferenced(tx, current.ID)
+					if err != nil {
+						return err
+					}
+					if referenced {
+						// Keep the last usable connection when a provider filter removes a route target.
+						result.Retained++
+						partial = true
+						delete(byKey, key)
+						continue
+					}
+				}
+				changedIDs = append(changedIDs, current.ID)
 				updates := map[string]any{
 					"name": want.Name, "source_name": want.SourceName, "group": want.Group, "link": want.Link,
 					"protocol": want.Protocol, "address": want.Address, "port": want.Port,
@@ -326,6 +345,15 @@ func (m *customNodeSubscriptionManager) sync(ctx context.Context, id uint) (cust
 			if sourceName == "" {
 				sourceName = stale.Name
 			}
+			referenced, err := routingNodeReferenced(tx, stale.ID)
+			if err != nil {
+				return err
+			}
+			if referenced {
+				result.Retained++
+				partial = true
+				continue
+			}
 			if failedNames[normalizeSubscriptionSourceName(sourceName)] {
 				retained++
 				continue
@@ -355,7 +383,7 @@ func (m *customNodeSubscriptionManager) sync(ctx context.Context, id uint) (cust
 		}
 		if partial {
 			updates["last_sync_status"] = model.SubscriptionSyncPartial
-			updates["last_error"] = fmt.Sprintf("有 %d 个节点解析失败，保留 %d 个仍在源中的旧节点", len(parsed.Skipped), retained)
+			updates["last_error"] = fmt.Sprintf("有 %d 个节点解析失败，保留 %d 个源中旧节点及 %d 个路由引用节点", len(parsed.Skipped), retained, result.Retained)
 		} else {
 			updates["last_success_at"] = &now
 		}
@@ -363,6 +391,9 @@ func (m *customNodeSubscriptionManager) sync(ctx context.Context, id uint) (cust
 	})
 	if err != nil {
 		return customNodeSubscriptionSyncResult{}, markFailure(fmt.Errorf("保存订阅节点失败: %w", err))
+	}
+	if m.onChanged != nil && len(changedIDs) > 0 {
+		m.onChanged(changedIDs)
 	}
 	return result, nil
 }

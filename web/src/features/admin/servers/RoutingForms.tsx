@@ -7,7 +7,7 @@ import {
   updateRule,
 } from '../../../api'
 import { applyWithToast } from '../../../configApply'
-import type { Outbound, OutboundType, RouteRule, RuleMatch, RuleSet } from '../../../types'
+import type { Outbound, OutboundType, RouteRule, RuleMatch, RuleSet, RoutingNode } from '../../../types'
 import { randomBase64, randomHex, randomUUID, SHADOWSOCKS_METHODS, ss2022KeyLen } from '../../../util'
 import { buildOutboundBody, TLS_REQUIRED_OUT, TRANSPORT_OUT, transportHost } from '../../../outboundForm'
 import { FormGroup, scrollToFirstError } from './InboundForm'
@@ -566,7 +566,7 @@ function activeMatchFields(match: RuleMatch): MatchField[] {
 export function RuleForm({
   serverId,
   rule,
-  outboundTags,
+  routingNodes,
   inboundTags,
   ruleSets,
   open,
@@ -575,7 +575,7 @@ export function RuleForm({
 }: {
   serverId: number
   rule: RouteRule | null
-  outboundTags: string[]
+  routingNodes: RoutingNode[]
   inboundTags: string[]
   ruleSets?: RuleSet[]
   open: boolean
@@ -754,10 +754,11 @@ export function RuleForm({
             <Form.Item name="outbound" label="目标出站" rules={[{ required: true, message: '请选择目标出站' }]} className="fm-full">
               <Select
                 allowClear
-                placeholder="选择出站"
+                showSearch
+                placeholder="选择全局节点或 direct"
                 options={[
                   { value: 'direct', label: 'direct' },
-                  ...outboundTags.filter((t) => t !== 'direct').map((t) => ({ value: t, label: t })),
+                  ...routingNodes.map((node) => ({ value: node.tag, label: node.name })),
                 ]}
               />
             </Form.Item>

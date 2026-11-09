@@ -230,7 +230,7 @@ func TestSubscriptionSyncRecordsBuildFailuresAndOfflineAsPending(t *testing.T) {
 	if got := subscriptionSyncForTest(t, app, f.alice.ID); got != (subscriptionSyncStatus{ConfigPending, 1, 0}) {
 		t.Fatalf("offline revision was settled or marked failed: %+v", got)
 	}
-	mustCreate(t, f.db, &model.Outbound{ServerID: f.server.ID, Tag: "broken", Type: "vless", Settings: model.JSONText(`{broken`)})
+	mustCreate(t, f.db, &model.RouteRule{ServerID: f.server.ID, Outbound: "direct", Enabled: true, Match: model.JSONText(`{broken`)})
 	if err := orch.PushConfig(context.Background(), f.server.ID); err == nil {
 		t.Fatal("invalid configuration was not rejected")
 	}

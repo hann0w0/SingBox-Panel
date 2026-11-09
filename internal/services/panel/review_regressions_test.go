@@ -67,61 +67,43 @@ func TestInboundTLSModeSwitchPreservesOnlyCompatibleSecrets(t *testing.T) {
 	}
 }
 
-func TestRuleSetDownloadDetourIntegrityAcrossOutboundEdits(t *testing.T) {
+func TestRuleSetDownloadDetourIntegrityAcrossGlobalNodeEdits(t *testing.T) {
 	db := testDB(t)
-	server := model.Server{Name: "node", AgentToken: "detour-fixture"}
-	other := model.Server{Name: "other", AgentToken: "detour-other"}
-	for _, row := range []*model.Server{&server, &other} {
-		if err := db.Create(row).Error; err != nil {
-			t.Fatal(err)
-		}
-	}
-	outbound := model.Outbound{ServerID: server.ID, Tag: "landing", Type: "socks", Settings: model.JSONText(`{"server":"example.com","server_port":1080}`)}
-	if err := db.Create(&outbound).Error; err != nil {
-		t.Fatal(err)
-	}
-	ruleSet := model.RuleSet{ServerID: server.ID, Tag: "geo", Type: "remote", Format: "binary", URL: "https://example.com/geo.srs", DownloadDetour: "landing"}
-	otherSet := model.RuleSet{ServerID: other.ID, Tag: "geo", Type: "remote", Format: "binary", URL: ruleSet.URL, DownloadDetour: "landing"}
-	for _, row := range []*model.RuleSet{&ruleSet, &otherSet} {
-		if err := db.Create(row).Error; err != nil {
-			t.Fatal(err)
-		}
-	}
+	node := model.CustomNode{Name: "landing", Protocol: "socks", Address: "example.com", Port: 1080, Enabled: true, Params: model.JSONText(`{}`)}
+	mustCreate(t, db, &node)
+	ruleSet := model.RuleSet{Tag: "geo", Type: "remote", Format: "binary", URL: "https://example.com/geo.srs", DownloadDetour: routingNodeTag(node.ID)}
+	mustCreate(t, db, &ruleSet)
 	app := &App{db: db, orch: NewOrchestrator(db, NewHub(db))}
 	router := gin.New()
-	router.PUT("/servers/:id/outbounds/:outboundID", app.updateOutbound)
-	router.DELETE("/servers/:id/outbounds/:outboundID", app.deleteOutbound)
-	router.POST("/servers/:id/rulesets", app.createRuleSet)
-	router.PUT("/servers/:id/rulesets/:rulesetID", app.updateRuleSet)
+	router.PUT("/custom-nodes/:id", app.updateCustomNode)
+	router.DELETE("/custom-nodes/:id", app.deleteCustomNode)
+	router.POST("/rulesets", app.createRuleSet)
+	router.PUT("/rulesets/:rulesetID", app.updateRuleSet)
 	request := func(method, path, body string, status int) {
 		t.Helper()
+		w := httptest.NewRecorder()
 		req := httptest.NewRequest(method, path, bytes.NewBufferString(body))
 		req.Header.Set("Content-Type", "application/json")
-		rec := httptest.NewRecorder()
-		router.ServeHTTP(rec, req)
-		if rec.Code != status {
-			t.Fatalf("%s %s: status %d, want %d: %s", method, path, rec.Code, status, rec.Body.String())
+		router.ServeHTTP(w, req)
+		if w.Code != status {
+			t.Fatalf("%s %s: %d want %d: %s", method, path, w.Code, status, w.Body)
 		}
 	}
-	path := fmt.Sprintf("/servers/%d/outbounds/%d", server.ID, outbound.ID)
+	path := fmt.Sprintf("/custom-nodes/%d", node.ID)
 	request(http.MethodDelete, path, "", http.StatusConflict)
-	request(http.MethodPut, path, `{"tag":"renamed"}`, http.StatusOK)
-	for _, row := range []*model.RuleSet{&ruleSet, &otherSet} {
-		if err := db.First(row, row.ID).Error; err != nil {
-			t.Fatal(err)
-		}
+	request(http.MethodPut, path, `{"name":"renamed","protocol":"socks","address":"example.com","port":1080,"params":{}}`, http.StatusOK)
+	if err := db.First(&ruleSet, ruleSet.ID).Error; err != nil {
+		t.Fatal(err)
 	}
-	if ruleSet.DownloadDetour != "renamed" || otherSet.DownloadDetour != "landing" {
-		t.Fatal("outbound rename did not update only its own server's rule-set reference")
+	if ruleSet.DownloadDetour != routingNodeTag(node.ID) {
+		t.Fatal("node rename changed stable download reference")
 	}
-	request(http.MethodDelete, path, "", http.StatusConflict)
 	for _, detour := range []string{"missing", "block", "sniff"} {
 		body := fmt.Sprintf(`{"tag":"test","url":"https://example.com/geo.srs","download_detour":%q}`, detour)
-		request(http.MethodPost, fmt.Sprintf("/servers/%d/rulesets", server.ID), body, http.StatusBadRequest)
-		request(http.MethodPut, fmt.Sprintf("/servers/%d/rulesets/%d", server.ID, ruleSet.ID), body, http.StatusBadRequest)
+		request(http.MethodPost, "/rulesets", body, http.StatusBadRequest)
+		request(http.MethodPut, fmt.Sprintf("/rulesets/%d", ruleSet.ID), body, http.StatusBadRequest)
 	}
-	request(http.MethodPut, fmt.Sprintf("/servers/%d/rulesets/%d", server.ID, ruleSet.ID),
-		`{"tag":"geo","url":"https://example.com/geo.srs","download_detour":"direct"}`, http.StatusOK)
+	request(http.MethodPut, fmt.Sprintf("/rulesets/%d", ruleSet.ID), `{"tag":"geo","url":"https://example.com/geo.srs","download_detour":"direct"}`, http.StatusOK)
 	request(http.MethodDelete, path, "", http.StatusOK)
 }
 

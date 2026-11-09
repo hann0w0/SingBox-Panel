@@ -25,15 +25,14 @@ import { useNavigate, useParams } from 'react-router-dom'
 import {
   applyRawConfig,
   deleteInbound,
-  deleteOutbound,
   deleteRule,
   errMsg,
   getServer,
   importConfig,
   installSingbox,
   isCanceledRequest,
-  listOutbounds,
   listRuleSets,
+  listRoutingNodes,
   listRules,
   remoteConfig,
   reorderRules,
@@ -41,17 +40,15 @@ import {
   serviceAction,
   setConfigMode,
   setFinalOutbound,
-  testOutbound,
   uninstallAgent,
   uninstallSingbox,
   updateAgent,
 } from '../../../api'
-import type { ImportSummary, OutboundTest } from '../../../api'
+import type { ImportSummary } from '../../../api'
 import { applyWithToast, isConfigApplyResult, showConfigApplyResult } from '../../../configApply'
-import type { Inbound, Outbound, RouteRule, RuleSet, Server } from '../../../types'
+import type { Inbound, RoutingNode, RouteRule, RuleSet, Server } from '../../../types'
 import InboundForm from './InboundForm'
-import { OutboundForm, RuleForm } from './RoutingForms'
-import { RuleSetsTab } from './RuleSetsTab'
+import { RuleForm } from './RoutingForms'
 import { ConfigEditorModal, ImportPreviewModal, InstallSingboxModal } from './ServerDialogs'
 import { NodeFormatsExportModal } from './NodeFormatsModal'
 import { ServerOverviewCard } from './ServerOverviewCard'
@@ -71,7 +68,7 @@ function ProtocolTag({ type }: { type: string }) {
   return <span className="ui-tag">{PROTOCOL_LABELS[type.trim().toLowerCase()] || type}</span>
 }
 
-const DETAIL_SECTIONS = ['inbounds', 'outbounds', 'rules', 'rulesets'] as const
+const DETAIL_SECTIONS = ['inbounds', 'rules'] as const
 type DetailSection = typeof DETAIL_SECTIONS[number]
 
 export default function ServerDetail() {
@@ -79,6 +76,10 @@ export default function ServerDetail() {
   const navigate = useNavigate()
   const section: DetailSection = (DETAIL_SECTIONS as readonly string[]).includes(sectionParam || '') ? sectionParam as DetailSection : 'inbounds'
   const sid = Number(id)
+  useEffect(() => {
+    if (sectionParam === 'outbounds') navigate(`/admin/servers/${id}/rules`, { replace: true })
+    if (sectionParam === 'rulesets') navigate('/admin/rulesets', { replace: true })
+  }, [id, sectionParam, navigate])
   const [server, setServer] = useState<Server | null>(null)
   const [pageLoading, setPageLoading] = useState(true)
   const [loadError, setLoadError] = useState<string | null>(null)
@@ -105,19 +106,14 @@ export default function ServerDetail() {
   // 节点格式弹窗状态
   const [fmtOpen, setFmtOpen] = useState(false)
 
-  const [outbounds, setOutbounds] = useState<Outbound[]>([])
+  const [routingNodes, setRoutingNodes] = useState<RoutingNode[]>([])
   const [rules, setRules] = useState<RouteRule[]>([])
   const [ruleSets, setRuleSets] = useState<RuleSet[]>([])
-  const [obOpen, setObOpen] = useState(false)
-  const [obEditing, setObEditing] = useState<Outbound | null>(null)
   const [ruleOpen, setRuleOpen] = useState(false)
   const [ruleEditing, setRuleEditing] = useState<RouteRule | null>(null)
-  const [ruleSetCreate, setRuleSetCreate] = useState(0)
   const [importOpen, setImportOpen] = useState(false)
   const [importSum, setImportSum] = useState<ImportSummary | null>(null)
   const [importing, setImporting] = useState(false)
-  const [obTests, setObTests] = useState<Record<number, OutboundTest>>({})
-  const [testing, setTesting] = useState<Set<number>>(() => new Set())
 
   const loadAbortRef = useRef<AbortController | null>(null)
   const loadGenerationRef = useRef(0)
@@ -177,20 +173,20 @@ export default function ServerDetail() {
       setServer(d.server)
       setInstall(d.install_command)
       setPublicURL(d.public_url)
-      const [outboundRows, ruleRows, ruleSetRows] = await Promise.allSettled([
-        listOutbounds(targetSID, controller.signal),
+      const [nodeRows, ruleRows, ruleSetRows] = await Promise.allSettled([
+        listRoutingNodes(controller.signal),
         listRules(targetSID, controller.signal),
-        listRuleSets(targetSID, controller.signal),
+        listRuleSets(controller.signal),
       ])
       if (generation !== loadGenerationRef.current || currentSIDRef.current !== targetSID) return
-      if (outboundRows.status === 'fulfilled') setOutbounds(outboundRows.value)
+      if (nodeRows.status === 'fulfilled') setRoutingNodes(nodeRows.value)
       if (ruleRows.status === 'fulfilled' && ruleOrderGeneration === ruleOrderGenerationRef.current) {
         ruleOrderRef.current = ruleRows.value
         setRules(ruleRows.value)
       }
       if (ruleSetRows.status === 'fulfilled') setRuleSets(ruleSetRows.value)
       const failures = [
-        outboundRows.status === 'rejected' ? `出站：${errMsg(outboundRows.reason)}` : '',
+        nodeRows.status === 'rejected' ? `节点：${errMsg(nodeRows.reason)}` : '',
         ruleRows.status === 'rejected' ? `规则：${errMsg(ruleRows.reason)}` : '',
         ruleSetRows.status === 'rejected' ? `规则集：${errMsg(ruleSetRows.reason)}` : '',
       ].filter(Boolean)
@@ -316,7 +312,7 @@ export default function ServerDetail() {
 
   useEffect(() => {
     setServer(null)
-    setOutbounds([])
+    setRoutingNodes([])
     setRules([])
     ruleOrderRef.current = []
     setRuleSets([])
@@ -331,13 +327,9 @@ export default function ServerDetail() {
     setImporting(false)
     setFormOpen(false)
     setEditing(null)
-    setObOpen(false)
-    setObEditing(null)
     setRuleOpen(false)
     setRuleEditing(null)
     setBusy('')
-    setTesting(new Set())
-    setObTests({})
     void load().catch((error) => {
       if (!isCanceledRequest(error)) message.error(errMsg(error))
     })
@@ -377,7 +369,6 @@ export default function ServerDetail() {
     }
   }
 
-  const outboundTags = outbounds.map((o) => o.tag)
   const inboundTags = (server?.inbounds || []).map((i) => i.tag)
 
   const onSetFinal = (v: string) => run('final', () => setFinalOutbound(sid, v), 'final 出站已更新')
@@ -422,38 +413,6 @@ export default function ServerDetail() {
       if (currentSIDRef.current === targetSID) message.error(errMsg(e))
     } finally {
       if (currentSIDRef.current === targetSID) setImporting(false)
-    }
-  }
-
-  // Reachability is measured from the node, not from the panel.
-  const runTest = async (o: Outbound) => {
-    if (testing.has(o.id)) return
-    const targetSID = sid
-    const controller = scopedController()
-    setTesting((prev) => new Set(prev).add(o.id))
-    try {
-      const r = await testOutbound(targetSID, o.id, controller.signal)
-      if (currentSIDRef.current !== targetSID) return
-      setObTests((prev) => ({ ...prev, [o.id]: r }))
-      // Successful results stay in the fixed-width connectivity cell. This
-      // avoids a second transient notification while the administrator tests
-      // several outbounds in sequence.
-      if (r.inconclusive) {
-        message.info(`${o.tag}：${r.note || '无法直接探测端口'}`)
-      } else if (!r.ok) {
-        message.error(`${o.tag} 不通：${r.error || '连接失败'}`)
-      }
-    } catch (e) {
-      if (!controller.signal.aborted && currentSIDRef.current === targetSID) message.error(errMsg(e))
-    } finally {
-      releaseScopedController(controller)
-      if (currentSIDRef.current === targetSID) {
-        setTesting((prev) => {
-          const next = new Set(prev)
-          next.delete(o.id)
-          return next
-        })
-      }
     }
   }
 
@@ -611,21 +570,6 @@ export default function ServerDetail() {
     })
   }
 
-  const onDeleteOutbound = (o: Outbound) => {
-    const targetSID = sid
-    return Modal.confirm({
-      title: '删除出站',
-      content: `确认删除「${o.tag}」？`,
-      okType: 'danger',
-      okText: '删除',
-      cancelText: '取消',
-      onOk: () => {
-        if (currentSIDRef.current !== targetSID) return
-        applyWithToast(`outbound-del-${o.id}`, () => deleteOutbound(targetSID, o.id)).then(loadCurrentServer)
-      },
-    })
-  }
-
   const onDeleteRule = (r: RouteRule) => {
     const targetSID = sid
     return Modal.confirm({
@@ -756,9 +700,7 @@ export default function ServerDetail() {
   const goSection = (key: string) => navigate(key === 'inbounds' ? `/admin/servers/${sid}` : `/admin/servers/${sid}/${key}`)
   const addButton: Record<DetailSection, ReactNode> = {
     inbounds: <Button type="primary" icon={<Plus />} disabled={rawMode} onClick={() => { setEditing(null); setFormOpen(true) }}>新增入站</Button>,
-    outbounds: <Button type="primary" icon={<Plus />} disabled={rawMode} onClick={() => { setObEditing(null); setObOpen(true) }}>新增出站</Button>,
     rules: <Button type="primary" icon={<Plus />} disabled={rawMode} onClick={() => { setRuleEditing(null); setRuleOpen(true) }}>新增规则</Button>,
-    rulesets: <Button type="primary" icon={<Plus />} disabled={rawMode} onClick={() => setRuleSetCreate((n) => n + 1)}>新增规则集</Button>,
   }
   const rowActions = (onEdit: () => void, onDelete: () => void, label: string) => (
     <span className="ui-row-actions">
@@ -784,46 +726,6 @@ export default function ServerDetail() {
     />
   )
 
-  const outboundTable = (
-    <Table
-      rowKey="id"
-      tableLayout="fixed"
-      scroll={{ x: 720 }}
-      dataSource={outbounds}
-      locale={{ emptyText: '暂无出站' }}
-      columns={[
-        { title: '标签', dataIndex: 'tag', width: 160, ellipsis: true, render: (v: string) => <span className="sd-strong">{v}</span> },
-        { title: '类型', dataIndex: 'type', width: 120, render: (v: string) => <ProtocolTag type={v} /> },
-        { title: '地址', width: 240, ellipsis: true, render: (_, o: Outbound) => <span className="mono">{`${o.settings?.server || '—'}:${o.settings?.server_port || ''}`}</span> },
-        {
-          title: '连通性',
-          width: 150,
-          render: (_, o: Outbound) => {
-            const t = obTests[o.id]
-            const isTesting = testing.has(o.id)
-            return (
-              <span className="sd-test">
-                <span className="sd-test-result">
-                  {isTesting
-                    ? <span className="faint">测试中…</span>
-                    : !t
-                      ? <span className="faint">—</span>
-                      : t.ok
-                        ? <Status tone="ok">{t.latency_ms} ms</Status>
-                        : t.inconclusive
-                          ? <span title={t.note}><Status tone="warn">仅解析</Status></span>
-                          : <span title={t.error}><Status tone="error">不通</Status></span>}
-                </span>
-                <Button size="small" type="text" icon={<RotateCw />} loading={isTesting} onClick={() => void runTest(o)} aria-label={`测试 ${o.tag} 连通性`} />
-              </span>
-            )
-          },
-        },
-        { title: '', width: 88, align: 'right', render: (_, o: Outbound) => rowActions(() => { setObEditing(o); setObOpen(true) }, () => onDeleteOutbound(o), `出站 ${o.tag}`) },
-      ]}
-    />
-  )
-
   const matchChips = (r: RouteRule) => {
     const m = r.match || {}
     const groups: [string, (string | number)[] | undefined][] = [
@@ -842,7 +744,7 @@ export default function ServerDetail() {
     if (act === 'reject' || v === 'block' || v === 'reject') return 'reject'
     if (act === 'sniff' || v === 'sniff') return 'sniff'
     if (act === 'hijack-dns' || v === 'hijack-dns') return 'hijack-dns'
-    return v
+    return routingNodes.find((node) => node.tag === v)?.name || v
   }
 
   const rulesTable = (
@@ -910,29 +812,19 @@ export default function ServerDetail() {
         <Select
           size="small"
           aria-label="兜底出站"
+          showSearch
           value={finalOutbound}
           disabled={rawMode || busy === 'final'}
           loading={busy === 'final'}
           popupMatchSelectWidth={false}
           onChange={(v) => { if (v !== finalOutbound) void onSetFinal(v) }}
-          options={[...new Set(['direct', finalOutbound, ...outboundTags])].map((tag) => ({ value: tag, label: tag }))}
+          options={[...new Set(['direct', finalOutbound, ...routingNodes.map((node) => node.tag)])].map((tag) => ({ value: tag, label: routingNodes.find((node) => node.tag === tag)?.name || tag }))}
         />
       </div>
     </>
   )
 
-  const ruleSetView = (
-    <RuleSetsTab
-      key={sid}
-      serverId={sid}
-      ruleSets={ruleSets}
-      outbounds={outbounds}
-      onRefresh={loadCurrentServer}
-      rawMode={rawMode}
-      createSignal={ruleSetCreate}
-    />
-  )
-  const views: Record<DetailSection, ReactNode> = { inbounds: inboundTable, outbounds: outboundTable, rules: rulesTable, rulesets: ruleSetView }
+  const views: Record<DetailSection, ReactNode> = { inbounds: inboundTable, rules: rulesTable }
 
   return (
     <RequestState loading={pageLoading} error={loadError || sectionError} hasData onRetry={loadCurrentServer}>
@@ -977,9 +869,7 @@ export default function ServerDetail() {
         actions={addButton[section]}
         items={[
           { key: 'inbounds', label: '入站', count: server.inbounds?.length || 0 },
-          { key: 'outbounds', label: '出站', count: outbounds.length },
           { key: 'rules', label: '路由', count: rules.length },
-          { key: 'rulesets', label: '规则集', count: ruleSets.length },
         ]}
       />
       {views[section]}
@@ -993,20 +883,11 @@ export default function ServerDetail() {
         onSaved={loadCurrentServer}
       />
 
-      <OutboundForm
-        key={`outbound-${sid}`}
-        serverId={sid}
-        outbound={obEditing}
-        open={obOpen}
-        onClose={() => setObOpen(false)}
-        onSaved={loadCurrentServer}
-      />
-
       <RuleForm
         key={`rule-${sid}`}
         serverId={sid}
         rule={ruleEditing}
-        outboundTags={outboundTags}
+        routingNodes={routingNodes}
         inboundTags={inboundTags}
         ruleSets={ruleSets}
         open={ruleOpen}

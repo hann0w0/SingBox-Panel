@@ -3,23 +3,22 @@ import { Button, Form, Input, Modal, Segmented, Select, Table, message } from '.
 import { Trash2, Pencil } from 'lucide-react'
 import { createRuleSet, deleteRuleSet, updateRuleSet } from '../../../api'
 import { showConfigApplyResult } from '../../../configApply'
-import type { Outbound, RuleSet } from '../../../types'
+import type { RoutingNode, RuleSet } from '../../../types'
 import { MODAL_SM } from '../../../ui/modal'
 
 // Keep the empty API value out of the selector without colliding with string tags.
 const DEFAULT_DOWNLOAD_DETOUR = 0
 
 interface RuleSetsTabProps {
-  serverId: number
   ruleSets: RuleSet[]
-  outbounds: Outbound[]
+  nodes: RoutingNode[]
   onRefresh: () => void
   rawMode?: boolean
   /** Incrementing this opens the create dialog (the add button lives in the page toolbar). */
   createSignal?: number
 }
 
-export const RuleSetsTab: React.FC<RuleSetsTabProps> = ({ serverId, ruleSets, outbounds, onRefresh, rawMode, createSignal = 0 }) => {
+export const RuleSetsTab: React.FC<RuleSetsTabProps> = ({ ruleSets, nodes, onRefresh, rawMode, createSignal = 0 }) => {
   const [modalOpen, setModalOpen] = useState(false)
   const [editingRS, setEditingRS] = useState<RuleSet | null>(null)
   const [loading, setLoading] = useState(false)
@@ -63,10 +62,10 @@ export const RuleSetsTab: React.FC<RuleSetsTabProps> = ({ serverId, ruleSets, ou
       setLoading(true)
       const payload = values
       if (editingRS) {
-        const result = await updateRuleSet(serverId, editingRS.id, payload)
+        const result = await updateRuleSet(editingRS.id, payload)
         showConfigApplyResult(result)
       } else {
-        const result = await createRuleSet(serverId, payload)
+        const result = await createRuleSet(payload)
         showConfigApplyResult(result)
       }
       setModalOpen(false)
@@ -85,7 +84,7 @@ export const RuleSetsTab: React.FC<RuleSetsTabProps> = ({ serverId, ruleSets, ou
 
   const handleDelete = async (rs: RuleSet) => {
     try {
-      const result = await deleteRuleSet(serverId, rs.id)
+      const result = await deleteRuleSet(rs.id)
       showConfigApplyResult(result)
       onRefresh()
     } catch (err: any) {
@@ -208,12 +207,13 @@ export const RuleSetsTab: React.FC<RuleSetsTabProps> = ({ serverId, ruleSets, ou
                 getValueFromEvent={(value: string | typeof DEFAULT_DOWNLOAD_DETOUR) => value === DEFAULT_DOWNLOAD_DETOUR ? '' : value}
               >
                 <Select
+                  showSearch
                   options={[
                     { value: DEFAULT_DOWNLOAD_DETOUR, label: '跟随默认出站' },
                     { value: 'direct', label: 'direct' },
-                    ...outbounds.filter((outbound) => outbound.tag !== 'direct').map((outbound) => ({
-                      value: outbound.tag,
-                      label: outbound.tag,
+                    ...nodes.map((node) => ({
+                      value: node.tag,
+                      label: node.name,
                     })),
                   ]}
                 />
@@ -222,7 +222,7 @@ export const RuleSetsTab: React.FC<RuleSetsTabProps> = ({ serverId, ruleSets, ou
           ) : (
             <Form.Item
               name="path"
-              label="路径"
+              label="路径（各引用服务器需存在）"
               rules={[{ required: true, message: '请输入服务器上的本地文件路径' }]}
             >
               <Input placeholder="/etc/sing-box/rules.json" />

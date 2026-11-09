@@ -193,23 +193,22 @@ func (a *App) applyImportUnlocked(srv *model.Server, p *singbox.ParsedConfig, ra
 		if err := syncImportedRuleSets(tx, srv.ID, p.RuleSets); err != nil {
 			return err
 		}
-		return tx.Model(&model.Server{}).Where("id = ?", srv.ID).Updates(map[string]any{
+		if err := tx.Model(&model.Server{}).Where("id = ?", srv.ID).Updates(map[string]any{
 			"final_outbound":     p.Final,
 			"config_mode":        mode,
 			"raw_config":         model.JSONText(append([]byte(nil), raw...)),
 			"config_initialized": true,
-		}).Error
+		}).Error; err != nil {
+			return err
+		}
+		if err := promoteServerOutbounds(tx, srv.ID); err != nil {
+			return err
+		}
+		return migrateGlobalRuleSets(tx)
 	})
 }
 
 func importedConfigMode(p *singbox.ParsedConfig, raw []byte) string {
-	// Subscription parsers can understand more client types than the managed
-	// server editor. Keep those whole-server imports editable as raw JSON.
-	for _, outbound := range p.Outbounds {
-		if !supportedOutboundTypes[outbound.Type] {
-			return model.ConfigModeRaw
-		}
-	}
 	// The real orchestrator adds panel statistics services even when they were
 	// absent in the imported JSON. Do not promote a gate that occupies those
 	// reserved ports: the raw configuration may work but managed pushes cannot.

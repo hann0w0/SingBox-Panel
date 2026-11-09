@@ -366,14 +366,26 @@ func (a *App) updateCustomNode(c *gin.Context) {
 		node.SortOrder = *req.SortOrder
 		columns = append(columns, "SortOrder")
 	}
-	if err := a.db.Model(&model.CustomNode{}).Where("id = ?", node.ID).Select(columns).Updates(&node).Error; err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+	if err := a.db.Transaction(func(tx *gorm.DB) error {
+		if !node.Enabled {
+			if err := rejectReferencedRoutingNodes(tx, []uint{node.ID}); err != nil {
+				return err
+			}
+		}
+		return tx.Model(&model.CustomNode{}).Where("id = ?", node.ID).Select(columns).Updates(&node).Error
+	}); err != nil {
+		status := http.StatusInternalServerError
+		if errors.Is(err, errRoutingNodeInUse) {
+			status = http.StatusConflict
+		}
+		c.JSON(status, gin.H{"error": err.Error()})
 		return
 	}
 	if err := a.db.First(&node, node.ID).Error; err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
+	a.pushRoutingNodeChanges([]uint{node.ID})
 	c.JSON(http.StatusOK, gin.H{"node": node})
 }
 
@@ -412,6 +424,9 @@ func (a *App) deleteCustomNode(c *gin.Context) {
 		if err := tx.First(&node, id).Error; err != nil {
 			return err
 		}
+		if err := rejectReferencedRoutingNodes(tx, []uint{node.ID}); err != nil {
+			return err
+		}
 		if err := tx.Delete(&node).Error; err != nil {
 			return err
 		}
@@ -431,6 +446,10 @@ func (a *App) deleteCustomNode(c *gin.Context) {
 		}
 		return nil
 	})
+	if errors.Is(err, errRoutingNodeInUse) {
+		c.JSON(http.StatusConflict, gin.H{"error": err.Error()})
+		return
+	}
 	if errors.Is(err, gorm.ErrRecordNotFound) {
 		c.JSON(http.StatusNotFound, gin.H{"error": "node not found"})
 		return
@@ -477,6 +496,9 @@ func (a *App) batchDeleteCustomNodes(c *gin.Context) {
 	}
 	var deleted int64
 	if err := a.db.Transaction(func(tx *gorm.DB) error {
+		if err := rejectReferencedRoutingNodes(tx, ids); err != nil {
+			return err
+		}
 		result := tx.Delete(&model.CustomNode{}, ids)
 		if result.Error != nil {
 			return result.Error
@@ -484,7 +506,11 @@ func (a *App) batchDeleteCustomNodes(c *gin.Context) {
 		deleted = result.RowsAffected
 		return deleteUserNodeOrderRefs(tx, userNodeTypeCustom, ids)
 	}); err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		status := http.StatusInternalServerError
+		if errors.Is(err, errRoutingNodeInUse) {
+			status = http.StatusConflict
+		}
+		c.JSON(status, gin.H{"error": err.Error()})
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"ok": true, "deleted": deleted})

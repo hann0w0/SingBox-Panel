@@ -109,6 +109,7 @@ func NewApp(cfg config.PanelConfig, db *gorm.DB) *App {
 	hub.AfterStatsCapabilityChange = func(serverID uint) {
 		go orch.PushConfigIfManaged(serverID)
 	}
+	a.customSubscriptions.onChanged = a.pushRoutingNodeChanges
 	a.engine = a.routes()
 	return a
 }
@@ -184,12 +185,7 @@ func (a *App) routes() *gin.Engine {
 		admin.PUT("/servers/:id/inbounds/:inboundID", a.updateInbound)
 		admin.DELETE("/servers/:id/inbounds/:inboundID", a.deleteInbound)
 
-		admin.POST("/servers/:id/outbound-preview", a.previewOutboundImport)
-		admin.GET("/servers/:id/outbounds", a.listOutbounds)
-		admin.POST("/servers/:id/outbounds", a.createOutbound)
-		admin.PUT("/servers/:id/outbounds/:outboundID", a.updateOutbound)
-		admin.DELETE("/servers/:id/outbounds/:outboundID", a.deleteOutbound)
-		admin.POST("/servers/:id/outbounds/:outboundID/test", a.testOutbound)
+		admin.GET("/routing-nodes", a.listRoutingNodes)
 
 		admin.GET("/servers/:id/rules", a.listRules)
 		admin.PUT("/servers/:id/rules/reorder", a.reorderRules)
@@ -197,10 +193,10 @@ func (a *App) routes() *gin.Engine {
 		admin.PUT("/servers/:id/rules/:ruleID", a.updateRule)
 		admin.DELETE("/servers/:id/rules/:ruleID", a.deleteRule)
 
-		admin.GET("/servers/:id/rulesets", a.listRuleSets)
-		admin.POST("/servers/:id/rulesets", a.createRuleSet)
-		admin.PUT("/servers/:id/rulesets/:rulesetID", a.updateRuleSet)
-		admin.DELETE("/servers/:id/rulesets/:rulesetID", a.deleteRuleSet)
+		admin.GET("/rulesets", a.listRuleSets)
+		admin.POST("/rulesets", a.createRuleSet)
+		admin.PUT("/rulesets/:rulesetID", a.updateRuleSet)
+		admin.DELETE("/rulesets/:rulesetID", a.deleteRuleSet)
 
 		admin.PUT("/servers/:id/final-outbound", a.setFinalOutbound)
 

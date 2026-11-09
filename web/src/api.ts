@@ -4,6 +4,7 @@ import type {
   InboundSettings,
   InboundType,
   Outbound,
+  RoutingNode,
   OutboundSettings,
   OutboundType,
   Overview,
@@ -241,14 +242,16 @@ export interface RuleSetBody {
   download_detour?: string
   update_interval?: string
 }
-export const listRuleSets = (serverId: number, signal?: AbortSignal) =>
-  http.get<{ rulesets: RuleSet[] }>(`/api/admin/servers/${serverId}/rulesets`, { signal }).then((r) => r.data.rulesets)
-export const createRuleSet = (serverId: number, body: RuleSetBody) =>
-  http.post<{ ruleset: RuleSet } & ConfigApplyResult>(`/api/admin/servers/${serverId}/rulesets`, body).then((r) => r.data)
-export const updateRuleSet = (serverId: number, id: number, body: RuleSetBody) =>
-  http.put<{ ruleset: RuleSet } & ConfigApplyResult>(`/api/admin/servers/${serverId}/rulesets/${id}`, body).then((r) => r.data)
-export const deleteRuleSet = (serverId: number, id: number) =>
-  http.delete<ConfigApplyResult>(`/api/admin/servers/${serverId}/rulesets/${id}`).then((r) => r.data)
+export const listRoutingNodes = (signal?: AbortSignal) =>
+  http.get<{ nodes: RoutingNode[] }>('/api/admin/routing-nodes', { signal }).then((r) => r.data.nodes)
+export const listRuleSets = (signal?: AbortSignal) =>
+  http.get<{ rulesets: RuleSet[] }>('/api/admin/rulesets', { signal }).then((r) => r.data.rulesets)
+export const createRuleSet = (body: RuleSetBody) =>
+  http.post<{ ruleset: RuleSet } & ConfigApplyResult>('/api/admin/rulesets', body).then((r) => r.data)
+export const updateRuleSet = (id: number, body: RuleSetBody) =>
+  http.put<{ ruleset: RuleSet } & ConfigApplyResult>(`/api/admin/rulesets/${id}`, body).then((r) => r.data)
+export const deleteRuleSet = (id: number) =>
+  http.delete<ConfigApplyResult>(`/api/admin/rulesets/${id}`).then((r) => r.data)
 
 // ---- admin: import an existing config into the panel ----
 export interface ImportSummary {

@@ -12,6 +12,7 @@ const Login = lazy(() => import('./features/auth/Login'))
 const Servers = lazy(() => import('./features/admin/servers/Servers'))
 const ServerDetail = lazy(() => import('./features/admin/servers/ServerDetail'))
 const ExternalNodes = lazy(() => import('./features/admin/nodes/ExternalNodes'))
+const RuleSets = lazy(() => import('./features/admin/servers/RuleSets'))
 const Traffic = lazy(() => import('./features/admin/traffic/Traffic'))
 const Logs = lazy(() => import('./features/admin/logs/Logs'))
 const Users = lazy(() => import('./features/admin/users/UsersPage'))
@@ -91,6 +92,7 @@ export default function App() {
           <Route path="/admin/overview" element={<Navigate to="/admin/servers" replace />} />
           <Route path="/admin/servers" element={<AdminGuard><Servers /></AdminGuard>} />
           <Route path="/admin/servers/:id/:section?" element={<AdminGuard><ServerDetail /></AdminGuard>} />
+          <Route path="/admin/rulesets" element={<AdminGuard><RuleSets /></AdminGuard>} />
           <Route path="/admin/traffic" element={<AdminGuard><Traffic /></AdminGuard>} />
           <Route path="/admin/users" element={<AdminGuard><Users /></AdminGuard>} />
           <Route path="/admin/users/:id" element={<AdminGuard><UserDetail /></AdminGuard>} />

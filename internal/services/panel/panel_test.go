@@ -235,7 +235,7 @@ func TestBuildServerConfigRejectsCorruptStoredJSON(t *testing.T) {
 		row  any
 		want string
 	}{
-		{name: "outbound", row: &model.Outbound{Tag: "bad-out", Type: "vless", Settings: model.JSONText(`{"server":`)}, want: "outbound \"bad-out\" settings"},
+		{name: "outbound", row: &model.CustomNode{ID: 1, Name: "bad-out", Protocol: "vless", Address: "example.com", Port: 443, Enabled: true, Params: model.JSONText(`{"uuid":`)}, want: "参数无法解析"},
 		{name: "route rule", row: &model.RouteRule{Outbound: "direct", Enabled: true, Match: model.JSONText(`{"inbound":`)}, want: "route rule"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -245,8 +245,8 @@ func TestBuildServerConfigRejectsCorruptStoredJSON(t *testing.T) {
 				t.Fatal(err)
 			}
 			switch row := tc.row.(type) {
-			case *model.Outbound:
-				row.ServerID = srv.ID
+			case *model.CustomNode:
+				srv.FinalOutbound = routingNodeTag(row.ID)
 			case *model.RouteRule:
 				row.ServerID = srv.ID
 			}
@@ -277,11 +277,14 @@ func TestApplyDesiredConfigReportsPendingAndFailed(t *testing.T) {
 	if err != nil || !srv.ConfigInitialized || !managed {
 		t.Fatalf("desired config marker: initialized=%v managed=%v err=%v", srv.ConfigInitialized, managed, err)
 	}
-	bad := model.Outbound{ServerID: srv.ID, Tag: "bad", Type: "vless", Settings: model.JSONText(`{"server":`)}
+	bad := model.CustomNode{Name: "bad", Protocol: "vless", Address: "example.com", Port: 443, Enabled: true, Params: model.JSONText(`{"uuid":`)}
 	if err := db.Create(&bad).Error; err != nil {
 		t.Fatal(err)
 	}
-	if got := orch.ApplyDesiredConfig(context.Background(), srv.ID); got.ApplyState != ConfigFailed || !strings.Contains(got.ApplyError, "outbound") {
+	if err := db.Model(&srv).Update("final_outbound", routingNodeTag(bad.ID)).Error; err != nil {
+		t.Fatal(err)
+	}
+	if got := orch.ApplyDesiredConfig(context.Background(), srv.ID); got.ApplyState != ConfigFailed || !strings.Contains(got.ApplyError, "路由节点") {
 		t.Fatalf("invalid config result = %+v", got)
 	}
 }
@@ -903,6 +906,15 @@ func TestManagedConfigKeepsSocksOutboundCredentials(t *testing.T) {
 	if err := db.Create(&model.Outbound{ServerID: srv.ID, Tag: "socks-out", Type: "socks", Settings: settings}).Error; err != nil {
 		t.Fatal(err)
 	}
+	if err := db.Model(&srv).Update("final_outbound", "socks-out").Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Transaction(func(tx *gorm.DB) error { return promoteServerOutbounds(tx, srv.ID) }); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.First(&srv, srv.ID).Error; err != nil {
+		t.Fatal(err)
+	}
 	raw, err := NewOrchestrator(db, NewHub(db)).BuildServerConfig(&srv)
 	if err != nil {
 		t.Fatal(err)
@@ -915,7 +927,7 @@ func TestManagedConfigKeepsSocksOutboundCredentials(t *testing.T) {
 	}
 	var socks map[string]any
 	for _, outbound := range cfg.Outbounds {
-		if outbound["tag"] == "socks-out" {
+		if outbound["tag"] == srv.FinalOutbound {
 			socks = outbound
 			break
 		}

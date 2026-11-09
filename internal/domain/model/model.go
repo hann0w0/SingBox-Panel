@@ -285,11 +285,11 @@ type RouteRule struct {
 	UpdatedAt time.Time `json:"updated_at"`
 }
 
-// RuleSet is a remote or local rule-set definition on a Server (for geoip/geosite-style
-// matching referenced by route rules).
+// RuleSet is a global remote or local definition referenced by server route rules.
+// ServerID is retained for legacy migrations; global definitions use zero.
 type RuleSet struct {
 	ID             uint      `gorm:"primaryKey" json:"id"`
-	ServerID       uint      `gorm:"index;uniqueIndex:idx_node_tag" json:"server_id"`
+	ServerID       uint      `gorm:"index;uniqueIndex:idx_node_tag" json:"-"`
 	Tag            string    `gorm:"size:64;not null;uniqueIndex:idx_node_tag" json:"tag"`
 	Type           string    `gorm:"size:16;not null;default:remote" json:"type"`   // remote | local
 	Format         string    `gorm:"size:16;not null;default:binary" json:"format"` // binary | source
@@ -402,10 +402,9 @@ type NameRewriteRule struct {
 // vmess://, ss://, trojan://, hysteria2://, tuic://, anytls://, socks5://) or
 // by structured fields for protocols without a widely-supported share-link
 // scheme (snell, mixed). Every subscription format (links/sing-box/clash/
-// surge) is derived from one of those two representations. The node is never
-// part of the managed sing-box configuration — the panel cannot provision
-// credentials on a server it does not control, so the link/params carry the
-// complete client credentials. AllUsers keeps the default-for-future-users
+// surge) is derived from one of those two representations. Server routes can
+// reference the node by its stable ID and reuse these client credentials.
+// AllUsers only controls user subscription access, keeping default-for-future-users
 // behaviour explicit; ExcludedUserIDs records per-user exceptions without
 // collapsing that default into a snapshot of the current account list.
 type CustomNode struct {

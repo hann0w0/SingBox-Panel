@@ -383,6 +383,8 @@ var applicationMigrations = []schemaMigration{
 		name:    "explicit external subscription sync status",
 		up:      func(tx *gorm.DB) error { return tx.AutoMigrate(&model.CustomNodeSubscription{}) },
 	},
+	{version: 32, name: "global routing nodes", up: migrateGlobalOutbounds},
+	{version: 33, name: "global rule sets", up: migrateGlobalRuleSets},
 }
 
 // migrationReplaySafe records whether an interrupted attempt of each migration
@@ -433,6 +435,8 @@ var migrationReplaySafe = map[uint]bool{
 	29: false, // backfill could overwrite a later change to an individual node switch
 	30: true,  // AutoMigrate of durable credential synchronization revisions
 	31: true,  // AutoMigrate of external subscription sync status
+	32: true,  // DML transaction; each adopted outbound is removed atomically
+	33: true,  // DML transaction; only adopts legacy server-scoped rows
 }
 
 // runSchemaMigrations applies every pending migration in order. If any

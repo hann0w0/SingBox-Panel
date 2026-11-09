@@ -2,7 +2,7 @@ import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/re
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { RuleSetsTab } from './RuleSetsTab'
 import { createRuleSet, updateRuleSet } from '../../../api'
-import type { Outbound, RuleSet } from '../../../types'
+import type { RoutingNode, RuleSet } from '../../../types'
 
 vi.mock('../../../api', () => ({
   createRuleSet: vi.fn(),
@@ -13,12 +13,14 @@ vi.mock('../../../api', () => ({
 vi.mock('../../../configApply', () => ({ showConfigApplyResult: vi.fn() }))
 
 const ruleSet: RuleSet = {
-  id: 5, server_id: 1, tag: 'geosite-cn', type: 'remote', format: 'binary',
+  id: 5, tag: 'geosite-cn', type: 'remote', format: 'binary',
   url: 'https://example.com/rules.srs', download_detour: '', update_interval: '1d',
 }
-const outbounds: Outbound[] = ['proxy', '0'].map((tag, index) => ({
-  id: index + 1, server_id: 1, tag, type: 'socks', settings: {}, remark: '', sort: index,
-}))
+const nodes: RoutingNode[] = [
+  { tag: 'proxy', name: 'proxy', type: 'socks' },
+  { tag: '0', name: '0', type: 'socks' },
+  { tag: 'node-42', name: '东京节点', type: 'socks' },
+]
 
 const originalScrollIntoView = Object.getOwnPropertyDescriptor(Element.prototype, 'scrollIntoView')
 beforeEach(() => {
@@ -40,7 +42,7 @@ afterEach(() => {
 })
 
 function openEdit(downloadDetour = '') {
-  render(<RuleSetsTab serverId={1} ruleSets={[{ ...ruleSet, download_detour: downloadDetour }]} outbounds={outbounds} onRefresh={vi.fn()} />)
+  render(<RuleSetsTab ruleSets={[{ ...ruleSet, download_detour: downloadDetour }]} nodes={nodes} onRefresh={vi.fn()} />)
   fireEvent.click(screen.getByRole('button', { name: '编辑规则集 geosite-cn' }))
 }
 
@@ -52,8 +54,8 @@ async function chooseDetour(label: string) {
 async function saveEdit() {
   fireEvent.click(screen.getByRole('button', { name: '确定' }))
   await waitFor(() => expect(updateRuleSet).toHaveBeenCalledOnce())
-  const [serverId, id, body] = vi.mocked(updateRuleSet).mock.calls[0]
-  expect([serverId, id]).toEqual([1, 5])
+  const [id, body] = vi.mocked(updateRuleSet).mock.calls[0]
+  expect(id).toBe(5)
   return body
 }
 
@@ -77,6 +79,13 @@ describe('rule-set download routing', () => {
     expect(await saveEdit()).toMatchObject({ download_detour: detour, update_interval: '2d' })
   })
 
+  it('displays a global node name and saves its stable tag', async () => {
+    openEdit()
+    await chooseDetour('东京节点')
+    expect(screen.getByLabelText('下载出站').textContent).toBe('东京节点')
+    expect(await saveEdit()).toMatchObject({ download_detour: 'node-42' })
+  })
+
   it('lets an explicit direct route switch back to the default outbound', async () => {
     openEdit('direct')
     await chooseDetour('跟随默认出站')
@@ -95,7 +104,7 @@ describe('rule-set download routing', () => {
     { label: 'direct', detour: 'direct' },
     { label: '跟随默认出站', detour: '' },
   ])('creates a remote rule set with $label download routing', async ({ label, detour }) => {
-    const props = { serverId: 1, ruleSets: [], outbounds, onRefresh: vi.fn() }
+    const props = { ruleSets: [], nodes, onRefresh: vi.fn() }
     const { rerender } = render(<RuleSetsTab {...props} />)
     rerender(<RuleSetsTab {...props} createSignal={1} />)
     expect((await screen.findByLabelText('下载出站')).textContent).toBe('direct')
@@ -104,7 +113,7 @@ describe('rule-set download routing', () => {
     if (detour !== 'direct') await chooseDetour(label)
     fireEvent.click(screen.getByRole('button', { name: '确定' }))
     await waitFor(() => expect(createRuleSet).toHaveBeenCalledOnce())
-    expect(vi.mocked(createRuleSet).mock.calls[0]).toEqual([1, expect.objectContaining({
+    expect(vi.mocked(createRuleSet).mock.calls[0]).toEqual([expect.objectContaining({
       tag: ruleSet.tag, url: ruleSet.url, download_detour: detour,
     })])
   })

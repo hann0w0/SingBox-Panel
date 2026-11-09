@@ -183,7 +183,7 @@ func TestHTTPProxyExportsRetainOneSidedAuthentication(t *testing.T) {
 	}
 }
 
-func TestSubscriptionOnlyOutboundTypesKeepServerImportRaw(t *testing.T) {
+func TestGlobalOutboundTypesKeepLosslessServerImportManaged(t *testing.T) {
 	for _, typ := range []string{"http", "hysteria"} {
 		t.Run(typ, func(t *testing.T) {
 			settings := singbox.InboundSettings{TLS: singbox.TLSSettings{Enabled: true}, UpMbps: 30, DownMbps: 80}
@@ -202,8 +202,8 @@ func TestSubscriptionOnlyOutboundTypesKeepServerImportRaw(t *testing.T) {
 			if err != nil || !equivalentJSON(raw, rebuilt) {
 				t.Fatalf("fixture must otherwise be a lossless managed candidate: %v", err)
 			}
-			if mode := importedConfigMode(parsed, raw); mode != model.ConfigModeRaw {
-				t.Fatalf("subscription-only protocol must keep raw server editing: %s", mode)
+			if mode := importedConfigMode(parsed, raw); mode != model.ConfigModeManaged {
+				t.Fatalf("global node protocol should keep managed server editing: %s", mode)
 			}
 		})
 	}

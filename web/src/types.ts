@@ -293,9 +293,14 @@ export interface RouteRule {
   enabled: boolean
 }
 
+export interface RoutingNode {
+  tag: string
+  name: string
+  type: string
+}
+
 export interface RuleSet {
   id: number
-  server_id: number
   tag: string
   type: 'remote' | 'local'
   format: 'binary' | 'source'

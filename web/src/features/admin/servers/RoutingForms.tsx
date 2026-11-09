@@ -624,6 +624,7 @@ export function RuleForm({
          remark: rule.remark || '',
          match_fields: activeMatchFields(m),
          rule_set: m.rule_set || [],
+         rule_set_ip_direction: m.rule_set_ip_cidr_match_source ? 'source' : 'target',
          inbound: m.inbound || [],
          domain: joinLines(m.domain),
          domain_suffix: joinLines(m.domain_suffix),
@@ -644,6 +645,7 @@ export function RuleForm({
          remark: '',
          match_fields: [],
          rule_set: [],
+         rule_set_ip_direction: 'target',
          inbound: [],
          domain: '',
          domain_suffix: '',
@@ -674,7 +676,10 @@ export function RuleForm({
         match.inbound = v.inbound
       }
       if (v.action === 'route' || v.action === 'reject') {
-        if (selectedFields.has('rule_set') && v.rule_set?.length) match.rule_set = v.rule_set
+        if (selectedFields.has('rule_set') && v.rule_set?.length) {
+          match.rule_set = v.rule_set
+          if (v.rule_set_ip_direction === 'source') match.rule_set_ip_cidr_match_source = true
+        }
         if (selectedFields.has('protocol') && v.protocol?.length) match.protocol = v.protocol
         if (selectedFields.has('domain')) {
           const domains = splitLines(v.domain)
@@ -822,14 +827,27 @@ export function RuleForm({
             )}
 
             {showMatchField('rule_set') && (
-              <Form.Item name="rule_set" label="规则集" rules={[{ required: true, message: '请选择至少一个规则集' }]} className="fm-full">
-                <Select
-                  mode="multiple"
-                  allowClear
-                  placeholder={ruleSets?.length ? '选择规则集' : '暂无规则集'}
-                  options={(ruleSets || []).map((rs) => ({ label: rs.tag, value: rs.tag }))}
-                />
-              </Form.Item>
+              <>
+                <Form.Item name="rule_set" label="规则集" rules={[{ required: true, message: '请选择至少一个规则集' }]} className="fm-full">
+                  <Select
+                    mode="multiple"
+                    allowClear
+                    placeholder={ruleSets?.length ? '选择规则集' : '暂无规则集'}
+                    options={(ruleSets || []).map((rs) => ({ label: rs.tag, value: rs.tag }))}
+                  />
+                </Form.Item>
+                <Form.Item
+                  name="rule_set_ip_direction"
+                  label="规则集 IP 匹配方向"
+                  extra="仅影响规则集中的 IP 网段。来源 IP 为入站看到的连接来源；开启 REALITY 前置 SNI 过滤时无法匹配真实客户端 IP。"
+                  className="fm-full"
+                >
+                  <Segmented aria-label="规则集 IP 匹配方向" options={[
+                    { value: 'target', label: '目标 IP' },
+                    { value: 'source', label: '来源 IP' },
+                  ]} />
+                </Form.Item>
+              </>
             )}
 
             {showMatchField('domain') && (

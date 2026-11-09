@@ -20,20 +20,21 @@ type OutboundInput struct {
 // The match fields carry json tags so a stored rule's Match blob unmarshals
 // straight into this struct; Outbound is set separately from its own column.
 type RuleInput struct {
-	Action        string   `json:"action,omitempty"`
-	Method        string   `json:"method,omitempty"`
-	Inbound       []string `json:"inbound,omitempty"` // match by which inbound received the traffic
-	Domain        []string `json:"domain,omitempty"`
-	DomainSuffix  []string `json:"domain_suffix,omitempty"`
-	DomainKeyword []string `json:"domain_keyword,omitempty"`
-	IPCIDR        []string `json:"ip_cidr,omitempty"`
-	SourceIPCIDR  []string `json:"source_ip_cidr,omitempty"`
-	Port          []int    `json:"port,omitempty"`
-	Protocol      []string `json:"protocol,omitempty"`
-	Sniffer       []string `json:"sniffer,omitempty"`
-	Network       string   `json:"network,omitempty"`  // "" | tcp | udp
-	RuleSet       []string `json:"rule_set,omitempty"` // referenced rule-set tags
-	Outbound      string   `json:"-"`                  // target tag; "block"/"reject" => reject
+	Action                   string   `json:"action,omitempty"`
+	Method                   string   `json:"method,omitempty"`
+	Inbound                  []string `json:"inbound,omitempty"` // match by which inbound received the traffic
+	Domain                   []string `json:"domain,omitempty"`
+	DomainSuffix             []string `json:"domain_suffix,omitempty"`
+	DomainKeyword            []string `json:"domain_keyword,omitempty"`
+	IPCIDR                   []string `json:"ip_cidr,omitempty"`
+	SourceIPCIDR             []string `json:"source_ip_cidr,omitempty"`
+	Port                     []int    `json:"port,omitempty"`
+	Protocol                 []string `json:"protocol,omitempty"`
+	Sniffer                  []string `json:"sniffer,omitempty"`
+	Network                  string   `json:"network,omitempty"`  // "" | tcp | udp
+	RuleSet                  []string `json:"rule_set,omitempty"` // referenced rule-set tags
+	RuleSetIPCIDRMatchSource bool     `json:"rule_set_ip_cidr_match_source,omitempty"`
+	Outbound                 string   `json:"-"` // target tag; "block"/"reject" => reject
 }
 
 // RuleSetInput describes a local or remote rule-set used by route rules.
@@ -154,6 +155,9 @@ func buildRouteRule(r RuleInput) map[string]any {
 	}
 	if len(r.RuleSet) > 0 {
 		m["rule_set"] = r.RuleSet
+	}
+	if r.RuleSetIPCIDRMatchSource {
+		m["rule_set_ip_cidr_match_source"] = true
 	}
 
 	act := routeRuleAction(r)

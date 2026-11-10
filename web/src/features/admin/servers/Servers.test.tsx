@@ -85,6 +85,7 @@ describe('server remarks', () => {
     expect(screen.getByText('fra.***.com · 69.63.*.36')).toBeTruthy()
     fireEvent.click(screen.getByRole('button', { name: '显示连接地址与 IP' }))
     expect(screen.getByText('fra.example.com · 69.63.207.36')).toBeTruthy()
+    expect(screen.getByRole('button', { name: /维护/ }).className).toContain('ui-btn-default')
     fireEvent.keyDown(screen.getByRole('button', { name: /维护/ }), { key: 'Enter' })
     fireEvent.click(await screen.findByRole('menuitem', { name: '编辑节点' }))
     expect(onEditServer).toHaveBeenCalledTimes(1)

@@ -37,7 +37,8 @@ input.ui-input-lg, .ui-input-affix-wrapper-lg { height: 40px; }
 .ui-select-tag { background: var(--console-surface); border: 1px solid var(--console-border); border-radius: 4px; padding: 0 5px; font-size: 12px; }
 .ui-select-clear { position: absolute; right: 27px; top: 50%; transform: translateY(-50%); background: var(--console-container); border: 0; color: var(--console-faint); padding: 1px; }
 .ui-select-dropdown { max-width: min(calc(100vw - 24px), var(--radix-popover-content-available-width)); max-height: var(--radix-popover-content-available-height); overflow: hidden; }
-.ui-select-item { min-height: 32px; font-size: 13px; margin: 2px 4px; }
+.ui-select-dropdown [data-slot='command-list'] { padding: 4px; }
+.ui-select-item { min-height: 32px; font-size: 13px; margin: 0; }
 .ui-switch { position: relative; display: inline-flex; flex: none; align-items: center; width: 32px; height: 18px; border: 1px solid var(--console-border-strong); border-radius: 999px; background: var(--console-selected); padding: 2px; }
 .ui-switch[data-state='checked'] { background: var(--console-primary); border-color: var(--console-primary); }
 .ui-switch-handle { display: block; width: 12px; height: 12px; border-radius: 50%; background: var(--console-container); transition: transform .12s; }

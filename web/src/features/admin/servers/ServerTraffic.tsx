@@ -395,10 +395,13 @@ export default function ServerTraffic({
 
   useEffect(() => {
     updateData(null)
+  }, [serverId, updateData])
+
+  useEffect(() => {
     void load()
     const timer = window.setInterval(() => void load(true), 60000)
     return () => window.clearInterval(timer)
-  }, [load, updateData])
+  }, [load])
 
   useEffect(() => {
     if (reloadKey > 0) void load(true)

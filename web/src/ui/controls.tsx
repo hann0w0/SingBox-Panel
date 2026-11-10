@@ -74,14 +74,25 @@ export const Button = forwardRef<HTMLButtonElement, ButtonProps>(
     },
     ref,
   ) {
+    // Radix Slot (e.g. DropdownMenuTrigger / PopoverTrigger asChild) forwards
+    // a native HTML `type="button"` prop when `Button` has no explicit `type`,
+    // which would otherwise replace the default visual variant (`ui-btn-default`).
+    const resolvedType =
+      type === 'primary' ||
+      type === 'text' ||
+      type === 'link' ||
+      type === 'dashed' ||
+      type === 'danger'
+        ? type
+        : 'default'
     const variant =
-      type === 'primary'
+      resolvedType === 'primary'
         ? danger
           ? 'destructive'
           : 'default'
-        : type === 'text'
+        : resolvedType === 'text'
           ? 'ghost'
-          : type === 'link'
+          : resolvedType === 'link'
             ? 'link'
             : 'outline'
     if (href)
@@ -113,12 +124,12 @@ export const Button = forwardRef<HTMLButtonElement, ButtonProps>(
             size: size === 'small' ? 'sm' : size === 'large' ? 'lg' : 'default',
           }),
           'ui-btn',
-          `ui-btn-${type}`,
-          (danger || type === 'danger') && 'ui-btn-dangerous',
+          `ui-btn-${resolvedType}`,
+          (danger || resolvedType === 'danger') && 'ui-btn-dangerous',
           size === 'small' && 'ui-btn-sm',
           size === 'large' && 'ui-btn-lg',
           block && 'w-full',
-          type === 'dashed' && 'border-dashed',
+          resolvedType === 'dashed' && 'border-dashed',
           !children && 'ui-btn-icon-only',
           className,
         )}

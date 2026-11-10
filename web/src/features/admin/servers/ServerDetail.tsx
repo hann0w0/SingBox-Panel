@@ -489,6 +489,7 @@ export default function ServerDetail() {
       if (currentSIDRef.current !== targetSID) return
       message.success('已导入到面板')
       setImportOpen(false)
+      setTrafficReloadKey((value) => value + 1)
       void load().catch(() => {})
     } catch (e) {
       if (currentSIDRef.current === targetSID) message.error(errMsg(e))
@@ -711,6 +712,7 @@ export default function ServerDetail() {
       if (currentSIDRef.current !== targetSID) return
       if (isConfigApplyResult(result)) showConfigApplyResult(result)
       else message.success(ok)
+      setTrafficReloadKey((value) => value + 1)
       void load().catch(() => {})
     } catch (e) {
       if (currentSIDRef.current === targetSID) message.error(errMsg(e))
@@ -788,6 +790,7 @@ export default function ServerDetail() {
         message.warning({ content: `安全提醒：${warning}`, duration: 10 })
       }
       closeConfigEditor()
+      setTrafficReloadKey((value) => value + 1)
       void load().catch(() => {})
     } catch (e) {
       if (isCurrentSession()) message.error(errMsg(e))
@@ -801,6 +804,7 @@ export default function ServerDetail() {
 
   const loadCurrentServer = () => {
     if (currentSIDRef.current !== sid) return
+    setTrafficReloadKey((value) => value + 1)
     void load().catch((error) => {
       if (!isCanceledRequest(error)) message.error(errMsg(error))
     })
@@ -841,13 +845,17 @@ export default function ServerDetail() {
 
 
 
-  const portTrafficById = useMemo(() => {
-    const map = new Map<number, { upload: number; download: number }>()
+  const { portTrafficById, portTrafficByTag } = useMemo(() => {
+    const byId = new Map<number, { upload: number; download: number }>()
+    const byTag = new Map<string, { upload: number; download: number }>()
     for (const port of trafficData?.ports ?? []) {
-      map.set(port.inbound_id, { upload: port.upload, download: port.download })
+      const entry = { upload: port.upload, download: port.download }
+      byId.set(port.inbound_id, entry)
+      if (port.tag) byTag.set(port.tag, entry)
     }
-    return map
+    return { portTrafficById: byId, portTrafficByTag: byTag }
   }, [trafficData])
+  const getInboundTraffic = (ib: Inbound) => portTrafficById.get(ib.id) ?? portTrafficByTag.get(ib.tag)
 
   if (!server) {
     if (pageLoading) return <ServerDetailSkeleton />
@@ -888,25 +896,25 @@ export default function ServerDetail() {
         {
           title: '下载',
           align: 'right',
-          sorter: (a: Inbound, b: Inbound) => (portTrafficById.get(a.id)?.download ?? 0) - (portTrafficById.get(b.id)?.download ?? 0),
-          render: (_, ib: Inbound) => <span className="mono">{trafficAvailable ? formatBytes(portTrafficById.get(ib.id)?.download ?? 0) : '—'}</span>,
+          sorter: (a: Inbound, b: Inbound) => (getInboundTraffic(a)?.download ?? 0) - (getInboundTraffic(b)?.download ?? 0),
+          render: (_, ib: Inbound) => <span className="mono">{trafficAvailable ? formatBytes(getInboundTraffic(ib)?.download ?? 0) : '—'}</span>,
         },
         {
           title: '上传',
           align: 'right',
-          sorter: (a: Inbound, b: Inbound) => (portTrafficById.get(a.id)?.upload ?? 0) - (portTrafficById.get(b.id)?.upload ?? 0),
-          render: (_, ib: Inbound) => <span className="mono muted">{trafficAvailable ? formatBytes(portTrafficById.get(ib.id)?.upload ?? 0) : '—'}</span>,
+          sorter: (a: Inbound, b: Inbound) => (getInboundTraffic(a)?.upload ?? 0) - (getInboundTraffic(b)?.upload ?? 0),
+          render: (_, ib: Inbound) => <span className="mono muted">{trafficAvailable ? formatBytes(getInboundTraffic(ib)?.upload ?? 0) : '—'}</span>,
         },
         {
           title: '合计',
           align: 'right',
           sorter: (a: Inbound, b: Inbound) => {
-            const totalA = (portTrafficById.get(a.id)?.upload ?? 0) + (portTrafficById.get(a.id)?.download ?? 0)
-            const totalB = (portTrafficById.get(b.id)?.upload ?? 0) + (portTrafficById.get(b.id)?.download ?? 0)
+            const totalA = (getInboundTraffic(a)?.upload ?? 0) + (getInboundTraffic(a)?.download ?? 0)
+            const totalB = (getInboundTraffic(b)?.upload ?? 0) + (getInboundTraffic(b)?.download ?? 0)
             return totalA - totalB
           },
           render: (_, ib: Inbound) => {
-            const traffic = portTrafficById.get(ib.id)
+            const traffic = getInboundTraffic(ib)
             return <span className="mono sd-strong">{trafficAvailable ? formatBytes((traffic?.upload ?? 0) + (traffic?.download ?? 0)) : '—'}</span>
           },
         },

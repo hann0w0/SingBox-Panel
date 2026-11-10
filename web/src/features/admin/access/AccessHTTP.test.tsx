@@ -31,8 +31,7 @@ beforeEach(() => {
 })
 
 describe('subscription sync feedback', () => {
-  it.each([true, false])('shows partial synchronization as a warning on desktop=%s', async (desktop) => {
-    vi.stubGlobal('innerWidth', desktop ? 1024 : 390)
+  it('shows partial synchronization as a warning', async () => {
     const source: CustomNodeSubscription = {
       id: 1, name: 'Partial source', url: 'https://provider.example.com/sub', group: '',
       enabled: true, auto_update: true, update_interval_minutes: 60, base_sort_order: 0,

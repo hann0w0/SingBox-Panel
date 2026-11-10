@@ -148,3 +148,31 @@ export function downloadText(filename: string, text: string, type = 'text/csv;ch
   a.remove()
   setTimeout(() => URL.revokeObjectURL(url), 1000)
 }
+
+// maskHost masks the middle segment of a domain name, IPv4, or IPv6 address.
+export function maskHost(value: string | null | undefined): string {
+  const trimmed = value?.trim() ?? ''
+  if (!trimmed) return ''
+  // IPv4: 1.1.1.1 -> 1.1.*.1
+  if (/^\d{1,3}(?:\.\d{1,3}){3}$/.test(trimmed)) {
+    const octets = trimmed.split('.')
+    return `${octets[0]}.${octets[1]}.*.${octets[3]}`
+  }
+  // IPv6: 2001:db8::1 -> 2001:***:1
+  if (trimmed.includes(':')) {
+    const bare = trimmed.replace(/^\[|\]$/g, '')
+    const groups = bare.split(':').filter(Boolean)
+    if (groups.length >= 2) return `${groups[0]}:***:${groups[groups.length - 1]}`
+    return '***'
+  }
+  const labels = trimmed.split('.')
+  if (labels.length >= 3) {
+    return `${labels[0]}.***.${labels[labels.length - 1]}`
+  }
+  if (labels.length === 2) {
+    const first = labels[0]
+    const head = first.length > 1 ? `${first[0]}***` : '***'
+    return `${head}.${labels[1]}`
+  }
+  return trimmed.length > 2 ? `${trimmed[0]}***${trimmed[trimmed.length - 1]}` : '***'
+}

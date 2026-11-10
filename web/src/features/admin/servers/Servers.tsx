@@ -4,7 +4,7 @@ import { ChevronDown, Pencil, GripVertical, Ellipsis, Plus, Search } from 'lucid
 import { useNavigate } from 'react-router-dom'
 import { createServer, deleteServer, errMsg, getOverview, getServersMeta, installSingbox, isCanceledRequest, updateAllAgents, updateServer, updateServerOrder } from '../../../api'
 import type { Server } from '../../../types'
-import { formatBytes } from '../../../util'
+import { formatBytes, maskHost } from '../../../util'
 import { RequestState } from '../../../components/RequestState'
 import { PageHeader, Pills, Stats, Status } from '../../../ui/Page'
 import '../../../styles/servers.css'
@@ -443,7 +443,7 @@ export default function Servers() {
               </span>
               <div className="srv-name">
                 <a href={`/admin/servers/${s.id}`} onClick={(e) => { e.preventDefault(); open_(s) }}>{s.name}</a>
-                <span className="mono">{s.address || s.public_ip || '未设置地址'}</span>
+                <span className="mono">{maskHost(s.address || s.public_ip) || '未设置地址'}</span>
                 {s.remark?.trim() && <span className="srv-remark" title={s.remark}>{s.remark}</span>}
               </div>
               <div className="srv-status"><Status tone={s.online ? 'ok' : 'off'}>{s.online ? '在线' : '离线'}</Status></div>

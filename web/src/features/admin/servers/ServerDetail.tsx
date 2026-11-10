@@ -15,11 +15,11 @@ import {
 } from '../../../ui'
 import {
   Copy,
+  Eye,
   Trash2,
   Pencil,
   GripVertical,
   Plus,
-  RotateCw,
 } from 'lucide-react'
 import { useNavigate, useParams } from 'react-router-dom'
 import {
@@ -43,13 +43,14 @@ import {
   uninstallAgent,
   uninstallSingbox,
   updateAgent,
+  updateServer,
 } from '../../../api'
 import type { ImportSummary } from '../../../api'
 import { applyWithToast, isConfigApplyResult, showConfigApplyResult } from '../../../configApply'
 import type { Inbound, RoutingNode, RouteRule, RuleSet, Server, TrafficSeries } from '../../../types'
 import InboundForm from './InboundForm'
 import { RuleForm } from './RoutingForms'
-import { ConfigEditorModal, ImportPreviewModal, InstallSingboxModal } from './ServerDialogs'
+import { ConfigEditorModal, ImportPreviewModal, InstallSingboxModal, ServerEditModal } from './ServerDialogs'
 import { NodeFormatsExportModal } from './NodeFormatsModal'
 import { ServerOverviewCard } from './ServerOverviewCard'
 import ServerTraffic from './ServerTraffic'
@@ -108,8 +109,12 @@ export default function ServerDetail() {
     saving: boolean
   } | null>(null)
 
-  // 节点格式弹窗状态
-  const [fmtOpen, setFmtOpen] = useState(false)
+  // 节点详情与编辑弹窗状态
+  const [viewingInbound, setViewingInbound] = useState<Inbound | null>(null)
+  const [serverEditOpen, setServerEditOpen] = useState(false)
+  const [serverEditSaving, setServerEditSaving] = useState(false)
+  const [serverEditForm] = Form.useForm()
+  const serverEditLockRef = useRef(false)
 
   const [routingNodes, setRoutingNodes] = useState<RoutingNode[]>([])
   const [rules, setRules] = useState<RouteRule[]>([])
@@ -327,7 +332,9 @@ export default function ServerDetail() {
     setCfgText('')
     setCfgLoading(false)
     setCfgSaving(false)
-    setFmtOpen(false)
+    setViewingInbound(null)
+    setServerEditOpen(false)
+    setServerEditSaving(false)
     setImportOpen(false)
     setImportSum(null)
     setImporting(false)
@@ -696,6 +703,39 @@ export default function ServerDetail() {
     })
   }
 
+  const openEditServer = () => {
+    if (!server) return
+    serverEditForm.resetFields()
+    serverEditForm.setFieldsValue({
+      name: server.name,
+      address: server.address,
+      remark: server.remark,
+      traffic_reset_day: server.traffic_reset_day ?? 1,
+    })
+    setServerEditOpen(true)
+  }
+
+  const submitEditServer = async () => {
+    if (serverEditLockRef.current) return
+    const targetSID = sid
+    serverEditLockRef.current = true
+    setServerEditSaving(true)
+    try {
+      const values = await serverEditForm.validateFields()
+      await updateServer(targetSID, values)
+      if (currentSIDRef.current !== targetSID) return
+      message.success('已保存')
+      setServerEditOpen(false)
+      setTrafficReloadKey((value) => value + 1)
+      loadCurrentServer()
+    } catch (e) {
+      if (currentSIDRef.current === targetSID) message.error(errMsg(e))
+    } finally {
+      serverEditLockRef.current = false
+      if (currentSIDRef.current === targetSID) setServerEditSaving(false)
+    }
+  }
+
 
 
   const portTrafficById = useMemo(() => {
@@ -720,8 +760,9 @@ export default function ServerDetail() {
     rules: <Button type="primary" icon={<Plus />} disabled={rawMode} onClick={() => { setRuleEditing(null); setRuleOpen(true) }}>新增规则</Button>,
     logs: null,
   }
-  const rowActions = (onEdit: () => void, onDelete: () => void, label: string) => (
+  const rowActions = (onEdit: () => void, onDelete: () => void, label: string, onView?: () => void) => (
     <span className="ui-row-actions">
+      {onView && <Button size="small" type="text" icon={<Eye />} title="查看详情" aria-label={`查看 ${label}`} onClick={onView} />}
       <Button size="small" type="text" icon={<Pencil />} aria-label={`编辑 ${label}`} disabled={rawMode} onClick={onEdit} />
       <Button size="small" type="text" icon={<Trash2 />} aria-label={`删除 ${label}`} disabled={rawMode} onClick={onDelete} />
     </span>
@@ -765,7 +806,17 @@ export default function ServerDetail() {
             return <span className="mono sd-strong">{trafficAvailable ? formatBytes((traffic?.upload ?? 0) + (traffic?.download ?? 0)) : '—'}</span>
           },
         },
-        { title: '', width: 88, align: 'right', render: (_, ib: Inbound) => rowActions(() => { setEditing(ib); setFormOpen(true) }, () => onDeleteInbound(ib), `入站 ${ib.tag}`) },
+        {
+          title: '',
+          width: 112,
+          align: 'right',
+          render: (_, ib: Inbound) => rowActions(
+            () => { setEditing(ib); setFormOpen(true) },
+            () => onDeleteInbound(ib),
+            `入站 ${ib.tag}`,
+            () => setViewingInbound(ib),
+          ),
+        },
       ]}
       summary={() => (trafficAvailable && unattributedUpload + unattributedDownload > 0 ? (
         <Table.Summary fixed>
@@ -897,6 +948,7 @@ export default function ServerDetail() {
         busy={busy}
         refreshing={refreshing}
         onRefresh={refresh}
+        onEditServer={openEditServer}
         onInstallSingbox={() => setInstallOpen(true)}
         onUninstallSingbox={confirmUninstallSingbox}
         onInstallAgent={installOrUpgradeAgent}
@@ -904,7 +956,6 @@ export default function ServerDetail() {
         onImport={openImport}
         onEditConfig={openConfigEditor}
         onRestart={() => run('restart', () => serviceAction(sid, 'restart'), 'sing-box 已重启')}
-        onExport={() => setFmtOpen(true)}
       />
 
       <ServerTraffic
@@ -985,7 +1036,22 @@ export default function ServerDetail() {
         onConfirm={doInstall}
       />
 
-      <NodeFormatsExportModal serverId={sid} open={fmtOpen} onCancel={() => setFmtOpen(false)} />
+      <ServerEditModal
+        title={`编辑 ${server.name}`}
+        open={serverEditOpen}
+        saving={serverEditSaving}
+        form={serverEditForm}
+        onCancel={() => setServerEditOpen(false)}
+        onConfirm={submitEditServer}
+      />
+
+      <NodeFormatsExportModal
+        serverId={sid}
+        open={!!viewingInbound}
+        inboundTag={viewingInbound?.tag}
+        multiUser={Boolean(viewingInbound?.settings?.multi_user)}
+        onCancel={() => setViewingInbound(null)}
+      />
 
       <span id="rule-sort-help" className="sr-only">使用上方向键或下方向键调整规则顺序</span>
       <div className="sr-only" aria-live="polite" aria-atomic="true">{sortAnnouncement}</div>

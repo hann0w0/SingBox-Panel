@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 
-import { SHADOWSOCKS_METHODS, daysUntil, relativeTime, toCSV } from './util'
+import { SHADOWSOCKS_METHODS, daysUntil, maskHost, relativeTime, toCSV } from './util'
 
 describe('Shadowsocks methods', () => {
   it('offers aes-128-gcm in every form through the shared method list', () => {
@@ -25,5 +25,13 @@ describe('usage helpers', () => {
   })
   it('quotes CSV cells', () => {
     expect(toCSV([['a', 'b,c'], ['say "hi"', 1]])).toBe('\uFEFFa,"b,c"\r\n"say ""hi""",1')
+  })
+  it('masks domain names and IP addresses by default', () => {
+    expect(maskHost('lax1.osid.cn')).toBe('lax1.***.cn')
+    expect(maskHost('1.1.1.1')).toBe('1.1.*.1')
+    expect(maskHost('69.63.207.36')).toBe('69.63.*.36')
+    expect(maskHost('osid.cn')).toBe('o***.cn')
+    expect(maskHost('2001:4860:4860::8888')).toBe('2001:***:8888')
+    expect(maskHost('')).toBe('')
   })
 })

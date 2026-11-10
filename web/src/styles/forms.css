@@ -62,7 +62,10 @@
 .fm-node-addr { flex: 1 1 0; min-width: 0; color: var(--console-faint); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .fm-node-actions { display: flex; align-items: center; gap: 6px; flex: none; }
 .fm-node-actions .ui-btn { font-size: 12.5px; }
-.fm-node-actions .ui-btn.is-copied { color: var(--console-success); border-color: currentColor; }
+.fm-node-actions .ui-btn.is-copied, .fm-detail-actions .ui-btn.is-copied { color: var(--console-success); border-color: currentColor; }
+.fm-detail-body { display: grid; gap: 12px; }
+.fm-detail-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+.fm-detail-actions .ui-btn { font-size: 12.5px; }
 .fm-kv { border: 1px solid var(--console-border); border-radius: var(--app-radius); overflow: hidden; }
 .fm-kv .ui-typography { margin: 0; color: var(--console-ink); }
 .fm-kv dd { font-family: var(--app-mono); font-size: 12.5px; }

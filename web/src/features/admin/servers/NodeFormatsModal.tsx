@@ -8,13 +8,50 @@ import { copyToClipboard } from '../../../util'
 import '../../../styles/forms.css'
 import { MODAL_LG, MODAL_MD } from '../../../ui/modal'
 
-export function NodeFormatsExportModal({ serverId, open, onCancel }: { serverId: number; open: boolean; onCancel: () => void }) {
-  return <Modal className="fm-modal" title="导出节点" open={open} onCancel={onCancel} footer={null} width={MODAL_LG}>
-    {open && <NodeExportSession key={serverId} serverId={serverId} />}
-  </Modal>
+export function NodeFormatsExportModal({
+  serverId,
+  open,
+  onCancel,
+  inboundTag,
+  multiUser,
+}: {
+  serverId: number
+  open: boolean
+  onCancel: () => void
+  inboundTag?: string
+  multiUser?: boolean
+}) {
+  const isSingleInbound = Boolean(inboundTag)
+  return (
+    <Modal
+      className="fm-modal"
+      title={inboundTag || '导出节点'}
+      open={open}
+      onCancel={onCancel}
+      footer={isSingleInbound ? <Button onClick={onCancel}>关闭</Button> : null}
+      width={isSingleInbound ? MODAL_MD : MODAL_LG}
+    >
+      {open && (
+        <NodeExportSession
+          key={`${serverId}-${inboundTag ?? ''}`}
+          serverId={serverId}
+          inboundTag={inboundTag}
+          multiUser={multiUser}
+        />
+      )}
+    </Modal>
+  )
 }
 
-function NodeExportSession({ serverId }: { serverId: number }) {
+function NodeExportSession({
+  serverId,
+  inboundTag,
+  multiUser,
+}: {
+  serverId: number
+  inboundTag?: string
+  multiUser?: boolean
+}) {
   const [userId, setUserId] = useState(0)
   const [data, setData] = useState<NodeFormats | null>(null)
   const [users, setUsers] = useState<NodeFormats['users']>([])
@@ -42,8 +79,9 @@ function NodeExportSession({ serverId }: { serverId: number }) {
 
   // Never show the previous account's credentials while its replacement loads.
   const current = data?.user_id === userId ? data : null
+  const showUserSelect = inboundTag ? Boolean(multiUser) : multiCount > 0
   return <>
-    {multiCount > 0 && <div className="fm-export-user">
+    {showUserSelect && <div className="fm-export-user">
       <Select aria-label="多用户凭证" value={userId} onChange={setUserId} showSearch options={[
         { value: 0, label: '选择用户以导出多用户节点' },
         ...users.map((user) => ({ value: user.id, label: user.email })),
@@ -53,14 +91,17 @@ function NodeExportSession({ serverId }: { serverId: number }) {
         : '暂无可用的授权用户，请先在用户页分配此服务器的多用户入站。'}</p>
     </div>}
     <RequestState loading={loading} error={error} hasData={!!current} onRetry={() => setAttempt((value) => value + 1)}>
-      {current && <NodeFormatsModalContent key={userId} data={current} />}
+      {current && (inboundTag ? (
+        <SingleInboundDetailContent key={`${userId}-${inboundTag}`} data={current} inboundTag={inboundTag} multiUser={multiUser} />
+      ) : (
+        <NodeFormatsModalContent key={userId} data={current} />
+      ))}
     </RequestState>
   </>
 }
 
-export function NodeFormatsModalContent({ data }: { data: NodeFormats }) {
+function useCopyFormat() {
   const [copiedKey, setCopiedKey] = useState<string | null>(null)
-  const [detailItem, setDetailItem] = useState<NodeFormats['items'][number] | null>(null)
   const copiedTimerRef = useRef<number | null>(null)
   const mountedRef = useRef(true)
 
@@ -88,8 +129,82 @@ export function NodeFormatsModalContent({ data }: { data: NodeFormats }) {
       .catch(() => message.error('复制失败，请手动选择内容'))
   }
 
+  return { copiedKey, copy }
+}
+
+function NodeFormatDetailView({ item }: { item: NodeFormats['items'][number] }) {
+  const { copiedKey, copy } = useCopyFormat()
+  const displayTag = item.tag || item.name || ''
+  const detailParams = Object.entries(item.params || {}).filter(([key]) => !['服务器', '端口', '协议'].includes(key))
+  const buttons = [
+    { key: 'detail-uri', label: 'URI', value: item.uri },
+    { key: 'detail-clash', label: 'Clash', value: item.clash },
+    { key: 'detail-surge', label: 'Surge', value: item.surge },
+  ]
+  return (
+    <div className="fm-detail-body">
+      <div className="fm-kv">
+        <dl className="ui-kv">
+          <div><dt>地址</dt><dd><Typography.Text copyable>{item.server || '—'}</Typography.Text></dd></div>
+          <div><dt>端口</dt><dd><Typography.Text copyable>{String(item.port)}</Typography.Text></dd></div>
+          <div><dt>协议</dt><dd><span className="ui-tag">{item.type}</span></dd></div>
+          {detailParams.map(([key, value]) => (
+            <div key={key}>
+              <dt>{key}</dt>
+              <dd><Typography.Text copyable={{ text: value }}>{value || '—'}</Typography.Text></dd>
+            </div>
+          ))}
+        </dl>
+      </div>
+      <div className="fm-detail-actions">
+        {buttons.map((button) => button.value ? (
+          <Button
+            key={button.key}
+            size="small"
+            className={copiedKey === button.key ? 'is-copied' : undefined}
+            icon={copiedKey === button.key ? <Check /> : <Copy />}
+            aria-label={`复制 ${displayTag} ${button.label}`}
+            onClick={() => copy(button.value, button.key, `${displayTag} ${button.label}`)}
+          >
+            {button.label}
+          </Button>
+        ) : (
+          <Tooltip key={button.key} title={`${button.label} 不支持该协议`}>
+            <Button size="small" disabled icon={<Copy />}>{button.label}</Button>
+          </Tooltip>
+        ))}
+      </div>
+    </div>
+  )
+}
+
+function SingleInboundDetailContent({
+  data,
+  inboundTag,
+  multiUser,
+}: {
+  data: NodeFormats
+  inboundTag: string
+  multiUser?: boolean
+}) {
+  const item = (data.items || []).find((entry) => entry.tag === inboundTag)
+  if (!item) {
+    return (
+      <div className="ui-empty">
+        {(multiUser || data.multi_user_count > 0) && !data.user_id
+          ? '选择已授权用户后可导出多用户节点'
+          : '暂无可导出的节点'}
+      </div>
+    )
+  }
+  return <NodeFormatDetailView item={item} />
+}
+
+export function NodeFormatsModalContent({ data }: { data: NodeFormats }) {
+  const { copiedKey, copy } = useCopyFormat()
+  const [detailItem, setDetailItem] = useState<NodeFormats['items'][number] | null>(null)
+
   const items = data.items || []
-  const detailParams = Object.entries(detailItem?.params || {}).filter(([key]) => !['服务器', '端口', '协议'].includes(key))
   return (
     <>
       {!items.length ? (
@@ -143,21 +258,7 @@ export function NodeFormatsModalContent({ data }: { data: NodeFormats }) {
         footer={<Button onClick={() => setDetailItem(null)}>关闭</Button>}
         width={MODAL_MD}
       >
-        {detailItem && (
-          <div className="fm-kv">
-            <dl className="ui-kv">
-              <div><dt>地址</dt><dd><Typography.Text copyable>{detailItem.server || '—'}</Typography.Text></dd></div>
-              <div><dt>端口</dt><dd><Typography.Text copyable>{String(detailItem.port)}</Typography.Text></dd></div>
-              <div><dt>协议</dt><dd><span className="ui-tag">{detailItem.type}</span></dd></div>
-              {detailParams.map(([key, value]) => (
-                <div key={key}>
-                  <dt>{key}</dt>
-                  <dd><Typography.Text copyable={{ text: value }}>{value || '—'}</Typography.Text></dd>
-                </div>
-              ))}
-            </dl>
-          </div>
-        )}
+        {detailItem && <NodeFormatDetailView item={detailItem} />}
       </Modal>
     </>
   )

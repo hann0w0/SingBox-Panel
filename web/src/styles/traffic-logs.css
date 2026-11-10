@@ -4,12 +4,14 @@
 .tr-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; min-width: 0; }
 
 /* ---------- 流量 ---------- */
-.tr-overview { min-width: 0; }
-.tr-range { flex: none; }
+.tr-overview { display: grid; grid-template-columns: minmax(0, 1fr); gap: 16px; margin-bottom: 32px; min-width: 0; }
+.tr-overview > .ui-stats, .tr-overview > .tr-grid { margin-bottom: 0; }
+.tr-range.ui-segmented { flex: none; padding: 2px; gap: 1px; border-radius: 6px; }
+.tr-range .ui-segmented-item { height: 20px; padding: 0 8px; border-radius: 4px; font-size: 12px; line-height: 20px; }
 .tr-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 16px; margin-bottom: 32px; }
 .tr-panel { min-width: 0; padding: 16px 20px 12px; }
-.tr-panel-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; min-height: 24px; }
-.tr-panel-head h3 { display: inline-flex; align-items: baseline; gap: 8px; margin: 0; font-size: 14px; font-weight: 600; color: var(--console-ink); }
+.tr-panel-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; min-height: 26px; }
+.tr-panel-head h3 { display: inline-flex; align-items: baseline; gap: 8px; margin: 0; font-size: 14px; line-height: 20px; font-weight: 600; color: var(--console-ink); }
 .tr-panel-note { color: var(--console-faint); font-size: 12px; font-weight: 400; }
 .tr-legend { display: inline-flex; align-items: center; gap: 14px; color: var(--console-muted); font-size: 12px; }
 .tr-legend span { display: inline-flex; align-items: center; gap: 6px; }

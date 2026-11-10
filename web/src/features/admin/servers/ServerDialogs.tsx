@@ -152,3 +152,40 @@ export function InstallSingboxModal({
     </Modal>
   )
 }
+
+export function ServerEditModal({
+  title, open, saving, form, onCancel, onConfirm,
+}: {
+  title: string
+  open: boolean
+  saving: boolean
+  form: FormInstance
+  onCancel: () => void
+  onConfirm: () => void
+}) {
+  return (
+    <Modal
+      title={title}
+      width={MODAL_SM}
+      open={open}
+      onOk={onConfirm}
+      onCancel={onCancel}
+      confirmLoading={saving}
+    >
+      <Form form={form} layout="vertical" initialValues={{ traffic_reset_day: 1 }}>
+        <Form.Item name="name" label="名称" rules={[{ required: true }]}>
+          <Input placeholder="hk-1" />
+        </Form.Item>
+        <Form.Item name="address" label="连接地址">
+          <Input placeholder="hk.example.com" />
+        </Form.Item>
+        <Form.Item name="remark" label="备注">
+          <Input />
+        </Form.Item>
+        <Form.Item name="traffic_reset_day" label="流量重置日" extra="每月当天 UTC 00:00 重新计量；短月按月末，重置前流量不计入页面，历史记录保留。" rules={[{ required: true }]}>
+          <Select options={Array.from({ length: 31 }, (_, index) => ({ value: index + 1, label: `每月 ${index + 1} 日` }))} />
+        </Form.Item>
+      </Form>
+    </Modal>
+  )
+}

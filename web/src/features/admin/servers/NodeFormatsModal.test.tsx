@@ -86,4 +86,17 @@ describe('node export account selection', () => {
     render(<NodeFormatsExportModal serverId={7} open onCancel={vi.fn()} />)
     await waitFor(() => expect(screen.getByText('暂无可用的授权用户，请先在用户页分配此服务器的多用户入站。')).toBeTruthy())
   })
+
+  it('renders connection details and URI/Clash/Surge copy buttons for a single inbound', async () => {
+    vi.mocked(getNodeFormats).mockResolvedValue({
+      ...result(0, 'vless-7ec402'),
+      multi_user_count: 0,
+    })
+    render(<NodeFormatsExportModal serverId={7} open inboundTag="vless-7ec402" multiUser={false} onCancel={vi.fn()} />)
+    await screen.findByText('vless-7ec402-uuid')
+    fireEvent.click(screen.getByRole('button', { name: '复制 vless-7ec402 URI' }))
+    expect(copyToClipboard).toHaveBeenCalledWith('vless://vless-7ec402-uuid@fra.example.com:443')
+    fireEvent.click(screen.getByRole('button', { name: '复制 vless-7ec402 Clash' }))
+    expect(copyToClipboard).toHaveBeenCalledWith('vless-7ec402-clash')
+  })
 })

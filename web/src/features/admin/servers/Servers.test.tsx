@@ -71,17 +71,23 @@ describe('server remarks', () => {
     await screen.findByText('Backup exit')
   })
 
-  it('shows the remark in the detail heading without rendering blank remarks', () => {
+  it('shows the remark and masks address/IP by default in the detail heading', async () => {
+    const onEditServer = vi.fn()
     const props = {
       publicURL: '', busy: '', refreshing: false,
-      onRefresh: vi.fn(), onInstallSingbox: vi.fn(), onUninstallSingbox: vi.fn(),
+      onRefresh: vi.fn(), onEditServer, onInstallSingbox: vi.fn(), onUninstallSingbox: vi.fn(),
       onInstallAgent: vi.fn(), onUninstallAgent: vi.fn(), onImport: vi.fn(),
-      onEditConfig: vi.fn(), onRestart: vi.fn(), onExport: vi.fn(),
+      onEditConfig: vi.fn(), onRestart: vi.fn(),
     }
-    const { container, rerender } = render(<ServerOverviewCard server={server} {...props} />)
+    const { container, rerender } = render(<ServerOverviewCard server={{ ...server, public_ip: '69.63.207.36' }} {...props} />)
     expect(screen.getByText('Backup exit').className).toBe('sd-remark')
-    expect(screen.getByRole('button', { name: '导出节点' })).toBeTruthy()
-    expect(screen.queryByText('导出订阅')).toBeNull()
+    expect(screen.queryByRole('button', { name: '导出节点' })).toBeNull()
+    expect(screen.getByText('fra.***.com · 69.63.*.36')).toBeTruthy()
+    fireEvent.click(screen.getByRole('button', { name: '显示连接地址与 IP' }))
+    expect(screen.getByText('fra.example.com · 69.63.207.36')).toBeTruthy()
+    fireEvent.keyDown(screen.getByRole('button', { name: /维护/ }), { key: 'Enter' })
+    fireEvent.click(await screen.findByRole('menuitem', { name: '编辑节点' }))
+    expect(onEditServer).toHaveBeenCalledTimes(1)
     rerender(<ServerOverviewCard server={{ ...server, remark: '  ' }} {...props} />)
     expect(container.querySelector('.sd-remark')).toBeNull()
   })

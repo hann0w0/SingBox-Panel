@@ -1,19 +1,22 @@
+import { useEffect, useState } from 'react'
 import { Button, Dropdown } from '../../../ui'
-import { ChevronDown, RotateCw } from 'lucide-react'
+import { ChevronDown, Eye, EyeOff, RotateCw } from 'lucide-react'
 import type { Server } from '../../../types'
+import { maskHost } from '../../../util'
 import { PageHeader, Status } from '../../../ui/Page'
 
 /** Server detail heading: name, one meta line and the server-level actions. */
 export function ServerOverviewCard({
   server, publicURL, busy, refreshing,
-  onRefresh, onInstallSingbox, onUninstallSingbox, onInstallAgent, onUninstallAgent,
-  onImport, onEditConfig, onRestart, onExport,
+  onRefresh, onEditServer, onInstallSingbox, onUninstallSingbox, onInstallAgent, onUninstallAgent,
+  onImport, onEditConfig, onRestart,
 }: {
   server: Server
   publicURL: string
   busy: string
   refreshing: boolean
   onRefresh: () => void
+  onEditServer?: () => void
   onInstallSingbox: () => void
   onUninstallSingbox: () => void
   onInstallAgent: () => void
@@ -21,14 +24,37 @@ export function ServerOverviewCard({
   onImport: () => void
   onEditConfig: () => void
   onRestart: () => void
-  onExport: () => void
 }) {
+  const [showAddress, setShowAddress] = useState(false)
+  useEffect(() => {
+    setShowAddress(false)
+  }, [server.id])
+
   const address = server.address || server.public_ip
+  const extraIP = server.public_ip && server.public_ip !== server.address ? server.public_ip : ''
+  const displayedAddress = showAddress ? address : maskHost(address)
+  const displayedExtraIP = extraIP ? (showAddress ? extraIP : maskHost(extraIP)) : ''
+
   return <PageHeader
     title={server.name}
     meta={<>
       <Status tone={server.online ? 'ok' : 'off'}>{server.online ? '在线' : '离线'}</Status>
-      {address && <span className="mono" title={server.agent_url || publicURL || undefined}>{address}{server.public_ip && server.public_ip !== server.address ? ` · ${server.public_ip}` : ''}</span>}
+      {address && (
+        <span className="sd-addr mono" title={showAddress ? (server.agent_url || publicURL || undefined) : undefined}>
+          <span className="sd-addr-text" onClick={() => setShowAddress((prev) => !prev)}>
+            {displayedAddress}{displayedExtraIP ? ` · ${displayedExtraIP}` : ''}
+          </span>
+          <button
+            type="button"
+            className="sd-addr-toggle"
+            aria-label={showAddress ? '隐藏连接地址与 IP' : '显示连接地址与 IP'}
+            title={showAddress ? '隐藏连接地址与 IP' : '显示连接地址与 IP'}
+            onClick={() => setShowAddress((prev) => !prev)}
+          >
+            {showAddress ? <EyeOff size={13} /> : <Eye size={13} />}
+          </button>
+        </span>
+      )}
       <span>
         {server.singbox_installed ? `sing-box ${server.singbox_version || ''}` : '未安装 sing-box'}
         {server.singbox_has_update && <span className="sd-up" title={`可升级至 ${server.singbox_latest_version || ''}`}> ↑</span>}
@@ -39,9 +65,12 @@ export function ServerOverviewCard({
     </>}
     actions={<>
       <Button icon={<RotateCw />} loading={refreshing} onClick={onRefresh} aria-label="刷新状态" title="刷新状态" />
-      <Button onClick={onExport}>导出节点</Button>
       <Button onClick={onEditConfig}>配置文件</Button>
       <Dropdown placement="bottomRight" menu={{ items: [
+        ...(onEditServer ? [
+          { key: 'edit', label: '编辑节点', disabled: !!busy, onClick: onEditServer },
+          { type: 'divider' as const },
+        ] : []),
         { key: 'restart', label: '重启 sing-box', disabled: !server.online || !!busy, onClick: onRestart },
         { key: 'import', label: '识别现有配置', disabled: !!busy, onClick: onImport },
         { type: 'divider' },

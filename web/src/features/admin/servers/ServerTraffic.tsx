@@ -446,7 +446,7 @@ export default function ServerTraffic({
             </h3>
             <div className="tr-actions">
               {compact ? (
-                <Select aria-label="历史统计范围" style={{ width: 112 }} options={RANGE_OPTIONS} value={range} onChange={setRange} />
+                <Select size="small" aria-label="历史统计范围" style={{ width: 104 }} options={RANGE_OPTIONS} value={range} onChange={setRange} />
               ) : (
                 <Segmented<TrafficRange> className="tr-range" aria-label="历史统计范围" options={RANGE_OPTIONS} value={range} onChange={setRange} />
               )}

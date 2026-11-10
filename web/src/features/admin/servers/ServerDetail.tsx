@@ -9,6 +9,7 @@ import {
   Popconfirm,
   Select,
   Space,
+  Switch,
   Table,
   Typography,
   message,
@@ -43,6 +44,7 @@ import {
   uninstallAgent,
   uninstallSingbox,
   updateAgent,
+  updateRule,
   updateServer,
 } from '../../../api'
 import type { ImportSummary } from '../../../api'
@@ -56,7 +58,7 @@ import { ServerOverviewCard } from './ServerOverviewCard'
 import ServerTraffic from './ServerTraffic'
 import Logs from '../logs/Logs'
 import { copyToClipboard, formatBytes } from '../../../util'
-import { Pills, Status } from '../../../ui/Page'
+import { Pills } from '../../../ui/Page'
 import '../../../styles/server-detail.css'
 import { RequestState } from '../../../components/RequestState'
 import { MODAL_MD } from '../../../ui/modal'
@@ -73,6 +75,69 @@ function ProtocolTag({ type }: { type: string }) {
 
 const DETAIL_SECTIONS = ['inbounds', 'rules', 'logs'] as const
 type DetailSection = typeof DETAIL_SECTIONS[number]
+
+function ServerDetailSkeleton() {
+  return (
+    <div className="sd-page sd-skeleton" role="status" aria-label="加载中">
+      <div className="ui-page-head">
+        <div className="ui-page-title">
+          <span className="sd-skel-bar sd-skel-title" />
+          <span className="sd-skel-bar sd-skel-meta" />
+        </div>
+        <div className="ui-page-actions">
+          <span className="sd-skel-bar sd-skel-btn-icon" />
+          <span className="sd-skel-bar sd-skel-btn" />
+          <span className="sd-skel-bar sd-skel-btn" />
+        </div>
+      </div>
+
+      <div className="tr-overview">
+        <div className="ui-stats">
+          {Array.from({ length: 4 }).map((_, i) => (
+            <div key={i} className="ui-stat">
+              <span className="sd-skel-bar sd-skel-stat-label" />
+              <span className="sd-skel-bar sd-skel-stat-value" />
+              <span className="sd-skel-bar sd-skel-stat-hint" />
+            </div>
+          ))}
+        </div>
+        <div className="tr-grid">
+          {Array.from({ length: 2 }).map((_, i) => (
+            <section key={i} className="ui-card tr-panel">
+              <header className="tr-panel-head">
+                <span className="sd-skel-bar sd-skel-panel-title" />
+                <span className="sd-skel-bar sd-skel-panel-ctrl" />
+              </header>
+              <span className="sd-skel-bar sd-skel-chart" />
+            </section>
+          ))}
+        </div>
+      </div>
+
+      <div className="ui-pills-row">
+        <span className="sd-skel-bar sd-skel-pills" />
+        <span className="sd-skel-bar sd-skel-add" />
+      </div>
+
+      <div className="ui-table-wrapper">
+        <div className="sd-skel-table-head">
+          <span className="sd-skel-bar sd-skel-cell" />
+          <span className="sd-skel-bar sd-skel-cell-sm" />
+          <span className="sd-skel-bar sd-skel-cell-sm" />
+          <span className="sd-skel-bar sd-skel-cell-right" />
+        </div>
+        {Array.from({ length: 3 }).map((_, i) => (
+          <div key={i} className="sd-skel-table-row">
+            <span className="sd-skel-bar sd-skel-cell" />
+            <span className="sd-skel-bar sd-skel-cell-sm" />
+            <span className="sd-skel-bar sd-skel-cell-sm" />
+            <span className="sd-skel-bar sd-skel-cell-right" />
+          </div>
+        ))}
+      </div>
+    </div>
+  )
+}
 
 export default function ServerDetail() {
   const { id, section: sectionParam } = useParams()
@@ -121,6 +186,7 @@ export default function ServerDetail() {
   const [ruleSets, setRuleSets] = useState<RuleSet[]>([])
   const [ruleOpen, setRuleOpen] = useState(false)
   const [ruleEditing, setRuleEditing] = useState<RouteRule | null>(null)
+  const [togglingRuleIDs, setTogglingRuleIDs] = useState<Set<number>>(() => new Set())
   const [importOpen, setImportOpen] = useState(false)
   const [importSum, setImportSum] = useState<ImportSummary | null>(null)
   const [importing, setImporting] = useState(false)
@@ -342,6 +408,7 @@ export default function ServerDetail() {
     setEditing(null)
     setRuleOpen(false)
     setRuleEditing(null)
+    setTogglingRuleIDs(new Set())
     setBusy('')
     void load().catch((error) => {
       if (!isCanceledRequest(error)) message.error(errMsg(error))
@@ -599,6 +666,42 @@ export default function ServerDetail() {
     })
   }
 
+  const onToggleRule = async (r: RouteRule, enabled: boolean) => {
+    const targetSID = sid
+    if (currentSIDRef.current !== targetSID || togglingRuleIDs.has(r.id)) return
+    setTogglingRuleIDs((prev) => new Set(prev).add(r.id))
+    const patchRules = (list: RouteRule[], nextEnabled: boolean) =>
+      list.map((item) => (item.id === r.id ? { ...item, enabled: nextEnabled } : item))
+    ruleOrderRef.current = patchRules(ruleOrderRef.current, enabled)
+    setRules((prev) => patchRules(prev, enabled))
+    try {
+      const saved = await applyWithToast(`rule-toggle-${r.id}`, () =>
+        updateRule(targetSID, r.id, {
+          match: r.match,
+          outbound: r.outbound,
+          remark: r.remark || '',
+          sort: r.sort,
+          enabled,
+        }),
+      )
+      if (currentSIDRef.current !== targetSID) return
+      if (!saved) {
+        ruleOrderRef.current = patchRules(ruleOrderRef.current, r.enabled)
+        setRules((prev) => patchRules(prev, r.enabled))
+      } else {
+        loadCurrentServer()
+      }
+    } finally {
+      if (currentSIDRef.current === targetSID) {
+        setTogglingRuleIDs((prev) => {
+          const next = new Set(prev)
+          next.delete(r.id)
+          return next
+        })
+      }
+    }
+  }
+
   const run = async (label: string, fn: () => Promise<unknown>, ok = '操作完成') => {
     const targetSID = sid
     if (currentSIDRef.current !== targetSID) return
@@ -747,7 +850,8 @@ export default function ServerDetail() {
   }, [trafficData])
 
   if (!server) {
-    return <RequestState loading={pageLoading} error={loadError} hasData={false} onRetry={loadCurrentServer}><span /></RequestState>
+    if (pageLoading) return <ServerDetailSkeleton />
+    return <RequestState loading={false} error={loadError} hasData={false} onRetry={loadCurrentServer}><span /></RequestState>
   }
   const rawMode = server.config_mode === 'raw'
   const finalOutbound = server.final_outbound || 'direct'
@@ -853,6 +957,7 @@ export default function ServerDetail() {
     if (act === 'reject' || v === 'block' || v === 'reject') return r.match?.method === 'drop' ? '静默丢弃' : '快速拒绝'
     if (act === 'sniff' || v === 'sniff') return 'sniff'
     if (act === 'hijack-dns' || v === 'hijack-dns') return 'hijack-dns'
+    if (v === 'direct') return 'Direct · 直出'
     return routingNodes.find((node) => node.tag === v)?.name || v
   }
 
@@ -912,22 +1017,39 @@ export default function ServerDetail() {
           },
           { title: '匹配', render: (_, r: RouteRule) => <span className="sd-chips">{matchChips(r)}</span> },
           { title: '出站', width: 160, render: (_, r: RouteRule) => <span className="mono">{ruleTarget(r)}</span> },
-          { title: '状态', dataIndex: 'enabled', width: 90, render: (v: boolean) => <Status tone={v ? 'ok' : 'off'}>{v ? '启用' : '停用'}</Status> },
+          { title: '备注', dataIndex: 'remark', width: 180, render: (v: string) => v ? <span className="muted">{v}</span> : <span className="faint">—</span> },
+          {
+            title: '状态',
+            dataIndex: 'enabled',
+            width: 90,
+            render: (v: boolean, r: RouteRule) => (
+              <Switch
+                size="small"
+                checked={v}
+                disabled={rawMode || togglingRuleIDs.has(r.id)}
+                aria-label={`${v ? '停用' : '启用'}规则 ${r.remark || r.id}`}
+                onChange={(checked) => void onToggleRule(r, checked)}
+              />
+            ),
+          },
           { title: '', width: 88, align: 'right', render: (_, r: RouteRule) => rowActions(() => { setRuleEditing(r); setRuleOpen(true) }, () => onDeleteRule(r), `规则 ${r.id}`) },
         ]}
       />
       <div className="sd-final">
-        <span>其余流量</span>
+        <span>默认出站流量</span>
         <Select
           size="small"
-          aria-label="兜底出站"
+          aria-label="默认出站流量"
           showSearch
           value={finalOutbound}
           disabled={rawMode || busy === 'final'}
           loading={busy === 'final'}
           popupMatchSelectWidth={false}
           onChange={(v) => { if (v !== finalOutbound) void onSetFinal(v) }}
-          options={[...new Set(['direct', finalOutbound, ...routingNodes.map((node) => node.tag)])].map((tag) => ({ value: tag, label: routingNodes.find((node) => node.tag === tag)?.name || tag }))}
+          options={[...new Set(['direct', finalOutbound, ...routingNodes.map((node) => node.tag)])].map((tag) => ({
+            value: tag,
+            label: tag === 'direct' ? 'Direct · 直出' : (routingNodes.find((node) => node.tag === tag)?.name || tag),
+          }))}
         />
       </div>
     </>

@@ -25,4 +25,17 @@ describe('RequestState', () => {
     expect(screen.getByText('刷新失败')).toBeTruthy()
     expect(screen.getByText('timeout')).toBeTruthy()
   })
+
+  it('portals the refreshing indicator bar into .app-header when present', () => {
+    render(
+      <div>
+        <header className="app-header" />
+        <RequestState loading error={null} hasData>
+          <div>content</div>
+        </RequestState>
+      </div>,
+    )
+    const bar = screen.getByRole('status', { name: '正在刷新' })
+    expect(bar.parentElement?.className).toBe('app-header')
+  })
 })

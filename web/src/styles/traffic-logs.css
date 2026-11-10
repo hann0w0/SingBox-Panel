@@ -7,7 +7,7 @@
 .tr-overview { display: grid; grid-template-columns: minmax(0, 1fr); gap: 16px; margin-bottom: 32px; min-width: 0; }
 .tr-overview > .ui-stats, .tr-overview > .tr-grid { margin-bottom: 0; }
 .tr-range.ui-segmented { flex: none; padding: 2px; gap: 1px; border-radius: 6px; }
-.tr-range .ui-segmented-item { height: 20px; padding: 0 8px; border-radius: 4px; font-size: 12px; line-height: 20px; }
+.tr-range .ui-segmented-item { height: 20px; padding: 0 4px; border-radius: 4px; font-size: 12px; line-height: 20px; }
 .tr-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 16px; margin-bottom: 32px; }
 .tr-panel { min-width: 0; padding: 16px 20px 12px; }
 .tr-panel-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; min-height: 26px; }
@@ -151,7 +151,7 @@
 .lg-line:hover .lg-copy-button, .lg-copy-button:focus-visible { opacity: 1; }
 .lg-copy-button:hover { background: var(--console-selected); color: var(--console-ink); }
 .lg-copy-button:focus-visible { outline: 2px solid var(--console-focus); outline-offset: 1px; }
-.lg-jump-latest { position: absolute; right: 16px; top: 14px; z-index: 2; box-shadow: 0 6px 20px rgb(0 0 0 / 18%); }
+.lg-jump-latest { position: absolute; right: 16px; top: 44px; z-index: 4; box-shadow: 0 6px 20px rgb(0 0 0 / 18%); }
 
 /* ---------- Mobile ---------- */
 @media (max-width: 1023px) {
@@ -171,6 +171,7 @@
   .lg-viewer, .lg-empty { height: clamp(320px, calc(60 * var(--dvh)), 600px); }
   /* The header strip is desktop-only; phones keep the two-line card rows. */
   .lg-thead { display: none; }
+  .lg-jump-latest { top: 12px; right: 14px; }
   .lg-line { padding: 6px 12px; border-bottom: 1px solid var(--console-border); }
   /* Two-line cards: time, direction, protocol/tag, user on the first line,
      the target and its error text below. */

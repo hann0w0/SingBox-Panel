@@ -760,9 +760,9 @@ export function RuleForm({
               <Select
                 allowClear
                 showSearch
-                placeholder="选择全局节点或 direct"
+                placeholder="选择全局节点或 Direct · 直出"
                 options={[
-                  { value: 'direct', label: 'direct' },
+                  { value: 'direct', label: 'Direct · 直出' },
                   ...routingNodes.map((node) => ({ value: node.tag, label: node.name })),
                 ]}
               />

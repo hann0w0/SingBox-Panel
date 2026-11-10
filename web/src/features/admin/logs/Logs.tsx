@@ -753,10 +753,10 @@ export default function Logs({ serverId, serverOnline }: { serverId?: number; se
                 type="primary"
                 size="small"
                 icon={<ArrowUpToLine />}
+                aria-label="回到最新"
+                title="回到最新"
                 onClick={() => scrollToLatest(true)}
-              >
-                回到最新
-              </Button>
+              />
             ) : null}
           </div>
         ) : (

@@ -27,6 +27,7 @@ describe('global routing data', () => {
     vi.mocked(createRule).mockResolvedValue({ apply_state: 'pending' } as Awaited<ReturnType<typeof createRule>>)
     render(<RuleForm serverId={1} rule={null} routingNodes={[{ tag, name: '东京节点', type: 'socks' }]} inboundTags={[]} open onClose={vi.fn()} onSaved={vi.fn()} />)
     fireEvent.click(await screen.findByLabelText(/目标出站/))
+    expect(await screen.findByRole('option', { name: 'Direct · 直出' })).toBeTruthy()
     fireEvent.click(await screen.findByRole('option', { name: '东京节点' }))
     expect(screen.getByLabelText(/目标出站/).textContent).toBe('东京节点')
     fireEvent.click(screen.getByRole('button', { name: '创建' }))

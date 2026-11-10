@@ -20,3 +20,26 @@
 .sd-drag.rule-drag-handle:focus-visible { outline: 2px solid var(--console-focus); }
 .sd-final { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-top: 12px; padding: 10px 16px; border: 1px dashed var(--console-border-strong); border-radius: var(--app-radius); color: var(--console-muted); font-size: 13px; }
 .sd-final .ui-select { min-width: 160px; font-family: var(--app-mono); }
+
+/* ---------- Detail skeleton ---------- */
+.sd-skeleton { pointer-events: none; user-select: none; }
+.sd-skel-bar { display: block; border-radius: 6px; background: color-mix(in srgb, var(--console-border-strong) 42%, var(--console-surface)); animation: sd-skel-pulse 1.5s ease-in-out infinite; }
+@keyframes sd-skel-pulse { 50% { opacity: .48; } }
+.sd-skel-title { width: min(240px, 60vw); height: 30px; border-radius: 7px; }
+.sd-skel-meta { width: min(340px, 78vw); height: 15px; margin-top: 10px; }
+.sd-skel-btn-icon { width: 34px; height: 34px; }
+.sd-skel-btn { width: 84px; height: 34px; }
+.sd-skel-stat-label { width: 56px; height: 13px; }
+.sd-skel-stat-value { width: 112px; height: 24px; margin-top: 8px; }
+.sd-skel-stat-hint { width: 88px; height: 12px; margin-top: 6px; }
+.sd-skel-panel-title { width: 72px; height: 16px; }
+.sd-skel-panel-ctrl { width: 148px; height: 22px; }
+.sd-skel-chart { width: 100%; height: 250px; margin-top: 8px; border-radius: 8px; }
+.sd-skel-pills { width: 176px; height: 32px; border-radius: 8px; }
+.sd-skel-add { width: 96px; height: 34px; }
+.sd-skel-table-head { height: 40px; padding: 0 20px; display: flex; align-items: center; gap: 24px; border-bottom: 1px solid var(--console-border); background: var(--console-surface); }
+.sd-skel-table-row { height: 46px; padding: 0 20px; display: flex; align-items: center; gap: 24px; border-bottom: 1px solid var(--console-border); }
+.sd-skel-table-row:last-child { border-bottom: 0; }
+.sd-skel-cell { height: 14px; flex: 1; max-width: 140px; }
+.sd-skel-cell-sm { height: 14px; width: 64px; flex: none; }
+.sd-skel-cell-right { margin-left: auto; width: 84px; height: 14px; flex: none; }

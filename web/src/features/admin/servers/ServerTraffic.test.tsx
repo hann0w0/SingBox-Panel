@@ -126,4 +126,40 @@ describe('live traffic freshness', () => {
     emit({ ts: SERVER_TS + 3000 })
     expectRates(true)
   })
+
+  it('renders combined server load/memory and period traffic metrics and forwards traffic series to parent', async () => {
+    const series = {
+      available: true,
+      range: '24h' as const,
+      step_seconds: 3600,
+      traffic_reset_day: 1,
+      updated_at: '2026-10-25T10:00:00Z',
+      upload: 1024,
+      download: 2048,
+      upload_rate: 0,
+      download_rate: 0,
+      tcp_connections: 0,
+      udp_connections: 0,
+      points: [],
+      ports: [],
+    }
+    vi.mocked(getServerTraffic).mockResolvedValueOnce(series)
+    const onDataChange = vi.fn()
+    render(
+      <ServerTraffic
+        serverId={1}
+        server={{ id: 1, name: 'Alpha', online: true, load1: 0.42, mem_used: 512 * 1024 * 1024, mem_total: 1024 * 1024 * 1024 } as any}
+        onDataChange={onDataChange}
+      />,
+    )
+    await act(async () => {})
+    expect(onDataChange).toHaveBeenLastCalledWith(series)
+    const periodCard = screen.getByText('区间流量').parentElement!
+    expect(within(periodCard).getByText('3.00 KB')).toBeTruthy()
+    expect(within(periodCard).getByText('↓ 2.00 KB · ↑ 1.00 KB')).toBeTruthy()
+    expect(within(screen.getByText('负载').parentElement!).getByText('0.42')).toBeTruthy()
+    const memCard = screen.getByText('内存').parentElement!
+    expect(within(memCard).getByText('50%')).toBeTruthy()
+    expect(within(memCard).getByText('512.00 MB / 1.00 GB')).toBeTruthy()
+  })
 })

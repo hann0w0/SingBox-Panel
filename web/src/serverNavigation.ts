@@ -4,9 +4,8 @@ export function parseServerId(value: string | null | undefined): number | null {
   return Number.isSafeInteger(id) && id > 0 ? id : null
 }
 
-export function serverIdFromLocation(pathname: string, search: string): number | null {
+export function serverIdFromLocation(pathname: string, _search = ''): number | null {
   const detail = pathname.match(/^\/admin\/servers\/(\d+)(?:\/|$)/)
-  if (detail) return parseServerId(detail[1])
-  return pathname === '/admin/traffic' || pathname === '/admin/logs'
-    ? parseServerId(new URLSearchParams(search).get('server')) : null
+  return detail ? parseServerId(detail[1]) : null
 }
+

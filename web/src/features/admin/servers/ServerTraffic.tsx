@@ -1,13 +1,11 @@
 import { memo, useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react'
-import type React from 'react'
-import { Button, Grid, Segmented, Select, Table, message } from '../../../ui'
-import { RotateCw } from 'lucide-react'
+import { Grid, Segmented, Select, message } from '../../../ui'
 import { errMsg, getServerTraffic, isCanceledRequest } from '../../../api'
-import type { TrafficPoint, TrafficPortSeries, TrafficRange, TrafficSeries } from '../../../types'
+import type { Server, TrafficPoint, TrafficRange, TrafficSeries } from '../../../types'
 import { formatBytes } from '../../../util'
 import { useSSE } from '../../../useSSE'
 import type { SSEMessage } from '../../../useSSE'
-import { PageHeader, Section, Stats } from '../../../ui/Page'
+import { Stats } from '../../../ui/Page'
 import '../../../styles/traffic-logs.css'
 
 function rate(n: number): string {
@@ -346,15 +344,20 @@ const RANGE_OPTIONS: { label: string; value: TrafficRange }[] = [
   { label: '30 天', value: '30d' },
 ]
 
-type PortRow = Pick<TrafficPortSeries, 'inbound_id' | 'tag' | 'port' | 'type' | 'upload' | 'download'>
-
-const bytesSorter = <T extends { upload: number; download: number }>(key: 'upload' | 'download' | 'total') =>
-  (a: T, b: T) => (key === 'total' ? a.upload + a.download - (b.upload + b.download) : a[key] - b[key])
-
-// ServerTraffic renders the traffic page for one node: headline totals, live
-// rate, history and the per-inbound breakdown. titleExtra (the host selector)
-// sits in the page header next to the range control.
-export default function ServerTraffic({ serverId, titleExtra }: { serverId: number; titleExtra?: React.ReactNode }) {
+// ServerTraffic renders the overview metrics and traffic trend charts for one
+// node, forwarding the loaded series to the parent so the inbound table can
+// display per-port usage for the active time range.
+export default function ServerTraffic({
+  serverId,
+  server,
+  reloadKey = 0,
+  onDataChange,
+}: {
+  serverId: number
+  server?: Server | null
+  reloadKey?: number
+  onDataChange?: (data: TrafficSeries | null) => void
+}) {
   const screens = Grid.useBreakpoint()
   const compact = !screens.md
   const [data, setData] = useState<TrafficSeries | null>(null)
@@ -362,7 +365,14 @@ export default function ServerTraffic({ serverId, titleExtra }: { serverId: numb
   const [range, setRange] = useState<TrafficRange>('24h')
   const loadAbortRef = useRef<AbortController | null>(null)
   const loadGenerationRef = useRef(0)
+  const onDataChangeRef = useRef(onDataChange)
+  onDataChangeRef.current = onDataChange
   const rateStore = useMemo(() => createLiveRateStore(), [])
+
+  const updateData = useCallback((next: TrafficSeries | null) => {
+    setData(next)
+    onDataChangeRef.current?.(next)
+  }, [])
 
   const load = useCallback(async (quiet = false) => {
     loadAbortRef.current?.abort()
@@ -372,7 +382,7 @@ export default function ServerTraffic({ serverId, titleExtra }: { serverId: numb
     if (!quiet) setLoading(true)
     try {
       const next = await getServerTraffic(serverId, range, controller.signal)
-      if (generation === loadGenerationRef.current) setData(next)
+      if (generation === loadGenerationRef.current) updateData(next)
     } catch (error) {
       if (!quiet && !isCanceledRequest(error)) message.error(errMsg(error))
     } finally {
@@ -381,63 +391,47 @@ export default function ServerTraffic({ serverId, titleExtra }: { serverId: numb
         if (!quiet) setLoading(false)
       }
     }
-  }, [range, serverId])
+  }, [range, serverId, updateData])
 
   useEffect(() => {
-    setData(null)
+    updateData(null)
     void load()
     const timer = window.setInterval(() => void load(true), 60000)
     return () => window.clearInterval(timer)
-  }, [load])
+  }, [load, updateData])
+
+  useEffect(() => {
+    if (reloadKey > 0) void load(true)
+  }, [reloadKey, load])
 
   useEffect(() => () => {
     loadGenerationRef.current += 1
     loadAbortRef.current?.abort()
   }, [])
 
-  const portRows: PortRow[] = useMemo(() => {
-    if (!data) return []
-    return data.ports.map((p) => ({
-      inbound_id: p.inbound_id, tag: p.tag, port: p.port, type: p.type, upload: p.upload, download: p.download,
-    }))
-  }, [data])
-  const unattributedUpload = data?.unattributed_upload ?? 0
-  const unattributedDownload = data?.unattributed_download ?? 0
   const available = !!data && (!!data.available || !!data.updated_at)
   const total = (value: number) => (available ? formatBytes(value) : '—')
+  const memPct = server?.mem_total ? Math.round((server.mem_used / server.mem_total) * 100) : null
 
   return (
-    <div className="tr-page">
-      <PageHeader
-        title="流量"
-        actions={
-          <div className="tr-actions">
-            {titleExtra}
-            {compact ? (
-              <Select aria-label="历史统计范围" style={{ width: 138 }} options={RANGE_OPTIONS} value={range} onChange={setRange} />
-            ) : (
-              <Segmented<TrafficRange> className="tr-range" aria-label="历史统计范围" options={RANGE_OPTIONS} value={range} onChange={setRange} />
-            )}
-            <Button
-              icon={<RotateCw />}
-              loading={loading}
-              onClick={() => void load()}
-              title="刷新"
-              aria-label="刷新"
-            />
-          </div>
-        }
-      />
-
+    <div className="tr-overview">
       <Stats
         items={[
-          { label: '下载', value: total(data?.download ?? 0) },
-          { label: '上传', value: total(data?.upload ?? 0) },
-          { label: '合计', value: total((data?.upload ?? 0) + (data?.download ?? 0)) },
           {
             label: '实时速率',
             value: <LiveRateValue store={rateStore} part="download" />,
             hint: <LiveRateValue store={rateStore} part="upload" />,
+          },
+          {
+            label: '区间流量',
+            value: total((data?.upload ?? 0) + (data?.download ?? 0)),
+            hint: available ? `↓ ${formatBytes(data?.download ?? 0)} · ↑ ${formatBytes(data?.upload ?? 0)}` : undefined,
+          },
+          { label: '负载', value: server?.online ? server.load1?.toFixed(2) : '—' },
+          {
+            label: '内存',
+            value: server?.online && memPct !== null ? `${memPct}%` : '—',
+            hint: server?.online && server.mem_total ? `${formatBytes(server.mem_used)} / ${formatBytes(server.mem_total)}` : undefined,
           },
         ]}
       />
@@ -450,57 +444,26 @@ export default function ServerTraffic({ serverId, titleExtra }: { serverId: numb
               历史用量
               <span className="tr-panel-note mono">UTC</span>
             </h3>
-            <TrafficLegend />
+            <div className="tr-actions">
+              {compact ? (
+                <Select aria-label="历史统计范围" style={{ width: 112 }} options={RANGE_OPTIONS} value={range} onChange={setRange} />
+              ) : (
+                <Segmented<TrafficRange> className="tr-range" aria-label="历史统计范围" options={RANGE_OPTIONS} value={range} onChange={setRange} />
+              )}
+            </div>
           </header>
-          {data ? (
+          {data && !available ? (
+            <div className="tr-chart-empty tr-unavailable">
+              <strong>暂未采集到流量</strong>
+              <span>重连 Agent 或重新下发配置后开始统计</span>
+            </div>
+          ) : data ? (
             <TrafficTrend points={data.points} range={range} stepSeconds={data.step_seconds} mode="usage" />
           ) : (
             <div className="tr-chart-empty">{loading ? '读取中…' : '暂无数据'}</div>
           )}
         </section>
       </div>
-
-      {data && available ? (
-        <Section title="入站">
-          <Table<PortRow>
-            className="tr-port-table"
-            rowKey="inbound_id"
-            size="middle"
-            tableLayout="fixed"
-            scroll={{ x: compact ? 600 : undefined }}
-            dataSource={portRows}
-            locale={{ emptyText: '暂无入站' }}
-            columns={[
-              { title: '标签', dataIndex: 'tag', width: compact ? 130 : undefined, ellipsis: true, render: (v: string) => <span className="tr-tag-name">{v}</span> },
-              { title: '协议', dataIndex: 'type', width: compact ? 100 : 130, render: (value: string) => <ProtocolTag type={value} /> },
-              { title: '端口', dataIndex: 'port', width: compact ? 76 : 100, sorter: (a, b) => a.port - b.port, render: (v: number) => <span className="mono">{v}</span> },
-              { title: '下载', dataIndex: 'download', align: 'right', width: compact ? 104 : 140, sorter: bytesSorter('download'), render: (v: number) => <span className="mono">{formatBytes(v)}</span> },
-              { title: '上传', dataIndex: 'upload', align: 'right', width: compact ? 104 : 140, sorter: bytesSorter('upload'), render: (v: number) => <span className="mono muted">{formatBytes(v)}</span> },
-              {
-                title: '合计', align: 'right', width: compact ? 110 : 150, sorter: bytesSorter('total'), defaultSortOrder: 'descend',
-                render: (_: unknown, r) => <span className="mono tr-strong">{formatBytes(r.upload + r.download)}</span>,
-              },
-            ]}
-            summary={() => (unattributedUpload + unattributedDownload > 0 ? (
-              <Table.Summary fixed>
-                <Table.Summary.Row className="tr-summary-row">
-                  <Table.Summary.Cell index={0}><span className="muted">未归属</span></Table.Summary.Cell>
-                  <Table.Summary.Cell index={1}><span className="faint">—</span></Table.Summary.Cell>
-                  <Table.Summary.Cell index={2}><span className="faint">—</span></Table.Summary.Cell>
-                  <Table.Summary.Cell index={3} align="right"><span className="mono">{formatBytes(unattributedDownload)}</span></Table.Summary.Cell>
-                  <Table.Summary.Cell index={4} align="right"><span className="mono muted">{formatBytes(unattributedUpload)}</span></Table.Summary.Cell>
-                  <Table.Summary.Cell index={5} align="right"><span className="mono tr-strong">{formatBytes(unattributedUpload + unattributedDownload)}</span></Table.Summary.Cell>
-                </Table.Summary.Row>
-              </Table.Summary>
-            ) : null)}
-          />
-        </Section>
-      ) : data && !data.available ? (
-        <div className="ui-card ui-empty tr-unavailable">
-          <strong>暂未采集到流量</strong>
-          <span>重连 Agent 或重新下发配置后开始统计</span>
-        </div>
-      ) : null}
     </div>
   )
 }

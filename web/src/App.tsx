@@ -1,6 +1,7 @@
 import { lazy, Suspense } from 'react'
 import { Navigate, Route, Routes, useLocation } from 'react-router-dom'
 import { useAuth } from './store'
+import { parseServerId } from './serverNavigation'
 import { DialogHost } from './ui/dialogs'
 import { ToastHost } from './ui/feedback'
 import { RouteErrorBoundary } from './components/RouteErrorBoundary'
@@ -13,12 +14,17 @@ const Servers = lazy(() => import('./features/admin/servers/Servers'))
 const ServerDetail = lazy(() => import('./features/admin/servers/ServerDetail'))
 const ExternalNodes = lazy(() => import('./features/admin/nodes/ExternalNodes'))
 const RuleSets = lazy(() => import('./features/admin/servers/RuleSets'))
-const Traffic = lazy(() => import('./features/admin/traffic/Traffic'))
-const Logs = lazy(() => import('./features/admin/logs/Logs'))
 const Users = lazy(() => import('./features/admin/users/UsersPage'))
 const UserDetail = lazy(() => import('./features/admin/users/UserDetail'))
 const Settings = lazy(() => import('./features/admin/settings/Settings'))
 const Dashboard = lazy(() => import('./features/user/Dashboard'))
+
+function ServerSectionRedirect({ section }: { section?: string }) {
+  const { search } = useLocation()
+  const serverId = parseServerId(new URLSearchParams(search).get('server'))
+  if (!serverId) return <Navigate to="/admin/servers" replace />
+  return <Navigate to={`/admin/servers/${serverId}${section ? `/${section}` : ''}`} replace />
+}
 
 function Protected({ children }: { children: JSX.Element }) {
   const token = useAuth((s) => s.token)
@@ -93,10 +99,10 @@ export default function App() {
           <Route path="/admin/servers" element={<AdminGuard><Servers /></AdminGuard>} />
           <Route path="/admin/servers/:id/:section?" element={<AdminGuard><ServerDetail /></AdminGuard>} />
           <Route path="/admin/rulesets" element={<AdminGuard><RuleSets /></AdminGuard>} />
-          <Route path="/admin/traffic" element={<AdminGuard><Traffic /></AdminGuard>} />
+          <Route path="/admin/traffic" element={<AdminGuard><ServerSectionRedirect /></AdminGuard>} />
           <Route path="/admin/users" element={<AdminGuard><Users /></AdminGuard>} />
           <Route path="/admin/users/:id" element={<AdminGuard><UserDetail /></AdminGuard>} />
-          <Route path="/admin/logs" element={<AdminGuard><Logs /></AdminGuard>} />
+          <Route path="/admin/logs" element={<AdminGuard><ServerSectionRedirect section="logs" /></AdminGuard>} />
           <Route path="/admin/external-nodes" element={<AdminGuard><ExternalNodes /></AdminGuard>} />
           <Route path="/admin/settings" element={<AdminGuard><Settings /></AdminGuard>} />
         </Route>

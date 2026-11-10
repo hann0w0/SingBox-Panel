@@ -1,13 +1,10 @@
-/* Design A — 流量 (/admin/traffic) and 日志 (/admin/logs). */
+/* Design A — 服务器流量概览与日志 (/admin/servers/:id). */
 
 /* ---------- Shared header controls ---------- */
 .tr-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; min-width: 0; }
-.tr-server-select { width: 220px; }
-.tr-server-option, .lg-server-option { display: inline-flex; align-items: center; gap: 8px; min-width: 0; }
-.tr-server-option .faint, .lg-server-option .faint { font-size: 12px; }
 
 /* ---------- 流量 ---------- */
-.tr-page { min-width: 0; }
+.tr-overview { min-width: 0; }
 .tr-range { flex: none; }
 .tr-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 16px; margin-bottom: 32px; }
 .tr-panel { min-width: 0; padding: 16px 20px 12px; }
@@ -159,15 +156,14 @@
   .tr-grid { grid-template-columns: minmax(0, 1fr); }
 }
 @media (max-width: 767px) {
-  .tr-page .ui-page-actions, .tr-actions { width: 100%; }
-  .tr-server-select { flex: 1 1 0; width: auto; min-width: 0; }
   .tr-panel { padding: 14px 14px 8px; }
   .tr-chart svg { height: 220px; }
 
   .lg-toolbar { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .lg-server-select, .lg-search { grid-column: 1 / -1; width: 100%; min-width: 0; max-width: none; }
   .lg-filter-select { width: 100%; min-width: 0; }
-  .lg-toggle { grid-column: 1 / -1; margin-left: 0; padding: 2px 0; }
+  .lg-toggle { grid-column: 1; margin-left: 0; padding: 2px 0; }
+  .lg-toolbar > .ui-btn { grid-column: 2; justify-self: end; }
   .lg-statusbar { padding-left: 12px; }
   .lg-count { display: none; }
   .lg-viewer, .lg-empty { height: clamp(320px, calc(60 * var(--dvh)), 600px); }

@@ -16,7 +16,6 @@ import { useSearchParams } from 'react-router-dom'
 import type { SSEMessage } from '../../../useSSE'
 import { copyToClipboard } from '../../../util'
 import { VirtualList } from '../../../components/VirtualList'
-import { PageHeader } from '../../../ui/Page'
 import '../../../styles/traffic-logs.css'
 import { LogReplay, mergeLogSnapshot } from '../../../logReplay'
 
@@ -289,7 +288,7 @@ function formatUpdatedAt(value: number | null) {
 
 // Logs renders one node's native sing-box log stream. With serverId fixed (server
 // detail tab) the node selector is hidden.
-export default function Logs({ serverId }: { serverId?: number } = {}) {
+export default function Logs({ serverId, serverOnline }: { serverId?: number; serverOnline?: boolean } = {}) {
   const [servers, setServers] = useState<Server[]>([])
   const [params, setParams] = useSearchParams()
   const requestedId = parseServerId(params.get('server'))
@@ -386,7 +385,8 @@ export default function Logs({ serverId }: { serverId?: number } = {}) {
       scrollToLatest()
       // Live tail is the default view; it only pauses when the stream fails
       // or the node goes offline.
-      if (servers.find((s) => s.id === sid)?.online !== false) setLive(true)
+      const online = serverOnline ?? servers.find((s) => s.id === sid)?.online
+      if (online !== false) setLive(true)
     } catch (e) {
       if (!quiet && !isCanceledRequest(e)) message.error(errMsg(e))
     } finally {
@@ -395,7 +395,7 @@ export default function Logs({ serverId }: { serverId?: number } = {}) {
         if (!quiet) setLoading(false)
       }
     }
-  }, [lines, scrollToLatest, servers, sid])
+  }, [lines, scrollToLatest, serverOnline, servers, sid])
 
   useEffect(() => () => {
     loadGenerationRef.current += 1
@@ -564,6 +564,7 @@ export default function Logs({ serverId }: { serverId?: number } = {}) {
   }, [sid])
 
   const current = servers.find((s) => s.id === sid)
+  const isOnline = serverOnline ?? (current ? current.online : undefined)
 
   const handleScroll = (event: UIEvent<HTMLDivElement>) => {
     const box = event.currentTarget
@@ -610,13 +611,6 @@ export default function Logs({ serverId }: { serverId?: number } = {}) {
 
   return (
     <div className="lg-page">
-      <PageHeader
-        title="日志"
-        actions={
-          <Button icon={<RotateCw />} loading={loading} onClick={() => load()}>刷新</Button>
-        }
-      />
-
       <div className="lg-toolbar">
         <Select
           className="lg-filter-select"
@@ -645,6 +639,7 @@ export default function Logs({ serverId }: { serverId?: number } = {}) {
           <Switch size="small" checked={hideNoise} onChange={setHideNoise} />
           <span>过滤噪音</span>
         </label>
+        <Button icon={<RotateCw />} loading={loading} onClick={() => load()}>刷新</Button>
       </div>
 
       <div className="lg-box">
@@ -652,13 +647,13 @@ export default function Logs({ serverId }: { serverId?: number } = {}) {
           <div className="lg-status-group">
             <span className={`lg-live ${liveTone}`}><i />{liveStatus}</span>
             {keyword.trim() ? <span className="lg-match mono">{filteredLines.length} 条匹配</span> : null}
-            {current && !current.online ? <span className="lg-offline">节点离线</span> : null}
+            {isOnline === false ? <span className="lg-offline">节点离线</span> : null}
           </div>
           <div className="lg-status-group lg-status-right">
             <span className="lg-count mono" title={`最后更新 ${formatUpdatedAt(lastUpdatedAt)}`}>
               {filteredLines.length} / {logEntries.length} 行 · {formatUpdatedAt(lastUpdatedAt)}
             </span>
-            {!live && current?.online ? (
+            {!live && isOnline !== false ? (
               <Button size="small" type="text" onClick={() => handleLiveChange(true)}>恢复实时</Button>
             ) : null}
             <Button

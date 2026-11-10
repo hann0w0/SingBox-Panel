@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import type { PointerEvent as ReactPointerEvent, ReactNode } from 'react'
 import {
   Alert,
@@ -46,14 +46,16 @@ import {
 } from '../../../api'
 import type { ImportSummary } from '../../../api'
 import { applyWithToast, isConfigApplyResult, showConfigApplyResult } from '../../../configApply'
-import type { Inbound, RoutingNode, RouteRule, RuleSet, Server } from '../../../types'
+import type { Inbound, RoutingNode, RouteRule, RuleSet, Server, TrafficSeries } from '../../../types'
 import InboundForm from './InboundForm'
 import { RuleForm } from './RoutingForms'
 import { ConfigEditorModal, ImportPreviewModal, InstallSingboxModal } from './ServerDialogs'
 import { NodeFormatsExportModal } from './NodeFormatsModal'
 import { ServerOverviewCard } from './ServerOverviewCard'
+import ServerTraffic from './ServerTraffic'
+import Logs from '../logs/Logs'
 import { copyToClipboard, formatBytes } from '../../../util'
-import { Pills, Stats, Status } from '../../../ui/Page'
+import { Pills, Status } from '../../../ui/Page'
 import '../../../styles/server-detail.css'
 import { RequestState } from '../../../components/RequestState'
 import { MODAL_MD } from '../../../ui/modal'
@@ -68,7 +70,7 @@ function ProtocolTag({ type }: { type: string }) {
   return <span className="ui-tag">{PROTOCOL_LABELS[type.trim().toLowerCase()] || type}</span>
 }
 
-const DETAIL_SECTIONS = ['inbounds', 'rules'] as const
+const DETAIL_SECTIONS = ['inbounds', 'rules', 'logs'] as const
 type DetailSection = typeof DETAIL_SECTIONS[number]
 
 export default function ServerDetail() {
@@ -78,9 +80,12 @@ export default function ServerDetail() {
   const sid = Number(id)
   useEffect(() => {
     if (sectionParam === 'outbounds') navigate(`/admin/servers/${id}/rules`, { replace: true })
+    if (sectionParam === 'traffic') navigate(`/admin/servers/${id}`, { replace: true })
     if (sectionParam === 'rulesets') navigate('/admin/rulesets', { replace: true })
   }, [id, sectionParam, navigate])
   const [server, setServer] = useState<Server | null>(null)
+  const [trafficData, setTrafficData] = useState<TrafficSeries | null>(null)
+  const [trafficReloadKey, setTrafficReloadKey] = useState(0)
   const [pageLoading, setPageLoading] = useState(true)
   const [loadError, setLoadError] = useState<string | null>(null)
   const [sectionError, setSectionError] = useState<string | null>(null)
@@ -312,6 +317,7 @@ export default function ServerDetail() {
 
   useEffect(() => {
     setServer(null)
+    setTrafficData(null)
     setRoutingNodes([])
     setRules([])
     ruleOrderRef.current = []
@@ -357,6 +363,7 @@ export default function ServerDetail() {
       if (currentSIDRef.current !== targetSID) return
       await load()
       if (currentSIDRef.current !== targetSID) return
+      setTrafficReloadKey((value) => value + 1)
       if (server?.online) message.success('已从 Agent 获取最新状态')
       else message.info('节点当前离线，已刷新面板状态')
     } catch (e) {
@@ -691,16 +698,27 @@ export default function ServerDetail() {
 
 
 
+  const portTrafficById = useMemo(() => {
+    const map = new Map<number, { upload: number; download: number }>()
+    for (const port of trafficData?.ports ?? []) {
+      map.set(port.inbound_id, { upload: port.upload, download: port.download })
+    }
+    return map
+  }, [trafficData])
+
   if (!server) {
     return <RequestState loading={pageLoading} error={loadError} hasData={false} onRetry={loadCurrentServer}><span /></RequestState>
   }
   const rawMode = server.config_mode === 'raw'
   const finalOutbound = server.final_outbound || 'direct'
-  const memPct = server.mem_total ? Math.round((server.mem_used / server.mem_total) * 100) : null
+  const trafficAvailable = !!trafficData && (!!trafficData.available || !!trafficData.updated_at)
+  const unattributedUpload = trafficData?.unattributed_upload ?? 0
+  const unattributedDownload = trafficData?.unattributed_download ?? 0
   const goSection = (key: string) => navigate(key === 'inbounds' ? `/admin/servers/${sid}` : `/admin/servers/${sid}/${key}`)
   const addButton: Record<DetailSection, ReactNode> = {
     inbounds: <Button type="primary" icon={<Plus />} disabled={rawMode} onClick={() => { setEditing(null); setFormOpen(true) }}>新增入站</Button>,
     rules: <Button type="primary" icon={<Plus />} disabled={rawMode} onClick={() => { setRuleEditing(null); setRuleOpen(true) }}>新增规则</Button>,
+    logs: null,
   }
   const rowActions = (onEdit: () => void, onDelete: () => void, label: string) => (
     <span className="ui-row-actions">
@@ -711,18 +729,58 @@ export default function ServerDetail() {
 
   const inboundTable = (
     <Table
+      className="tr-port-table"
       rowKey="id"
-      scroll={{ x: 560 }}
+      scroll={{ x: 760 }}
       dataSource={server.inbounds || []}
       locale={{ emptyText: '暂无入站' }}
       rowClassName={(ib: Inbound) => (ib.enabled === false ? 'is-disabled' : '')}
       columns={[
         { title: '标签', dataIndex: 'tag', render: (v: string) => <span className="sd-strong">{v}</span> },
         { title: '协议', dataIndex: 'type', render: (v: string) => <ProtocolTag type={v} /> },
-        { title: '端口', dataIndex: 'listen_port', render: (v: number) => <span className="mono">{v}</span> },
+        { title: '端口', dataIndex: 'listen_port', sorter: (a: Inbound, b: Inbound) => a.listen_port - b.listen_port, render: (v: number) => <span className="mono">{v}</span> },
         { title: '用户', render: (_, ib: Inbound) => <span className="muted">{ib.settings?.multi_user ? '多用户' : '单用户'}</span> },
+        {
+          title: '下载',
+          align: 'right',
+          sorter: (a: Inbound, b: Inbound) => (portTrafficById.get(a.id)?.download ?? 0) - (portTrafficById.get(b.id)?.download ?? 0),
+          render: (_, ib: Inbound) => <span className="mono">{trafficAvailable ? formatBytes(portTrafficById.get(ib.id)?.download ?? 0) : '—'}</span>,
+        },
+        {
+          title: '上传',
+          align: 'right',
+          sorter: (a: Inbound, b: Inbound) => (portTrafficById.get(a.id)?.upload ?? 0) - (portTrafficById.get(b.id)?.upload ?? 0),
+          render: (_, ib: Inbound) => <span className="mono muted">{trafficAvailable ? formatBytes(portTrafficById.get(ib.id)?.upload ?? 0) : '—'}</span>,
+        },
+        {
+          title: '合计',
+          align: 'right',
+          sorter: (a: Inbound, b: Inbound) => {
+            const totalA = (portTrafficById.get(a.id)?.upload ?? 0) + (portTrafficById.get(a.id)?.download ?? 0)
+            const totalB = (portTrafficById.get(b.id)?.upload ?? 0) + (portTrafficById.get(b.id)?.download ?? 0)
+            return totalA - totalB
+          },
+          render: (_, ib: Inbound) => {
+            const traffic = portTrafficById.get(ib.id)
+            return <span className="mono sd-strong">{trafficAvailable ? formatBytes((traffic?.upload ?? 0) + (traffic?.download ?? 0)) : '—'}</span>
+          },
+        },
         { title: '', width: 88, align: 'right', render: (_, ib: Inbound) => rowActions(() => { setEditing(ib); setFormOpen(true) }, () => onDeleteInbound(ib), `入站 ${ib.tag}`) },
       ]}
+      summary={() => (trafficAvailable && unattributedUpload + unattributedDownload > 0 ? (
+        <Table.Summary fixed>
+          <Table.Summary.Row className="tr-summary-row">
+            <Table.Summary.Cell index={0}><span className="muted">未归属</span></Table.Summary.Cell>
+            <Table.Summary.Cell index={1}><span className="faint">—</span></Table.Summary.Cell>
+            <Table.Summary.Cell index={2}><span className="faint">—</span></Table.Summary.Cell>
+            <Table.Summary.Cell index={3}><span className="faint">—</span></Table.Summary.Cell>
+            <Table.Summary.Cell index={4} align="right"><span className="mono">{formatBytes(unattributedDownload)}</span></Table.Summary.Cell>
+            <Table.Summary.Cell index={5} align="right"><span className="mono muted">{formatBytes(unattributedUpload)}</span></Table.Summary.Cell>
+            <Table.Summary.Cell index={6} align="right"><span className="mono sd-strong">{formatBytes(unattributedUpload + unattributedDownload)}</span></Table.Summary.Cell>
+            <Table.Summary.Cell index={7} />
+          </Table.Summary.Row>
+        </Table.Summary>
+      ) : null)}
     />
   )
 
@@ -824,7 +882,11 @@ export default function ServerDetail() {
     </>
   )
 
-  const views: Record<DetailSection, ReactNode> = { inbounds: inboundTable, rules: rulesTable }
+  const views: Record<DetailSection, ReactNode> = {
+    inbounds: inboundTable,
+    rules: rulesTable,
+    logs: <Logs key={sid} serverId={sid} serverOnline={server.online} />,
+  }
 
   return (
     <RequestState loading={pageLoading} error={loadError || sectionError} hasData onRetry={loadCurrentServer}>
@@ -845,12 +907,13 @@ export default function ServerDetail() {
         onExport={() => setFmtOpen(true)}
       />
 
-      <Stats items={[
-        { label: '下行速率', value: server.online && server.traffic_available ? `${formatBytes(server.traffic_download_rate ?? 0)}/s` : '—' },
-        { label: '上行速率', value: server.online && server.traffic_available ? `${formatBytes(server.traffic_upload_rate ?? 0)}/s` : '—' },
-        { label: '负载', value: server.online ? server.load1?.toFixed(2) : '—' },
-        { label: '内存', value: server.online && memPct !== null ? `${memPct}%` : '—', hint: server.online && server.mem_total ? `${formatBytes(server.mem_used)} / ${formatBytes(server.mem_total)}` : undefined },
-      ]} />
+      <ServerTraffic
+        key={sid}
+        serverId={sid}
+        server={server}
+        reloadKey={trafficReloadKey}
+        onDataChange={setTrafficData}
+      />
 
       {rawMode && (
         <Alert
@@ -870,6 +933,7 @@ export default function ServerDetail() {
         items={[
           { key: 'inbounds', label: '入站', count: server.inbounds?.length || 0 },
           { key: 'rules', label: '路由', count: rules.length },
+          { key: 'logs', label: '日志' },
         ]}
       />
       {views[section]}

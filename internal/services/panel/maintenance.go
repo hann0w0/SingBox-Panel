@@ -753,6 +753,14 @@ func (a *App) selfUpdate(c *gin.Context) {
 		c.JSON(http.StatusBadGateway, gin.H{"error": "新版二进制版本校验失败"})
 		return
 	}
+	// Refuse a version this database can no longer serve before anything is
+	// stopped or replaced. An older release cannot open a schema migrated by a
+	// newer one, and discovering that after the swap means a panel that will not
+	// come back up.
+	if probeErr := runDatabaseProbe(stagedBin, a.cfgPath, stageDir); probeErr != nil {
+		c.JSON(http.StatusConflict, gin.H{"error": "目标版本 " + target + " 无法使用当前数据库，已取消安装（当前面板未受影响）：" + probeErr.Error()})
+		return
+	}
 	stagedWebDir := filepath.Join(stageDir, "web")
 	stagedAgentsDir := filepath.Join(stageDir, "agents")
 	if err := extractUpdateArchive(stagedWebArchive, stagedWebDir); err != nil {
@@ -1129,6 +1137,31 @@ func extractUpdateArchive(archivePath, destination string) error {
 	}
 	if limited.N <= 0 {
 		return fmt.Errorf("归档解压后超过大小限制")
+	}
+	return nil
+}
+
+// runDatabaseProbe executes the staged binary's --check-database mode against the
+// live configuration. It only reads the migration ledger, so it is safe to run
+// while the current panel still serves requests.
+func runDatabaseProbe(binary, cfgPath, stageDir string) error {
+	args := []string{"--check-database"}
+	if cfgPath != "" {
+		args = append(args, "--config", cfgPath)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	cmd := exec.CommandContext(ctx, binary, args...)
+	// Keep any stray temp output inside the staging directory, which the swap
+	// helper already cleans up.
+	cmd.Dir = stageDir
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		msg := strings.TrimSpace(string(out))
+		if msg == "" {
+			msg = err.Error()
+		}
+		return errors.New(msg)
 	}
 	return nil
 }

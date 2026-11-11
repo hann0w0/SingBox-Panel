@@ -6,6 +6,7 @@ import (
 	"flag"
 	"fmt"
 	"log"
+	"os"
 	"os/signal"
 	"runtime/debug"
 	"strings"
@@ -25,6 +26,11 @@ var commit string
 func main() {
 	cfgPath := flag.String("config", "", "path to panel config YAML")
 	showVer := flag.Bool("version", false, "print version and exit")
+	// Self-update hands the staged binary this probe before swapping it in. It
+	// answers "could this version boot against the live database?" without
+	// installing anything, so an incompatible rollback is refused up front
+	// instead of replacing a working panel with one that cannot start.
+	checkDB := flag.Bool("check-database", false, "verify this version can read the configured database, then exit")
 	flag.Parse()
 
 	if *showVer {
@@ -36,13 +42,20 @@ func main() {
 		return
 	}
 
-	if commit == "" {
-		commit = buildCommit()
-	}
-
 	cfg, err := loadRuntimeConfig(*cfgPath)
 	if err != nil {
 		log.Fatalf("config: %v", err)
+	}
+	if *checkDB {
+		if err := panel.CheckDatabaseCompatibility(cfg.Database.Driver, cfg.Database.DSN); err != nil {
+			fmt.Fprintln(os.Stderr, err)
+			os.Exit(1)
+		}
+		return
+	}
+
+	if commit == "" {
+		commit = buildCommit()
 	}
 
 	db, err := panel.InitDB(cfg)

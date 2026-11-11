@@ -6,6 +6,31 @@ package panel
 const agentInstallScript = `#!/bin/sh
 set -eu
 
+# The panel hands out one short command:
+#   curl -fsSL <panel>/api/agent/install.sh | sh -s -- --url <panel> --code <code>
+# When that runs as an ordinary account, re-download this same script and feed
+# it to root through sudo or doas. Re-fetching instead of re-reading stdin is
+# deliberate: the invoking shell may already have buffered the rest of a piped
+# script, so a child process could otherwise see a truncated installer. Keeping
+# the escalation here is what allows the pasted command to stay on one line.
+if [ "$(id -u)" != "0" ]; then
+  panel_url=""; previous=""
+  for arg in "$@"; do
+    [ "$previous" = "--url" ] && panel_url="$arg"
+    previous="$arg"
+  done
+  case "$panel_url" in
+    https://*) ;;
+    *) echo "--url is required to run the installer as root" >&2; exit 1 ;;
+  esac
+  for elevate in sudo doas; do
+    command -v "$elevate" >/dev/null 2>&1 || continue
+    exec "$elevate" sh -c 'if command -v curl >/dev/null 2>&1; then curl -fsSL "$0/api/agent/install.sh"; else wget -qO- "$0/api/agent/install.sh"; fi | sh -s -- "$@"' "$panel_url" "$@"
+  done
+  echo "run this command as root or install sudo/doas" >&2
+  exit 1
+fi
+
 URL=""; TOKEN=""; CODE=""; TMP=""; AUTH_CONFIG=""
 BIN=/usr/local/bin/singbox-panel-agent
 PREV=/usr/local/bin/singbox-panel-agent.prev

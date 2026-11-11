@@ -151,7 +151,7 @@ panel.example.com {
 
 ## 节点接入
 
-在面板创建服务器，复制节点详情页生成的安装命令，在目标 VPS 的宿主机执行。目标 VPS 需为 Linux amd64/arm64，并运行 systemd 或 Alpine OpenRC。Alpine 最小系统可直接使用生成的命令：脚本会在 root 下执行，或通过 `sudo`/`doas` 提权，并自动补齐 `curl` 依赖；安装 sing-box 时保留默认的官方脚本方式。面板镜像内同时包含两种架构的 Agent，镜像自身架构不会限制可管理的节点架构。
+在面板创建服务器，复制节点详情页生成的安装命令，在目标 VPS 的宿主机执行。目标 VPS 需为 Linux amd64/arm64，并运行 systemd 或 Alpine OpenRC。生成的命令只有一行 `curl … | sh -s --`：脚本在普通账号下运行时自动通过 `sudo`/`doas` 提权，并自动补齐 `curl` 依赖，因此 Alpine 最小系统也能直接粘贴执行；安装 sing-box 时保留默认的官方脚本方式。面板镜像内同时包含两种架构的 Agent，镜像自身架构不会限制可管理的节点架构。
 
 Agent 不进入容器，sing-box 的安装、启停、更新、配置下发、日志及流量采集仍走现有原生流程。systemd 节点从 journal 读取日志；Alpine/OpenRC 节点使用 `/var/log/sing-box.log`，Agent 本身写入 `/var/log/singbox-panel-agent.log`，两者应纳入节点现有的日志轮转策略。节点不需开放额外管理端口。
 

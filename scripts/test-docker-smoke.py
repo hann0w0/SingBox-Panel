@@ -19,21 +19,16 @@ class RegistrationCodeTest(unittest.TestCase):
         command = f"curl -fsSL 'https://panel.example.test/api/agent/install.sh' | sudo bash -s -- --url 'https://panel.example.test' --code '{CODE}'"
         self.assertEqual(SMOKE.registration_code(command), CODE)
 
-    def test_openrc_bootstrap_with_root_sudo_and_doas_branches(self):
+    def test_short_bootstrap_with_single_registration_code(self):
+        # The panel emits one line; curl/wget and sudo/doas are resolved inside
+        # the served script, so the code appears exactly once.
         url = shlex.quote("https://panel.example.test")
         script = shlex.quote("https://panel.example.test/api/agent/install.sh")
         args = f"--url {url} --code '{CODE}'"
-        command = (
-            f'if command -v curl >/dev/null 2>&1; then curl -fsSL {script}; '
-            f'elif command -v wget >/dev/null 2>&1; then wget -qO- {script}; '
-            'else echo "curl or wget is required" >&2; exit 1; fi | '
-            f'if [ "$(id -u)" -eq 0 ]; then sh -s -- {args}; '
-            f'elif command -v sudo >/dev/null 2>&1; then sudo sh -s -- {args}; '
-            f'elif command -v doas >/dev/null 2>&1; then doas sh -s -- {args}; '
-            'else echo "run this command as root or install sudo/doas" >&2; exit 1; fi'
-        )
+        command = f'{{ curl -fsSL {script} || wget -qO- {script}; }} | sh -s -- {args}'
         words = shlex.split(command)
-        self.assertEqual(words[words.index("--code") + 1], CODE + ";")
+        self.assertEqual(words[words.index("--code") + 1], CODE)
+        self.assertEqual(command.count(CODE), 1)
         self.assertEqual(SMOKE.registration_code(command), CODE)
 
     def test_adjacent_shell_operators(self):

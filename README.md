@@ -14,7 +14,7 @@ curl -fsSL https://github.com/hann0w0/SingBox-Panel/releases/latest/download/ins
 
 安装脚本支持非交互安装（`--base-url`、`--admin`、`--password`、`--non-interactive`），用 `--version vX.Y.Z` 可指定版本。安装完成后在面板中创建服务器，并在目标 VPS 上执行该节点详情页生成的 Agent 安装命令。
 
-节点 Agent 支持 Linux amd64/arm64 的 systemd 节点，也支持 Alpine Linux 的 OpenRC。Alpine 节点可直接执行面板生成的命令；脚本会使用 `wget`/`curl` 获取安装包，并为 Agent、sing-box 服务及面板日志读取配置 OpenRC。
+节点 Agent 支持 Linux amd64/arm64 的 systemd 节点，也支持 Alpine Linux 的 OpenRC。面板生成的安装命令是一行 `curl … | sh -s --`：以普通账号执行时，脚本会自行通过 `sudo` 或 `doas` 提权，并自动补齐 `curl` 依赖，因此 Alpine 最小系统也能直接粘贴执行；脚本会为 Agent、sing-box 服务及面板日志读取配置 OpenRC。
 
 ### Docker 部署
 

@@ -42,6 +42,8 @@ func TestAgentInstallScriptSyntaxAndTransactionalRollback(t *testing.T) {
 		"UMask=0077",
 		"--connect-timeout 10",
 		"--retry 3",
+		`for elevate in sudo doas; do`,
+		`exec "$elevate" sh -c`,
 	} {
 		if !strings.Contains(agentInstallScript, required) {
 			t.Fatalf("install script is missing transactional step %q", required)

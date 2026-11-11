@@ -240,8 +240,12 @@ func installCommand(baseURL, code string) string {
 	baseURL = strings.TrimRight(baseURL, "/")
 	scriptURL := shellQuote(baseURL + "/api/agent/install.sh")
 	args := fmt.Sprintf("--url %s --code %s", shellQuote(baseURL), shellQuote(code))
-	return fmt.Sprintf(`if command -v curl >/dev/null 2>&1; then curl -fsSL %s; elif command -v wget >/dev/null 2>&1; then wget -qO- %s; else echo "curl or wget is required" >&2; exit 1; fi | if [ "$(id -u)" -eq 0 ]; then sh -s -- %s; elif command -v sudo >/dev/null 2>&1; then sudo sh -s -- %s; elif command -v doas >/dev/null 2>&1; then doas sh -s -- %s; else echo "run this command as root or install sudo/doas" >&2; exit 1; fi`,
-		scriptURL, scriptURL, args, args, args)
+	// One short line, as before OpenRC support. Fetching with wget and
+	// re-executing under sudo/doas both happen inside the script, so neither
+	// has to be repeated here three times just to cover Alpine and non-root
+	// shells.
+	return fmt.Sprintf(`{ curl -fsSL %s || wget -qO- %s; } | sh -s -- %s`,
+		scriptURL, scriptURL, args)
 }
 
 // shellQuote returns one POSIX-shell argument. The generated command is copied

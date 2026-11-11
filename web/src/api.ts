@@ -183,14 +183,33 @@ export const deleteInbound = (serverId: number, inboundId: number) =>
   http.delete<ConfigApplyResult>(`/api/admin/servers/${serverId}/inbounds/${inboundId}`).then((r) => r.data)
 
 // ---- admin: outbounds (landing / transit targets) ----
+export type OutboundSourceKind = 'inbound' | 'custom_node'
+export interface OutboundSource {
+  kind: OutboundSourceKind
+  id: number
+  name: string
+  group?: string
+  type?: string
+  server?: string
+  server_port?: number
+  disabled?: boolean
+  unavailable_reason?: string
+}
 export interface OutboundBody {
   tag: string
   type: OutboundType
   settings?: OutboundSettings
   remark?: string
   sort?: number
+  source_kind?: OutboundSourceKind
+  source_id?: number
 }
-export const previewOutboundImport = (serverId: number, body: { uri: string }, signal?: AbortSignal) =>
+export type OutboundPreviewRequest =
+  | { uri: string }
+  | { source_kind: OutboundSourceKind; source_id: number }
+export const listOutboundSources = (serverId: number, signal?: AbortSignal) =>
+  http.get<{ sources: OutboundSource[] }>(`/api/admin/servers/${serverId}/outbound-sources`, { signal }).then((r) => r.data.sources)
+export const previewOutboundImport = (serverId: number, body: OutboundPreviewRequest, signal?: AbortSignal) =>
   http.post<{ outbound: OutboundBody }>(`/api/admin/servers/${serverId}/outbound-preview`, body, { signal }).then((r) => r.data.outbound)
 export const listOutbounds = (serverId: number, signal?: AbortSignal) =>
   http.get<{ outbounds: Outbound[] }>(`/api/admin/servers/${serverId}/outbounds`, { signal }).then((r) => r.data.outbounds)

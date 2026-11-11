@@ -25,10 +25,23 @@ type Orchestrator struct {
 	db    *gorm.DB
 	hub   *Hub
 	locks *keyedMutex[uint]
+	// app resolves node-imported outbounds against their live source. Set by
+	// NewApp; nil in tests that build an orchestrator directly, where such
+	// outbounds keep their imported snapshot.
+	app *App
 
 	asyncMu      sync.Mutex
 	asyncRunning map[uint]bool
 	asyncPending map[uint]bool
+}
+
+// app returns the panel that owns this orchestrator, or a bare App backed by
+// the same database when tests construct one without a panel.
+func (o *Orchestrator) appOrFallback() *App {
+	if o.app != nil {
+		return o.app
+	}
+	return &App{db: o.db}
 }
 
 type ConfigApplyState string
@@ -93,6 +106,13 @@ func (o *Orchestrator) BuildServerConfig(srv *model.Server) ([]byte, error) {
 				return nil, fmt.Errorf("load users for inbound %q: %w", ib.Tag, loadErr)
 			}
 			users = loadedUsers
+			// Other servers may route through this inbound; each consumer needs
+			// its own dedicated credential in this server's config.
+			routingUsers, routeErr := routingIdentitiesForInbound(o.db, srv, ib.ID)
+			if routeErr != nil {
+				return nil, fmt.Errorf("load routing users for inbound %q: %w", ib.Tag, routeErr)
+			}
+			users = append(users, routingUsers...)
 		} else {
 			st.MultiUser = false
 			st.SingleUser = true
@@ -117,6 +137,22 @@ func (o *Orchestrator) BuildServerConfig(srv *model.Server) ([]byte, error) {
 		if len(ob.Settings) > 0 {
 			if err := json.Unmarshal(ob.Settings, &os); err != nil {
 				return nil, fmt.Errorf("outbound %q settings: %w", ob.Tag, err)
+			}
+		}
+		// Node-imported outbounds follow their source, so edits there apply
+		// without re-importing. A source that became unusable falls back to the
+		// snapshot taken at import time: a stale route still beats dropping the
+		// outbound (which every rule referencing it would then lose).
+		if ob.Referenced() {
+			if client, err := o.appOrFallback().outboundSourceClient(&ob, srv.ID); err == nil {
+				os = outboundStoredSettings{
+					Server: client.Server, ServerPort: client.ServerPort,
+					UUID: client.User.UUID, Username: client.User.Username, Password: client.User.Password,
+					Settings: client.Settings,
+				}
+				ob.Type = client.Type
+			} else {
+				log.Printf("orchestrator: outbound %q on server %d keeps its imported snapshot: %v", ob.Tag, srv.ID, err)
 			}
 		}
 		obs = append(obs, singbox.OutboundInput{

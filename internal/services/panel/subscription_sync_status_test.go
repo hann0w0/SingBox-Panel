@@ -62,7 +62,7 @@ func TestSubscriptionSyncStatusMigrationPreservesHistory(t *testing.T) {
 	if err := db.Migrator().DropColumn(&model.CustomNodeSubscription{}, "LastSyncStatus"); err != nil {
 		t.Fatal(err)
 	}
-	if err := db.Where("version = ?", 31).Delete(&model.SchemaMigration{}).Error; err != nil {
+	if err := db.Where("version >= ?", 31).Delete(&model.SchemaMigration{}).Error; err != nil {
 		t.Fatal(err)
 	}
 	if db.Migrator().HasColumn(&model.CustomNodeSubscription{}, "LastSyncStatus") {
@@ -83,8 +83,9 @@ func TestSubscriptionSyncStatusMigrationPreservesHistory(t *testing.T) {
 	if err := db.First(&preservedNode, node.ID).Error; err != nil || !reflect.DeepEqual(preservedNode, node) {
 		t.Fatalf("migration changed saved node/grants: %+v, %v", preservedNode, err)
 	}
-	if version, err := schemaVersionInDB(db); err != nil || version != 31 {
-		t.Fatalf("upgraded schema = %d, %v; want v31", version, err)
+	wantVersion := applicationMigrations[len(applicationMigrations)-1].version
+	if version, err := schemaVersionInDB(db); err != nil || version != wantVersion {
+		t.Fatalf("upgraded schema = %d, %v; want v%d", version, err, wantVersion)
 	}
 	if err := db.Model(&migrated).Update("last_sync_status", model.SubscriptionSyncPartial).Error; err != nil {
 		t.Fatal(err)

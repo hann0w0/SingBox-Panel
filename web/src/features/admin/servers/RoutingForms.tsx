@@ -1,5 +1,5 @@
 import { useEffect, useId, useLayoutEffect, useRef, useState } from 'react'
-import { Button, Checkbox, Form, Input, InputNumber, Modal, Segmented, Select, Space, Switch } from '../../../ui'
+import { Alert, Button, Checkbox, Form, Input, InputNumber, Modal, Segmented, Select, Space, Switch } from '../../../ui'
 import {
   createOutbound,
   createRule,
@@ -13,7 +13,7 @@ import { buildOutboundBody, TLS_REQUIRED_OUT, TRANSPORT_OUT, transportHost } fro
 import { FormGroup, scrollToFirstError } from './InboundForm'
 import '../../../styles/forms.css'
 import { MODAL_MD } from '../../../ui/modal'
-import { OutboundImport } from './OutboundImport'
+import { OutboundImport, type NodeImportMode } from './OutboundImport'
 import { Pills } from '../../../ui/Page'
 
 const OUT_TYPES: { value: OutboundType; label: string }[] = [
@@ -27,6 +27,8 @@ const OUT_TYPES: { value: OutboundType; label: string }[] = [
   { value: 'anytls', label: 'AnyTLS' },
   { value: 'snell', label: 'Snell' },
 ]
+
+type OutboundSourceMode = 'manual' | NodeImportMode
 
 const UUID_OUT = new Set<OutboundType>(['vless', 'vmess', 'tuic'])
 const PW_OUT = new Set<OutboundType>(['trojan', 'hysteria2', 'tuic', 'anytls'])
@@ -50,7 +52,7 @@ export function OutboundForm({
   const [form] = Form.useForm()
   const importFormId = useId()
   const [importReady, setImportReady] = useState(false)
-  const [source, setSource] = useState<'manual' | 'uri'>('manual')
+  const [source, setSource] = useState<OutboundSourceMode>('manual')
   const [submitting, setSubmitting] = useState(false)
   const submitLock = useRef(false)
   const submitSessionRef = useRef(0)
@@ -192,16 +194,33 @@ export function OutboundForm({
       confirmLoading={submitting}
       width={MODAL_MD}
     >
+      {outbound?.source_kind && (
+        <Alert
+          type="info"
+          showIcon
+          className="fm-edit-follow-hint"
+          message={
+            outbound.source_kind === 'inbound'
+              ? '该出站由面板节点导入，会跟随源节点自动更新；在此手动保存后将改为固定配置，不再跟随。'
+              : '该出站由外部节点导入；在此手动保存后将改为固定配置，不再跟随。'
+          }
+        />
+      )}
       {!outbound && <fieldset className="fm-source-picker" disabled={submitting}>
         <Pills
           label="出站来源"
           active={source}
-          items={[{ key: 'manual', label: '手动配置' }, { key: 'uri', label: 'URI 导入' }]}
-          onChange={(value) => { setImportReady(false); setSource(value as typeof source) }}
+          items={[
+            { key: 'manual', label: '手动配置' },
+            { key: 'panel', label: '面板节点' },
+            { key: 'external', label: '外部节点' },
+            { key: 'uri', label: 'URI 导入' },
+          ]}
+          onChange={(value) => { setImportReady(false); setSource(value as OutboundSourceMode) }}
         />
       </fieldset>}
       {!outbound && source !== 'manual' ? (
-        <OutboundImport key={serverId} serverId={serverId} onClose={onClose} onSaved={onSaved} onSavingChange={setSubmitting} formId={importFormId} onReadyChange={setImportReady} />
+        <OutboundImport key={`${serverId}-${source}`} serverId={serverId} mode={source} onClose={onClose} onSaved={onSaved} onSavingChange={setSubmitting} formId={importFormId} onReadyChange={setImportReady} />
       ) : <fieldset disabled={submitting} aria-busy={submitting} className="min-w-0 border-0 p-0 m-0">
       <Form form={form} layout="vertical" className="fm-form">
         <FormGroup title="基本">

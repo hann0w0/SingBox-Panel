@@ -100,6 +100,9 @@ func NewApp(cfg config.PanelConfig, db *gorm.DB) *App {
 		logSessions:         make(map[uint]map[string]logSessionLease),
 		serverOperations:    newKeyedMutex[uint](),
 	}
+	// The orchestrator resolves node-imported outbounds against the live panel
+	// state (source inbound, external node, or their removal).
+	orch.app = a
 	hub.AfterRegister = func(serverID uint) {
 		// onRegister runs in the Agent read pump. Every command that waits for a
 		// result must run asynchronously so that pump can receive the response.
@@ -184,6 +187,7 @@ func (a *App) routes() *gin.Engine {
 		admin.PUT("/servers/:id/inbounds/:inboundID", a.updateInbound)
 		admin.DELETE("/servers/:id/inbounds/:inboundID", a.deleteInbound)
 
+		admin.GET("/servers/:id/outbound-sources", a.listOutboundSources)
 		admin.POST("/servers/:id/outbound-preview", a.previewOutboundImport)
 		admin.GET("/servers/:id/outbounds", a.listOutbounds)
 		admin.POST("/servers/:id/outbounds", a.createOutbound)

@@ -42,6 +42,10 @@ type outboundReq struct {
 	Settings json.RawMessage `json:"settings"`
 	Remark   *string         `json:"remark"`
 	Sort     *int            `json:"sort"`
+	// Set only when imported from a panel node; the config build then renders
+	// this outbound from that node instead of the stored snapshot.
+	SourceKind string `json:"source_kind,omitempty"`
+	SourceID   uint   `json:"source_id,omitempty"`
 }
 
 func (a *App) createOutbound(c *gin.Context) {
@@ -71,6 +75,11 @@ func (a *App) createOutbound(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "unsupported outbound type: " + req.Type})
 		return
 	}
+	sourceKind, sourceID, err := a.outboundSourceLink(id, req.SourceKind, req.SourceID)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
 	if err := a.validateOutbound(a.db, id, 0, req.Tag, req.Type, req.Settings); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
@@ -86,10 +95,14 @@ func (a *App) createOutbound(c *gin.Context) {
 	ob := &model.Outbound{
 		ServerID: id, Tag: req.Tag, Type: req.Type,
 		Settings: model.JSONText(req.Settings), Remark: remark, Sort: sort,
+		SourceKind: sourceKind, SourceID: sourceID,
 	}
 	if err := a.db.Create(ob).Error; err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
+	}
+	if ob.Referenced() {
+		a.pushRoutingSourceChanges(ob)
 	}
 	a.applyConfigAndRespond(c, id, gin.H{"outbound": ob})
 }
@@ -128,6 +141,12 @@ func (a *App) updateOutbound(c *gin.Context) {
 	nextSettings := json.RawMessage(ob.Settings)
 	if len(req.Settings) > 0 {
 		nextSettings = req.Settings
+	}
+	// Editing a node-imported outbound through the manual form freezes it: the
+	// edited parameters are the administrator's, so it stops following the node.
+	previous := ob
+	if req.SourceKind == "" && req.SourceID == 0 {
+		ob.SourceKind, ob.SourceID = "", 0
 	}
 	if err := a.validateOutbound(a.db, sid, ob.ID, nextTag, nextType, nextSettings); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
@@ -174,6 +193,14 @@ func (a *App) updateOutbound(c *gin.Context) {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
+	// Losing or changing the source revokes the previous source server's
+	// credential, so rebuild that config as well.
+	if previous.Referenced() && (previous.SourceKind != ob.SourceKind || previous.SourceID != ob.SourceID) {
+		a.pushRoutingSourceChanges(&previous)
+	}
+	if ob.Referenced() {
+		a.pushRoutingSourceChanges(&ob)
+	}
 	a.applyConfigAndRespond(c, sid, gin.H{"outbound": ob})
 }
 
@@ -218,6 +245,9 @@ func (a *App) deleteOutbound(c *gin.Context) {
 	if err := a.db.Delete(&ob).Error; err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
+	}
+	if ob.Referenced() {
+		a.pushRoutingSourceChanges(&ob)
 	}
 	a.applyConfigAndRespond(c, sid, gin.H{"ok": true})
 }

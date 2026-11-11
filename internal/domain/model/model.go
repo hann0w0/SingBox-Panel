@@ -257,18 +257,38 @@ type Inbound struct {
 	UpdatedAt time.Time `json:"updated_at"`
 }
 
+// Outbounds imported from another node of the panel keep a reference to their
+// source instead of a frozen credential copy: the referenced inbound issues a
+// dedicated credential (see sourceOutboundClient), so it keeps working when the
+// source's settings change and disappears when the source is removed.
+const (
+	OutboundSourceInbound    = "inbound"     // a panel-managed inbound (own or another server)
+	OutboundSourceCustomNode = "custom_node" // an external/custom node
+)
+
 // Outbound is a routing target on a Server: "direct" or a proxy to a landing
 // server. Settings holds proxy-specific fields as JSON.
 type Outbound struct {
-	ID        uint      `gorm:"primaryKey" json:"id"`
-	ServerID  uint      `gorm:"index" json:"server_id"`
-	Tag       string    `gorm:"size:64" json:"tag"`
-	Type      string    `gorm:"size:32" json:"type"` // direct | vless | vmess | trojan | shadowsocks | hysteria2 | tuic
-	Settings  JSONText  `gorm:"type:text" json:"settings"`
-	Remark    string    `gorm:"size:255" json:"remark"`
-	Sort      int       `json:"sort"`
-	CreatedAt time.Time `json:"created_at"`
-	UpdatedAt time.Time `json:"updated_at"`
+	ID       uint     `gorm:"primaryKey" json:"id"`
+	ServerID uint     `gorm:"index" json:"server_id"`
+	Tag      string   `gorm:"size:64" json:"tag"`
+	Type     string   `gorm:"size:32" json:"type"` // direct | vless | vmess | trojan | shadowsocks | hysteria2 | tuic
+	Settings JSONText `gorm:"type:text" json:"settings"`
+	// SourceKind/SourceID are set for outbounds imported from a panel node.
+	// Manual entries and URI imports leave both empty and carry their own
+	// credential in Settings; URI imports are independent snapshots.
+	SourceKind string    `gorm:"size:16" json:"source_kind,omitempty"`
+	SourceID   uint      `gorm:"index" json:"source_id,omitempty"`
+	Remark     string    `gorm:"size:255" json:"remark"`
+	Sort       int       `json:"sort"`
+	CreatedAt  time.Time `json:"created_at"`
+	UpdatedAt  time.Time `json:"updated_at"`
+}
+
+// Referenced reports whether this outbound follows a panel node rather than
+// storing an independent copy of its connection parameters.
+func (o *Outbound) Referenced() bool {
+	return (o.SourceKind == OutboundSourceInbound || o.SourceKind == OutboundSourceCustomNode) && o.SourceID != 0
 }
 
 // RouteRule is one routing rule on a Server: match conditions -> outbound tag

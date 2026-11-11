@@ -62,7 +62,12 @@ func (a *App) availableOutboundTag(serverID uint, name string) (string, error) {
 }
 
 // Preview is read-only. Saving uses the normal createOutbound validation and
-// config-apply path; the URI is parsed into an independent outbound configuration.
+// config-apply path. Three sources are accepted:
+//
+//   - a panel node (source_kind=inbound) or an external node
+//     (source_kind=custom_node), which produce an outbound that keeps following
+//     that node;
+//   - a share link (uri), which produces an independent snapshot as before.
 func (a *App) previewOutboundImport(c *gin.Context) {
 	sid, ok := uintParam(c, "id")
 	if !ok || !a.requireManagedMode(c, sid) {
@@ -70,12 +75,30 @@ func (a *App) previewOutboundImport(c *gin.Context) {
 	}
 	c.Header("Cache-Control", "no-store")
 	var req struct {
-		URI string `json:"uri"`
+		URI        string `json:"uri"`
+		SourceKind string `json:"source_kind"`
+		SourceID   uint   `json:"source_id"`
 	}
 	if !bindJSON(c, &req) {
 		return
 	}
 	req.URI = strings.TrimSpace(req.URI)
+	if req.SourceKind != "" || req.SourceID != 0 {
+		kind, err := normalizeSourceKind(req.SourceKind)
+		if err == nil && req.SourceID == 0 {
+			err = fmt.Errorf("请选择一个节点")
+		}
+		var body outboundReq
+		if err == nil {
+			body, err = a.outboundSourceBody(sid, kind, req.SourceID)
+		}
+		if err != nil {
+			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+			return
+		}
+		c.JSON(http.StatusOK, gin.H{"outbound": body, "source_kind": kind, "source_id": req.SourceID})
+		return
+	}
 	if req.URI == "" {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "请填写一条节点 URI"})
 		return

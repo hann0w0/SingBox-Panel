@@ -349,6 +349,16 @@ func (a *App) updateCustomNode(c *gin.Context) {
 		columns = append(columns, "AllUsers", "UserIDs", "ExcludedUserIDs")
 	}
 	if req.Enabled != nil {
+		if !*req.Enabled && node.Enabled {
+			// An outbound imported from this node would lose its credential.
+			if n, err := outboundSourceReference(a.db, model.OutboundSourceCustomNode, node.ID); err != nil {
+				c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+				return
+			} else if n > 0 {
+				c.JSON(http.StatusConflict, gin.H{"error": "该节点仍被出站引用，请先修改或删除那些出站"})
+				return
+			}
+		}
 		node.UserEnabled = *req.Enabled
 		node.Enabled = *req.Enabled
 		if node.SubscriptionID != nil {
@@ -408,6 +418,13 @@ func (a *App) deleteCustomNode(c *gin.Context) {
 	defer unlock()
 	unlockAudience := a.subscriptionManager().lockAudience()
 	defer unlockAudience()
+	if n, err := outboundSourceReference(a.db, model.OutboundSourceCustomNode, id); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	} else if n > 0 {
+		c.JSON(http.StatusConflict, gin.H{"error": "该节点仍被出站引用，请先修改或删除那些出站"})
+		return
+	}
 	err := a.db.Transaction(func(tx *gorm.DB) error {
 		if err := tx.First(&node, id).Error; err != nil {
 			return err

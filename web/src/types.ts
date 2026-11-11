@@ -264,6 +264,9 @@ export interface Outbound {
   settings: OutboundSettings
   remark: string
   sort: number
+  // Set when the outbound was imported from a panel node and follows it.
+  source_kind?: 'inbound' | 'custom_node'
+  source_id?: number
 }
 
 // RuleMatch mirrors singbox.RuleInput match fields.

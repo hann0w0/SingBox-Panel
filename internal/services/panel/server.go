@@ -242,7 +242,6 @@ func (a *App) routes() *gin.Engine {
 		admin.GET("/maintenance/onedrive", a.oneDriveStatus)
 		admin.POST("/maintenance/onedrive/auth/start", a.startOneDriveAuth)
 		admin.POST("/maintenance/onedrive/auth/:sessionID/poll", a.pollOneDriveAuth)
-		admin.PUT("/maintenance/onedrive/passphrase", a.setOneDrivePassphrase)
 		admin.POST("/maintenance/onedrive/sync", a.syncOneDriveBackup)
 		admin.GET("/maintenance/onedrive/backups/:id/download", a.downloadOneDriveBackup)
 		admin.POST("/maintenance/onedrive/backups/:id/restore", a.restoreOneDriveBackup)

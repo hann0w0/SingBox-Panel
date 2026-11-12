@@ -15,9 +15,9 @@ import (
 	"golang.org/x/crypto/argon2"
 )
 
-// Encrypted backups wrap the ordinary tar.gz archive so it can be stored on a
-// third-party drive. The archive contains jwt_secret and every node secret, so
-// whoever reads a plaintext copy can forge an admin session.
+// Encrypted backups wrap the ordinary tar.gz archive. New cloud backups are
+// plain .tar.gz files; this format remains only so older .enc archives and
+// older restore uploads can still be opened.
 //
 // Layout:
 //

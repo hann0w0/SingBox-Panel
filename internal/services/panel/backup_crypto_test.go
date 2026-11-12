@@ -12,8 +12,6 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/gin-gonic/gin"
-
 	"github.com/hann0w0/singbox-panel/internal/config"
 )
 
@@ -135,67 +133,7 @@ func TestValidateBackupPassphrase(t *testing.T) {
 	}
 }
 
-func TestOneDriveSyncRefusesPlaintextUpload(t *testing.T) {
-	dir := t.TempDir()
-	dbPath := filepath.Join(dir, "singbox-panel.db")
-	a := &App{
-		cfg: config.PanelConfig{
-			JWTSecret: testLiveJWTSecret,
-			Database:  config.DatabaseConfig{Driver: "sqlite", DSN: dbPath},
-		},
-		db: testDBAt(t, dbPath),
-	}
-	if err := a.saveOneDriveSettings(oneDriveSettings{RefreshToken: "refresh-token", AutoSync: true}); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := a.syncOneDriveBackupLocked(); err == nil || !strings.Contains(err.Error(), "加密口令") {
-		t.Fatalf("sync without passphrase err = %v", err)
-	}
-	settings, err := a.loadOneDriveSettings()
-	if err != nil || settings.FailedAttempts != 1 || !strings.Contains(settings.LastError, "加密口令") {
-		t.Fatalf("failure not recorded: %#v, err = %v", settings, err)
-	}
-}
-
-func TestOneDrivePassphraseIsStoredEncrypted(t *testing.T) {
-	a := &App{cfg: config.PanelConfig{JWTSecret: testLiveJWTSecret}, db: testDB(t)}
-	router := gin.New()
-	router.PUT("/passphrase", a.setOneDrivePassphrase)
-
-	body := `{"passphrase":"` + testBackupPassphrase + `"}`
-	req := httptest.NewRequest(http.MethodPut, "/passphrase", strings.NewReader(body))
-	req.Header.Set("Content-Type", "application/json")
-	rec := httptest.NewRecorder()
-	router.ServeHTTP(rec, req)
-	if rec.Code != http.StatusOK {
-		t.Fatalf("status = %d body = %s", rec.Code, rec.Body.String())
-	}
-	var raw struct{ Value string }
-	if err := a.db.Table("settings").Where("key = ?", oneDriveSettingKey).Select("value").Scan(&raw).Error; err != nil {
-		t.Fatal(err)
-	}
-	if strings.Contains(raw.Value, testBackupPassphrase) {
-		t.Fatalf("passphrase stored in plaintext: %s", raw.Value)
-	}
-	var stored oneDriveStoredSettings
-	if err := json.Unmarshal([]byte(raw.Value), &stored); err != nil || !strings.HasPrefix(stored.EncryptedPassphrase, "v1:") {
-		t.Fatalf("stored = %#v, err = %v", stored, err)
-	}
-	settings, err := a.loadOneDriveSettings()
-	if err != nil || settings.Passphrase != testBackupPassphrase {
-		t.Fatalf("loaded passphrase = %q, err = %v", settings.Passphrase, err)
-	}
-
-	short := httptest.NewRequest(http.MethodPut, "/passphrase", strings.NewReader(`{"passphrase":"short"}`))
-	short.Header.Set("Content-Type", "application/json")
-	rec = httptest.NewRecorder()
-	router.ServeHTTP(rec, short)
-	if rec.Code != http.StatusBadRequest {
-		t.Fatalf("short passphrase status = %d", rec.Code)
-	}
-}
-
-func TestOneDriveSyncRemovesLegacyPlaintextBackup(t *testing.T) {
+func TestOneDriveSyncUploadsPlaintextBackup(t *testing.T) {
 	oldOAuthURL, oldGraphURL := oneDriveOAuthBaseURL, oneDriveGraphBaseURL
 	defer func() {
 		oneDriveOAuthBaseURL = oldOAuthURL
@@ -217,8 +155,8 @@ func TestOneDriveSyncRemovesLegacyPlaintextBackup(t *testing.T) {
 			_, _ = w.Write([]byte(`{"id":"encrypted-id"}`))
 		case r.URL.Path == "/me/drive/items/folder-id/children":
 			_ = json.NewEncoder(w).Encode(map[string]any{"value": []map[string]any{
-				{"id": "encrypted-id", "name": oneDriveBackupName, "file": map[string]any{}},
-				{"id": "legacy-id", "name": oneDriveLegacyBackupName, "file": map[string]any{}},
+				{"id": "plain-id", "name": oneDriveBackupName, "file": map[string]any{}},
+				{"id": "legacy-id", "name": oneDriveEncryptedBackupName, "file": map[string]any{}},
 			}})
 		case r.Method == http.MethodDelete && strings.HasPrefix(r.URL.Path, "/me/drive/items/"):
 			deleted = append(deleted, strings.TrimPrefix(r.URL.Path, "/me/drive/items/"))
@@ -240,13 +178,13 @@ func TestOneDriveSyncRemovesLegacyPlaintextBackup(t *testing.T) {
 		},
 		db: testDBAt(t, dbPath),
 	}
-	if err := a.saveOneDriveSettings(oneDriveSettings{RefreshToken: "refresh-token", Passphrase: testBackupPassphrase}); err != nil {
+	if err := a.saveOneDriveSettings(oneDriveSettings{RefreshToken: "refresh-token"}); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := a.syncOneDriveBackupLocked(); err != nil {
 		t.Fatal(err)
 	}
 	if len(deleted) != 1 || deleted[0] != "legacy-id" {
-		t.Fatalf("deleted = %v, want only the legacy plaintext backup", deleted)
+		t.Fatalf("deleted = %v, want only the legacy encrypted backup", deleted)
 	}
 }

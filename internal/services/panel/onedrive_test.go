@@ -152,7 +152,7 @@ func TestOneDriveUploadSessionReceivesBackupBytes(t *testing.T) {
 			_ = json.NewEncoder(w).Encode(oneDriveTokenResponse{AccessToken: "access-token", RefreshToken: "refresh-token"})
 		case r.URL.Path == "/me/drive/root:/singbox-panel-backups:":
 			_ = json.NewEncoder(w).Encode(oneDriveFile{ID: "folder-id", Name: oneDriveBackupFolder, Folder: &struct{}{}})
-		case r.URL.Path == "/me/drive/items/folder-id:/singbox-panel-backup.tar.gz.enc:/createUploadSession":
+		case r.URL.Path == "/me/drive/items/folder-id:/singbox-panel-backup.tar.gz:/createUploadSession":
 			var payload struct {
 				Item map[string]string `json:"item"`
 			}
@@ -209,7 +209,7 @@ func TestOneDriveUploadRejectsIncompleteFinalChunk(t *testing.T) {
 			_ = json.NewEncoder(w).Encode(oneDriveTokenResponse{AccessToken: "access-token", RefreshToken: "refresh-token"})
 		case r.URL.Path == "/me/drive/root:/singbox-panel-backups:":
 			_ = json.NewEncoder(w).Encode(oneDriveFile{ID: "folder-id", Name: oneDriveBackupFolder, Folder: &struct{}{}})
-		case r.URL.Path == "/me/drive/items/folder-id:/singbox-panel-backup.tar.gz.enc:/createUploadSession":
+		case r.URL.Path == "/me/drive/items/folder-id:/singbox-panel-backup.tar.gz:/createUploadSession":
 			_ = json.NewEncoder(w).Encode(map[string]string{"uploadUrl": serverURL(r) + "/upload"})
 		case r.URL.Path == "/upload":
 			_, _ = io.Copy(io.Discard, r.Body)
@@ -257,7 +257,7 @@ func TestOneDriveSyncPreservesRotatedRefreshToken(t *testing.T) {
 			_ = json.NewEncoder(w).Encode(oneDriveTokenResponse{AccessToken: "access-token", RefreshToken: refresh})
 		case r.URL.Path == "/me/drive/root:/singbox-panel-backups:":
 			_ = json.NewEncoder(w).Encode(oneDriveFile{ID: "folder-id", Name: oneDriveBackupFolder, Folder: &struct{}{}})
-		case r.URL.Path == "/me/drive/items/folder-id:/singbox-panel-backup.tar.gz.enc:/createUploadSession":
+		case r.URL.Path == "/me/drive/items/folder-id:/singbox-panel-backup.tar.gz:/createUploadSession":
 			_ = json.NewEncoder(w).Encode(map[string]string{"uploadUrl": serverURL(r) + "/upload"})
 		case r.URL.Path == "/upload":
 			uploaded, _ = io.ReadAll(r.Body)
@@ -280,18 +280,14 @@ func TestOneDriveSyncPreservesRotatedRefreshToken(t *testing.T) {
 		},
 		db: testDBAt(t, dbPath),
 	}
-	if err := a.saveOneDriveSettings(oneDriveSettings{RefreshToken: "refresh-token-1", Passphrase: testBackupPassphrase, AutoSync: true}); err != nil {
+	if err := a.saveOneDriveSettings(oneDriveSettings{RefreshToken: "refresh-token-1", AutoSync: true}); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := a.syncOneDriveBackupLocked(); err != nil {
 		t.Fatal(err)
 	}
-	plain, encrypted, err := backupPlainReader(bytes.NewReader(uploaded), testBackupPassphrase)
-	if err != nil || !encrypted {
-		t.Fatalf("uploaded backup encrypted = %v, err = %v", encrypted, err)
-	}
-	if dbFile, _, err := extractBackup(plain, t.TempDir()); err != nil || dbFile == "" {
-		t.Fatalf("decrypted upload is not a backup archive: db = %q, err = %v", dbFile, err)
+	if dbFile, _, err := extractBackup(bytes.NewReader(uploaded), t.TempDir()); err != nil || dbFile == "" {
+		t.Fatalf("uploaded backup is not a backup archive: db = %q, err = %v", dbFile, err)
 	}
 	settings, err := a.loadOneDriveSettings()
 	if err != nil {

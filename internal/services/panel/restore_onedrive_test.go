@@ -22,12 +22,12 @@ func TestRestoreReencryptsOneDriveSettingsForRuntimeKey(t *testing.T) {
 		missingKey  bool
 		wantWarning bool
 	}{
-		{name: "archive authorization", archived: oneDriveSettings{RefreshToken: "archive-token", Passphrase: "archive-backup-passphrase", AutoSync: true}},
-		{name: "archive passphrase only", archived: oneDriveSettings{Passphrase: "archive-backup-passphrase"}},
-		{name: "current authorization wins", archived: oneDriveSettings{RefreshToken: "archive-token", Passphrase: "archive-backup-passphrase"}, current: oneDriveSettings{RefreshToken: "current-token", Passphrase: "current-backup-passphrase", AutoSync: true}},
-		{name: "missing archived key", archived: oneDriveSettings{RefreshToken: "archive-token", Passphrase: "archive-backup-passphrase"}, missingKey: true, wantWarning: true},
+		{name: "archive authorization", archived: oneDriveSettings{RefreshToken: "archive-token", LegacyPassphrase: "archive-backup-passphrase", AutoSync: true}},
+		{name: "archive passphrase only", archived: oneDriveSettings{LegacyPassphrase: "archive-backup-passphrase"}},
+		{name: "current authorization wins", archived: oneDriveSettings{RefreshToken: "archive-token"}, current: oneDriveSettings{RefreshToken: "current-token", AutoSync: true}},
+		{name: "missing archived key", archived: oneDriveSettings{RefreshToken: "archive-token"}, missingKey: true, wantWarning: true},
 		{name: "corrupt cloud settings", badArchive: true, wantWarning: true},
-		{name: "current authorization replaces corrupt archive", badArchive: true, current: oneDriveSettings{RefreshToken: "current-token", Passphrase: "current-backup-passphrase", AutoSync: true}},
+		{name: "current authorization replaces corrupt archive", badArchive: true, current: oneDriveSettings{RefreshToken: "current-token", AutoSync: true}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Setenv("JWT_SECRET", testLiveJWTSecret)
@@ -68,7 +68,7 @@ func TestRestoreReencryptsOneDriveSettingsForRuntimeKey(t *testing.T) {
 			} else if tc.wantWarning {
 				want = defaultOneDriveSettings()
 			}
-			if got.RefreshToken != want.RefreshToken || got.Passphrase != want.Passphrase || got.AutoSync != want.AutoSync {
+			if got.RefreshToken != want.RefreshToken || got.LegacyPassphrase != want.LegacyPassphrase || got.AutoSync != want.AutoSync {
 				t.Fatal("restored cloud settings do not match the selected authorization")
 			}
 			if hasWarning := strings.Contains(response.Header().Get("X-Restore-Warning"), "OneDrive"); hasWarning != tc.wantWarning {

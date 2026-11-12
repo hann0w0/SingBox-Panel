@@ -571,10 +571,8 @@ export interface RestoreBackupResult {
   message: string
 }
 
-export const restoreBackup = (file: File, passphrase?: string) => {
+export const restoreBackup = (file: File) => {
   const fd = new FormData()
-  // The server streams the upload, so the passphrase must precede the file.
-  if (passphrase) fd.append('passphrase', passphrase)
   fd.append('file', file)
   return http
     .post<RestoreBackupResult>(
@@ -589,12 +587,10 @@ export interface OneDriveBackupFile {
   name: string
   size: number
   lastModifiedDateTime: string
-  encrypted?: boolean
 }
 
 export interface OneDriveStatus {
   connected: boolean
-  encrypted?: boolean
   auto_sync: boolean
   interval_hours: number
   last_sync_at?: string
@@ -631,9 +627,6 @@ export const pollOneDriveAuth = (sessionID: string, signal?: AbortSignal) =>
     )
     .then((r) => r.data)
 
-export const setOneDrivePassphrase = (passphrase: string) =>
-  http.put<{ ok: boolean }>('/api/admin/maintenance/onedrive/passphrase', { passphrase }).then((r) => r.data)
-
 export const syncOneDriveBackup = () =>
   http
     .post<{ ok: boolean; name: string; message: string }>('/api/admin/maintenance/onedrive/sync')
@@ -653,11 +646,11 @@ export const downloadOneDriveBackup = async (id: string, name: string): Promise<
   window.setTimeout(() => URL.revokeObjectURL(url), 1000)
 }
 
-export const restoreOneDriveBackup = (id: string, passphrase?: string) =>
+export const restoreOneDriveBackup = (id: string) =>
   http
     .post<RestoreBackupResult>(
       `/api/admin/maintenance/onedrive/backups/${encodeURIComponent(id)}/restore`,
-      passphrase ? { passphrase } : {},
+      {},
     )
     .then((r) => r.data)
 

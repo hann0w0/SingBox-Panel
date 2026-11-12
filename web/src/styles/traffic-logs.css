@@ -121,11 +121,8 @@
 
 .lg-time { color: var(--console-faint); }
 .lg-dir { display: inline-grid; place-items: center; height: 18px; padding: 0 6px; border-radius: 4px; font-family: var(--app-font); font-size: 11px; font-weight: 600; line-height: 1; align-self: first baseline; white-space: nowrap; }
-.lg-dir-inbound { color: #1d4ed8; background: color-mix(in srgb, #3b82f6 14%, transparent); }
-.lg-dir-outbound { color: #15803d; background: color-mix(in srgb, #22c55e 16%, transparent); }
+.lg-dir-inbound, .lg-dir-outbound { color: var(--console-muted); background: var(--console-surface); }
 .lg-dir-none { color: var(--console-faint); }
-:root[data-console-theme='dark'] .lg-dir-inbound { color: #93c5fd; background: color-mix(in srgb, #3b82f6 22%, transparent); }
-:root[data-console-theme='dark'] .lg-dir-outbound { color: #86efac; background: color-mix(in srgb, #22c55e 20%, transparent); }
 
 /* Each parameter is its own column: 协议 pill, 标签, 用户, 目标, 报错. */
 .lg-thead > span,

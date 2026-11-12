@@ -18,9 +18,9 @@ function BrandMark({ className }: { className: string }) {
 
 const ADMIN_NAV = [
   { to: '/admin/servers', label: '服务器' },
-  { to: '/admin/external-nodes', label: '节点' },
   { to: '/admin/rules', label: '规则' },
   { to: '/admin/users', label: '用户' },
+  { to: '/admin/external-nodes', label: '节点' },
   { to: '/admin/settings', label: '设置' },
 ]
 

@@ -1,7 +1,7 @@
 import { memo, useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react'
 import type React from 'react'
+import { createPortal } from 'react-dom'
 import { Button, Grid, Segmented, Select, Table, message } from '../../../ui'
-import { RotateCw } from 'lucide-react'
 import { errMsg, getServerTraffic, isCanceledRequest } from '../../../api'
 import type { TrafficPoint, TrafficPortSeries, TrafficRange, TrafficSeries } from '../../../types'
 import { formatBytes } from '../../../util'
@@ -354,7 +354,7 @@ const bytesSorter = <T extends { upload: number; download: number }>(key: 'uploa
 // ServerTraffic renders the traffic page for one node: headline totals, live
 // rate, history and the per-inbound breakdown. titleExtra (the host selector)
 // sits in the page header next to the range control.
-export default function ServerTraffic({ serverId }: { serverId: number }) {
+export default function ServerTraffic({ serverId, toolbar }: { serverId: number; toolbar?: HTMLElement | null }) {
   const screens = Grid.useBreakpoint()
   const compact = !screens.md
   const [data, setData] = useState<TrafficSeries | null>(null)
@@ -407,23 +407,18 @@ export default function ServerTraffic({ serverId }: { serverId: number }) {
   const total = (value: number) => (available ? formatBytes(value) : '—')
 
   return (
-    <div className="tr-page">
-      <div className="tr-tab-toolbar">
+    <>
+      {toolbar && createPortal(
         <div className="tr-actions">
           {compact ? (
             <Select aria-label="历史统计范围" style={{ width: 138 }} options={RANGE_OPTIONS} value={range} onChange={setRange} />
           ) : (
             <Segmented<TrafficRange> className="tr-range" aria-label="历史统计范围" options={RANGE_OPTIONS} value={range} onChange={setRange} />
           )}
-          <Button
-            icon={<RotateCw />}
-            loading={loading}
-            onClick={() => void load()}
-            title="刷新"
-            aria-label="刷新"
-          />
-        </div>
-      </div>
+        </div>,
+        toolbar,
+      )}
+      <div className="tr-page">
 
       <Stats
         items={[
@@ -497,6 +492,7 @@ export default function ServerTraffic({ serverId }: { serverId: number }) {
           <span>重连 Agent 或重新下发配置后开始统计</span>
         </div>
       ) : null}
-    </div>
+      </div>
+    </>
   )
 }

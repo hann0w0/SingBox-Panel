@@ -1,10 +1,10 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import type { ReactNode, UIEvent } from 'react'
+import { createPortal } from 'react-dom'
 import { Button, Input, Select, Switch, message } from '../../../ui'
 import {
   Copy,
   Download,
-  RotateCw,
   Search,
   ArrowUpToLine,
 } from 'lucide-react'
@@ -289,7 +289,7 @@ function formatUpdatedAt(value: number | null) {
 
 // Logs renders one node's native sing-box log stream. With serverId fixed (server
 // detail tab) the node selector is hidden.
-export default function Logs({ serverId, embedded = false }: { serverId?: number; embedded?: boolean } = {}) {
+export default function Logs({ serverId, embedded = false, toolbar }: { serverId?: number; embedded?: boolean; toolbar?: HTMLElement | null } = {}) {
   const [servers, setServers] = useState<Server[]>([])
   const [params, setParams] = useSearchParams()
   const requestedId = parseServerId(params.get('server'))
@@ -610,16 +610,9 @@ export default function Logs({ serverId, embedded = false }: { serverId?: number
 
   return (
     <div className="lg-page">
-      {!embedded && (
-        <PageHeader
-          title="日志"
-          actions={
-            <Button icon={<RotateCw />} loading={loading} onClick={() => load()}>刷新</Button>
-          }
-        />
-      )}
+      {!embedded && <PageHeader title="日志" />}
 
-      <div className="lg-toolbar">
+      {toolbar ? createPortal(<div className="lg-toolbar">
         <Select
           className="lg-filter-select"
           value={levelFilter}
@@ -647,7 +640,37 @@ export default function Logs({ serverId, embedded = false }: { serverId?: number
           <Switch size="small" checked={hideNoise} onChange={setHideNoise} />
           <span>过滤噪音</span>
         </label>
-      </div>
+      </div>, toolbar) : (
+        <div className="lg-toolbar">
+          <Select
+            className="lg-filter-select"
+            value={levelFilter}
+            onChange={(value: LevelFilter) => setLevelFilter(value)}
+            options={LEVEL_OPTIONS}
+            aria-label="日志级别"
+          />
+          <Select
+            className="lg-filter-select"
+            value={directionFilter}
+            onChange={(value: DirectionFilter) => setDirectionFilter(value)}
+            options={DIRECTION_OPTIONS}
+            aria-label="方向"
+          />
+          <Input
+            className="lg-search"
+            prefix={<Search />}
+            placeholder="搜索"
+            aria-label="搜索日志"
+            value={keyword}
+            onChange={(event) => setKeyword(event.target.value)}
+            allowClear
+          />
+          <label className="lg-toggle">
+            <Switch size="small" checked={hideNoise} onChange={setHideNoise} />
+            <span>过滤噪音</span>
+          </label>
+        </div>
+      )}
 
       <div className="lg-box">
         <div className="lg-statusbar">
@@ -662,11 +685,6 @@ export default function Logs({ serverId, embedded = false }: { serverId?: number
             </span>
             {!live && current?.online ? (
               <Button size="small" type="text" onClick={() => handleLiveChange(true)}>恢复实时</Button>
-            ) : null}
-            {embedded ? (
-              <Button size="small" type="text" icon={<RotateCw />} loading={loading} onClick={() => void load()} aria-label="刷新日志">
-                刷新
-              </Button>
             ) : null}
             <Button
               size="small"

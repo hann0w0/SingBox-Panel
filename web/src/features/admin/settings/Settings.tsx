@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import { Alert, Button, Input, Modal, Popconfirm, Select, Tooltip, Typography, Upload, message } from '../../../ui'
 import type { UploadFile } from '../../../ui'
-import { Trash2, Download, Inbox, Link, RotateCw } from 'lucide-react'
+import { Trash2, Download, Inbox, Link } from 'lucide-react'
 import {
   listPanelReleases,
   deleteOneDriveBackup,
@@ -570,11 +570,6 @@ export default function Settings() {
         <section className="settings-cloud">
           <header className="ui-section-head">
             <h2>云端备份{cloud.files?.length ? <span className="settings-count">{cloud.files.length}</span> : null}</h2>
-            <div className="ui-section-actions">
-              <Tooltip title="刷新">
-                <Button type="text" icon={<RotateCw />} aria-label="刷新云端备份" onClick={loadCloud} loading={cloudLoading} />
-              </Tooltip>
-            </div>
           </header>
           <div className="ui-card settings-files">
             {(cloud.files ?? []).length === 0 ? (

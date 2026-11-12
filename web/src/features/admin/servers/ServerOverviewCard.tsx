@@ -1,17 +1,15 @@
 import { Button, Dropdown } from '../../../ui'
-import { ChevronDown, Download, FileJson, RotateCw } from 'lucide-react'
+import { ChevronDown, Download, FileJson } from 'lucide-react'
 import type { Server } from '../../../types'
 
 /** Compact server actions; identity lives in the breadcrumb and tabs. */
 export function ServerOverviewCard({
-  server, busy, refreshing,
-  onRefresh, onInstallSingbox, onUninstallSingbox, onInstallAgent, onUninstallAgent,
+  server, busy,
+  onInstallSingbox, onUninstallSingbox, onInstallAgent, onUninstallAgent,
   onImport, onEditConfig, onRestart, onExport,
 }: {
   server: Server
   busy: string
-  refreshing: boolean
-  onRefresh: () => void
   onInstallSingbox: () => void
   onUninstallSingbox: () => void
   onInstallAgent: () => void
@@ -23,9 +21,8 @@ export function ServerOverviewCard({
 }) {
   return <header className="sd-overview">
     <div className="sd-overview-actions">
-      <Button icon={<RotateCw />} loading={refreshing} onClick={onRefresh} aria-label="刷新状态" title="刷新状态" />
-      <Button icon={<Download />} aria-label="导出节点" title="导出节点" onClick={onExport} />
-      <Button icon={<FileJson />} aria-label="配置文件" title="配置文件" onClick={onEditConfig} />
+      <Button icon={<Download />} onClick={onExport}>导出节点</Button>
+      <Button icon={<FileJson />} onClick={onEditConfig}>配置文件</Button>
       <Dropdown placement="bottomRight" menu={{ items: [
         { key: 'restart', label: '重启 sing-box', disabled: !server.online || !!busy, onClick: onRestart },
         { key: 'import', label: '识别现有配置', disabled: !!busy, onClick: onImport },

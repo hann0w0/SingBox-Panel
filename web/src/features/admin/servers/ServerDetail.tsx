@@ -36,7 +36,6 @@ import {
   listRules,
   remoteConfig,
   reorderRules,
-  serverStatus,
   serviceAction,
   setConfigMode,
   setFinalOutbound,
@@ -85,7 +84,6 @@ export default function ServerDetail() {
   const [sectionError, setSectionError] = useState<string | null>(null)
   const [install, setInstall] = useState('')
   const [busy, setBusy] = useState('')
-  const [refreshing, setRefreshing] = useState(false)
   const [formOpen, setFormOpen] = useState(false)
   const [editing, setEditing] = useState<Inbound | null>(null)
   const [installForm] = Form.useForm()
@@ -115,6 +113,7 @@ export default function ServerDetail() {
   const [importing, setImporting] = useState(false)
   const [obTests, setObTests] = useState<Record<number, OutboundTest>>({})
   const [testing, setTesting] = useState<Set<number>>(() => new Set())
+  const [tabToolbar, setTabToolbar] = useState<HTMLDivElement | null>(null)
 
   const loadAbortRef = useRef<AbortController | null>(null)
   const loadGenerationRef = useRef(0)
@@ -312,7 +311,6 @@ export default function ServerDetail() {
     setOutbounds([])
     setRules([])
     ruleOrderRef.current = []
-    setRefreshing(false)
     setCfgOpen(false)
     setCfgText('')
     setCfgLoading(false)
@@ -347,27 +345,6 @@ export default function ServerDetail() {
       draggedRuleIndexRef.current = null
     }
   }, [load])
-
-  const refresh = async () => {
-    const targetSID = sid
-    const controller = scopedController()
-    setRefreshing(true)
-    try {
-      if (server?.online) await serverStatus(targetSID, controller.signal)
-      if (currentSIDRef.current !== targetSID) return
-      await load()
-      if (currentSIDRef.current !== targetSID) return
-      if (server?.online) message.success('已从 Agent 获取最新状态')
-      else message.info('节点当前离线，已刷新面板状态')
-    } catch (e) {
-      if (controller.signal.aborted || currentSIDRef.current !== targetSID) return
-      await load().catch(() => {})
-      message.error(errMsg(e))
-    } finally {
-      releaseScopedController(controller)
-      if (currentSIDRef.current === targetSID) setRefreshing(false)
-    }
-  }
 
   const outboundTags = outbounds.map((o) => o.tag)
   const inboundTags = (server?.inbounds || []).map((i) => i.tag)
@@ -916,8 +893,8 @@ export default function ServerDetail() {
     inbounds: inboundTable,
     outbounds: outboundTable,
     rules: rulesTable,
-    traffic: <ServerTraffic key={`traffic-${sid}`} serverId={sid} />,
-    logs: <Logs key={`logs-${sid}`} serverId={sid} embedded />,
+    traffic: <ServerTraffic key={`traffic-${sid}`} serverId={sid} toolbar={tabToolbar} />,
+    logs: <Logs key={`logs-${sid}`} serverId={sid} embedded toolbar={tabToolbar} />,
   }
 
   return (
@@ -937,31 +914,34 @@ export default function ServerDetail() {
             { key: 'logs', label: '日志' },
           ]}
         />
+        <div className="sd-tab-actions" ref={setTabToolbar} />
         <div className="sd-toolbar-actions">
-          {addButton[section]}
-          <ServerOverviewCard
-            server={server}
-            busy={busy}
-            refreshing={refreshing}
-            onRefresh={refresh}
-            onInstallSingbox={() => setInstallOpen(true)}
-            onUninstallSingbox={confirmUninstallSingbox}
-            onInstallAgent={installOrUpgradeAgent}
-            onUninstallAgent={confirmUninstallAgent}
-            onImport={openImport}
-            onEditConfig={openConfigEditor}
-            onRestart={() => run('restart', () => serviceAction(sid, 'restart'), 'sing-box 已重启')}
-            onExport={() => setFmtOpen(true)}
-          />
+          {section !== 'traffic' && section !== 'logs' && <>
+            {addButton[section]}
+            <ServerOverviewCard
+              server={server}
+              busy={busy}
+              onInstallSingbox={() => setInstallOpen(true)}
+              onUninstallSingbox={confirmUninstallSingbox}
+              onInstallAgent={installOrUpgradeAgent}
+              onUninstallAgent={confirmUninstallAgent}
+              onImport={openImport}
+              onEditConfig={openConfigEditor}
+              onRestart={() => run('restart', () => serviceAction(sid, 'restart'), 'sing-box 已重启')}
+              onExport={() => setFmtOpen(true)}
+            />
+          </>}
         </div>
       </div>
 
-      <Stats items={[
-        { label: '下行速率', value: server.online && server.traffic_available ? `${formatBytes(server.traffic_download_rate ?? 0)}/s` : '—' },
-        { label: '上行速率', value: server.online && server.traffic_available ? `${formatBytes(server.traffic_upload_rate ?? 0)}/s` : '—' },
-        { label: '负载', value: server.online ? server.load1?.toFixed(2) : '—' },
-        { label: '内存', value: server.online && memPct !== null ? `${memPct}%` : '—', hint: server.online && server.mem_total ? `${formatBytes(server.mem_used)} / ${formatBytes(server.mem_total)}` : undefined },
-      ]} />
+      {section !== 'traffic' && section !== 'logs' && (
+        <Stats items={[
+          { label: '下行速率', value: server.online && server.traffic_available ? `${formatBytes(server.traffic_download_rate ?? 0)}/s` : '—' },
+          { label: '上行速率', value: server.online && server.traffic_available ? `${formatBytes(server.traffic_upload_rate ?? 0)}/s` : '—' },
+          { label: '负载', value: server.online ? server.load1?.toFixed(2) : '—' },
+          { label: '内存', value: server.online && memPct !== null ? `${memPct}%` : '—', hint: server.online && server.mem_total ? `${formatBytes(server.mem_used)} / ${formatBytes(server.mem_total)}` : undefined },
+        ]} />
+      )}
 
       {rawMode && (
         <Alert

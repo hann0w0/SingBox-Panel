@@ -73,8 +73,8 @@ describe('server remarks', () => {
 
   it('keeps server actions available without repeating the identity heading', () => {
     const props = {
-      publicURL: '', busy: '', refreshing: false,
-      onRefresh: vi.fn(), onInstallSingbox: vi.fn(), onUninstallSingbox: vi.fn(),
+      busy: '',
+      onInstallSingbox: vi.fn(), onUninstallSingbox: vi.fn(),
       onInstallAgent: vi.fn(), onUninstallAgent: vi.fn(), onImport: vi.fn(),
       onEditConfig: vi.fn(), onRestart: vi.fn(), onExport: vi.fn(),
     }

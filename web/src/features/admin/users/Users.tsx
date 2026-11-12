@@ -1,15 +1,13 @@
 import { useEffect, useRef, useState } from 'react'
 import { Link, useNavigate } from 'react-router-dom'
-import { Button, Table } from '../../../ui'
+import { Table } from '../../../ui'
 import type { ColumnsType } from '../../../ui'
-import { ChevronRight, Plus } from 'lucide-react'
+import { ChevronRight } from 'lucide-react'
 import { errMsg, listCustomNodes, listServers, listUsers } from '../../../api'
 import type { CustomNode } from '../../../api'
 import type { Server, User } from '../../../types'
 import { formatBytes, relativeTime } from '../../../util'
 import { RequestState } from '../../../components/RequestState'
-import { PageToolbar } from '../../../ui/Page'
-import { UserAccountDialog } from './UserDialogs'
 import '../../../styles/users.css'
 
 export default function Users() {
@@ -21,7 +19,6 @@ export default function Users() {
   const [loadError, setLoadError] = useState<string | null>(null)
   const [, setNodesLoading] = useState(false)
   const [, setNodesError] = useState<string | null>(null)
-  const [open, setOpen] = useState(false)
   const userLoadRef = useRef<{ generation: number; controller: AbortController | null }>({ generation: 0, controller: null })
   const nodeLoadRef = useRef<{ generation: number; controller: AbortController | null }>({ generation: 0, controller: null })
   const serverNames = (u: User) => (u.server_ids ?? []).map((id) => servers.find((s) => s.id === id)?.name ?? `#${id}`)
@@ -94,8 +91,6 @@ export default function Users() {
       })
     return () => controller.abort()
   }, [])
-
-  const addUserButton = <Button type="primary" icon={<Plus />} onClick={() => setOpen(true)}>新增用户</Button>
 
   // A custom node is visible to a user when it targets everyone (minus
   // exclusions) or lists the user explicitly. Mirrors model.CustomNode.HasUser.
@@ -188,11 +183,7 @@ export default function Users() {
   ]
 
   return (
-    <div className="um-page">
-      <PageToolbar
-        meta={users.length ? <span>{users.length} 个用户</span> : undefined}
-        actions={addUserButton}
-      />
+    <>
       <RequestState loading={loading} error={loadError} hasData={users.length > 0} empty={!loading && !loadError && users.length === 0} emptyDescription="暂无用户" onRetry={load}>
         <Table<User>
           rowKey="id"
@@ -208,7 +199,6 @@ export default function Users() {
         />
       </RequestState>
 
-      {open && <UserAccountDialog onClose={() => setOpen(false)} onSaved={(user) => navigate(`/admin/users/${user.id}`)} />}
-    </div>
+    </>
   )
 }

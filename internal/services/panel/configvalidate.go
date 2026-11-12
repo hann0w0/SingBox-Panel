@@ -9,6 +9,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"gorm.io/gorm"
+	"gorm.io/gorm/clause"
 
 	"github.com/hann0w0/singbox-panel/internal/domain/model"
 	"github.com/hann0w0/singbox-panel/internal/domain/protocol"
@@ -307,17 +308,62 @@ func (a *App) validateRule(db *gorm.DB, serverID uint, raw json.RawMessage, outb
 			return fmt.Errorf("规则引用的入站 %q 不存在", tag)
 		}
 	}
-	var ruleSets []string
-	if err := db.Model(&model.RuleSet{}).Where("server_id = ?", serverID).Pluck("tag", &ruleSets).Error; err != nil {
+	ruleSets, err := assignedRuleSetTags(db, serverID)
+	if err != nil {
 		return err
 	}
 	ruleSetSet := stringSet(ruleSets)
 	for _, tag := range rule.RuleSet {
 		if !ruleSetSet[tag] {
-			return fmt.Errorf("规则引用的规则集 %q 不存在", tag)
+			return fmt.Errorf("规则引用的规则集 %q 不存在或未分配给该服务器", tag)
 		}
 	}
 	return nil
+}
+
+// referencedRuleSetIDs resolves the shared rule-set tags in one rule payload.
+// Used by the rule API to attach a definition to the server at save time, so
+// the administrator never has to visit a separate assignment screen.
+func referencedRuleSetIDs(db *gorm.DB, raw json.RawMessage) ([]uint, error) {
+	var rule singbox.RuleInput
+	if len(raw) > 0 {
+		if err := json.Unmarshal(raw, &rule); err != nil {
+			return nil, err
+		}
+	}
+	if len(rule.RuleSet) == 0 {
+		return nil, nil
+	}
+	var rows []model.RuleSet
+	if err := db.Where("tag IN ?", rule.RuleSet).Find(&rows).Error; err != nil {
+		return nil, err
+	}
+	ids := make([]uint, 0, len(rows))
+	for _, row := range rows {
+		ids = append(ids, row.ID)
+	}
+	return ids, nil
+}
+
+func attachRuleSetsToServer(db *gorm.DB, serverID uint, ids []uint) error {
+	for _, ruleSetID := range ids {
+		assignment := model.ServerRuleSet{ServerID: serverID, RuleSetID: ruleSetID}
+		if err := db.Clauses(clause.OnConflict{DoNothing: true}).Create(&assignment).Error; err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// assignedRuleSetTags lists only shared rule sets assigned to this server, so
+// one server's route rules cannot reference another node's assignment.
+func assignedRuleSetTags(db *gorm.DB, serverID uint) ([]string, error) {
+	var tags []string
+	err := db.Table("server_rule_sets").
+		Joins("JOIN rule_sets ON rule_sets.id = server_rule_sets.rule_set_id").
+		Where("server_rule_sets.server_id = ?", serverID).
+		Pluck("rule_sets.tag", &tags).Error
+	return tags, err
 }
 
 func replaceString(values []string, old, next string) ([]string, bool) {
@@ -417,6 +463,53 @@ func (a *App) ruleSetReferenced(db *gorm.DB, serverID uint, tag string) (bool, e
 		}
 	}
 	return false, nil
+}
+
+// sharedRuleSetReferencedAnywhere reports whether any server's route rule still
+// names this tag. Deleting a shared definition must not silently break a rule
+// on a server that happens to use the same tag.
+func sharedRuleSetReferencedAnywhere(db *gorm.DB, tag string) (bool, error) {
+	var rows []model.RouteRule
+	if err := db.Find(&rows).Error; err != nil {
+		return false, err
+	}
+	for _, row := range rows {
+		var rule singbox.RuleInput
+		if json.Unmarshal(row.Match, &rule) == nil {
+			for _, value := range rule.RuleSet {
+				if value == tag {
+					return true, nil
+				}
+			}
+		}
+	}
+	return false, nil
+}
+
+func renameSharedRuleSetRefs(tx *gorm.DB, old, next string) error {
+	var rows []model.RouteRule
+	if err := tx.Find(&rows).Error; err != nil {
+		return err
+	}
+	for i := range rows {
+		var rule singbox.RuleInput
+		if len(rows[i].Match) == 0 || json.Unmarshal(rows[i].Match, &rule) != nil {
+			continue
+		}
+		var changed bool
+		rule.RuleSet, changed = replaceString(rule.RuleSet, old, next)
+		if !changed {
+			continue
+		}
+		raw, err := json.Marshal(rule)
+		if err != nil {
+			return err
+		}
+		if err := tx.Model(&model.RouteRule{}).Where("id = ?", rows[i].ID).Update("match", model.JSONText(raw)).Error; err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 // preserveInboundSecrets merges credentials that partial API clients commonly

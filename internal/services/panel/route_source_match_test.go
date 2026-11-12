@@ -18,8 +18,9 @@ func TestRuleSetSourceMatchAPIAndConfig(t *testing.T) {
 	mustCreate(t, db, &server)
 	mustCreate(t, db, &model.Inbound{ServerID: server.ID, Tag: "dmit-in", Type: model.InboundSocks,
 		ListenPort: 1080, Enabled: true, Settings: model.JSONText(`{"username":"test","password":"test"}`)})
-	ruleSet := model.RuleSet{ServerID: server.ID, Tag: "geoip-cn", Type: "local", Format: "source", Path: "/etc/sing-box/cn.json"}
+	ruleSet := model.RuleSet{Tag: "geoip-cn", Type: "local", Format: "source", Path: "/etc/sing-box/cn.json"}
 	mustCreate(t, db, &ruleSet)
+	mustCreate(t, db, &model.ServerRuleSet{ServerID: server.ID, RuleSetID: ruleSet.ID})
 	app := &App{db: db, orch: NewOrchestrator(db, NewHub(db))}
 	router := gin.New()
 	router.POST("/servers/:id/rules", app.createRule)

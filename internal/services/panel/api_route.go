@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
+	"gorm.io/gorm"
 
 	"github.com/hann0w0/singbox-panel/internal/domain/model"
 	"github.com/hann0w0/singbox-panel/internal/domain/protocol"
@@ -178,7 +179,7 @@ func (a *App) updateOutbound(c *gin.Context) {
 			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 			return
 		}
-		if err := tx.Model(&model.RuleSet{}).Where("server_id = ? AND download_detour = ?", sid, oldTag).Update("download_detour", ob.Tag).Error; err != nil {
+		if err := tx.Model(&model.ServerRuleSet{}).Where("server_id = ? AND download_detour = ?", sid, oldTag).Update("download_detour", ob.Tag).Error; err != nil {
 			tx.Rollback()
 			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 			return
@@ -234,7 +235,7 @@ func (a *App) deleteOutbound(c *gin.Context) {
 		return
 	}
 	var ruleSetCount int64
-	if err := a.db.Model(&model.RuleSet{}).Where("server_id = ? AND download_detour = ?", sid, ob.Tag).Count(&ruleSetCount).Error; err != nil {
+	if err := a.db.Model(&model.ServerRuleSet{}).Where("server_id = ? AND download_detour = ?", sid, ob.Tag).Count(&ruleSetCount).Error; err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
@@ -369,6 +370,15 @@ func (a *App) createRule(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "目标出站必填"})
 		return
 	}
+	ruleSetIDs, err := referencedRuleSetIDs(a.db, req.Match)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+	if err := attachRuleSetsToServer(a.db, id, ruleSetIDs); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
 	if err := a.validateRule(a.db, id, req.Match, strings.TrimSpace(req.Outbound)); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
@@ -439,6 +449,15 @@ func (a *App) updateRule(c *gin.Context) {
 	nextOutbound := r.Outbound
 	if strings.TrimSpace(req.Outbound) != "" {
 		nextOutbound = strings.TrimSpace(req.Outbound)
+	}
+	ruleSetIDs, err := referencedRuleSetIDs(a.db, nextMatch)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+	if err := attachRuleSetsToServer(a.db, sid, ruleSetIDs); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
 	}
 	if err := a.validateRule(a.db, sid, nextMatch, nextOutbound); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
@@ -551,17 +570,29 @@ func (a *App) reorderRules(c *gin.Context) {
 
 // ---------- rule-sets ----------
 
-func (a *App) listRuleSets(c *gin.Context) {
-	id, ok := uintParam(c, "id")
-	if !ok {
-		return
-	}
+// Rule sets are panel-level definitions. Servers are attached automatically
+// when a route rule references one, so there is no per-server rule-set screen.
+
+func (a *App) listSharedRuleSets(c *gin.Context) {
 	var rows []model.RuleSet
-	if err := a.db.Where("server_id = ?", id).Order("id").Find(&rows).Error; err != nil {
+	if err := a.db.Order("id").Find(&rows).Error; err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
-	c.JSON(http.StatusOK, gin.H{"rulesets": rows})
+	type row struct {
+		model.RuleSet
+		ServerIDs []uint `json:"server_ids"`
+	}
+	out := make([]row, 0, len(rows))
+	for _, rs := range rows {
+		var ids []uint
+		if err := a.db.Model(&model.ServerRuleSet{}).Where("rule_set_id = ?", rs.ID).Order("server_id").Pluck("server_id", &ids).Error; err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+			return
+		}
+		out = append(out, row{RuleSet: rs, ServerIDs: ids})
+	}
+	c.JSON(http.StatusOK, gin.H{"rulesets": out})
 }
 
 type ruleSetReq struct {
@@ -570,7 +601,6 @@ type ruleSetReq struct {
 	Format         string `json:"format"`
 	URL            string `json:"url"`
 	Path           string `json:"path"`
-	DownloadDetour string `json:"download_detour"`
 	UpdateInterval string `json:"update_interval"`
 }
 
@@ -580,7 +610,6 @@ func normalizeRuleSetReq(req *ruleSetReq) error {
 	req.Format = strings.TrimSpace(req.Format)
 	req.URL = strings.TrimSpace(req.URL)
 	req.Path = strings.TrimSpace(req.Path)
-	req.DownloadDetour = strings.TrimSpace(req.DownloadDetour)
 	req.UpdateInterval = strings.TrimSpace(req.UpdateInterval)
 	if err := validateTag(req.Tag); err != nil {
 		return err
@@ -599,7 +628,6 @@ func normalizeRuleSetReq(req *ruleSetReq) error {
 			return fmt.Errorf("本地规则集路径必填")
 		}
 		req.URL = ""
-		req.DownloadDetour = ""
 		req.UpdateInterval = ""
 		return nil
 	}
@@ -610,30 +638,7 @@ func normalizeRuleSetReq(req *ruleSetReq) error {
 	return nil
 }
 
-func (a *App) validateRuleSetDetour(serverID uint, detour string) error {
-	if detour == "" || detour == "direct" {
-		return nil
-	}
-	var count int64
-	if err := a.db.Model(&model.Outbound{}).Where("server_id = ? AND tag = ?", serverID, detour).Count(&count).Error; err != nil {
-		return err
-	}
-	if count == 0 {
-		return fmt.Errorf("规则集下载出站 %q 不存在", detour)
-	}
-	return nil
-}
-
-func (a *App) createRuleSet(c *gin.Context) {
-	id, ok := uintParam(c, "id")
-	if !ok {
-		return
-	}
-	unlockOperation := a.lockServerOperation(id)
-	defer unlockOperation()
-	if !a.requireManagedMode(c, id) {
-		return
-	}
+func (a *App) createSharedRuleSet(c *gin.Context) {
 	var req ruleSetReq
 	if !bindJSON(c, &req) {
 		return
@@ -642,12 +647,8 @@ func (a *App) createRuleSet(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
-	if err := a.validateRuleSetDetour(id, req.DownloadDetour); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
-		return
-	}
 	var duplicate int64
-	if err := a.db.Model(&model.RuleSet{}).Where("server_id = ? AND tag = ?", id, req.Tag).Count(&duplicate).Error; err != nil {
+	if err := a.db.Model(&model.RuleSet{}).Where("tag = ?", req.Tag).Count(&duplicate).Error; err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
@@ -655,34 +656,21 @@ func (a *App) createRuleSet(c *gin.Context) {
 		c.JSON(http.StatusConflict, gin.H{"error": "规则集标签已存在"})
 		return
 	}
-	rs := &model.RuleSet{
-		ServerID: id, Tag: req.Tag, Type: req.Type, Format: req.Format,
-		URL: req.URL, Path: req.Path, DownloadDetour: req.DownloadDetour,
-		UpdateInterval: req.UpdateInterval,
-	}
+	rs := &model.RuleSet{Tag: req.Tag, Type: req.Type, Format: req.Format, URL: req.URL, Path: req.Path, UpdateInterval: req.UpdateInterval}
 	if err := a.db.Create(rs).Error; err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
-	a.applyConfigAndRespond(c, id, gin.H{"ruleset": rs})
+	c.JSON(http.StatusOK, gin.H{"ruleset": rs})
 }
 
-func (a *App) updateRuleSet(c *gin.Context) {
-	sid, ok := uintParam(c, "id")
-	if !ok {
-		return
-	}
-	unlockOperation := a.lockServerOperation(sid)
-	defer unlockOperation()
+func (a *App) updateSharedRuleSet(c *gin.Context) {
 	rsid, ok := uintParam(c, "rulesetID")
 	if !ok {
 		return
 	}
-	if !a.requireManagedMode(c, sid) {
-		return
-	}
 	var rs model.RuleSet
-	if err := a.db.Where("id = ? AND server_id = ?", rsid, sid).First(&rs).Error; err != nil {
+	if err := a.db.First(&rs, rsid).Error; err != nil {
 		c.JSON(http.StatusNotFound, gin.H{"error": "ruleset not found"})
 		return
 	}
@@ -694,14 +682,8 @@ func (a *App) updateRuleSet(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
-	if err := a.validateRuleSetDetour(sid, req.DownloadDetour); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
-		return
-	}
 	var duplicate int64
-	if err := a.db.Model(&model.RuleSet{}).
-		Where("server_id = ? AND tag = ? AND id <> ?", sid, req.Tag, rs.ID).
-		Count(&duplicate).Error; err != nil {
+	if err := a.db.Model(&model.RuleSet{}).Where("tag = ? AND id <> ?", req.Tag, rs.ID).Count(&duplicate).Error; err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
@@ -710,26 +692,21 @@ func (a *App) updateRuleSet(c *gin.Context) {
 		return
 	}
 	oldTag := rs.Tag
-	rs.Tag = req.Tag
-	rs.Type = req.Type
-	rs.Format = req.Format
-	rs.URL = req.URL
-	rs.Path = req.Path
-	rs.DownloadDetour = req.DownloadDetour
-	rs.UpdateInterval = req.UpdateInterval
 	tx := a.db.Begin()
 	if tx.Error != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": tx.Error.Error()})
 		return
 	}
-	if oldTag != rs.Tag {
-		if err := renameRuleSetRefs(tx, sid, oldTag, rs.Tag); err != nil {
+	if oldTag != req.Tag {
+		if err := renameSharedRuleSetRefs(tx, oldTag, req.Tag); err != nil {
 			tx.Rollback()
 			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 			return
 		}
 	}
-	if err := tx.Save(&rs).Error; err != nil {
+	if err := tx.Model(&rs).Updates(map[string]any{
+		"tag": req.Tag, "type": req.Type, "format": req.Format, "url": req.URL, "path": req.Path, "update_interval": req.UpdateInterval,
+	}).Error; err != nil {
 		tx.Rollback()
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
@@ -738,29 +715,20 @@ func (a *App) updateRuleSet(c *gin.Context) {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
-	a.applyConfigAndRespond(c, sid, gin.H{"ruleset": rs})
+	c.JSON(http.StatusOK, gin.H{"ruleset": rs})
 }
 
-func (a *App) deleteRuleSet(c *gin.Context) {
-	sid, ok := uintParam(c, "id")
-	if !ok {
-		return
-	}
-	unlockOperation := a.lockServerOperation(sid)
-	defer unlockOperation()
+func (a *App) deleteSharedRuleSet(c *gin.Context) {
 	rsid, ok := uintParam(c, "rulesetID")
 	if !ok {
 		return
 	}
-	if !a.requireManagedMode(c, sid) {
-		return
-	}
 	var rs model.RuleSet
-	if err := a.db.Where("id = ? AND server_id = ?", rsid, sid).First(&rs).Error; err != nil {
+	if err := a.db.First(&rs, rsid).Error; err != nil {
 		c.JSON(http.StatusNotFound, gin.H{"error": "ruleset not found"})
 		return
 	}
-	referenced, err := a.ruleSetReferenced(a.db, sid, rs.Tag)
+	referenced, err := sharedRuleSetReferencedAnywhere(a.db, rs.Tag)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
@@ -769,11 +737,24 @@ func (a *App) deleteRuleSet(c *gin.Context) {
 		c.JSON(http.StatusConflict, gin.H{"error": "该规则集仍被分流规则引用，请先修改相关规则"})
 		return
 	}
-	if err := a.db.Delete(&rs).Error; err != nil {
+	var assignments []model.ServerRuleSet
+	if err := a.db.Where("rule_set_id = ?", rs.ID).Find(&assignments).Error; err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
-	a.applyConfigAndRespond(c, sid, gin.H{"ok": true})
+	if err := a.db.Transaction(func(tx *gorm.DB) error {
+		if err := tx.Where("rule_set_id = ?", rs.ID).Delete(&model.ServerRuleSet{}).Error; err != nil {
+			return err
+		}
+		return tx.Delete(&rs).Error
+	}); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+	for _, assignment := range assignments {
+		a.orch.PushConfigIfManaged(assignment.ServerID)
+	}
+	c.JSON(http.StatusOK, gin.H{"ok": true})
 }
 
 // ---------- final outbound ----------

@@ -402,7 +402,7 @@ func (a *App) deleteServer(c *gin.Context) {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
-	for _, row := range []any{&model.Inbound{}, &model.Outbound{}, &model.RouteRule{}, &model.RuleSet{}} {
+	for _, row := range []any{&model.Inbound{}, &model.Outbound{}, &model.RouteRule{}, &model.ServerRuleSet{}} {
 		if err := tx.Where("server_id = ?", id).Delete(row).Error; err != nil {
 			tx.Rollback()
 			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})

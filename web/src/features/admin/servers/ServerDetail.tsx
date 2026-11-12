@@ -33,7 +33,6 @@ import {
   installSingbox,
   isCanceledRequest,
   listOutbounds,
-  listRuleSets,
   listRules,
   remoteConfig,
   reorderRules,
@@ -48,13 +47,14 @@ import {
 } from '../../../api'
 import type { ImportSummary, OutboundTest } from '../../../api'
 import { applyWithToast, isConfigApplyResult, showConfigApplyResult } from '../../../configApply'
-import type { Inbound, Outbound, RouteRule, RuleSet, Server } from '../../../types'
+import type { Inbound, Outbound, RouteRule, Server } from '../../../types'
 import InboundForm from './InboundForm'
 import { OutboundForm, RuleForm } from './RoutingForms'
-import { RuleSetsTab } from './RuleSetsTab'
 import { ConfigEditorModal, ImportPreviewModal, InstallSingboxModal } from './ServerDialogs'
 import { NodeFormatsExportModal } from './NodeFormatsModal'
 import { ServerOverviewCard } from './ServerOverviewCard'
+import ServerTraffic from './ServerTraffic'
+import Logs from '../logs/Logs'
 import { copyToClipboard, formatBytes } from '../../../util'
 import { Pills, Stats, Status } from '../../../ui/Page'
 import '../../../styles/server-detail.css'
@@ -71,7 +71,7 @@ function ProtocolTag({ type }: { type: string }) {
   return <span className="ui-tag">{PROTOCOL_LABELS[type.trim().toLowerCase()] || type}</span>
 }
 
-const DETAIL_SECTIONS = ['inbounds', 'outbounds', 'rules', 'rulesets'] as const
+const DETAIL_SECTIONS = ['inbounds', 'outbounds', 'rules', 'traffic', 'logs'] as const
 type DetailSection = typeof DETAIL_SECTIONS[number]
 
 export default function ServerDetail() {
@@ -84,7 +84,6 @@ export default function ServerDetail() {
   const [loadError, setLoadError] = useState<string | null>(null)
   const [sectionError, setSectionError] = useState<string | null>(null)
   const [install, setInstall] = useState('')
-  const [publicURL, setPublicURL] = useState('')
   const [busy, setBusy] = useState('')
   const [refreshing, setRefreshing] = useState(false)
   const [formOpen, setFormOpen] = useState(false)
@@ -107,12 +106,10 @@ export default function ServerDetail() {
 
   const [outbounds, setOutbounds] = useState<Outbound[]>([])
   const [rules, setRules] = useState<RouteRule[]>([])
-  const [ruleSets, setRuleSets] = useState<RuleSet[]>([])
   const [obOpen, setObOpen] = useState(false)
   const [obEditing, setObEditing] = useState<Outbound | null>(null)
   const [ruleOpen, setRuleOpen] = useState(false)
   const [ruleEditing, setRuleEditing] = useState<RouteRule | null>(null)
-  const [ruleSetCreate, setRuleSetCreate] = useState(0)
   const [importOpen, setImportOpen] = useState(false)
   const [importSum, setImportSum] = useState<ImportSummary | null>(null)
   const [importing, setImporting] = useState(false)
@@ -176,11 +173,9 @@ export default function ServerDetail() {
       if (generation !== loadGenerationRef.current || currentSIDRef.current !== targetSID) return
       setServer(d.server)
       setInstall(d.install_command)
-      setPublicURL(d.public_url)
-      const [outboundRows, ruleRows, ruleSetRows] = await Promise.allSettled([
+      const [outboundRows, ruleRows] = await Promise.allSettled([
         listOutbounds(targetSID, controller.signal),
         listRules(targetSID, controller.signal),
-        listRuleSets(targetSID, controller.signal),
       ])
       if (generation !== loadGenerationRef.current || currentSIDRef.current !== targetSID) return
       if (outboundRows.status === 'fulfilled') setOutbounds(outboundRows.value)
@@ -188,11 +183,9 @@ export default function ServerDetail() {
         ruleOrderRef.current = ruleRows.value
         setRules(ruleRows.value)
       }
-      if (ruleSetRows.status === 'fulfilled') setRuleSets(ruleSetRows.value)
       const failures = [
         outboundRows.status === 'rejected' ? `出站：${errMsg(outboundRows.reason)}` : '',
         ruleRows.status === 'rejected' ? `规则：${errMsg(ruleRows.reason)}` : '',
-        ruleSetRows.status === 'rejected' ? `规则集：${errMsg(ruleSetRows.reason)}` : '',
       ].filter(Boolean)
       setSectionError(failures.length > 0 ? failures.join('；') : null)
     } catch (error) {
@@ -319,7 +312,6 @@ export default function ServerDetail() {
     setOutbounds([])
     setRules([])
     ruleOrderRef.current = []
-    setRuleSets([])
     setRefreshing(false)
     setCfgOpen(false)
     setCfgText('')
@@ -753,12 +745,11 @@ export default function ServerDetail() {
   const rawMode = server.config_mode === 'raw'
   const finalOutbound = server.final_outbound || 'direct'
   const memPct = server.mem_total ? Math.round((server.mem_used / server.mem_total) * 100) : null
-  const goSection = (key: string) => navigate(key === 'inbounds' ? `/admin/servers/${sid}` : `/admin/servers/${sid}/${key}`)
-  const addButton: Record<DetailSection, ReactNode> = {
-    inbounds: <Button type="primary" icon={<Plus />} disabled={rawMode} onClick={() => { setEditing(null); setFormOpen(true) }}>新增入站</Button>,
-    outbounds: <Button type="primary" icon={<Plus />} disabled={rawMode} onClick={() => { setObEditing(null); setObOpen(true) }}>新增出站</Button>,
-    rules: <Button type="primary" icon={<Plus />} disabled={rawMode} onClick={() => { setRuleEditing(null); setRuleOpen(true) }}>新增规则</Button>,
-    rulesets: <Button type="primary" icon={<Plus />} disabled={rawMode} onClick={() => setRuleSetCreate((n) => n + 1)}>新增规则集</Button>,
+  const goSection = (key: string) => navigate(key === 'inbounds' ? `/admin/servers/${sid}` : `/admin/servers/${sid}/${key}`, { replace: true })
+  const addButton: Partial<Record<DetailSection, ReactNode>> = {
+    inbounds: <Button type="primary" size="small" icon={<Plus />} disabled={rawMode} onClick={() => { setEditing(null); setFormOpen(true) }}>新增入站</Button>,
+    outbounds: <Button type="primary" size="small" icon={<Plus />} disabled={rawMode} onClick={() => { setObEditing(null); setObOpen(true) }}>新增出站</Button>,
+    rules: <Button type="primary" size="small" icon={<Plus />} disabled={rawMode} onClick={() => { setRuleEditing(null); setRuleOpen(true) }}>新增规则</Button>,
   }
   const rowActions = (onEdit: () => void, onDelete: () => void, label: string) => (
     <span className="ui-row-actions">
@@ -921,37 +912,49 @@ export default function ServerDetail() {
     </>
   )
 
-  const ruleSetView = (
-    <RuleSetsTab
-      key={sid}
-      serverId={sid}
-      ruleSets={ruleSets}
-      outbounds={outbounds}
-      onRefresh={loadCurrentServer}
-      rawMode={rawMode}
-      createSignal={ruleSetCreate}
-    />
-  )
-  const views: Record<DetailSection, ReactNode> = { inbounds: inboundTable, outbounds: outboundTable, rules: rulesTable, rulesets: ruleSetView }
+  const views: Record<DetailSection, ReactNode> = {
+    inbounds: inboundTable,
+    outbounds: outboundTable,
+    rules: rulesTable,
+    traffic: <ServerTraffic key={`traffic-${sid}`} serverId={sid} />,
+    logs: <Logs key={`logs-${sid}`} serverId={sid} embedded />,
+  }
 
   return (
     <RequestState loading={pageLoading} error={loadError || sectionError} hasData onRetry={loadCurrentServer}>
     <div className="sd-page">
-      <ServerOverviewCard
-        server={server}
-        publicURL={publicURL}
-        busy={busy}
-        refreshing={refreshing}
-        onRefresh={refresh}
-        onInstallSingbox={() => setInstallOpen(true)}
-        onUninstallSingbox={confirmUninstallSingbox}
-        onInstallAgent={installOrUpgradeAgent}
-        onUninstallAgent={confirmUninstallAgent}
-        onImport={openImport}
-        onEditConfig={openConfigEditor}
-        onRestart={() => run('restart', () => serviceAction(sid, 'restart'), 'sing-box 已重启')}
-        onExport={() => setFmtOpen(true)}
-      />
+      <div className="sd-toolbar">
+        <Pills
+          label="服务器"
+          active={section}
+          onChange={goSection}
+          actions={undefined}
+          items={[
+            { key: 'inbounds', label: '入站', count: server.inbounds?.length || 0 },
+            { key: 'outbounds', label: '出站', count: outbounds.length },
+            { key: 'rules', label: '路由', count: rules.length },
+            { key: 'traffic', label: '流量' },
+            { key: 'logs', label: '日志' },
+          ]}
+        />
+        <div className="sd-toolbar-actions">
+          {addButton[section]}
+          <ServerOverviewCard
+            server={server}
+            busy={busy}
+            refreshing={refreshing}
+            onRefresh={refresh}
+            onInstallSingbox={() => setInstallOpen(true)}
+            onUninstallSingbox={confirmUninstallSingbox}
+            onInstallAgent={installOrUpgradeAgent}
+            onUninstallAgent={confirmUninstallAgent}
+            onImport={openImport}
+            onEditConfig={openConfigEditor}
+            onRestart={() => run('restart', () => serviceAction(sid, 'restart'), 'sing-box 已重启')}
+            onExport={() => setFmtOpen(true)}
+          />
+        </div>
+      </div>
 
       <Stats items={[
         { label: '下行速率', value: server.online && server.traffic_available ? `${formatBytes(server.traffic_download_rate ?? 0)}/s` : '—' },
@@ -969,19 +972,6 @@ export default function ServerDetail() {
           action={<Button size="small" danger loading={busy === 'mode'} onClick={switchToManaged}>切换到面板管理</Button>}
         />
       )}
-
-      <Pills
-        label="服务器配置"
-        active={section}
-        onChange={goSection}
-        actions={addButton[section]}
-        items={[
-          { key: 'inbounds', label: '入站', count: server.inbounds?.length || 0 },
-          { key: 'outbounds', label: '出站', count: outbounds.length },
-          { key: 'rules', label: '路由', count: rules.length },
-          { key: 'rulesets', label: '规则集', count: ruleSets.length },
-        ]}
-      />
       {views[section]}
 
       <InboundForm
@@ -1008,7 +998,6 @@ export default function ServerDetail() {
         rule={ruleEditing}
         outboundTags={outboundTags}
         inboundTags={inboundTags}
-        ruleSets={ruleSets}
         open={ruleOpen}
         onClose={() => setRuleOpen(false)}
         onSaved={loadCurrentServer}

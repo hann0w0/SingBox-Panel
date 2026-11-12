@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"gorm.io/gorm"
+	"gorm.io/gorm/clause"
 
 	"github.com/gin-gonic/gin"
 
@@ -489,13 +490,21 @@ func replaceImportedRules(tx *gorm.DB, serverID uint, parsed []singbox.ParsedRul
 }
 
 func syncImportedRuleSets(tx *gorm.DB, serverID uint, parsed []singbox.RuleSetInput) error {
-	var existing []model.RuleSet
-	if err := tx.Where("server_id = ?", serverID).Find(&existing).Error; err != nil {
+	var assigned []model.ServerRuleSet
+	if err := tx.Where("server_id = ?", serverID).Find(&assigned).Error; err != nil {
 		return err
 	}
-	byTag := make(map[string]*model.RuleSet, len(existing))
-	for i := range existing {
-		byTag[existing[i].Tag] = &existing[i]
+	assignedByID := make(map[uint]model.ServerRuleSet, len(assigned))
+	for _, assignment := range assigned {
+		assignedByID[assignment.RuleSetID] = assignment
+	}
+	var existing []model.RuleSet
+	if err := tx.Find(&existing).Error; err != nil {
+		return err
+	}
+	byTag := make(map[string]model.RuleSet, len(existing))
+	for _, row := range existing {
+		byTag[row.Tag] = row
 	}
 	keepIDs := make([]uint, 0, len(parsed))
 	for _, rs := range parsed {
@@ -507,21 +516,35 @@ func syncImportedRuleSets(tx *gorm.DB, serverID uint, parsed []singbox.RuleSetIn
 		if typ != "local" {
 			typ = "remote"
 		}
-		row := byTag[rs.Tag]
-		if row == nil {
-			row = &model.RuleSet{ServerID: serverID, Tag: rs.Tag}
-			if err := tx.Create(row).Error; err != nil {
+		row, ok := byTag[rs.Tag]
+		if !ok {
+			row = model.RuleSet{Tag: rs.Tag}
+			if err := tx.Create(&row).Error; err != nil {
 				return err
 			}
 			byTag[rs.Tag] = row
 		}
-		if err := tx.Model(row).Updates(map[string]any{
+		if err := tx.Model(&model.RuleSet{}).Where("id = ?", row.ID).Updates(map[string]any{
 			"type": typ, "format": format, "url": rs.URL, "path": rs.Path,
-			"download_detour": rs.DownloadDetour, "update_interval": rs.UpdateInterval,
+			"update_interval": rs.UpdateInterval,
 		}).Error; err != nil {
 			return err
 		}
 		keepIDs = append(keepIDs, row.ID)
+		assignment := assignedByID[row.ID]
+		if assignment.ID == 0 {
+			assignment = model.ServerRuleSet{ServerID: serverID, RuleSetID: row.ID}
+		}
+		assignment.DownloadDetour = rs.DownloadDetour
+		if err := tx.Clauses(clause.OnConflict{
+			Columns:   []clause.Column{{Name: "server_id"}, {Name: "rule_set_id"}},
+			DoUpdates: clause.AssignmentColumns([]string{"download_detour", "updated_at"}),
+		}).Create(&assignment).Error; err != nil {
+			return err
+		}
 	}
-	return deleteRowsExcept(tx, serverID, keepIDs, &model.RuleSet{})
+	if len(keepIDs) == 0 {
+		return tx.Where("server_id = ?", serverID).Delete(&model.ServerRuleSet{}).Error
+	}
+	return tx.Where("server_id = ? AND rule_set_id NOT IN ?", serverID, keepIDs).Delete(&model.ServerRuleSet{}).Error
 }

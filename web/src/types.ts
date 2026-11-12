@@ -299,13 +299,14 @@ export interface RouteRule {
 
 export interface RuleSet {
   id: number
-  server_id: number
   tag: string
   type: 'remote' | 'local'
   format: 'binary' | 'source'
   url?: string
   path?: string
   download_detour?: string
+  assigned?: boolean
+  server_ids?: number[]
   update_interval?: string
   created_at?: string
   updated_at?: string

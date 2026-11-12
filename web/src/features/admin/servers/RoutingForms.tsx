@@ -3,6 +3,7 @@ import { Alert, Button, Checkbox, Form, Input, InputNumber, Modal, Segmented, Se
 import {
   createOutbound,
   createRule,
+  listSharedRuleSets,
   updateOutbound,
   updateRule,
 } from '../../../api'
@@ -587,7 +588,7 @@ export function RuleForm({
   rule,
   outboundTags,
   inboundTags,
-  ruleSets,
+  ruleSets: assignedRuleSets,
   open,
   onClose,
   onSaved,
@@ -603,6 +604,7 @@ export function RuleForm({
 }) {
   const [form] = Form.useForm()
   const [submitting, setSubmitting] = useState(false)
+  const [ruleSets, setRuleSets] = useState<RuleSet[]>(assignedRuleSets ?? [])
   const submitLock = useRef(false)
   const submitSessionRef = useRef(0)
   const action = Form.useWatch('action', form) || 'route'
@@ -615,6 +617,15 @@ export function RuleForm({
     setSubmitting(false)
     return () => { submitSessionRef.current += 1 }
   }, [open, serverId, rule?.id])
+
+  useEffect(() => {
+    if (!open) return
+    const controller = new AbortController()
+    listSharedRuleSets(controller.signal)
+      .then((rows) => { if (!controller.signal.aborted) setRuleSets(rows) })
+      .catch(() => {})
+    return () => controller.abort()
+  }, [open])
 
   useEffect(() => {
     if (!open) return

@@ -388,6 +388,11 @@ var applicationMigrations = []schemaMigration{
 		name:    "outbounds imported from panel nodes",
 		up:      func(tx *gorm.DB) error { return tx.AutoMigrate(&model.Outbound{}) },
 	},
+	{
+		version: 33,
+		name:    "shared rule sets with per-server assignment",
+		up:      migrateSharedRuleSets,
+	},
 }
 
 // migrationReplaySafe records whether an interrupted attempt of each migration
@@ -439,6 +444,7 @@ var migrationReplaySafe = map[uint]bool{
 	30: true,  // AutoMigrate of durable credential synchronization revisions
 	31: true,  // AutoMigrate of external subscription sync status
 	32: true,  // AutoMigrate adds nullable outbound source columns
+	33: true,  // AutoMigrate plus insert-only server assignments
 }
 
 // runSchemaMigrations applies every pending migration in order. If any

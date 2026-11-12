@@ -6,6 +6,7 @@ import (
 	"log"
 
 	"gorm.io/gorm"
+	"gorm.io/gorm/clause"
 
 	"github.com/hann0w0/singbox-panel/internal/domain/model"
 	"github.com/hann0w0/singbox-panel/internal/domain/singbox"
@@ -75,4 +76,70 @@ func credentialMissing(typ string, s singbox.InboundSettings) bool {
 		return s.Password == ""
 	}
 	return false
+}
+
+// migrateSharedRuleSets turns per-server rule-set rows into shared definitions
+// plus per-server assignments. Rows with identical connection details and tag
+// collapse into one definition; download_detour stays on the assignment
+// because outbound tags are local to each node.
+func migrateSharedRuleSets(tx *gorm.DB) error {
+	type legacyRuleSet struct {
+		ID             uint
+		ServerID       uint
+		Tag            string
+		Type           string
+		Format         string
+		URL            string
+		Path           string
+		DownloadDetour string
+		UpdateInterval string
+	}
+	var rows []legacyRuleSet
+	if err := tx.Table("rule_sets").Order("id").Find(&rows).Error; err != nil {
+		return err
+	}
+	if err := tx.AutoMigrate(&model.RuleSet{}, &model.ServerRuleSet{}); err != nil {
+		return err
+	}
+	type definitionKey struct {
+		Tag, Type, Format, URL, Path, UpdateInterval string
+	}
+	definitions := make(map[definitionKey]uint)
+	var existing []model.RuleSet
+	if err := tx.Order("id").Find(&existing).Error; err != nil {
+		return err
+	}
+	for _, row := range existing {
+		definitions[definitionKey{row.Tag, row.Type, row.Format, row.URL, row.Path, row.UpdateInterval}] = row.ID
+	}
+	for _, row := range rows {
+		key := definitionKey{row.Tag, row.Type, row.Format, row.URL, row.Path, row.UpdateInterval}
+		ruleSetID := definitions[key]
+		if ruleSetID == 0 {
+			created := model.RuleSet{
+				Tag: row.Tag, Type: row.Type, Format: row.Format,
+				URL: row.URL, Path: row.Path, UpdateInterval: row.UpdateInterval,
+			}
+			if err := tx.Create(&created).Error; err != nil {
+				return err
+			}
+			definitions[key] = created.ID
+			ruleSetID = created.ID
+		}
+		assignment := model.ServerRuleSet{ServerID: row.ServerID, RuleSetID: ruleSetID, DownloadDetour: row.DownloadDetour}
+		if err := tx.Clauses(clause.OnConflict{DoNothing: true}).Create(&assignment).Error; err != nil {
+			return err
+		}
+	}
+	if tx.Migrator().HasColumn(&model.RuleSet{}, "server_id") {
+		if err := tx.Migrator().DropColumn(&model.RuleSet{}, "server_id"); err != nil {
+			return err
+		}
+	}
+	if tx.Migrator().HasColumn(&model.RuleSet{}, "download_detour") {
+		if err := tx.Migrator().DropColumn(&model.RuleSet{}, "download_detour"); err != nil {
+			return err
+		}
+	}
+	return nil
 }

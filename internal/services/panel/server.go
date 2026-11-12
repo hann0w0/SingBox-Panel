@@ -201,10 +201,10 @@ func (a *App) routes() *gin.Engine {
 		admin.PUT("/servers/:id/rules/:ruleID", a.updateRule)
 		admin.DELETE("/servers/:id/rules/:ruleID", a.deleteRule)
 
-		admin.GET("/servers/:id/rulesets", a.listRuleSets)
-		admin.POST("/servers/:id/rulesets", a.createRuleSet)
-		admin.PUT("/servers/:id/rulesets/:rulesetID", a.updateRuleSet)
-		admin.DELETE("/servers/:id/rulesets/:rulesetID", a.deleteRuleSet)
+		admin.GET("/rulesets", a.listSharedRuleSets)
+		admin.POST("/rulesets", a.createSharedRuleSet)
+		admin.PUT("/rulesets/:rulesetID", a.updateSharedRuleSet)
+		admin.DELETE("/rulesets/:rulesetID", a.deleteSharedRuleSet)
 
 		admin.PUT("/servers/:id/final-outbound", a.setFinalOutbound)
 

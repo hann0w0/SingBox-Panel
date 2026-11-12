@@ -6,6 +6,9 @@ import type { RouteRule } from '../../../types'
 
 vi.mock('../../../api', () => ({
   createRule: vi.fn(), updateRule: vi.fn(), createOutbound: vi.fn(), updateOutbound: vi.fn(),
+  listSharedRuleSets: vi.fn(async () => [
+    { id: 1, tag: 'geoip-cn', type: 'remote', format: 'binary', url: 'https://example.com/cn.srs' },
+  ]),
   errMsg: (e: Error) => e.message,
 }))
 vi.mock('../../../configApply', () => ({
@@ -27,7 +30,7 @@ const sourceRejectRule: RouteRule = {
 
 function renderRule(rule: RouteRule | null = null) {
   return render(<RuleForm serverId={1} rule={rule} outboundTags={[]} inboundTags={['dmit-in']}
-    ruleSets={[{ id: 1, server_id: 1, tag: 'geoip-cn', type: 'remote', format: 'binary', url: 'https://example.com/cn.srs' }]}
+    ruleSets={[{ id: 1, tag: 'geoip-cn', type: 'remote', format: 'binary', url: 'https://example.com/cn.srs' }]}
     open onClose={vi.fn()} onSaved={vi.fn()} />)
 }
 

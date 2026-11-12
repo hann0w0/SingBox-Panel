@@ -180,8 +180,21 @@ func (o *Orchestrator) BuildServerConfig(srv *model.Server) ([]byte, error) {
 	}
 
 	// Rule-sets.
-	var rsRows []model.RuleSet
-	if err := o.db.Where("server_id = ?", srv.ID).Find(&rsRows).Error; err != nil {
+	var rsRows []struct {
+		Tag            string
+		Type           string
+		URL            string
+		Path           string
+		Format         string
+		DownloadDetour string
+		UpdateInterval string
+	}
+	if err := o.db.Table("server_rule_sets").
+		Select("rule_sets.tag, rule_sets.type, rule_sets.url, rule_sets.path, rule_sets.format, server_rule_sets.download_detour, rule_sets.update_interval").
+		Joins("JOIN rule_sets ON rule_sets.id = server_rule_sets.rule_set_id").
+		Where("server_rule_sets.server_id = ?", srv.ID).
+		Order("rule_sets.id").
+		Scan(&rsRows).Error; err != nil {
 		return nil, fmt.Errorf("load rule sets for server %d: %w", srv.ID, err)
 	}
 	rsets := make([]singbox.RuleSetInput, 0, len(rsRows))
@@ -456,7 +469,7 @@ func (o *Orchestrator) serverIsManaged(serverID uint) (bool, error) {
 	if n > 0 {
 		return true, nil
 	}
-	if err := o.db.Model(&model.RuleSet{}).Where("server_id = ?", serverID).Count(&n).Error; err != nil {
+	if err := o.db.Model(&model.ServerRuleSet{}).Where("server_id = ?", serverID).Count(&n).Error; err != nil {
 		return false, err
 	}
 	return n > 0, nil

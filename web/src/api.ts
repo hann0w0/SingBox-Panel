@@ -250,24 +250,35 @@ export const deleteRule = (serverId: number, id: number) =>
 export const reorderRules = (serverId: number, order: number[]) =>
   http.put<ConfigApplyResult>(`/api/admin/servers/${serverId}/rules/reorder`, { order }).then((r) => r.data)
 
-// ---- admin: rule sets (规则集) ----
+// ---- admin: shared rule sets (规则集) ----
 export interface RuleSetBody {
   tag: string
   type: 'remote' | 'local'
   format: 'binary' | 'source'
   url?: string
   path?: string
-  download_detour?: string
   update_interval?: string
 }
 export const listRuleSets = (serverId: number, signal?: AbortSignal) =>
   http.get<{ rulesets: RuleSet[] }>(`/api/admin/servers/${serverId}/rulesets`, { signal }).then((r) => r.data.rulesets)
-export const createRuleSet = (serverId: number, body: RuleSetBody) =>
-  http.post<{ ruleset: RuleSet } & ConfigApplyResult>(`/api/admin/servers/${serverId}/rulesets`, body).then((r) => r.data)
-export const updateRuleSet = (serverId: number, id: number, body: RuleSetBody) =>
-  http.put<{ ruleset: RuleSet } & ConfigApplyResult>(`/api/admin/servers/${serverId}/rulesets/${id}`, body).then((r) => r.data)
-export const deleteRuleSet = (serverId: number, id: number) =>
-  http.delete<ConfigApplyResult>(`/api/admin/servers/${serverId}/rulesets/${id}`).then((r) => r.data)
+export const listSharedRuleSets = (signal?: AbortSignal) =>
+  http.get<{ rulesets: RuleSet[] }>('/api/admin/rulesets', { signal }).then((r) => r.data.rulesets)
+export const listRuleSetOptions = (signal?: AbortSignal) =>
+  http.get<{ rulesets: RuleSet[] }>('/api/admin/rulesets', { signal }).then((r) => r.data.rulesets)
+export const createSharedRuleSet = (body: RuleSetBody) =>
+  http.post<{ ruleset: RuleSet }>('/api/admin/rulesets', body).then((r) => r.data)
+export const updateSharedRuleSet = (id: number, body: RuleSetBody) =>
+  http.put<{ ruleset: RuleSet }>(`/api/admin/rulesets/${id}`, body).then((r) => r.data)
+export const deleteSharedRuleSet = (id: number) =>
+  http.delete<{ ok: boolean }>(`/api/admin/rulesets/${id}`).then((r) => r.data)
+export const assignRuleSet = (serverId: number, id: number, downloadDetour = '') =>
+  http.post<ConfigApplyResult>(`/api/admin/servers/${serverId}/rulesets/${id}/assign`, { download_detour: downloadDetour }).then((r) => r.data)
+export const unassignRuleSet = (serverId: number, id: number) =>
+  http.delete<ConfigApplyResult>(`/api/admin/servers/${serverId}/rulesets/${id}/assign`).then((r) => r.data)
+export const attachRuleSet = (serverId: number, id: number) =>
+  http.put<{ ok: boolean }>(`/api/admin/servers/${serverId}/rulesets/${id}`, {}).then((r) => r.data)
+export const setRuleSetAssignments = (id: number, serverIds: number[]) =>
+  http.put<{ ok: boolean }>(`/api/admin/rulesets/${id}/servers`, { server_ids: serverIds }).then((r) => r.data)
 
 // ---- admin: import an existing config into the panel ----
 export interface ImportSummary {

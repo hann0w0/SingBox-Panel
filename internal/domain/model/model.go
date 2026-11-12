@@ -305,18 +305,28 @@ type RouteRule struct {
 	UpdatedAt time.Time `json:"updated_at"`
 }
 
-// RuleSet is a remote or local rule-set definition on a Server (for geoip/geosite-style
-// matching referenced by route rules).
+// RuleSet is a panel-level remote or local rule-set definition (geoip/geosite
+// style). Servers reference it by tag after it is assigned, so one definition
+// can be reused without duplicating the download and update policy.
 type RuleSet struct {
 	ID             uint      `gorm:"primaryKey" json:"id"`
-	ServerID       uint      `gorm:"index;uniqueIndex:idx_node_tag" json:"server_id"`
-	Tag            string    `gorm:"size:64;not null;uniqueIndex:idx_node_tag" json:"tag"`
+	Tag            string    `gorm:"size:64;not null;uniqueIndex" json:"tag"`
 	Type           string    `gorm:"size:16;not null;default:remote" json:"type"`   // remote | local
 	Format         string    `gorm:"size:16;not null;default:binary" json:"format"` // binary | source
 	URL            string    `gorm:"size:512" json:"url"`
 	Path           string    `gorm:"size:512" json:"path"`
-	DownloadDetour string    `gorm:"size:64" json:"download_detour"`
 	UpdateInterval string    `gorm:"size:32" json:"update_interval"`
+	CreatedAt      time.Time `json:"created_at"`
+	UpdatedAt      time.Time `json:"updated_at"`
+}
+
+// ServerRuleSet assigns a panel-level rule-set to one server. DownloadDetour
+// stays per-server because outbound tags are local to each node.
+type ServerRuleSet struct {
+	ID             uint      `gorm:"primaryKey" json:"id"`
+	ServerID       uint      `gorm:"not null;index;uniqueIndex:idx_server_ruleset,priority:1" json:"server_id"`
+	RuleSetID      uint      `gorm:"not null;index;uniqueIndex:idx_server_ruleset,priority:2" json:"ruleset_id"`
+	DownloadDetour string    `gorm:"size:64" json:"download_detour"`
 	CreatedAt      time.Time `json:"created_at"`
 	UpdatedAt      time.Time `json:"updated_at"`
 }
@@ -497,7 +507,7 @@ type CustomNodeSubscription struct {
 // AllModels lists every entity for AutoMigrate.
 func AllModels() []any {
 	return []any{
-		&User{}, &UserNodeOrder{}, &Server{}, &Inbound{}, &Outbound{}, &RouteRule{}, &RuleSet{}, &Setting{}, &TrafficRecord{},
+		&User{}, &UserNodeOrder{}, &Server{}, &Inbound{}, &Outbound{}, &RouteRule{}, &RuleSet{}, &ServerRuleSet{}, &Setting{}, &TrafficRecord{},
 		&CustomNodeSubscription{}, &CustomNode{}, &TrafficHourly{}, &SubscriptionFetch{}, &TrafficUserHourly{}, &UserTrafficIdentity{}, &TrafficReportCursor{}, &InboundTrafficIdentity{},
 	}
 }

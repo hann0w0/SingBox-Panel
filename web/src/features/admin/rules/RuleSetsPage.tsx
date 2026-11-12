@@ -1,0 +1,211 @@
+import { useCallback, useEffect, useRef, useState } from 'react'
+import { Button, Form, Input, Modal, Segmented, Select, Table, message } from '../../../ui'
+import { Pencil, Plus, Trash2 } from 'lucide-react'
+import {
+  createSharedRuleSet, deleteSharedRuleSet, errMsg, isCanceledRequest,
+  listServers, listSharedRuleSets, setRuleSetAssignments, updateSharedRuleSet,
+} from '../../../api'
+import type { RuleSetBody } from '../../../api'
+import type { RuleSet, Server } from '../../../types'
+import { PageHeader } from '../../../ui/Page'
+import { RequestState } from '../../../components/RequestState'
+import { MODAL_SM } from '../../../ui/modal'
+import '../../../styles/users.css'
+
+/** Panel-wide rule-set definitions shared by any number of servers. */
+export default function RuleSetsPage() {
+  const [ruleSets, setRuleSets] = useState<RuleSet[]>([])
+  const [servers, setServers] = useState<Server[]>([])
+  const [loading, setLoading] = useState(true)
+  const [error, setError] = useState<string | null>(null)
+  const [editing, setEditing] = useState<RuleSet | null>(null)
+  const [open, setOpen] = useState(false)
+  const [assigning, setAssigning] = useState<RuleSet | null>(null)
+  const [selectedServers, setSelectedServers] = useState<number[]>([])
+  const [saving, setSaving] = useState(false)
+  const [rsType, setRsType] = useState<'remote' | 'local'>('remote')
+  const [form] = Form.useForm()
+  const loadRef = useRef<{ generation: number; controller: AbortController | null }>({ generation: 0, controller: null })
+
+  const load = useCallback(() => {
+    loadRef.current.controller?.abort()
+    const controller = new AbortController()
+    const generation = ++loadRef.current.generation
+    loadRef.current.controller = controller
+    setLoading(true)
+    setError(null)
+    Promise.all([listSharedRuleSets(controller.signal), listServers(controller.signal)])
+      .then(([sets, hosts]) => {
+        if (generation !== loadRef.current.generation) return
+        setRuleSets(sets)
+        setServers(hosts)
+      })
+      .catch((cause) => {
+        if (generation === loadRef.current.generation && !isCanceledRequest(cause)) setError(errMsg(cause))
+      })
+      .finally(() => {
+        if (generation === loadRef.current.generation) {
+          loadRef.current.controller = null
+          setLoading(false)
+        }
+      })
+  }, [])
+
+  useEffect(() => {
+    load()
+    return () => {
+      loadRef.current.generation++
+      loadRef.current.controller?.abort()
+    }
+  }, [load])
+
+  const openCreate = () => {
+    setEditing(null)
+    setRsType('remote')
+    form.resetFields()
+    form.setFieldsValue({ type: 'remote', format: 'binary', update_interval: '1d' })
+    setOpen(true)
+  }
+
+  const openEdit = (rs: RuleSet) => {
+    setEditing(rs)
+    setRsType(rs.type || 'remote')
+    form.setFieldsValue({
+      tag: rs.tag, type: rs.type || 'remote', format: rs.format || 'binary',
+      url: rs.url || '', path: rs.path || '', update_interval: rs.update_interval || '1d',
+    })
+    setOpen(true)
+  }
+
+  const submit = async () => {
+    setSaving(true)
+    try {
+      const values = await form.validateFields() as RuleSetBody
+      if (editing) await updateSharedRuleSet(editing.id, values)
+      else await createSharedRuleSet(values)
+      setOpen(false)
+      load()
+    } catch (cause) {
+      message.error(errMsg(cause))
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  const remove = (rs: RuleSet) => Modal.confirm({
+    title: '删除规则集',
+    content: `确认删除「${rs.tag}」？`,
+    okText: '删除',
+    okType: 'danger',
+    onOk: async () => {
+      await deleteSharedRuleSet(rs.id)
+      load()
+    },
+  })
+
+  const openAssign = (rs: RuleSet) => {
+    setAssigning(rs)
+    setSelectedServers(rs.server_ids ?? [])
+  }
+
+  const saveAssignments = async () => {
+    if (!assigning) return
+    setSaving(true)
+    try {
+      await setRuleSetAssignments(assigning.id, selectedServers)
+      setAssigning(null)
+      load()
+    } catch (cause) {
+      message.error(errMsg(cause))
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  return (
+    <div className="um-page">
+      <PageHeader
+        title="规则"
+        actions={<Button type="primary" icon={<Plus />} onClick={openCreate}>新增规则集</Button>}
+      />
+      <RequestState loading={loading} error={error} hasData={ruleSets.length > 0} empty={!loading && !error && ruleSets.length === 0} emptyDescription="暂无规则集" onRetry={load}>
+        <Table<RuleSet>
+          rowKey="id"
+          dataSource={ruleSets}
+          columns={[
+            { title: '标签', dataIndex: 'tag', render: (value: string) => <span className="sd-strong">{value}</span> },
+            { title: '类型', dataIndex: 'type', width: 90, render: (value: string) => <span className="ui-tag">{value === 'local' ? '本地' : '远程'}</span> },
+            { title: '格式', dataIndex: 'format', width: 90, render: (value: string) => <span className="mono">{value === 'source' ? 'JSON' : 'SRS'}</span> },
+            {
+              title: '服务器',
+              render: (_: unknown, rs: RuleSet) => {
+                const names = (rs.server_ids ?? []).map((id) => servers.find((server) => server.id === id)?.name ?? `#${id}`)
+                if (!names.length) return <span className="faint">未分配</span>
+                return <span className="nodes-ruleset-servers" title={names.join('、')}>
+                  {names.slice(0, 3).map((name) => <span key={name} className="ui-tag">{name}</span>)}
+                  {names.length > 3 && <span className="faint">+{names.length - 3}</span>}
+                </span>
+              },
+            },
+            {
+              title: '', width: 168, align: 'right',
+              render: (_: unknown, rs: RuleSet) => <span className="ui-row-actions">
+                <Button size="small" type="text" onClick={() => openAssign(rs)}>分配</Button>
+                <Button size="small" type="text" icon={<Pencil />} aria-label={`编辑规则集 ${rs.tag}`} onClick={() => openEdit(rs)} />
+                <Button size="small" type="text" icon={<Trash2 />} aria-label={`删除规则集 ${rs.tag}`} onClick={() => remove(rs)} />
+              </span>,
+            },
+          ]}
+        />
+      </RequestState>
+
+      <Modal title={editing ? '编辑规则集' : '新增规则集'} width={MODAL_SM} open={open} onOk={submit} onCancel={() => setOpen(false)} confirmLoading={saving}>
+        <Form form={form} layout="vertical">
+          <Form.Item name="tag" label="标签" rules={[
+            { required: true, message: '请输入规则集标签' },
+            { pattern: /^[a-zA-Z0-9_-]+$/, message: '标签只能包含字母、数字、下划线与连字符' },
+          ]}>
+            <Input placeholder="geosite-cn" />
+          </Form.Item>
+          <Form.Item name="type" label="类型">
+            <Segmented<'remote' | 'local'> onChange={setRsType} options={[{ value: 'remote', label: '远程' }, { value: 'local', label: '本地' }]} />
+          </Form.Item>
+          <Form.Item name="format" label="格式">
+            <Segmented options={[{ value: 'binary', label: 'SRS' }, { value: 'source', label: 'JSON' }]} />
+          </Form.Item>
+          {rsType === 'remote' ? <>
+            <Form.Item name="url" label="URL" rules={[{ required: true, message: '请输入远程规则集下载 URL' }]}>
+              <Input placeholder="https://" />
+            </Form.Item>
+            <Form.Item name="update_interval" label="更新间隔">
+              <Input placeholder="1d" />
+            </Form.Item>
+          </> : (
+            <Form.Item name="path" label="路径" rules={[{ required: true, message: '请输入服务器上的本地文件路径' }]}>
+              <Input placeholder="/etc/sing-box/rules.json" />
+            </Form.Item>
+          )}
+        </Form>
+      </Modal>
+
+      <Modal
+        title={assigning ? `分配 ${assigning.tag}` : '分配规则集'}
+        width={MODAL_SM}
+        open={!!assigning}
+        onOk={saveAssignments}
+        onCancel={() => setAssigning(null)}
+        confirmLoading={saving}
+        okText="保存"
+      >
+        <Select
+          mode="multiple"
+          aria-label="分配服务器"
+          placeholder="选择服务器"
+          value={selectedServers}
+          onChange={(value: number[]) => setSelectedServers(value)}
+          options={servers.map((server) => ({ value: server.id, label: server.name }))}
+        />
+      </Modal>
+    </div>
+  )
+}

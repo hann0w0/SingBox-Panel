@@ -636,7 +636,11 @@ func TestDeleteServerCleansSerializedUserAccess(t *testing.T) {
 	if err := db.Create(&model.RouteRule{ServerID: remove.ID, Outbound: "landing"}).Error; err != nil {
 		t.Fatal(err)
 	}
-	if err := db.Create(&model.RuleSet{ServerID: remove.ID, Tag: "geo", URL: "https://example.com/geo.srs"}).Error; err != nil {
+	ruleSet := model.RuleSet{Tag: "geo", URL: "https://example.com/geo.srs"}
+	if err := db.Create(&ruleSet).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Create(&model.ServerRuleSet{ServerID: remove.ID, RuleSetID: ruleSet.ID}).Error; err != nil {
 		t.Fatal(err)
 	}
 	u := model.User{
@@ -662,7 +666,7 @@ func TestDeleteServerCleansSerializedUserAccess(t *testing.T) {
 	if len(u.ServerIDs) != 1 || u.ServerIDs[0] != keep.ID || len(u.InboundIDs) != 1 || u.InboundIDs[0] != keepInbound.ID {
 		t.Fatalf("user access not cleaned: servers=%v inbounds=%v", u.ServerIDs, u.InboundIDs)
 	}
-	for _, modelValue := range []any{&model.Inbound{}, &model.Outbound{}, &model.RouteRule{}, &model.RuleSet{}} {
+	for _, modelValue := range []any{&model.Inbound{}, &model.Outbound{}, &model.RouteRule{}, &model.ServerRuleSet{}} {
 		var count int64
 		if err := db.Model(modelValue).Where("server_id = ?", remove.ID).Count(&count).Error; err != nil {
 			t.Fatal(err)

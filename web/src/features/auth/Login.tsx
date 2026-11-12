@@ -29,16 +29,15 @@ export default function Login() {
       <div className="login-card">
         <header className="login-head">
           <img className="login-logo" src={logo} alt="" aria-hidden="true" />
-          <h1 id="login-title">登录 SingBox Panel</h1>
+          <h1 id="login-title">SingBox Panel</h1>
         </header>
 
         <Form name="login" layout="vertical" onFinish={doLogin} requiredMark={false}>
           <Form.Item name="username" label="用户名" rules={[{ required: true, whitespace: true, message: '请输入用户名' }]}>
-            <Input placeholder="请输入用户名" size="large" autoComplete="username" autoCapitalize="none" spellCheck={false} />
+            <Input size="large" autoComplete="username" autoCapitalize="none" spellCheck={false} />
           </Form.Item>
           <Form.Item name="password" label="密码" rules={[{ required: true, message: '请输入密码' }]}>
             <Input.Password
-              placeholder="请输入密码"
               size="large"
               autoComplete="current-password"
             />

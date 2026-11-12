@@ -60,11 +60,8 @@ function Spinner({ size }: { size?: 'lg' }) {
 
 function PageFallback() {
   return (
-    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', minHeight: '50vh', color: '#8c8c8c' }}>
-      <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 12 }}>
-        <Spinner size="lg" />
-        <div style={{ fontSize: 13 }}>加载中…</div>
-      </div>
+    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', minHeight: '50vh', color: 'var(--console-faint)' }}>
+      <Spinner size="lg" />
     </div>
   )
 }

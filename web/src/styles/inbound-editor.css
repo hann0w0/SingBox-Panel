@@ -1,23 +1,22 @@
-/* Compact inbound editor, aligned with the dense reference layout. */
+/* Compact inbound editor: same palette as every other dialog. */
 .ui-modal.inbound-compact {
-  --inbound-bg: #ffffff;
-  --inbound-panel: #fafafa;
-  --inbound-field: #ffffff;
-  --inbound-hover: #f4f4f4;
-  --inbound-line: #e8e8e8;
-  --inbound-line-strong: #d5d5d5;
-  --inbound-hover-line: #b8b8b8;
-  --inbound-ink: #111111;
-  --inbound-muted: #656565;
-  --inbound-faint: #929292;
-  --inbound-focus: #7a7a7a;
+  --inbound-bg: var(--console-container);
+  --inbound-panel: var(--console-surface);
+  --inbound-field: var(--console-container);
+  --inbound-hover: var(--console-hover);
+  --inbound-line: var(--console-border);
+  --inbound-line-strong: var(--console-border-strong);
+  --inbound-hover-line: var(--console-border-hover);
+  --inbound-ink: var(--console-ink);
+  --inbound-muted: var(--console-muted);
+  --inbound-faint: var(--console-faint);
+  --inbound-focus: var(--console-focus);
   width: 680px;
   max-height: min(calc(88 * var(--dvh)), 840px);
   border-color: var(--inbound-line);
   border-radius: 12px;
   background: var(--inbound-bg);
   color: var(--inbound-ink);
-  box-shadow: 0 20px 60px rgb(0 0 0 / 16%);
 }
 
 .ui-modal.inbound-compact .ui-modal-header {
@@ -274,7 +273,7 @@
 
 .inbound-compact .ui-switch {
   border-color: var(--inbound-line-strong);
-  background: #e6e6e6;
+  background: var(--console-selected);
 }
 
 .inbound-compact .ui-switch[data-state='checked'] {
@@ -283,12 +282,11 @@
 }
 
 .inbound-compact .ui-switch-handle {
-  background: #ffffff;
-  box-shadow: 0 1px 2px rgb(0 0 0 / 16%);
+  background: var(--console-container);
 }
 
 .inbound-compact .ui-switch[data-state='checked'] .ui-switch-handle {
-  background: #ffffff;
+  background: var(--console-on-primary);
 }
 
 .inbound-compact .fm-warn {
@@ -319,54 +317,15 @@
 .ui-modal.inbound-compact .ui-modal-footer > .ui-btn-primary {
   border-color: var(--inbound-ink);
   background: var(--inbound-ink);
-  color: #ffffff;
+  color: var(--console-on-primary);
 }
 
 .ui-modal.inbound-compact .ui-modal-footer > .ui-btn-primary:hover {
-  border-color: #333333;
-  background: #333333;
+  opacity: .82;
 }
 
 :root[data-console-theme='dark'] .ui-modal.inbound-compact {
-  --inbound-bg: #0a0a0b;
-  --inbound-panel: #0e0e10;
-  --inbound-field: #0c0c0e;
-  --inbound-hover: #141416;
-  --inbound-line: #242428;
-  --inbound-line-strong: #33343a;
-  --inbound-hover-line: #4b4c53;
-  --inbound-ink: #f3f4f6;
-  --inbound-muted: #a0a1a8;
-  --inbound-faint: #797a82;
-  --inbound-focus: #6f8fce;
-  box-shadow: 0 24px 80px rgb(0 0 0 / 42%);
-}
-
-:root[data-console-theme='dark'] .inbound-compact .ui-switch {
-  border-color: #4a4b52;
-  background: #35363b;
-}
-
-:root[data-console-theme='dark'] .inbound-compact .ui-switch[data-state='checked'] {
-  border-color: #c9cbd2;
-  background: #c9cbd2;
-}
-
-:root[data-console-theme='dark'] .inbound-compact .ui-switch-handle,
-:root[data-console-theme='dark'] .inbound-compact .ui-switch[data-state='checked'] .ui-switch-handle {
-  background: #111113;
-  box-shadow: none;
-}
-
-:root[data-console-theme='dark'] .ui-modal.inbound-compact .ui-modal-footer > .ui-btn-primary {
-  border-color: #b9bbc2;
-  background: #b9bbc2;
-  color: #101012;
-}
-
-:root[data-console-theme='dark'] .ui-modal.inbound-compact .ui-modal-footer > .ui-btn-primary:hover {
-  border-color: #d1d2d7;
-  background: #d1d2d7;
+  color-scheme: dark;
 }
 
 @media (max-width: 709px) {

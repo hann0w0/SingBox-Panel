@@ -9,7 +9,6 @@ import { useInstallPrompt } from '../pwa'
 import { getConsolePalette, parseConsoleTheme } from '../theme'
 import { useThemePreference } from '../themePreference'
 import type { Server } from '../types'
-import { serverIdFromLocation } from '../serverNavigation'
 import logoLight from '../assets/logo.svg'
 import logoDark from '../assets/logo-dark.svg'
 
@@ -19,10 +18,9 @@ function BrandMark({ className }: { className: string }) {
 
 const ADMIN_NAV = [
   { to: '/admin/servers', label: '服务器' },
-  { to: '/admin/traffic', label: '流量' },
-  { to: '/admin/logs', label: '日志' },
-  { to: '/admin/users', label: '用户' },
   { to: '/admin/external-nodes', label: '节点' },
+  { to: '/admin/rules', label: '规则' },
+  { to: '/admin/users', label: '用户' },
   { to: '/admin/settings', label: '设置' },
 ]
 
@@ -97,13 +95,10 @@ function AccountBar({ scope }: { scope: 'admin' | 'user' }) {
 
 export default function AppLayout() {
   const { user } = useAuth()
-  const { pathname, search } = useLocation()
+  const { pathname } = useLocation()
   const admin = user?.role === 'admin'
   const navigate = useNavigate()
   const serverMatch = pathname.match(/^\/admin\/servers\/(\d+)(?:\/|$)/)
-  // Traffic and logs pick their server through ?server=, shown in the same breadcrumb switcher.
-  const pickerPage = admin && (pathname === '/admin/traffic' || pathname === '/admin/logs')
-  const selectedServerId = admin ? serverIdFromLocation(pathname, search) : null
   const home = admin ? '/admin/servers' : '/dashboard'
   const pageKey = pathname.split('/').slice(0, 4).join('/')
   useEffect(() => { window.scrollTo(0, 0) }, [pageKey])
@@ -116,20 +111,12 @@ export default function AppLayout() {
           const section = pathname.split('/')[4]
           navigate(`/admin/servers/${next}${section ? `/${section}` : ''}`)
         }} />}
-        {pickerPage && <ServerSwitcher id={selectedServerId} onPick={(next) => {
-          const params = new URLSearchParams(search)
-          params.set('server', String(next))
-          navigate(`${pathname}?${params}`)
-        }} />}
         <div className="app-bar-right">
           <AccountBar scope={admin ? 'admin' : 'user'} />
         </div>
       </div>
       {admin && <nav className="app-nav" aria-label="主导航">
-        {ADMIN_NAV.map((item) => {
-          const scoped = selectedServerId && (item.to === '/admin/traffic' || item.to === '/admin/logs')
-          return <NavLink key={item.to} to={scoped ? `${item.to}?server=${selectedServerId}` : item.to} className={({ isActive }) => `app-nav-link${isActive ? ' is-active' : ''}`}>{item.label}</NavLink>
-        })}
+        {ADMIN_NAV.map((item) => <NavLink key={item.to} to={item.to} className={({ isActive }) => `app-nav-link${isActive ? ' is-active' : ''}`}>{item.label}</NavLink>)}
       </nav>}
     </header>
     <main className="app-main"><div className="app-route"><Outlet /></div></main>

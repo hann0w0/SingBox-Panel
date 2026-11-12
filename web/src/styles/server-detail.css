@@ -1,4 +1,11 @@
 /* Server detail (design A) */
+.sd-toolbar { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; margin-bottom: 20px; }
+.sd-toolbar .ui-pills-row { flex: 1 1 auto; margin-bottom: 0; }
+.sd-toolbar-actions { display: flex; align-items: center; gap: 8px; }
+.sd-toolbar-actions > .ui-btn { height: var(--app-control-h); }
+.sd-toolbar .ui-pills { height: var(--app-control-h); }
+.sd-overview { display: flex; align-items: center; gap: 8px; }
+.sd-overview-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
 .sd-up { color: var(--console-warning); font-weight: 600; }
 .sd-strong { font-weight: 500; color: var(--console-ink); }
 .sd-remark { flex-basis: 100%; min-width: 0; color: var(--console-muted); white-space: pre-wrap; overflow-wrap: anywhere; }
@@ -15,3 +22,8 @@
 .sd-drag.rule-drag-handle:focus-visible { outline: 2px solid var(--console-focus); }
 .sd-final { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-top: 12px; padding: 10px 16px; border: 1px dashed var(--console-border-strong); border-radius: var(--app-radius); color: var(--console-muted); font-size: 13px; }
 .sd-final .ui-select { min-width: 160px; font-family: var(--app-mono); }
+@media (max-width: 767px) {
+  .sd-toolbar { align-items: stretch; }
+  .sd-toolbar .ui-pills-row { flex-basis: 100%; }
+  .sd-toolbar-actions { justify-content: space-between; }
+}

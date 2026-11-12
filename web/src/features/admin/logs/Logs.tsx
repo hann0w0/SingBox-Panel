@@ -289,7 +289,7 @@ function formatUpdatedAt(value: number | null) {
 
 // Logs renders one node's native sing-box log stream. With serverId fixed (server
 // detail tab) the node selector is hidden.
-export default function Logs({ serverId }: { serverId?: number } = {}) {
+export default function Logs({ serverId, embedded = false }: { serverId?: number; embedded?: boolean } = {}) {
   const [servers, setServers] = useState<Server[]>([])
   const [params, setParams] = useSearchParams()
   const requestedId = parseServerId(params.get('server'))
@@ -610,12 +610,14 @@ export default function Logs({ serverId }: { serverId?: number } = {}) {
 
   return (
     <div className="lg-page">
-      <PageHeader
-        title="日志"
-        actions={
-          <Button icon={<RotateCw />} loading={loading} onClick={() => load()}>刷新</Button>
-        }
-      />
+      {!embedded && (
+        <PageHeader
+          title="日志"
+          actions={
+            <Button icon={<RotateCw />} loading={loading} onClick={() => load()}>刷新</Button>
+          }
+        />
+      )}
 
       <div className="lg-toolbar">
         <Select
@@ -660,6 +662,11 @@ export default function Logs({ serverId }: { serverId?: number } = {}) {
             </span>
             {!live && current?.online ? (
               <Button size="small" type="text" onClick={() => handleLiveChange(true)}>恢复实时</Button>
+            ) : null}
+            {embedded ? (
+              <Button size="small" type="text" icon={<RotateCw />} loading={loading} onClick={() => void load()} aria-label="刷新日志">
+                刷新
+              </Button>
             ) : null}
             <Button
               size="small"

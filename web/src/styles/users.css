@@ -192,3 +192,6 @@
 .um-chips { display: inline-flex; flex-wrap: wrap; align-items: center; gap: 6px; max-width: 360px; }
 .um-chips .ui-tag { max-width: 150px; overflow: hidden; text-overflow: ellipsis; color: var(--console-ink); }
 .um-chips .um-chip-ext { border-style: dashed; color: var(--console-muted); }
+.nodes-ruleset-meta { margin: -4px 0 12px; color: var(--console-faint); font-size: 12.5px; }
+.nodes-ruleset-servers { display: inline-flex; flex-wrap: wrap; align-items: center; gap: 4px; min-width: 0; }
+.nodes-ruleset-servers .ui-tag { max-width: 140px; overflow: hidden; text-overflow: ellipsis; }

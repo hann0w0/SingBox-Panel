@@ -71,18 +71,16 @@ describe('server remarks', () => {
     await screen.findByText('Backup exit')
   })
 
-  it('shows the remark in the detail heading without rendering blank remarks', () => {
+  it('keeps server actions available without repeating the identity heading', () => {
     const props = {
       publicURL: '', busy: '', refreshing: false,
       onRefresh: vi.fn(), onInstallSingbox: vi.fn(), onUninstallSingbox: vi.fn(),
       onInstallAgent: vi.fn(), onUninstallAgent: vi.fn(), onImport: vi.fn(),
       onEditConfig: vi.fn(), onRestart: vi.fn(), onExport: vi.fn(),
     }
-    const { container, rerender } = render(<ServerOverviewCard server={server} {...props} />)
-    expect(screen.getByText('Backup exit').className).toBe('sd-remark')
+    render(<ServerOverviewCard server={server} {...props} />)
+    expect(screen.queryByText('Backup exit')).toBeNull()
     expect(screen.getByRole('button', { name: '导出节点' })).toBeTruthy()
     expect(screen.queryByText('导出订阅')).toBeNull()
-    rerender(<ServerOverviewCard server={{ ...server, remark: '  ' }} {...props} />)
-    expect(container.querySelector('.sd-remark')).toBeNull()
   })
 })

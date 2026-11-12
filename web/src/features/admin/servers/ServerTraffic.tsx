@@ -7,7 +7,7 @@ import type { TrafficPoint, TrafficPortSeries, TrafficRange, TrafficSeries } fro
 import { formatBytes } from '../../../util'
 import { useSSE } from '../../../useSSE'
 import type { SSEMessage } from '../../../useSSE'
-import { PageHeader, Section, Stats } from '../../../ui/Page'
+import { Section, Stats } from '../../../ui/Page'
 import '../../../styles/traffic-logs.css'
 
 function rate(n: number): string {
@@ -354,7 +354,7 @@ const bytesSorter = <T extends { upload: number; download: number }>(key: 'uploa
 // ServerTraffic renders the traffic page for one node: headline totals, live
 // rate, history and the per-inbound breakdown. titleExtra (the host selector)
 // sits in the page header next to the range control.
-export default function ServerTraffic({ serverId, titleExtra }: { serverId: number; titleExtra?: React.ReactNode }) {
+export default function ServerTraffic({ serverId }: { serverId: number }) {
   const screens = Grid.useBreakpoint()
   const compact = !screens.md
   const [data, setData] = useState<TrafficSeries | null>(null)
@@ -408,26 +408,22 @@ export default function ServerTraffic({ serverId, titleExtra }: { serverId: numb
 
   return (
     <div className="tr-page">
-      <PageHeader
-        title="流量"
-        actions={
-          <div className="tr-actions">
-            {titleExtra}
-            {compact ? (
-              <Select aria-label="历史统计范围" style={{ width: 138 }} options={RANGE_OPTIONS} value={range} onChange={setRange} />
-            ) : (
-              <Segmented<TrafficRange> className="tr-range" aria-label="历史统计范围" options={RANGE_OPTIONS} value={range} onChange={setRange} />
-            )}
-            <Button
-              icon={<RotateCw />}
-              loading={loading}
-              onClick={() => void load()}
-              title="刷新"
-              aria-label="刷新"
-            />
-          </div>
-        }
-      />
+      <div className="tr-tab-toolbar">
+        <div className="tr-actions">
+          {compact ? (
+            <Select aria-label="历史统计范围" style={{ width: 138 }} options={RANGE_OPTIONS} value={range} onChange={setRange} />
+          ) : (
+            <Segmented<TrafficRange> className="tr-range" aria-label="历史统计范围" options={RANGE_OPTIONS} value={range} onChange={setRange} />
+          )}
+          <Button
+            icon={<RotateCw />}
+            loading={loading}
+            onClick={() => void load()}
+            title="刷新"
+            aria-label="刷新"
+          />
+        </div>
+      </div>
 
       <Stats
         items={[

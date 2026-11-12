@@ -4,6 +4,7 @@ import { useAuth } from './store'
 import { DialogHost } from './ui/dialogs'
 import { ToastHost } from './ui/feedback'
 import { RouteErrorBoundary } from './components/RouteErrorBoundary'
+import { parseServerId } from './serverNavigation'
 
 // Each screen is loaded only when its route is visited. This keeps the login
 // and user pages from downloading the much larger admin forms up front.
@@ -12,12 +13,18 @@ const Login = lazy(() => import('./features/auth/Login'))
 const Servers = lazy(() => import('./features/admin/servers/Servers'))
 const ServerDetail = lazy(() => import('./features/admin/servers/ServerDetail'))
 const ExternalNodes = lazy(() => import('./features/admin/nodes/ExternalNodes'))
-const Traffic = lazy(() => import('./features/admin/traffic/Traffic'))
-const Logs = lazy(() => import('./features/admin/logs/Logs'))
+const RuleSetsPage = lazy(() => import('./features/admin/rules/RuleSetsPage'))
 const Users = lazy(() => import('./features/admin/users/UsersPage'))
 const UserDetail = lazy(() => import('./features/admin/users/UserDetail'))
 const Settings = lazy(() => import('./features/admin/settings/Settings'))
 const Dashboard = lazy(() => import('./features/user/Dashboard'))
+
+/** Old top-level traffic/log links now open the matching tab on one server. */
+function LegacyServerTab({ tab }: { tab: 'traffic' | 'logs' }) {
+  const location = useLocation()
+  const serverId = parseServerId(new URLSearchParams(location.search).get('server'))
+  return <Navigate to={serverId ? `/admin/servers/${serverId}/${tab}` : '/admin/servers'} replace />
+}
 
 function Protected({ children }: { children: JSX.Element }) {
   const token = useAuth((s) => s.token)
@@ -88,11 +95,12 @@ export default function App() {
           <Route path="/admin/overview" element={<Navigate to="/admin/servers" replace />} />
           <Route path="/admin/servers" element={<AdminGuard><Servers /></AdminGuard>} />
           <Route path="/admin/servers/:id/:section?" element={<AdminGuard><ServerDetail /></AdminGuard>} />
-          <Route path="/admin/traffic" element={<AdminGuard><Traffic /></AdminGuard>} />
+          <Route path="/admin/traffic" element={<AdminGuard><LegacyServerTab tab="traffic" /></AdminGuard>} />
+          <Route path="/admin/logs" element={<AdminGuard><LegacyServerTab tab="logs" /></AdminGuard>} />
           <Route path="/admin/users" element={<AdminGuard><Users /></AdminGuard>} />
           <Route path="/admin/users/:id" element={<AdminGuard><UserDetail /></AdminGuard>} />
-          <Route path="/admin/logs" element={<AdminGuard><Logs /></AdminGuard>} />
           <Route path="/admin/external-nodes" element={<AdminGuard><ExternalNodes /></AdminGuard>} />
+          <Route path="/admin/rules" element={<AdminGuard><RuleSetsPage /></AdminGuard>} />
           <Route path="/admin/settings" element={<AdminGuard><Settings /></AdminGuard>} />
         </Route>
         <Route path="*" element={<Navigate to="/" replace />} />

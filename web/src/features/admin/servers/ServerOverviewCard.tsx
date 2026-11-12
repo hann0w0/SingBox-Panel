@@ -1,16 +1,14 @@
 import { Button, Dropdown } from '../../../ui'
-import { ChevronDown, RotateCw } from 'lucide-react'
+import { ChevronDown, Download, FileJson, RotateCw } from 'lucide-react'
 import type { Server } from '../../../types'
-import { PageHeader, Status } from '../../../ui/Page'
 
-/** Server detail heading: name, one meta line and the server-level actions. */
+/** Compact server actions; identity lives in the breadcrumb and tabs. */
 export function ServerOverviewCard({
-  server, publicURL, busy, refreshing,
+  server, busy, refreshing,
   onRefresh, onInstallSingbox, onUninstallSingbox, onInstallAgent, onUninstallAgent,
   onImport, onEditConfig, onRestart, onExport,
 }: {
   server: Server
-  publicURL: string
   busy: string
   refreshing: boolean
   onRefresh: () => void
@@ -23,24 +21,11 @@ export function ServerOverviewCard({
   onRestart: () => void
   onExport: () => void
 }) {
-  const address = server.address || server.public_ip
-  return <PageHeader
-    title={server.name}
-    meta={<>
-      <Status tone={server.online ? 'ok' : 'off'}>{server.online ? '在线' : '离线'}</Status>
-      {address && <span className="mono" title={server.agent_url || publicURL || undefined}>{address}{server.public_ip && server.public_ip !== server.address ? ` · ${server.public_ip}` : ''}</span>}
-      <span>
-        {server.singbox_installed ? `sing-box ${server.singbox_version || ''}` : '未安装 sing-box'}
-        {server.singbox_has_update && <span className="sd-up" title={`可升级至 ${server.singbox_latest_version || ''}`}> ↑</span>}
-      </span>
-      <span>Agent {server.agent_version || '—'}{server.agent_has_update && <span className="sd-up"> ↑</span>}</span>
-      {server.os && <span>{server.os}</span>}
-      {server.remark?.trim() && <span className="sd-remark">{server.remark}</span>}
-    </>}
-    actions={<>
+  return <header className="sd-overview">
+    <div className="sd-overview-actions">
       <Button icon={<RotateCw />} loading={refreshing} onClick={onRefresh} aria-label="刷新状态" title="刷新状态" />
-      <Button onClick={onExport}>导出节点</Button>
-      <Button onClick={onEditConfig}>配置文件</Button>
+      <Button icon={<Download />} aria-label="导出节点" title="导出节点" onClick={onExport} />
+      <Button icon={<FileJson />} aria-label="配置文件" title="配置文件" onClick={onEditConfig} />
       <Dropdown placement="bottomRight" menu={{ items: [
         { key: 'restart', label: '重启 sing-box', disabled: !server.online || !!busy, onClick: onRestart },
         { key: 'import', label: '识别现有配置', disabled: !!busy, onClick: onImport },
@@ -53,6 +38,6 @@ export function ServerOverviewCard({
       ] }}>
         <Button loading={!!busy}>维护 <ChevronDown style={{ fontSize: 10 }} /></Button>
       </Dropdown>
-    </>}
-  />
+    </div>
+  </header>
 }

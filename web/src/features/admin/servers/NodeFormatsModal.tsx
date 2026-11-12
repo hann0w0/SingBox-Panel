@@ -48,9 +48,7 @@ function NodeExportSession({ serverId }: { serverId: number }) {
         { value: 0, label: '选择用户以导出多用户节点' },
         ...users.map((user) => ({ value: user.id, label: user.email })),
       ]} />
-      <p className="muted">{users.length
-        ? '单凭证节点始终显示；多用户节点使用所选用户的实际凭证，仅包含该用户获授权的入站。'
-        : '暂无可用的授权用户，请先在用户页分配此服务器的多用户入站。'}</p>
+      {!users.length && <p className="muted">暂无可用的授权用户，请先在用户页分配此服务器的多用户入站。</p>}
     </div>}
     <RequestState loading={loading} error={error} hasData={!!current} onRetry={() => setAttempt((value) => value + 1)}>
       {current && <NodeFormatsModalContent key={userId} data={current} />}

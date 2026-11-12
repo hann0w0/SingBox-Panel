@@ -132,6 +132,4 @@ a { color: inherit; }
 }
 html[data-standalone='true'] .app-header { padding-top: env(safe-area-inset-top); }
 
-.ui-dialog-heading { display: flex; flex-direction: column; gap: 2px; }
-.ui-dialog-heading small { color: var(--console-faint); font-size: 12px; font-weight: 400; line-height: 18px; letter-spacing: 0; }
 :root .ui-modal .ui-select-single .ui-select-selector { align-items: center; }

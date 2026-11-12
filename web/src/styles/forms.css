@@ -47,7 +47,6 @@
 .fm-preview .fm-group-title { margin-bottom: 10px; }
 .fm-export-user { margin-bottom: 16px; padding-bottom: 16px; border-bottom: 1px solid var(--console-border); }
 .fm-export-user .ui-select { width: 100%; max-width: 320px; }
-.fm-export-user p { margin: 8px 0 0; font-size: 12px; }
 .fm-preview .ui-table-wrapper { margin-bottom: 14px; }
 .fm-preview-final { display: flex; align-items: center; gap: 10px; padding: 14px 0 4px; border-top: 1px solid var(--console-border); color: var(--console-muted); font-size: 13px; }
 .fm-preview-skipped { margin-top: 12px; color: var(--console-warning); font-size: 12.5px; }

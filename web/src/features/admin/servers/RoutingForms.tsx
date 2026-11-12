@@ -180,7 +180,7 @@ export function OutboundForm({
   return (
     <Modal
       className="fm-modal"
-      title={<div className="ui-dialog-heading"><span>{outbound ? '编辑出站' : '新增出站'}</span><small>连接目标与转发方式</small></div>}
+      title={outbound ? '编辑出站' : '新增出站'}
       open={open}
       onOk={submit}
       onCancel={() => { if (!submitting) onClose() }}

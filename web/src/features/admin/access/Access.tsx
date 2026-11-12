@@ -813,7 +813,6 @@ export function UserAccessEditor({ userId, onStateChange }: {
             </Button>
           ) : null}
         />
-        <p className="um-access-note">{view === 'order' ? '拖拽排序，点铅笔改名；仅对当前用户生效。' : '勾选要分配的节点，也可整组选择。停用的节点不会出现在订阅中。'}</p>
         {loadedServerWide ? (
           <p className="um-access-note">
             整机授权：{loadedServerIDs.map((id) => servers.find((server) => server.id === id)?.name || `#${id}`).join('、')}

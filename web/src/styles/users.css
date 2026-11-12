@@ -77,7 +77,6 @@
 /* ---------- Assign modal ---------- */
 .um-access-assign-modal .ui-modal-body > .request-state-loading { min-height: min(360px, calc(50 * var(--dvh))); }
 .um-access-assign-modal .ui-modal-body { padding-top: 8px; }
-.um-access-note { margin: 0 0 12px; color: var(--console-muted); font-size: 12.5px; }
 .um-access-modal-body { display: flex; flex-direction: column; border: 1px solid var(--console-border); border-radius: var(--app-radius); overflow: hidden; }
 .um-access-modal-group { flex: none; }
 .um-access-modal-group + .um-access-modal-group { border-top: 1px solid var(--console-border); }

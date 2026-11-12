@@ -345,7 +345,11 @@ func referencedRuleSetIDs(db *gorm.DB, raw json.RawMessage) ([]uint, error) {
 	return ids, nil
 }
 
-func attachRuleSetsToServer(db *gorm.DB, serverID uint, ids []uint) error {
+func attachRuleSetsToServer(db *gorm.DB, serverID uint, raw json.RawMessage) error {
+	ids, err := referencedRuleSetIDs(db, raw)
+	if err != nil {
+		return err
+	}
 	for _, ruleSetID := range ids {
 		assignment := model.ServerRuleSet{ServerID: serverID, RuleSetID: ruleSetID}
 		if err := db.Clauses(clause.OnConflict{DoNothing: true}).Create(&assignment).Error; err != nil {
@@ -353,6 +357,54 @@ func attachRuleSetsToServer(db *gorm.DB, serverID uint, ids []uint) error {
 		}
 	}
 	return nil
+}
+
+// syncServerRuleSets makes the server's rule-set assignments exactly match the
+// rule sets referenced by its saved route rules. Assignments are an implicit
+// consequence of rule references: when the last referencing rule is deleted or
+// changed, the now-unused definition must leave the server config as well.
+func syncServerRuleSets(db *gorm.DB, serverID uint) error {
+	referenced, err := referencedRuleSetIDsForServer(db, serverID)
+	if err != nil {
+		return err
+	}
+	if len(referenced) == 0 {
+		return db.Where("server_id = ?", serverID).Delete(&model.ServerRuleSet{}).Error
+	}
+	return db.Where("server_id = ? AND rule_set_id NOT IN ?", serverID, referenced).
+		Delete(&model.ServerRuleSet{}).Error
+}
+
+// referencedRuleSetIDsForServer resolves tags from every saved rule on one
+// server. A tag that has no definition yet is ignored (rule validation reports
+// it separately); the caller only needs IDs of real shared definitions.
+func referencedRuleSetIDsForServer(db *gorm.DB, serverID uint) ([]uint, error) {
+	var rows []model.RouteRule
+	if err := db.Where("server_id = ?", serverID).Find(&rows).Error; err != nil {
+		return nil, err
+	}
+	tags := make(map[string]struct{})
+	for _, row := range rows {
+		var rule singbox.RuleInput
+		if len(row.Match) == 0 || json.Unmarshal(row.Match, &rule) != nil {
+			continue
+		}
+		for _, tag := range rule.RuleSet {
+			tags[tag] = struct{}{}
+		}
+	}
+	if len(tags) == 0 {
+		return nil, nil
+	}
+	list := make([]string, 0, len(tags))
+	for tag := range tags {
+		list = append(list, tag)
+	}
+	var ids []uint
+	if err := db.Model(&model.RuleSet{}).Where("tag IN ?", list).Order("id").Pluck("id", &ids).Error; err != nil {
+		return nil, err
+	}
+	return ids, nil
 }
 
 // assignedRuleSetTags lists only shared rule sets assigned to this server, so
@@ -438,24 +490,6 @@ func (a *App) inboundReferenced(db *gorm.DB, serverID uint, tag string) (bool, e
 		var rule singbox.RuleInput
 		if json.Unmarshal(row.Match, &rule) == nil {
 			for _, value := range rule.Inbound {
-				if value == tag {
-					return true, nil
-				}
-			}
-		}
-	}
-	return false, nil
-}
-
-func (a *App) ruleSetReferenced(db *gorm.DB, serverID uint, tag string) (bool, error) {
-	var rows []model.RouteRule
-	if err := db.Where("server_id = ?", serverID).Find(&rows).Error; err != nil {
-		return false, err
-	}
-	for _, row := range rows {
-		var rule singbox.RuleInput
-		if json.Unmarshal(row.Match, &rule) == nil {
-			for _, value := range rule.RuleSet {
 				if value == tag {
 					return true, nil
 				}

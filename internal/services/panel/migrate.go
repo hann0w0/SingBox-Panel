@@ -143,3 +143,20 @@ func migrateSharedRuleSets(tx *gorm.DB) error {
 	}
 	return nil
 }
+
+// pruneUnreferencedRuleSetAssignments repairs data written while assignments
+// were treated as independent editor state. Rule sets are included in a node's
+// config only while a saved route rule names them, so removing leftover rows
+// makes the database invariant true immediately after upgrade.
+func pruneUnreferencedRuleSetAssignments(tx *gorm.DB) error {
+	var serverIDs []uint
+	if err := tx.Model(&model.Server{}).Order("id").Pluck("id", &serverIDs).Error; err != nil {
+		return err
+	}
+	for _, serverID := range serverIDs {
+		if err := syncServerRuleSets(tx, serverID); err != nil {
+			return fmt.Errorf("prune rule-set assignments for server %d: %w", serverID, err)
+		}
+	}
+	return nil
+}

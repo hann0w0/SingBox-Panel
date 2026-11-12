@@ -259,11 +259,7 @@ export interface RuleSetBody {
   path?: string
   update_interval?: string
 }
-export const listRuleSets = (serverId: number, signal?: AbortSignal) =>
-  http.get<{ rulesets: RuleSet[] }>(`/api/admin/servers/${serverId}/rulesets`, { signal }).then((r) => r.data.rulesets)
 export const listSharedRuleSets = (signal?: AbortSignal) =>
-  http.get<{ rulesets: RuleSet[] }>('/api/admin/rulesets', { signal }).then((r) => r.data.rulesets)
-export const listRuleSetOptions = (signal?: AbortSignal) =>
   http.get<{ rulesets: RuleSet[] }>('/api/admin/rulesets', { signal }).then((r) => r.data.rulesets)
 export const createSharedRuleSet = (body: RuleSetBody) =>
   http.post<{ ruleset: RuleSet }>('/api/admin/rulesets', body).then((r) => r.data)
@@ -271,15 +267,6 @@ export const updateSharedRuleSet = (id: number, body: RuleSetBody) =>
   http.put<{ ruleset: RuleSet }>(`/api/admin/rulesets/${id}`, body).then((r) => r.data)
 export const deleteSharedRuleSet = (id: number) =>
   http.delete<{ ok: boolean }>(`/api/admin/rulesets/${id}`).then((r) => r.data)
-export const assignRuleSet = (serverId: number, id: number, downloadDetour = '') =>
-  http.post<ConfigApplyResult>(`/api/admin/servers/${serverId}/rulesets/${id}/assign`, { download_detour: downloadDetour }).then((r) => r.data)
-export const unassignRuleSet = (serverId: number, id: number) =>
-  http.delete<ConfigApplyResult>(`/api/admin/servers/${serverId}/rulesets/${id}/assign`).then((r) => r.data)
-export const attachRuleSet = (serverId: number, id: number) =>
-  http.put<{ ok: boolean }>(`/api/admin/servers/${serverId}/rulesets/${id}`, {}).then((r) => r.data)
-export const setRuleSetAssignments = (id: number, serverIds: number[]) =>
-  http.put<{ ok: boolean }>(`/api/admin/rulesets/${id}/servers`, { server_ids: serverIds }).then((r) => r.data)
-
 // ---- admin: import an existing config into the panel ----
 export interface ImportSummary {
   inbounds: { tag: string; type: string; listen_port: number; single_user: boolean; users: number }[] | null

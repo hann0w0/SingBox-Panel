@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"sort"
 	"strings"
 	"time"
 
@@ -370,19 +371,6 @@ func (a *App) createRule(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "目标出站必填"})
 		return
 	}
-	ruleSetIDs, err := referencedRuleSetIDs(a.db, req.Match)
-	if err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
-		return
-	}
-	if err := attachRuleSetsToServer(a.db, id, ruleSetIDs); err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
-		return
-	}
-	if err := a.validateRule(a.db, id, req.Match, strings.TrimSpace(req.Outbound)); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
-		return
-	}
 	enabled := true
 	if req.Enabled != nil {
 		enabled = *req.Enabled
@@ -412,7 +400,32 @@ func (a *App) createRule(c *gin.Context) {
 	if req.Remark != nil {
 		r.Remark = *req.Remark
 	}
-	if err := a.db.Create(r).Error; err != nil {
+	tx := a.db.Begin()
+	if tx.Error != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": tx.Error.Error()})
+		return
+	}
+	if err := attachRuleSetsToServer(tx, id, req.Match); err != nil {
+		tx.Rollback()
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+	if err := a.validateRule(tx, id, req.Match, strings.TrimSpace(req.Outbound)); err != nil {
+		tx.Rollback()
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+	if err := tx.Create(r).Error; err != nil {
+		tx.Rollback()
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+	if err := syncServerRuleSets(tx, id); err != nil {
+		tx.Rollback()
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+	if err := tx.Commit().Error; err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
@@ -450,19 +463,6 @@ func (a *App) updateRule(c *gin.Context) {
 	if strings.TrimSpace(req.Outbound) != "" {
 		nextOutbound = strings.TrimSpace(req.Outbound)
 	}
-	ruleSetIDs, err := referencedRuleSetIDs(a.db, nextMatch)
-	if err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
-		return
-	}
-	if err := attachRuleSetsToServer(a.db, sid, ruleSetIDs); err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
-		return
-	}
-	if err := a.validateRule(a.db, sid, nextMatch, nextOutbound); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
-		return
-	}
 	if req.Sort != nil {
 		r.Sort = *req.Sort
 	}
@@ -474,7 +474,32 @@ func (a *App) updateRule(c *gin.Context) {
 	if req.Enabled != nil {
 		r.Enabled = *req.Enabled
 	}
-	if err := a.db.Save(&r).Error; err != nil {
+	tx := a.db.Begin()
+	if tx.Error != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": tx.Error.Error()})
+		return
+	}
+	if err := attachRuleSetsToServer(tx, sid, nextMatch); err != nil {
+		tx.Rollback()
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+	if err := a.validateRule(tx, sid, nextMatch, nextOutbound); err != nil {
+		tx.Rollback()
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+	if err := tx.Save(&r).Error; err != nil {
+		tx.Rollback()
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+	if err := syncServerRuleSets(tx, sid); err != nil {
+		tx.Rollback()
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+	if err := tx.Commit().Error; err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
@@ -495,13 +520,21 @@ func (a *App) deleteRule(c *gin.Context) {
 	if !a.requireManagedMode(c, sid) {
 		return
 	}
-	res := a.db.Where("id = ? AND server_id = ?", rid, sid).Delete(&model.RouteRule{})
-	if res.Error != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": res.Error.Error()})
-		return
-	}
-	if res.RowsAffected == 0 {
-		c.JSON(http.StatusNotFound, gin.H{"error": "rule not found"})
+	if err := a.db.Transaction(func(tx *gorm.DB) error {
+		res := tx.Where("id = ? AND server_id = ?", rid, sid).Delete(&model.RouteRule{})
+		if res.Error != nil {
+			return res.Error
+		}
+		if res.RowsAffected == 0 {
+			return gorm.ErrRecordNotFound
+		}
+		return syncServerRuleSets(tx, sid)
+	}); err != nil {
+		if err == gorm.ErrRecordNotFound {
+			c.JSON(http.StatusNotFound, gin.H{"error": "rule not found"})
+			return
+		}
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
 	a.applyConfigAndRespond(c, sid, gin.H{"ok": true})
@@ -579,20 +612,55 @@ func (a *App) listSharedRuleSets(c *gin.Context) {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
+	references, err := ruleSetServerReferences(a.db)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
 	type row struct {
 		model.RuleSet
 		ServerIDs []uint `json:"server_ids"`
 	}
 	out := make([]row, 0, len(rows))
 	for _, rs := range rows {
-		var ids []uint
-		if err := a.db.Model(&model.ServerRuleSet{}).Where("rule_set_id = ?", rs.ID).Order("server_id").Pluck("server_id", &ids).Error; err != nil {
-			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
-			return
-		}
-		out = append(out, row{RuleSet: rs, ServerIDs: ids})
+		out = append(out, row{RuleSet: rs, ServerIDs: references[rs.Tag]})
 	}
 	c.JSON(http.StatusOK, gin.H{"rulesets": out})
+}
+
+// ruleSetServerReferences derives which servers actually use each shared
+// rule-set from their saved route rules. Assignments are not an independent
+// editor state: a rule-set is shown on a server only while a rule references
+// it. This also keeps the list truthful for data written before automatic
+// assignment cleanup existed.
+func ruleSetServerReferences(db *gorm.DB) (map[string][]uint, error) {
+	var rows []model.RouteRule
+	if err := db.Select("server_id", "match").Find(&rows).Error; err != nil {
+		return nil, err
+	}
+	references := make(map[string]map[uint]struct{})
+	for _, row := range rows {
+		var rule singbox.RuleInput
+		if len(row.Match) == 0 || json.Unmarshal(row.Match, &rule) != nil {
+			continue
+		}
+		for _, tag := range rule.RuleSet {
+			if references[tag] == nil {
+				references[tag] = make(map[uint]struct{})
+			}
+			references[tag][row.ServerID] = struct{}{}
+		}
+	}
+	out := make(map[string][]uint, len(references))
+	for tag, ids := range references {
+		list := make([]uint, 0, len(ids))
+		for id := range ids {
+			list = append(list, id)
+		}
+		sort.Slice(list, func(i, j int) bool { return list[i] < list[j] })
+		out[tag] = list
+	}
+	return out, nil
 }
 
 type ruleSetReq struct {

@@ -1,9 +1,9 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { Button, Form, Input, Modal, Segmented, Select, Table, message } from '../../../ui'
+import { Button, Form, Input, Modal, Segmented, Table, message } from '../../../ui'
 import { Pencil, Plus, Trash2 } from 'lucide-react'
 import {
   createSharedRuleSet, deleteSharedRuleSet, errMsg, isCanceledRequest,
-  listServers, listSharedRuleSets, setRuleSetAssignments, updateSharedRuleSet,
+  listServers, listSharedRuleSets, updateSharedRuleSet,
 } from '../../../api'
 import type { RuleSetBody } from '../../../api'
 import type { RuleSet, Server } from '../../../types'
@@ -20,8 +20,6 @@ export default function RuleSetsPage() {
   const [error, setError] = useState<string | null>(null)
   const [editing, setEditing] = useState<RuleSet | null>(null)
   const [open, setOpen] = useState(false)
-  const [assigning, setAssigning] = useState<RuleSet | null>(null)
-  const [selectedServers, setSelectedServers] = useState<number[]>([])
   const [saving, setSaving] = useState(false)
   const [rsType, setRsType] = useState<'remote' | 'local'>('remote')
   const [form] = Form.useForm()
@@ -103,25 +101,6 @@ export default function RuleSetsPage() {
     },
   })
 
-  const openAssign = (rs: RuleSet) => {
-    setAssigning(rs)
-    setSelectedServers(rs.server_ids ?? [])
-  }
-
-  const saveAssignments = async () => {
-    if (!assigning) return
-    setSaving(true)
-    try {
-      await setRuleSetAssignments(assigning.id, selectedServers)
-      setAssigning(null)
-      load()
-    } catch (cause) {
-      message.error(errMsg(cause))
-    } finally {
-      setSaving(false)
-    }
-  }
-
   return (
     <div className="um-page">
       <PageHeader
@@ -148,9 +127,8 @@ export default function RuleSetsPage() {
               },
             },
             {
-              title: '', width: 168, align: 'right',
+              title: '', width: 128, align: 'right',
               render: (_: unknown, rs: RuleSet) => <span className="ui-row-actions">
-                <Button size="small" type="text" onClick={() => openAssign(rs)}>分配</Button>
                 <Button size="small" type="text" icon={<Pencil />} aria-label={`编辑规则集 ${rs.tag}`} onClick={() => openEdit(rs)} />
                 <Button size="small" type="text" icon={<Trash2 />} aria-label={`删除规则集 ${rs.tag}`} onClick={() => remove(rs)} />
               </span>,
@@ -188,24 +166,6 @@ export default function RuleSetsPage() {
         </Form>
       </Modal>
 
-      <Modal
-        title={assigning ? `分配 ${assigning.tag}` : '分配规则集'}
-        width={MODAL_SM}
-        open={!!assigning}
-        onOk={saveAssignments}
-        onCancel={() => setAssigning(null)}
-        confirmLoading={saving}
-        okText="保存"
-      >
-        <Select
-          mode="multiple"
-          aria-label="分配服务器"
-          placeholder="选择服务器"
-          value={selectedServers}
-          onChange={(value: number[]) => setSelectedServers(value)}
-          options={servers.map((server) => ({ value: server.id, label: server.name }))}
-        />
-      </Modal>
     </div>
   )
 }

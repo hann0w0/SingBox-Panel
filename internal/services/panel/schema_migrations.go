@@ -393,6 +393,11 @@ var applicationMigrations = []schemaMigration{
 		name:    "shared rule sets with per-server assignment",
 		up:      migrateSharedRuleSets,
 	},
+	{
+		version: 34,
+		name:    "prune unreferenced rule-set assignments",
+		up:      pruneUnreferencedRuleSetAssignments,
+	},
 }
 
 // migrationReplaySafe records whether an interrupted attempt of each migration
@@ -445,6 +450,7 @@ var migrationReplaySafe = map[uint]bool{
 	31: true,  // AutoMigrate of external subscription sync status
 	32: true,  // AutoMigrate adds nullable outbound source columns
 	33: true,  // AutoMigrate plus insert-only server assignments
+	34: true,  // only removes assignments no saved route rule references
 }
 
 // runSchemaMigrations applies every pending migration in order. If any

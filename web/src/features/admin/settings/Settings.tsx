@@ -433,7 +433,6 @@ export default function Settings() {
     poll()
   }
 
-  const refreshAll = () => { load(true); void loadCloud() }
   const cloudError = cloud?.connected ? (cloud.last_error || cloud.cloud_error) : undefined
   const authLink = authPending ? (authPending.verification_uri_complete || authPending.verification_uri) : ''
 
@@ -639,10 +638,7 @@ export default function Settings() {
 
   return (
     <div className="settings-page">
-      <PageHeader
-        title="设置"
-        actions={<Button icon={<RotateCw />} loading={loading} onClick={refreshAll} disabled={updating}>刷新</Button>}
-      />
+      <PageHeader title="设置" />
       <Pills label="设置分类" items={VIEWS} active={view} onChange={(key) => setView(key as SettingsView)} />
       <div className="settings-view">
         {view === 'version' ? versionView : view === 'backup' ? (

@@ -1,8 +1,8 @@
 import { useEffect, useRef, useState } from 'react'
 import { Link, useNavigate } from 'react-router-dom'
-import { Button, Input, Table } from '../../../ui'
+import { Button, Table } from '../../../ui'
 import type { ColumnsType } from '../../../ui'
-import { ChevronRight, Plus, Search } from 'lucide-react'
+import { ChevronRight, Plus } from 'lucide-react'
 import { errMsg, listCustomNodes, listServers, listUsers } from '../../../api'
 import type { CustomNode } from '../../../api'
 import type { Server, User } from '../../../types'
@@ -22,7 +22,6 @@ export default function Users() {
   const [, setNodesLoading] = useState(false)
   const [, setNodesError] = useState<string | null>(null)
   const [open, setOpen] = useState(false)
-  const [search, setSearch] = useState('')
   const userLoadRef = useRef<{ generation: number; controller: AbortController | null }>({ generation: 0, controller: null })
   const nodeLoadRef = useRef<{ generation: number; controller: AbortController | null }>({ generation: 0, controller: null })
   const serverNames = (u: User) => (u.server_ids ?? []).map((id) => servers.find((s) => s.id === id)?.name ?? `#${id}`)
@@ -120,9 +119,6 @@ export default function Users() {
       : { at: u.last_login_at!, what: '登录面板', ip: u.last_login_ip }
   }
 
-  const query = search.trim().toLocaleLowerCase()
-  const visibleUsers = users.filter((u) => !query || u.email.toLocaleLowerCase().includes(query))
-
   const columns: ColumnsType<User> = [
     {
       title: '用户',
@@ -195,18 +191,7 @@ export default function Users() {
     <div className="um-page">
       <PageToolbar
         meta={users.length ? <span>{users.length} 个用户</span> : undefined}
-        actions={<>
-          <Input
-            allowClear
-            className="um-search"
-            prefix={<Search />}
-            placeholder="搜索用户"
-            aria-label="搜索用户"
-            value={search}
-            onChange={(event) => setSearch(event.target.value)}
-          />
-          {addUserButton}
-        </>}
+        actions={addUserButton}
       />
       <RequestState loading={loading} error={loadError} hasData={users.length > 0} empty={!loading && !loadError && users.length === 0} emptyDescription="暂无用户" onRetry={load}>
         <Table<User>
@@ -217,10 +202,9 @@ export default function Users() {
             if (event.defaultPrevented || event.ctrlKey || event.metaKey || event.shiftKey || event.altKey || window.getSelection()?.toString()) return
             navigate(`/admin/users/${user.id}`)
           } })}
-          dataSource={visibleUsers}
+          dataSource={users}
           columns={columns}
           scroll={{ x: 'max-content' }}
-          locale={{ emptyText: '没有匹配的用户' }}
         />
       </RequestState>
 

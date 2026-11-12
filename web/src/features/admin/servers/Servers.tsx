@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState, type DragEvent, type PointerEvent as ReactPointerEvent } from 'react'
 import { Button, Dropdown, Form, Grid, Input, Modal, Segmented, Select, Typography, message } from '../../../ui'
-import { ChevronDown, Pencil, GripVertical, Ellipsis, Plus, Search } from 'lucide-react'
+import { ChevronDown, Pencil, GripVertical, Ellipsis, Plus } from 'lucide-react'
 import { useNavigate } from 'react-router-dom'
 import { createServer, deleteServer, errMsg, getOverview, getServersMeta, installSingbox, isCanceledRequest, updateAllAgents, updateServer, updateServerOrder } from '../../../api'
 import type { Server } from '../../../types'
@@ -32,7 +32,6 @@ export default function Servers() {
   const [sortAnnouncement, setSortAnnouncement] = useState('')
   const [usersTotal, setUsersTotal] = useState<number | null>(null)
   const [filter, setFilter] = useState('all')
-  const [query, setQuery] = useState('')
   const pointerDragRef = useRef<{ id: number; pointerId: number } | null>(null)
   const pointerDropRef = useRef<{ id: number; after: boolean } | null>(null)
   const loadRef = useRef<{ generation: number; controller: AbortController | null }>({ generation: 0, controller: null })
@@ -342,26 +341,15 @@ export default function Servers() {
   const online = servers.filter((s) => s.online)
   const totalDown = online.reduce((sum, s) => sum + (s.traffic_available ? s.traffic_download_rate ?? 0 : 0), 0)
   const totalUp = online.reduce((sum, s) => sum + (s.traffic_available ? s.traffic_upload_rate ?? 0 : 0), 0)
-  const q = query.trim().toLowerCase()
-  const shown = servers.filter((s) => (filter === 'all' || (filter === 'online') === s.online)
-    && (!q || `${s.name} ${s.address} ${s.public_ip || ''} ${s.remark || ''}`.toLowerCase().includes(q)))
+  const shown = servers.filter((s) => filter === 'all' || (filter === 'online') === s.online)
   const open_ = (s: Server) => nav(`/admin/servers/${s.id}`)
   // Reordering a filtered view would move servers relative to hidden rows.
-  const canSort = filter === 'all' && !q
+  const canSort = filter === 'all'
 
   return (
     <div className="srv-page">
       <PageHeader
         title="服务器"
-        actions={<>
-          <Dropdown placement="bottomRight" menu={{ items: [
-            { key: 'singbox', label: '更新 sing-box', disabled: updatingSingbox, onClick: handleUpdateSingbox },
-            { key: 'agent', label: '同步 Agent', disabled: updatingAll, onClick: handleUpdateAllAgents },
-          ] }}>
-            <Button loading={updatingSingbox || updatingAll}>批量维护 <ChevronDown style={{ fontSize: 10 }} /></Button>
-          </Dropdown>
-          <Button type="primary" icon={<Plus />} onClick={openCreate}>新增服务器</Button>
-        </>}
       />
       <Stats items={[
         { label: '在线', value: <>{online.length}<span className="srv-stat-total"> / {servers.length}</span></> },
@@ -378,11 +366,18 @@ export default function Servers() {
           { key: 'online', label: '在线', count: online.length },
           { key: 'offline', label: '离线', count: servers.length - online.length },
         ]}
-        actions={<Input allowClear className="srv-search" prefix={<Search />} placeholder="搜索" value={query} onChange={(e) => setQuery(e.target.value)} aria-label="搜索服务器" />}
+        actions={<>
+          <Dropdown placement="bottomRight" menu={{ items: [
+            { key: 'singbox', label: '更新 sing-box', disabled: updatingSingbox, onClick: handleUpdateSingbox },
+            { key: 'agent', label: '同步 Agent', disabled: updatingAll, onClick: handleUpdateAllAgents },
+          ] }}>
+            <Button loading={updatingSingbox || updatingAll}>批量维护 <ChevronDown style={{ fontSize: 10 }} /></Button>
+          </Dropdown>
+          <Button type="primary" icon={<Plus />} onClick={openCreate}>新增服务器</Button>
+        </>}
       />
       <RequestState loading={loading} error={loadError} hasData={servers.length > 0} empty={!loading && !loadError && servers.length === 0} emptyDescription="暂无服务器" onRetry={() => load()}>
       <div className="srv-list" role="list">
-        {shown.length === 0 && <div className="ui-empty">没有匹配的服务器</div>}
         {shown.map((s) => {
           const memPct = s.mem_total ? Math.round((s.mem_used / s.mem_total) * 100) : null
           const position = servers.findIndex((item) => item.id === s.id)

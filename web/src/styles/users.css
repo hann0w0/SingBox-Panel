@@ -2,7 +2,6 @@
 
 /* ---------- Page ---------- */
 .um-page { min-width: 0; }
-.um-search { width: 220px; }
 .um-strong { font-weight: 500; color: var(--console-ink); }
 .um-user { display: inline-flex; align-items: center; gap: 8px; min-width: 0; }
 .um-user-name { font-weight: 500; color: var(--console-ink); overflow-wrap: anywhere; }
@@ -140,7 +139,7 @@
 @media (max-width: 767px) {
   .um-page .ui-pills-row { align-items: stretch; }
   .um-page .ui-pills-actions:has(.ui-input-affix-wrapper, .ui-select) { flex: 1 1 100%; }
-  .um-search, .um-filter-search, .um-filter-group { flex: 1 1 0; width: auto; min-width: 0; }
+  .um-filter-search, .um-filter-group { flex: 1 1 0; width: auto; min-width: 0; }
   .um-page .ui-pills-actions > .ui-btn { flex: none; }
   .um-mini-stats, .um-mini-stats.is-3 { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .um-mini-stats > div:nth-child(odd) { border-left: 0; }

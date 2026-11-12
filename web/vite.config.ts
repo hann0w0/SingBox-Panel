@@ -11,7 +11,7 @@ export default defineConfig({
   server: {
     port: 5173,
     proxy: {
-      '/api': 'http://127.0.0.1:32334',
+      '/api': process.env.SINGBOX_PANEL_DEV_API ?? 'http://127.0.0.1:32334',
     },
   },
   build: {

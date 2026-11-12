@@ -27,8 +27,8 @@ const (
 )
 
 // backupMetadata is deliberately machine-readable. MANIFEST.txt remains a
-// human-readable companion, while this record lets restore reject a newer
-// incompatible backup before touching the live database.
+// human-readable companion, while this record lets restore verify the archive's
+// integrity and the credentials it carries before touching the live database.
 type backupMetadata struct {
 	FormatVersion     int    `json:"format_version"`
 	PanelVersion      string `json:"panel_version"`

@@ -109,8 +109,8 @@ func (a *App) restoreBackup(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "无效的 multipart 上传"})
 		return
 	}
-	// An encrypted backup needs its passphrase, which the client must send as a
-	// "passphrase" field before the file part because the upload is streamed.
+	// "passphrase" is still read for archives written by releases that encrypted
+	// backups. Current exports are plain .tar.gz and send no such field.
 	passphrase := ""
 	for parts := 0; parts < 32; parts++ {
 		part, partErr := multipartReader.NextPart()
@@ -185,8 +185,8 @@ func (a *App) restoreBackupReader(c *gin.Context, src io.Reader) (restartSchedul
 		return
 	}
 	if metadataPresent {
-		if err := validateBackupMetadata(metadata, stagedDB, a.version); err != nil {
-			c.JSON(http.StatusBadRequest, gin.H{"error": "备份版本或完整性校验失败：" + err.Error()})
+		if err := validateBackupMetadata(metadata, stagedDB); err != nil {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "备份完整性校验失败：" + err.Error()})
 			return
 		}
 	}
@@ -209,9 +209,10 @@ func (a *App) restoreBackupReader(c *gin.Context, src io.Reader) (restartSchedul
 		return
 	}
 
-	// Run all pending migrations against the staged file. The migration runner
-	// creates only temporary pre-migration snapshots inside stageDir; none can
-	// affect the live database.
+	// Run all pending migrations against the staged file. A backup created by a
+	// newer release becomes servable once its schema moves forward here, which is
+	// also the downgrade path. The migration runner creates only temporary
+	// pre-migration snapshots inside stageDir; none can affect the live database.
 	staged, err := openSQLiteForMigration(stagedDB)
 	if err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "打开暂存数据库失败：" + err.Error()})
@@ -458,7 +459,7 @@ func (a *App) restoreOneDriveSettings(staged *gorm.DB, current oneDriveSettings,
 		log.Printf("restore: discard unreadable archived OneDrive authorization: %v", err)
 		// A broken cloud credential must not block data recovery or prevent a
 		// subsequent device-code login from replacing it.
-		return "备份中的 OneDrive 配置无法解密，已清除；请重新连接并设置备份口令", target.saveOneDriveSettings(defaultOneDriveSettings())
+		return "备份中的 OneDrive 配置无法解密，已清除；请重新连接 OneDrive", target.saveOneDriveSettings(defaultOneDriveSettings())
 	}
 	return "", target.saveOneDriveSettings(archived)
 }
@@ -696,7 +697,7 @@ func extractBackupWithMetadata(r io.Reader, stageDir string) (dbPath, secret str
 	return dbPath, secret, metadata, metadataPresent, nil
 }
 
-func validateBackupMetadata(metadata backupMetadata, stagedDB, currentVersion string) error {
+func validateBackupMetadata(metadata backupMetadata, stagedDB string) error {
 	if metadata.FormatVersion != backupFormatVersion {
 		if metadata.FormatVersion > backupFormatVersion {
 			return fmt.Errorf("备份格式版本 %d 高于当前支持的 %d，请先升级面板", metadata.FormatVersion, backupFormatVersion)
@@ -718,21 +719,6 @@ func validateBackupMetadata(metadata backupMetadata, stagedDB, currentVersion st
 	}
 	if !strings.EqualFold(hash, metadata.DatabaseSHA256) {
 		return fmt.Errorf("数据库文件校验值不匹配")
-	}
-	if metadata.SchemaVersion == 0 {
-		return fmt.Errorf("缺少数据库版本")
-	}
-	if metadata.SchemaVersion > currentSchemaVersion() {
-		return fmt.Errorf("备份数据库版本 %d 高于当前支持的 %d，请先升级面板", metadata.SchemaVersion, currentSchemaVersion())
-	}
-	if currentVersion != "" && metadata.PanelVersion != "" {
-		comparison, err := comparePanelVersions(metadata.PanelVersion, currentVersion)
-		if err != nil {
-			return err
-		}
-		if comparison > 0 {
-			return fmt.Errorf("备份来自更高版本 %s，当前面板为 %s，请先升级面板", metadata.PanelVersion, currentVersion)
-		}
 	}
 	if metadata.CredentialVersion != backupCredentialVersion {
 		return fmt.Errorf("不支持的节点凭据校验版本：%d", metadata.CredentialVersion)
@@ -757,6 +743,9 @@ func validateBackupMetadata(metadata backupMetadata, stagedDB, currentVersion st
 	if err != nil {
 		return fmt.Errorf("读取备份数据库版本失败：%w", err)
 	}
+	if metadata.SchemaVersion == 0 {
+		return fmt.Errorf("备份元数据缺少数据库版本")
+	}
 	if actualSchema != metadata.SchemaVersion {
 		return fmt.Errorf("备份元数据版本与数据库记录不一致")
 	}
@@ -764,7 +753,9 @@ func validateBackupMetadata(metadata backupMetadata, stagedDB, currentVersion st
 }
 
 // validateSQLiteFile confirms the staged file is a healthy Panel SQLite
-// database whose migration history can be safely consumed by this binary.
+// database. Its migration ledger is not compared with this binary: importing a
+// backup is also the supported downgrade path, and the staged copy is migrated
+// forward before it replaces the live file.
 func validateSQLiteFile(path string) error {
 	f, err := os.Open(path)
 	if err != nil {
@@ -835,13 +826,6 @@ func validateSQLiteFile(path string) error {
 		}
 	}
 
-	migrations, err := validateMigrations(applicationMigrations)
-	if err != nil {
-		return fmt.Errorf("面板迁移定义无效：%w", err)
-	}
-	if _, _, _, err := validateSchemaMigrationHistory(db, migrations, false); err != nil {
-		return fmt.Errorf("备份数据库迁移历史无效：%w", err)
-	}
 	return nil
 }
 

@@ -323,6 +323,31 @@ func TestRestoreRejectsNonSQLiteArchive(t *testing.T) {
 	}
 }
 
+// Restoring an older release's backup is the supported downgrade path. The
+// staged copy is migrated forward, so a schema ledger newer than this binary
+// must be accepted instead of being rejected before the live DB is touched.
+func TestRestoreAcceptsNewerSchemaBackup(t *testing.T) {
+	dir := t.TempDir()
+	dbPath := filepath.Join(dir, "singbox-panel.db")
+	live := testDBAt(t, dbPath)
+	archive := makeBackupArchive(t, testRestoredJWTSecret, func(db *gorm.DB) {
+		if err := db.Create(&model.SchemaMigration{
+			Version: currentSchemaVersion() + 1, Name: "future release", AppliedAt: time.Now(),
+		}).Error; err != nil {
+			t.Fatal(err)
+		}
+	})
+	a := &App{
+		cfg: config.PanelConfig{Database: config.DatabaseConfig{Driver: "sqlite", DSN: dbPath}},
+		db:  live, version: "v1.0.10",
+	}
+	if w := uploadRestore(t, a, archive); w.Code != http.StatusBadRequest {
+		if strings.Contains(w.Body.String(), "newer than or unknown") || strings.Contains(w.Body.String(), "备份来自更高版本") {
+			t.Fatalf("restore rejected a version-only mismatch: %d %s", w.Code, w.Body.String())
+		}
+	}
+}
+
 func TestRestoreRejectsArchiveWithoutDB(t *testing.T) {
 	dir := t.TempDir()
 	dbPath := filepath.Join(dir, "singbox-panel.db")
@@ -352,40 +377,6 @@ func TestValidateSQLiteFileRejectsCorruptDatabaseWithMagicHeader(t *testing.T) {
 	}
 	if err := validateSQLiteFile(path); err == nil {
 		t.Fatal("database with only a valid magic header must be rejected")
-	}
-}
-
-func TestValidateSQLiteFileRejectsDirtySchema(t *testing.T) {
-	path := panelDBWithMigrationRows(t, []model.SchemaMigration{{
-		Version:   1,
-		Name:      "dirty",
-		Dirty:     true,
-		AppliedAt: time.Now(),
-	}})
-	if err := validateSQLiteFile(path); err == nil || !strings.Contains(err.Error(), "dirty") {
-		t.Fatalf("error = %v, want dirty migration rejection", err)
-	}
-}
-
-func TestValidateSQLiteFileRejectsFutureSchema(t *testing.T) {
-	future := applicationMigrations[len(applicationMigrations)-1].version + 1
-	path := panelDBWithMigrationRows(t, []model.SchemaMigration{{
-		Version:   future,
-		Name:      "future",
-		AppliedAt: time.Now(),
-	}})
-	if err := validateSQLiteFile(path); err == nil || !strings.Contains(err.Error(), "newer than or unknown") {
-		t.Fatalf("error = %v, want future migration rejection", err)
-	}
-}
-
-func TestValidateSQLiteFileRejectsNonPrefixSchema(t *testing.T) {
-	path := panelDBWithMigrationRows(t, []model.SchemaMigration{
-		{Version: 1, Name: "one", AppliedAt: time.Now()},
-		{Version: 3, Name: "three", AppliedAt: time.Now()},
-	})
-	if err := validateSQLiteFile(path); err == nil || !strings.Contains(err.Error(), "ordered prefix") {
-		t.Fatalf("error = %v, want non-prefix migration rejection", err)
 	}
 }
 

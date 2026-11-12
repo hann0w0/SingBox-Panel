@@ -68,8 +68,10 @@ func TestRestoreOlderMainBuildBackup(t *testing.T) {
 	if err != nil || !present {
 		t.Fatalf("backup metadata missing: %v", err)
 	}
-	metadata.SchemaVersion = currentSchemaVersion() + 1
-	if err := validateBackupMetadata(metadata, staged, newApp.version); err == nil {
-		t.Fatal("edge compatibility bypassed the schema version guard")
+	// Version metadata is informational: a downgrade restores an older file and
+	// migrates it forward. A mismatched schema count still fails integrity.
+	metadata.SchemaVersion = 0
+	if err := validateBackupMetadata(metadata, staged); err == nil {
+		t.Fatal("missing database version bypassed the metadata check")
 	}
 }

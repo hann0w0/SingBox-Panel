@@ -50,6 +50,17 @@ afterEach(() => {
 })
 
 describe('user subscription dashboard', () => {
+  it('keeps the console tabs visible but disables forwarding views when the account lacks permission', async () => {
+    vi.mocked(getMe).mockResolvedValue({ user: { ...user, forwarding_enabled: false }, subscription_url: 'https://panel.example/sub/test' })
+    mount()
+    await screen.findByText('Tokyo')
+    const tabs = screen.getByRole('tablist', { name: '控制台视图' })
+    expect(within(tabs).getByRole('tab', { name: /^节点/ }).getAttribute('aria-selected')).toBe('true')
+    expect((within(tabs).getByRole('tab', { name: /^出站/ }) as HTMLButtonElement).disabled).toBe(true)
+    expect((within(tabs).getByRole('tab', { name: /^转发/ }) as HTMLButtonElement).disabled).toBe(true)
+    expect(screen.getByText('Tokyo')).toBeTruthy()
+  })
+
   it('shows the signed-in user usage and only their private outbounds', async () => {
     vi.mocked(getUserOutbounds).mockResolvedValue([
       { id: 1, tag: 'HK 家宽', type: 'vless', remark: '' },

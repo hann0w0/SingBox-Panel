@@ -126,13 +126,35 @@ func (o *Orchestrator) BuildServerConfig(srv *model.Server) ([]byte, error) {
 		})
 	}
 
-	// Outbounds (direct + landing proxies).
+	// Route rules are loaded before outbounds because a user-private exit only
+	// belongs in this server's config when one of its rules references it.
+	var ruleRows []model.RouteRule
+	if err := o.db.Where("server_id = ? AND enabled = ?", srv.ID, true).Order("sort").Find(&ruleRows).Error; err != nil {
+		return nil, fmt.Errorf("load route rules for server %d: %w", srv.ID, err)
+	}
+	privateTags, err := privateOutboundTagsForRules(o.db, ruleRows)
+	if err != nil {
+		return nil, fmt.Errorf("load private outbounds for server %d: %w", srv.ID, err)
+	}
+
+	// Outbounds: shared server rows plus the private exits actually referenced
+	// by this server. Private credentials stay global so one user exit can serve
+	// forwards from multiple entry servers without duplicating the secret.
 	var obRows []model.Outbound
-	if err := o.db.Where("server_id = ?", srv.ID).Order("sort").Find(&obRows).Error; err != nil {
+	query := o.db.Where("server_id = ? AND owner_user_id = 0", srv.ID)
+	if len(privateTags) > 0 {
+		query = o.db.Where("(server_id = ? AND owner_user_id = 0) OR (server_id = 0 AND owner_user_id <> 0 AND tag IN ?)", srv.ID, privateTags)
+	}
+	if err := query.Order("sort").Find(&obRows).Error; err != nil {
 		return nil, fmt.Errorf("load outbounds for server %d: %w", srv.ID, err)
 	}
 	obs := make([]singbox.OutboundInput, 0, len(obRows))
+	seenTags := make(map[string]bool, len(obRows))
 	for _, ob := range obRows {
+		if seenTags[ob.Tag] {
+			return nil, fmt.Errorf("outbound tag %q is defined by both a shared and a private outbound", ob.Tag)
+		}
+		seenTags[ob.Tag] = true
 		var os outboundStoredSettings
 		if len(ob.Settings) > 0 {
 			if err := json.Unmarshal(ob.Settings, &os); err != nil {
@@ -162,11 +184,6 @@ func (o *Orchestrator) BuildServerConfig(srv *model.Server) ([]byte, error) {
 		})
 	}
 
-	// Route rules.
-	var ruleRows []model.RouteRule
-	if err := o.db.Where("server_id = ? AND enabled = ?", srv.ID, true).Order("sort").Find(&ruleRows).Error; err != nil {
-		return nil, fmt.Errorf("load route rules for server %d: %w", srv.ID, err)
-	}
 	rules := make([]singbox.RuleInput, 0, len(ruleRows))
 	for _, r := range ruleRows {
 		var ri singbox.RuleInput
@@ -215,6 +232,31 @@ func (o *Orchestrator) BuildServerConfig(srv *model.Server) ([]byte, error) {
 		StatsSecret:     statsSecret(srv.AgentToken),
 		StatsAPI:        statsAPIAddress(srv, inbounds),
 	})
+}
+
+// privateOutboundTagsForRules returns private exit tags referenced by this
+// server's enabled rules. Private exits are stored once (server_id = 0), so
+// config assembly must include them on demand rather than own a row per server.
+func privateOutboundTagsForRules(db *gorm.DB, rules []model.RouteRule) ([]string, error) {
+	candidates := make([]string, 0, len(rules))
+	seen := make(map[string]bool, len(rules))
+	for _, rule := range rules {
+		if rule.Outbound == "" || seen[rule.Outbound] || builtinOutboundTags[rule.Outbound] {
+			continue
+		}
+		seen[rule.Outbound] = true
+		candidates = append(candidates, rule.Outbound)
+	}
+	if len(candidates) == 0 {
+		return nil, nil
+	}
+	var tags []string
+	if err := db.Model(&model.Outbound{}).
+		Where("server_id = 0 AND owner_user_id <> 0 AND tag IN ?", candidates).
+		Pluck("tag", &tags).Error; err != nil {
+		return nil, err
+	}
+	return tags, nil
 }
 
 // statsSecret derives the per-node secret protecting the loopback stats

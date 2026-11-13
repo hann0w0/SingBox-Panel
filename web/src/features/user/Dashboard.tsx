@@ -12,7 +12,6 @@ import { formatBytes } from '../../util'
 import { SubscriptionLinks } from './SubscriptionLinks'
 import { SubscriptionSyncStatus } from './SubscriptionSyncStatus'
 import { useAuth } from '../../store'
-import { CONTINENT_ORDER, continentOf, type Continent } from '../../continents'
 import regionData from '../../assets/regions.json'
 import { VirtualList } from '../../components/VirtualList'
 import { RequestState } from '../../components/RequestState'
@@ -42,8 +41,6 @@ export default function Dashboard() {
   const [traffic, setTraffic] = useState<UserTrafficSeries | null>(null)
   const [trafficRange, setTrafficRange] = useState<UserTrafficRange>('24h')
   const [trafficLoading, setTrafficLoading] = useState(true)
-  const [continentNodes, setContinentNodes] = useState<Partial<Record<Continent, UserNode[]>>>({})
-  const [seg, setSeg] = useState<Continent>('亚洲')
   const [selectedNode, setSelectedNode] = useState<UserNode | null>(null)
   const [importOpen, setImportOpen] = useState(false)
   const [importMode, setImportMode] = useState<'uri' | 'subscription'>('uri')
@@ -106,16 +103,6 @@ export default function Dashboard() {
     }
   }, [trafficRange])
 
-  useEffect(() => {
-    const byContinent: Partial<Record<Continent, UserNode[]>> = {}
-    for (const n of nodes) {
-      const c = continentOf(n.region)
-      if (!byContinent[c]) byContinent[c] = []
-      byContinent[c].push(n)
-    }
-    setContinentNodes(byContinent)
-  }, [nodes])
-
   if (!user) return <RequestState loading={loading} error={loadError} hasData={false} onRetry={load}><span /></RequestState>
 
   const doReset = () => Modal.confirm({
@@ -171,9 +158,6 @@ export default function Dashboard() {
     },
   })
 
-  const segOptions = CONTINENT_ORDER.map((c) => ({ value: c, count: continentNodes[c]?.length ?? 0 })).filter((o) => o.count > 0).map((o) => ({ key: o.value, label: o.value, count: o.count }))
-  const activeSeg = segOptions.some((o) => o.key === seg) ? seg : (segOptions[0]?.key ?? '其他')
-  const activeNodes = continentNodes[activeSeg] ?? []
   const renderNode = (n: UserNode, index = 0) => (
     <div onClick={() => setSelectedNode(n)} onKeyDown={(event) => { if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); setSelectedNode(n) } }} role="button" tabIndex={0} className={`sub-node${index === 0 ? ' is-first' : ''}`}>
       <RegionFlag code={n.region} size={15} fallback={false} />
@@ -191,14 +175,20 @@ export default function Dashboard() {
           <div className="ui-card sub-usage">{trafficLoading && !traffic ? <div className="ui-empty">读取中…</div> : traffic ? <div className="sub-usage-stats"><div><span>下载 ↓</span><strong className="mono">{formatBytes(traffic.download)}</strong></div><div><span>上传 ↑</span><strong className="mono">{formatBytes(traffic.upload)}</strong></div><div><span>合计</span><strong className="mono">{formatBytes(traffic.download + traffic.upload)}</strong></div></div> : <div className="ui-empty">暂无用量</div>}</div>
         </Section>
         <Section title="订阅链接" actions={<Button size="small" onClick={doReset}>重置链接</Button>}><SubscriptionLinks url={subUrl} /><SubscriptionSyncStatus key={subUrl} initial={resetSync} /></Section>
-        <Pills label="控制台视图" active={tab} onChange={(key) => setTab(key as UserTab)} items={[
+        <Pills label="控制台视图" active={user.forwarding_enabled ? tab : 'nodes'} onChange={(key) => setTab(key as UserTab)} actions={
+          user.forwarding_enabled && tab === 'outbounds'
+            ? <Button size="small" icon={<Plus />} onClick={() => setImportOpen(true)}>添加出站</Button>
+            : user.forwarding_enabled && tab === 'forwards'
+              ? <Button size="small" icon={<Plus />} onClick={() => { setForwardInbound(undefined); setForwardOutbound(undefined); setForwardOpen(true) }}>添加转发</Button>
+              : undefined
+        } items={[
           { key: 'nodes', label: '节点', count: nodes.length },
-          { key: 'outbounds', label: '出站', count: outbounds.length },
-          ...(user.forwarding_enabled ? [{ key: 'forwards', label: '转发', count: forwards.length }] : []),
+          { key: 'outbounds', label: '出站', count: outbounds.length, disabled: !user.forwarding_enabled },
+          { key: 'forwards', label: '转发', count: forwards.length, disabled: !user.forwarding_enabled },
         ]} />
-        {tab === 'nodes' && <Section title="节点"><RequestState loading={nodesLoading} error={nodesError} hasData={nodes.length > 0} empty={!nodesLoading && !nodesError && nodes.length === 0} emptyDescription="暂无节点" onRetry={load}>{segOptions.length > 1 && <Pills label="地区" items={segOptions} active={activeSeg} onChange={(key) => setSeg(key as Continent)} />}<div className="ui-card sub-nodes">{activeNodes.length > 0 ? (isMobile || activeNodes.length > 50 ? <VirtualList className="sub-node-virtual" style={{ height: Math.min(activeNodes.length, isMobile ? 6 : 9) * 64, maxHeight: isMobile ? 384 : 576 }} items={activeNodes} getKey={userNodeKey} estimatedItemHeight={64} overscan={5} renderItem={renderNode} /> : activeNodes.map((n, i) => <div key={userNodeKey(n)}>{renderNode(n, i)}</div>)) : <div className="ui-empty">该地区暂无节点</div>}</div></RequestState></Section>}
-        {tab === 'outbounds' && <Section title="出站" actions={<Button size="small" icon={<Plus />} onClick={() => setImportOpen(true)}>添加出站</Button>}>{outbounds.length === 0 ? <div className="ui-empty ui-card">暂无出站</div> : <div className="ui-card sub-outbounds">{outbounds.map((outbound) => <div key={outbound.id} className="sub-outbound"><span className="sub-outbound-main"><strong>{outbound.tag}</strong>{outbound.remark && <small>{outbound.remark}</small>}</span><span className="ui-tag">{outbound.type}</span></div>)}</div>}</Section>}
-        {tab === 'forwards' && user.forwarding_enabled && <Section title="转发" actions={<Button size="small" icon={<Plus />} onClick={() => { setForwardInbound(undefined); setForwardOutbound(undefined); setForwardOpen(true) }}>添加转发</Button>}>{forwards.length === 0 ? <div className="ui-empty ui-card">暂无转发</div> : <div className="ui-card sub-outbounds">{forwards.map((row) => <div key={row.id} className="sub-outbound"><span className="sub-outbound-main"><strong>{row.node_name}</strong><small>{row.inbound_tag} → {row.outbound_tag} · {row.server_name}</small></span><Button size="small" type="text" icon={<Trash2 />} loading={actionID === row.id} aria-label={`删除转发 ${row.inbound_tag}`} onClick={() => removeForward(row)} /></div>)}</div>}</Section>}
+        {(user.forwarding_enabled ? tab : 'nodes') === 'nodes' && <Section><RequestState loading={nodesLoading} error={nodesError} hasData={nodes.length > 0} empty={!nodesLoading && !nodesError && nodes.length === 0} emptyDescription="暂无节点" onRetry={load}><div className="ui-card sub-nodes">{nodes.length > 0 ? (isMobile || nodes.length > 50 ? <VirtualList className="sub-node-virtual" style={{ height: Math.min(nodes.length, isMobile ? 6 : 9) * 64, maxHeight: isMobile ? 384 : 576 }} items={nodes} getKey={userNodeKey} estimatedItemHeight={64} overscan={5} renderItem={renderNode} /> : nodes.map((n, i) => <div key={userNodeKey(n)}>{renderNode(n, i)}</div>)) : <div className="ui-empty">暂无节点</div>}</div></RequestState></Section>}
+        {user.forwarding_enabled && tab === 'outbounds' && <Section>{outbounds.length === 0 ? <div className="ui-empty ui-card">暂无出站</div> : <div className="ui-card sub-outbounds">{outbounds.map((outbound) => <div key={outbound.id} className="sub-outbound"><span className="sub-outbound-main"><strong>{outbound.tag}</strong>{outbound.remark && <small>{outbound.remark}</small>}</span><span className="ui-tag">{outbound.type}</span></div>)}</div>}</Section>}
+        {user.forwarding_enabled && tab === 'forwards' && <Section>{forwards.length === 0 ? <div className="ui-empty ui-card">暂无转发</div> : <div className="ui-card sub-outbounds">{forwards.map((row) => <div key={row.id} className="sub-outbound"><span className="sub-outbound-main"><strong>{row.node_name}</strong><small>{row.inbound_tag} → {row.outbound_tag} · {row.server_name}</small></span><Button size="small" type="text" icon={<Trash2 />} loading={actionID === row.id} aria-label={`删除转发 ${row.inbound_tag}`} onClick={() => removeForward(row)} /></div>)}</div>}</Section>}
         <Modal title="添加出站" width={MODAL_SM} open={importOpen} onCancel={() => setImportOpen(false)} onOk={submitImport} confirmLoading={importing} okText="导入">
           <div className="sub-form">
             <Segmented<'uri' | 'subscription'> options={[{ value: 'uri', label: 'URI 导入' }, { value: 'subscription', label: '订阅导入' }]} value={importMode} onChange={setImportMode} />

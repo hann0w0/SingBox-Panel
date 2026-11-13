@@ -682,14 +682,20 @@ func (a *App) deleteAdminUserOutbound(c *gin.Context) {
 		return
 	}
 	serverIDs := owner.ServerIDs
+	var using int64
+	if err := a.db.Model(&model.UserForward{}).Where("outbound_id = ?", ob.ID).Count(&using).Error; err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+	if using > 0 {
+		c.JSON(http.StatusConflict, gin.H{"error": "该专属出站仍被转发节点使用，请先删除相关转发"})
+		return
+	}
 	if err := a.db.Transaction(func(tx *gorm.DB) error {
-		if err := tx.Where("outbound_id = ?", ob.ID).Delete(&model.UserForward{}).Error; err != nil {
-			return err
-		}
 		if err := tx.Where("id = ?", ob.ID).Delete(&model.Outbound{}).Error; err != nil {
 			return err
 		}
-		return tx.Where("outbound = ? AND server_id IN ?", ob.Tag, normalizedIDs(serverIDs)).Delete(&model.RouteRule{}).Error
+		return nil
 	}); err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return

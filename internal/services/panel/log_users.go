@@ -14,7 +14,9 @@ import (
 	"github.com/hann0w0/singbox-panel/internal/domain/protocol"
 )
 
-var logTrafficUserPattern = regexp.MustCompile(`\[` + regexp.QuoteMeta(proxyTrafficNamePrefix) + `[0-9]+:[0-9a-f]{32}\]`)
+var logTrafficUserPattern = regexp.MustCompile(`\[(` +
+	regexp.QuoteMeta(proxyTrafficNamePrefix) + `[0-9]+:[0-9a-f]{32}|` +
+	regexp.QuoteMeta(forwardTrafficNamePrefix) + `[0-9]+:[0-9]+:[0-9a-f]{32})\]`)
 
 const logUserCacheTTL = 5 * time.Second
 
@@ -41,8 +43,14 @@ func (r *logUserResolver) resolve(ctx context.Context, text string) string {
 		}
 	}
 	return logTrafficUserPattern.ReplaceAllStringFunc(text, func(token string) string {
-		if name := r.names[token[1:len(token)-1]]; name != "" {
+		raw := token[1 : len(token)-1]
+		if name := r.names[raw]; name != "" {
 			return "[" + name + "]"
+		}
+		if strings.HasPrefix(raw, forwardTrafficNamePrefix) {
+			if name := r.forwardUserDisplayName(ctx, raw); name != "" {
+				return "[" + name + "]"
+			}
 		}
 		return token
 	})
@@ -81,6 +89,42 @@ func (r *logUserResolver) load(ctx context.Context) error {
 		r.names[row.Name] = strings.NewReplacer("[", `\u005b`, "]", `\u005d`).Replace(quoted[1 : len(quoted)-1])
 	}
 	return nil
+}
+
+// forwardUserDisplayName resolves a derived forward identity to the owning
+// account plus a forward label. The token contains IDs and a seed hash, so the
+// lookup verifies the current seed instead of trusting the log text.
+func (r *logUserResolver) forwardUserDisplayName(ctx context.Context, token string) string {
+	parts := strings.Split(strings.TrimPrefix(token, forwardTrafficNamePrefix), ":")
+	if len(parts) != 3 {
+		return ""
+	}
+	userID, err := strconv.ParseUint(parts[0], 10, 64)
+	if err != nil || userID == 0 {
+		return ""
+	}
+	forwardID, err := strconv.ParseUint(parts[1], 10, 64)
+	if err != nil || forwardID == 0 {
+		return ""
+	}
+	var row struct {
+		Email      string
+		ProxyToken string
+		SubToken   string
+	}
+	if err := r.db.WithContext(ctx).Table("users").
+		Select("email, proxy_token, sub_token").Where("id = ?", userID).Take(&row).Error; err != nil {
+		return ""
+	}
+	user := model.User{ID: uint(userID), ProxyToken: row.ProxyToken, SubToken: row.SubToken}
+	if forwardTrafficName(&user, uint(forwardID)) != token {
+		return ""
+	}
+	name := row.Email
+	if name == "" {
+		name = "u" + parts[0]
+	}
+	return name + " → 转发"
 }
 
 func (r *logUserResolver) event(ctx context.Context, event liveEvent) liveEvent {

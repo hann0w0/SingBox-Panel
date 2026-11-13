@@ -1238,6 +1238,44 @@ func (a *App) deleteInbound(c *gin.Context) {
 		if err := rememberInboundTrafficTag(tx, &ib); err != nil {
 			return err
 		}
+		var forwards []model.UserForward
+		if err := tx.Where("server_id = ? AND inbound_id = ?", sid, ib.ID).Find(&forwards).Error; err != nil {
+			return err
+		}
+		for _, forward := range forwards {
+			var outbound model.Outbound
+			if err := tx.Select("id", "tag").First(&outbound, forward.OutboundID).Error; err != nil {
+				continue
+			}
+			var user model.User
+			if err := tx.Select("id", "email", "proxy_token", "sub_token").First(&user, forward.UserID).Error; err != nil {
+				continue
+			}
+			identity := forwardTrafficName(&user, forward.ID)
+			var rules []model.RouteRule
+			if err := tx.Where("server_id = ? AND outbound = ?", sid, outbound.Tag).Find(&rules).Error; err != nil {
+				return err
+			}
+			for _, rule := range rules {
+				var match singbox.RuleInput
+				if len(rule.Match) == 0 || json.Unmarshal(rule.Match, &match) != nil {
+					continue
+				}
+				if len(match.AuthUser) != 1 || match.AuthUser[0] != identity {
+					continue
+				}
+				if err := tx.Delete(&rule).Error; err != nil {
+					return err
+				}
+			}
+			if err := tx.Where("user_id = ? AND node_type = ? AND node_id = ?", user.ID, userNodeTypeForward, forward.ID).
+				Delete(&model.UserNodeOrder{}).Error; err != nil {
+				return err
+			}
+		}
+		if err := tx.Where("server_id = ? AND inbound_id = ?", sid, ib.ID).Delete(&model.UserForward{}).Error; err != nil {
+			return err
+		}
 		if err := tx.Delete(&ib).Error; err != nil {
 			return err
 		}

@@ -212,3 +212,59 @@ func TestUserForwardRequiresExplicitPermission(t *testing.T) {
 		t.Fatalf("derived nodes after permission revoked = %d, want original only", len(nodes))
 	}
 }
+
+func TestRevokingForwardingPermissionRemovesDerivedState(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	db := testDB(t)
+	server := model.Server{Name: "entry", Address: "entry.example", AgentToken: "entry", ConfigMode: model.ConfigModeManaged}
+	mustCreate(t, db, &server)
+	user := model.User{Email: "alice", Role: model.RoleUser, Enabled: true, ForwardingEnabled: true, ServerIDs: []uint{server.ID}, SubToken: "alice", ProxyToken: "alice-proxy"}
+	mustCreate(t, db, &user)
+	inbound := model.Inbound{ServerID: server.ID, Tag: "multi-in", Type: model.InboundVLESS, ListenPort: 443, Enabled: true, Settings: model.JSONText(`{"multi_user":true}`)}
+	mustCreate(t, db, &inbound)
+	outbound := model.Outbound{ServerID: 0, OwnerUserID: user.ID, Tag: "alice-home", Type: "vless", Settings: model.JSONText(`{"server":"home.example","server_port":443,"uuid":"11111111-2222-4333-8444-555555555555"}`)}
+	mustCreate(t, db, &outbound)
+	app := &App{db: db, orch: NewOrchestrator(db, NewHub(db))}
+	router := gin.New()
+	router.POST("/user/forwards", func(c *gin.Context) { c.Set("uid", user.ID) }, app.createUserForward)
+	router.PUT("/admin/users/:id", app.updateUser)
+	body := fmt.Sprintf(`{"inbound_server_id":%d,"inbound_tag":"multi-in","outbound_id":%d}`, server.ID, outbound.ID)
+	if response := serveJSONRequest(t, router, http.MethodPost, "/user/forwards", body); response.Code != http.StatusOK {
+		t.Fatalf("create forward: %d %s", response.Code, response.Body)
+	}
+	var forward model.UserForward
+	if err := db.Where("user_id = ?", user.ID).First(&forward).Error; err != nil {
+		t.Fatal(err)
+	}
+	var rule model.RouteRule
+	if err := db.Where("server_id = ? AND outbound = ?", server.ID, outbound.Tag).First(&rule).Error; err != nil {
+		t.Fatal(err)
+	}
+	mustCreate(t, db, &model.UserNodeOrder{UserID: user.ID, NodeType: userNodeTypeForward, NodeID: forward.ID, SortOrder: 0})
+
+	response := serveJSONRequest(t, router, http.MethodPut, fmt.Sprintf("/admin/users/%d", user.ID), `{"forwarding_enabled":false}`)
+	if response.Code != http.StatusOK {
+		t.Fatalf("revoke permission: %d %s", response.Code, response.Body)
+	}
+	var forwards int64
+	if err := db.Model(&model.UserForward{}).Where("user_id = ?", user.ID).Count(&forwards).Error; err != nil {
+		t.Fatal(err)
+	}
+	if forwards != 0 {
+		t.Fatalf("forward rows after revoke = %d, want 0", forwards)
+	}
+	var rules int64
+	if err := db.Model(&model.RouteRule{}).Where("id = ?", rule.ID).Count(&rules).Error; err != nil {
+		t.Fatal(err)
+	}
+	if rules != 0 {
+		t.Fatalf("route rules after revoke = %d, want 0", rules)
+	}
+	var orders int64
+	if err := db.Model(&model.UserNodeOrder{}).Where("user_id = ? AND node_type = ? AND node_id = ?", user.ID, userNodeTypeForward, forward.ID).Count(&orders).Error; err != nil {
+		t.Fatal(err)
+	}
+	if orders != 0 {
+		t.Fatalf("node orders after revoke = %d, want 0", orders)
+	}
+}

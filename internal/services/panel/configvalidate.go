@@ -232,13 +232,20 @@ func (a *App) validateOutbound(db *gorm.DB, serverID, excludeID uint, tag, typ s
 	return nil
 }
 
+var builtinOutboundTags = map[string]bool{
+	"direct": true, "block": true, "reject": true, "sniff": true, "hijack-dns": true,
+}
+
+// outboundExists checks the server's shared outbounds. User-private exits are
+// resolved separately in validateRule because their owner identity scopes them.
 func (a *App) outboundExists(db *gorm.DB, serverID uint, tag string) (bool, error) {
 	switch tag {
 	case "direct", "block", "reject", "sniff", "hijack-dns":
 		return true, nil
 	}
 	var n int64
-	err := db.Model(&model.Outbound{}).Where("server_id = ? AND tag = ?", serverID, tag).Count(&n).Error
+	err := db.Model(&model.Outbound{}).
+		Where("server_id = ? AND tag = ? AND owner_user_id = 0", serverID, tag).Count(&n).Error
 	return n > 0, err
 }
 
@@ -258,9 +265,6 @@ func (a *App) validateRule(db *gorm.DB, serverID uint, raw json.RawMessage, outb
 	if err != nil {
 		return err
 	}
-	if !ok {
-		return fmt.Errorf("目标出站 %q 不存在", outbound)
-	}
 	var rule singbox.RuleInput
 	if len(raw) > 0 {
 		if err := json.Unmarshal(raw, &rule); err != nil {
@@ -271,8 +275,14 @@ func (a *App) validateRule(db *gorm.DB, serverID uint, raw json.RawMessage, outb
 	// it must also carry exactly that account's auth_user identity; otherwise
 	// one user's home broadband could be used by other accounts.
 	var privateOutbound model.Outbound
-	privateErr := db.Where("server_id = ? AND tag = ? AND owner_user_id <> 0", serverID, outbound).First(&privateOutbound).Error
+	privateErr := db.Where("tag = ? AND owner_user_id <> 0", outbound).First(&privateOutbound).Error
 	if privateErr == nil {
+		if ok {
+			return fmt.Errorf("出站标签 %q 同时属于公共出站和专属出站，请先重命名", outbound)
+		}
+		if privateOutbound.ServerID != 0 && privateOutbound.ServerID != serverID {
+			return fmt.Errorf("专属出站 %q 绑定在其它入口服务器，无法在此使用", outbound)
+		}
 		var owner model.User
 		if err := db.Select("id", "email", "proxy_token", "sub_token").First(&owner, privateOutbound.OwnerUserID).Error; err != nil {
 			return fmt.Errorf("专属出站的所属用户不存在")
@@ -283,6 +293,8 @@ func (a *App) validateRule(db *gorm.DB, serverID uint, raw json.RawMessage, outb
 		}
 	} else if !errors.Is(privateErr, gorm.ErrRecordNotFound) {
 		return privateErr
+	} else if !ok {
+		return fmt.Errorf("目标出站 %q 不存在", outbound)
 	}
 	action := rule.Action
 	if action == "" {
@@ -513,9 +525,39 @@ func (a *App) inboundReferenced(db *gorm.DB, serverID uint, tag string) (bool, e
 	if err := db.Where("server_id = ?", serverID).Find(&rows).Error; err != nil {
 		return false, err
 	}
+	// Derived forward rules target the inbound being deleted and are removed
+	// together with their forward rows. They must not by themselves block the
+	// deletion, or the inbound could never be removed while a user forward exists.
+	var forwards []model.UserForward
+	if err := db.Where("server_id = ?", serverID).Find(&forwards).Error; err != nil {
+		return false, err
+	}
+	forwardNames := make(map[string]bool, len(forwards))
+	if len(forwards) > 0 {
+		var users []model.User
+		userIDs := make([]uint, 0, len(forwards))
+		for _, forward := range forwards {
+			userIDs = append(userIDs, forward.UserID)
+		}
+		if err := db.Where("id IN ?", normalizedIDs(userIDs)).Find(&users).Error; err != nil {
+			return false, err
+		}
+		byID := make(map[uint]model.User, len(users))
+		for _, user := range users {
+			byID[user.ID] = user
+		}
+		for _, forward := range forwards {
+			if user, ok := byID[forward.UserID]; ok {
+				forwardNames[forwardTrafficName(&user, forward.ID)] = true
+			}
+		}
+	}
 	for _, row := range rows {
 		var rule singbox.RuleInput
 		if json.Unmarshal(row.Match, &rule) == nil {
+			if len(rule.AuthUser) == 1 && forwardNames[rule.AuthUser[0]] && len(rule.Inbound) == 1 && rule.Inbound[0] == tag {
+				continue
+			}
 			for _, value := range rule.Inbound {
 				if value == tag {
 					return true, nil

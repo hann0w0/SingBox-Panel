@@ -77,6 +77,8 @@ a { color: inherit; }
 .ui-pills { display: inline-flex; gap: 2px; height: var(--app-control-h); box-sizing: border-box; padding: 2px; border: 1px solid var(--console-border); border-radius: var(--app-radius-pop); background: var(--console-surface); max-width: 100%; overflow-x: auto; scrollbar-width: none; }
 .ui-pill { flex: none; display: inline-flex; align-items: center; gap: 6px; height: 26px; padding: 0 12px; border: 0; border-radius: 6px; background: transparent; color: var(--console-muted); font: inherit; font-size: 13px; cursor: pointer; white-space: nowrap; }
 .ui-pill:hover { color: var(--console-ink); }
+.ui-pill:disabled, .ui-pill.is-disabled { color: var(--console-faint); cursor: not-allowed; opacity: .55; }
+.ui-pill:disabled:hover, .ui-pill.is-disabled:hover { color: var(--console-faint); }
 .ui-pill.is-active, .ui-pill[data-state='active'] { background: var(--console-container); color: var(--console-ink); box-shadow: 0 1px 2px rgb(0 0 0 / 8%), 0 0 0 1px var(--console-border); }
 :root[data-console-theme='dark'] .ui-pill.is-active, :root[data-console-theme='dark'] .ui-pill[data-state='active'] { background: #3a3a3a; box-shadow: none; }
 .ui-pill-count { color: var(--console-faint); font-variant-numeric: tabular-nums; }

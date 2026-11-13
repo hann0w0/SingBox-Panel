@@ -30,7 +30,7 @@ export function Stats({ items }: { items: { label: ReactNode; value: ReactNode; 
   </div>
 }
 
-export type PillItem = { key: string; label: ReactNode; count?: number }
+export type PillItem = { key: string; label: ReactNode; count?: number; disabled?: boolean }
 
 /** Segmented pill tabs with an optional action slot on the right. */
 export function Pills({ items, active, onChange, actions, label }: {
@@ -41,7 +41,7 @@ export function Pills({ items, active, onChange, actions, label }: {
   label?: string
 }) {
   const buttons = useRef(new Map<string, HTMLButtonElement>())
-  const focusIndex = Math.max(0, items.findIndex((item) => item.key === active))
+  const focusIndex = Math.max(0, items.findIndex((item) => item.key === active && !item.disabled))
   const moveFocus = (event: KeyboardEvent<HTMLButtonElement>, index: number) => {
     if (event.altKey || event.ctrlKey || event.metaKey || !items.length) return
     let nextIndex: number
@@ -68,14 +68,14 @@ export function Pills({ items, active, onChange, actions, label }: {
   }
   return <div className="ui-pills-row">
     <div className="ui-pills" role="tablist" aria-label={label} aria-orientation="horizontal">
-      {items.map((item, index) => <button key={item.key} type="button" role="tab" aria-selected={item.key === active}
+      {items.map((item, index) => <button key={item.key} type="button" role="tab" aria-selected={item.key === active} disabled={item.disabled}
         ref={(button) => {
           if (button) buttons.current.set(item.key, button)
           else buttons.current.delete(item.key)
         }}
-        tabIndex={index === focusIndex ? 0 : -1}
+        tabIndex={item.disabled ? -1 : index === focusIndex ? 0 : -1}
         onKeyDown={(event) => moveFocus(event, index)}
-        className={`ui-pill${item.key === active ? ' is-active' : ''}`} onClick={() => onChange(item.key)}>
+        className={`ui-pill${item.key === active ? ' is-active' : ''}${item.disabled ? ' is-disabled' : ''}`} onClick={() => { if (!item.disabled) onChange(item.key) }}>
         {item.label}{item.count !== undefined && <span className="ui-pill-count">{item.count}</span>}
       </button>)}
     </div>

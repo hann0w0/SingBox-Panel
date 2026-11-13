@@ -45,7 +45,7 @@ export function UserAccountDialog({ user, onClose, onSaved }: {
       <Form.Item name="password" label={user ? '新密码' : '密码'} rules={user ? [{ max: 72 }] : [{ required: true, message: '请输入密码' }, { max: 72 }]}>
         <Input.Password placeholder={user ? '不修改' : undefined} autoComplete="new-password" />
       </Form.Item>
-      <Form.Item name="forwarding_enabled" label="允许创建转发" valuePropName="checked" extra="授权后，该用户才能把自己的专属出站关联到入口节点。">
+      <Form.Item name="forwarding_enabled" label="允许创建转发" valuePropName="checked">
         <Switch />
       </Form.Item>
     </Form>

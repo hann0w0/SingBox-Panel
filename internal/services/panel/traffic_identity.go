@@ -13,7 +13,10 @@ import (
 	"github.com/hann0w0/singbox-panel/internal/domain/singbox"
 )
 
-const proxyTrafficNamePrefix = "__singbox_panel_user__:"
+const (
+	proxyTrafficNamePrefix   = "__singbox_panel_user__:"
+	forwardTrafficNamePrefix = "__singbox_panel_forward__:"
+)
 
 // proxyTrafficName is metadata, not a client credential. The seed hash also
 // prevents a restored/recreated account with the same numeric ID from claiming
@@ -27,8 +30,22 @@ func proxyTrafficName(user *model.User) string {
 	return fmt.Sprintf("%s%d:%x", proxyTrafficNamePrefix, user.ID, sum[:16])
 }
 
+// forwardTrafficName identifies the dedicated credential of one forwarded
+// node. It belongs to the same account as proxyTrafficName but is never shared
+// with the original node, so selecting node A and node A→B produces different
+// sing-box users and independent routing.
+func forwardTrafficName(user *model.User, forwardID uint) string {
+	seed := user.ProxyToken
+	if seed == "" {
+		seed = user.SubToken
+	}
+	sum := sha256.Sum256([]byte(fmt.Sprintf("forward-traffic:v1:%s:%d", seed, forwardID)))
+	return fmt.Sprintf("%s%d:%d:%x", forwardTrafficNamePrefix, user.ID, forwardID, sum[:16])
+}
+
 func reservedTrafficUsername(name string) bool {
-	return strings.HasPrefix(normalizeUsername(name), proxyTrafficNamePrefix)
+	name = normalizeUsername(name)
+	return strings.HasPrefix(name, proxyTrafficNamePrefix) || strings.HasPrefix(name, forwardTrafficNamePrefix)
 }
 
 // rememberProxyTrafficIdentities is called before publishing a managed config.

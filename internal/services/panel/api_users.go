@@ -836,9 +836,43 @@ func (a *App) updateUser(c *gin.Context) {
 		columns = append(columns, "ServerIDs", "InboundIDs")
 	}
 	if len(columns) > 0 {
+		var forwardingServers []uint
 		err := a.db.Transaction(func(tx *gorm.DB) error {
 			if err := tx.Model(&model.User{}).Where("id = ?", u.ID).Select(columns).Updates(&u).Error; err != nil {
 				return err
+			}
+			if req.ForwardingEnabled != nil && !*req.ForwardingEnabled {
+				var forwards []model.UserForward
+				if err := tx.Where("user_id = ?", u.ID).Find(&forwards).Error; err != nil {
+					return err
+				}
+				for _, forward := range forwards {
+					forwardingServers = append(forwardingServers, forward.ServerID)
+					var outbound model.Outbound
+					if err := tx.Select("id", "tag").First(&outbound, forward.OutboundID).Error; err != nil {
+						continue
+					}
+					var rules []model.RouteRule
+					if err := tx.Where("server_id = ? AND outbound = ?", forward.ServerID, outbound.Tag).Find(&rules).Error; err != nil {
+						return err
+					}
+					for _, rule := range rules {
+						var match singbox.RuleInput
+						if len(rule.Match) > 0 && json.Unmarshal(rule.Match, &match) == nil &&
+							len(match.AuthUser) == 1 && match.AuthUser[0] == forwardTrafficName(&u, forward.ID) {
+							if err := tx.Delete(&rule).Error; err != nil {
+								return err
+							}
+						}
+					}
+					if err := tx.Where("user_id = ? AND node_type = ? AND node_id = ?", u.ID, userNodeTypeForward, forward.ID).
+						Delete(&model.UserNodeOrder{}).Error; err != nil {
+						return err
+					}
+				}
+				if err := tx.Where("user_id = ?", u.ID).Delete(&model.UserForward{}).Error; err != nil {
+					return err
+				}
 			}
 			if revokeSessions {
 				return tx.Model(&model.User{}).Where("id = ?", u.ID).
@@ -854,19 +888,22 @@ func (a *App) updateUser(c *gin.Context) {
 			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 			return
 		}
+		if len(forwardingServers) > 0 {
+			a.refreshUserProxyAccess(forwardingServers)
+		}
 	}
 	if err := a.db.First(&u, id).Error; err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
 
-	a.refreshUserProxyAccess(oldServerIDs, u.ServerIDs)
-	if req.ForwardingEnabled != nil {
+	if req.ForwardingEnabled != nil && *req.ForwardingEnabled {
 		var forwardServers []uint
 		if err := a.db.Model(&model.UserForward{}).Where("user_id = ?", u.ID).Pluck("server_id", &forwardServers).Error; err == nil {
 			a.refreshUserProxyAccess(forwardServers)
 		}
 	}
+	a.refreshUserProxyAccess(oldServerIDs, u.ServerIDs)
 	c.JSON(http.StatusOK, gin.H{"user": u})
 }
 

@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { Button, Form, Input, Modal, Segmented, Table, message } from '../../../ui'
+import { Button, Form, Grid, Input, Modal, Segmented, Table, message } from '../../../ui'
 import { Pencil, Plus, Trash2 } from 'lucide-react'
 import {
   createSharedRuleSet, deleteSharedRuleSet, errMsg, isCanceledRequest,
@@ -11,9 +11,11 @@ import { PageHeader } from '../../../ui/Page'
 import { RequestState } from '../../../components/RequestState'
 import { MODAL_SM } from '../../../ui/modal'
 import '../../../styles/users.css'
+import '../../../styles/rules.css'
 
 /** Panel-wide rule-set definitions shared by any number of servers. */
 export default function RuleSetsPage() {
+  const screens = Grid.useBreakpoint()
   const [ruleSets, setRuleSets] = useState<RuleSet[]>([])
   const [servers, setServers] = useState<Server[]>([])
   const [loading, setLoading] = useState(true)
@@ -101,40 +103,60 @@ export default function RuleSetsPage() {
     },
   })
 
+  const serverReferences = (rs: RuleSet) => {
+    const names = (rs.server_ids ?? []).map((id) => servers.find((server) => server.id === id)?.name ?? `#${id}`)
+    if (!names.length) return <span className="faint">未引用</span>
+    const visibleNames = screens.md ? names.slice(0, 3) : names
+    return <span className="nodes-ruleset-servers" title={names.join('、')}>
+      {visibleNames.map((name, index) => <span key={rs.server_ids?.[index]} className="ui-tag">{name}</span>)}
+      {names.length > visibleNames.length && <span className="faint">+{names.length - visibleNames.length}</span>}
+    </span>
+  }
+
+  const rowActions = (rs: RuleSet) => <span className="ui-row-actions">
+    <Button size="small" type="text" icon={<Pencil />} aria-label={`编辑规则集 ${rs.tag}`} onClick={() => openEdit(rs)} />
+    <Button size="small" type="text" icon={<Trash2 />} aria-label={`删除规则集 ${rs.tag}`} onClick={() => remove(rs)} />
+  </span>
+
   return (
-    <div className="um-page">
+    <div className="um-page rs-page">
       <PageHeader
         title="规则"
         actions={<Button type="primary" icon={<Plus />} onClick={openCreate}>新增规则集</Button>}
       />
       <RequestState loading={loading} error={error} hasData={ruleSets.length > 0} empty={!loading && !error && ruleSets.length === 0} emptyDescription="暂无规则集" onRetry={load}>
-        <Table<RuleSet>
+        {screens.md ? <Table<RuleSet>
           rowKey="id"
+          className="rs-table"
           dataSource={ruleSets}
           columns={[
-            { title: '标签', dataIndex: 'tag', render: (value: string) => <span className="sd-strong">{value}</span> },
+            { title: '标签', dataIndex: 'tag', render: (value: string) => <span className="um-strong">{value}</span> },
             { title: '类型', dataIndex: 'type', width: 90, render: (value: string) => <span className="ui-tag">{value === 'local' ? '本地' : '远程'}</span> },
             { title: '格式', dataIndex: 'format', width: 90, render: (value: string) => <span className="mono">{value === 'source' ? 'JSON' : 'SRS'}</span> },
             {
               title: '服务器',
-              render: (_: unknown, rs: RuleSet) => {
-                const names = (rs.server_ids ?? []).map((id) => servers.find((server) => server.id === id)?.name ?? `#${id}`)
-                if (!names.length) return <span className="faint">未分配</span>
-                return <span className="nodes-ruleset-servers" title={names.join('、')}>
-                  {names.slice(0, 3).map((name) => <span key={name} className="ui-tag">{name}</span>)}
-                  {names.length > 3 && <span className="faint">+{names.length - 3}</span>}
-                </span>
-              },
+              render: (_: unknown, rs: RuleSet) => serverReferences(rs),
             },
             {
-              title: '', width: 128, align: 'right',
-              render: (_: unknown, rs: RuleSet) => <span className="ui-row-actions">
-                <Button size="small" type="text" icon={<Pencil />} aria-label={`编辑规则集 ${rs.tag}`} onClick={() => openEdit(rs)} />
-                <Button size="small" type="text" icon={<Trash2 />} aria-label={`删除规则集 ${rs.tag}`} onClick={() => remove(rs)} />
-              </span>,
+              title: <span className="sr-only">操作</span>, width: 96, align: 'right',
+              render: (_: unknown, rs: RuleSet) => rowActions(rs),
             },
           ]}
-        />
+        /> : (
+          <ul className="ui-card rs-list" aria-label="规则集">
+            {ruleSets.map((rs) => <li key={rs.id} className="rs-list-item">
+              <div className="rs-list-main">
+                <strong className="um-strong rs-list-tag">{rs.tag}</strong>
+                <div className="rs-list-meta">
+                  <span className="ui-tag">{rs.type === 'local' ? '本地' : '远程'}</span>
+                  <span className="mono">{rs.format === 'source' ? 'JSON' : 'SRS'}</span>
+                </div>
+              </div>
+              {rowActions(rs)}
+              <div className="rs-list-servers" role="group" aria-label="引用服务器">{serverReferences(rs)}</div>
+            </li>)}
+          </ul>
+        )}
       </RequestState>
 
       <Modal title={editing ? '编辑规则集' : '新增规则集'} width={MODAL_SM} open={open} onOk={submit} onCancel={() => setOpen(false)} confirmLoading={saving}>
@@ -165,7 +187,6 @@ export default function RuleSetsPage() {
           )}
         </Form>
       </Modal>
-
     </div>
   )
 }

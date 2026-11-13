@@ -1,0 +1,15 @@
+.rs-table .ui-table th { white-space: nowrap; }
+.rs-list { margin: 0; padding: 0; list-style: none; }
+.rs-list-item { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: start; gap: 12px; padding: 16px; }
+.rs-list-item + .rs-list-item { border-top: 1px solid var(--console-border); }
+.rs-list-main { display: flex; flex-direction: column; gap: 8px; min-width: 0; }
+.rs-list-tag { overflow-wrap: anywhere; }
+.rs-list-meta { display: flex; align-items: center; gap: 8px; color: var(--console-muted); }
+.rs-list-servers { grid-column: 1 / -1; min-width: 0; font-size: 12.5px; }
+.rs-list-servers .nodes-ruleset-servers { max-width: 100%; }
+.rs-list-servers .ui-tag { height: auto; min-height: 22px; max-width: 100%; white-space: normal; overflow-wrap: anywhere; }
+
+@media (max-width: 767px) {
+  .rs-page .ui-page-head { align-items: center; }
+  .rs-list .ui-row-actions .ui-btn { width: 40px; height: 40px; }
+}

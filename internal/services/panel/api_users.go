@@ -1,6 +1,7 @@
 package panel
 
 import (
+	"encoding/json"
 	"errors"
 	"fmt"
 	"net/http"
@@ -14,6 +15,7 @@ import (
 	"gorm.io/gorm"
 
 	"github.com/hann0w0/singbox-panel/internal/domain/model"
+	"github.com/hann0w0/singbox-panel/internal/domain/singbox"
 )
 
 var (
@@ -27,15 +29,17 @@ var (
 const (
 	userNodeTypeManaged = "managed"
 	userNodeTypeCustom  = "custom"
+	userNodeTypeForward = "forward"
 )
 
 type userReq struct {
-	Email      string `json:"email"`
-	Password   string `json:"password"`
-	ServerIDs  []uint `json:"server_ids"`
-	InboundIDs []uint `json:"inbound_ids"` // empty = every inbound on those servers
-	ExpireAt   *int64 `json:"expire_at"`   // unix seconds; 0/null = never
-	Enabled    *bool  `json:"enabled"`
+	Email             string `json:"email"`
+	Password          string `json:"password"`
+	ServerIDs         []uint `json:"server_ids"`
+	InboundIDs        []uint `json:"inbound_ids"` // empty = every inbound on those servers
+	ExpireAt          *int64 `json:"expire_at"`   // unix seconds; 0/null = never
+	Enabled           *bool  `json:"enabled"`
+	ForwardingEnabled *bool  `json:"forwarding_enabled"`
 }
 
 type userAccessReq struct {
@@ -71,6 +75,46 @@ type userListItem struct {
 	// cannot see it through /api/user/me.
 	TrafficUpload30d   uint64 `json:"traffic_upload_30d"`
 	TrafficDownload30d uint64 `json:"traffic_download_30d"`
+}
+
+// authUserRef is the non-secret identity a route rule matches. It is stable for
+// the same user on the given server even when credentials are rotated.
+type authUserRef struct {
+	ID       uint   `json:"id"`
+	Name     string `json:"name"`
+	AuthUser string `json:"auth_user"`
+}
+
+func (a *App) listServerAuthUsers(c *gin.Context) {
+	sid, ok := uintParam(c, "id")
+	if !ok {
+		return
+	}
+	var server model.Server
+	if err := a.db.Select("id", "config_mode", "raw_config").First(&server, sid).Error; err != nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "server not found"})
+		return
+	}
+	var users []model.User
+	if err := a.db.Where("role = ? AND enabled = ?", model.RoleUser, true).Order("id").Find(&users).Error; err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+	now := time.Now()
+	out := make([]authUserRef, 0, len(users))
+	seen := make(map[string]struct{}, len(users))
+	for i := range users {
+		if users[i].Expired(now) || !users[i].HasServer(sid) {
+			continue
+		}
+		authUser := proxyTrafficName(&users[i])
+		if _, exists := seen[authUser]; exists {
+			continue
+		}
+		seen[authUser] = struct{}{}
+		out = append(out, authUserRef{ID: users[i].ID, Name: users[i].Email, AuthUser: authUser})
+	}
+	c.JSON(http.StatusOK, gin.H{"users": out})
 }
 
 func normalizedIDs(ids []uint) []uint {
@@ -649,14 +693,15 @@ func (a *App) createUser(c *gin.Context) {
 		return
 	}
 	u := &model.User{
-		Email:           email,
-		EmailNormalized: &normalizedEmail,
-		Role:            model.RoleUser,
-		ServerIDs:       normalizedIDs(req.ServerIDs),
-		InboundIDs:      normalizedIDs(req.InboundIDs),
-		ExpireAt:        unixToTime(req.ExpireAt),
-		SubToken:        randHex(16),
-		ProxyToken:      randHex(32),
+		Email:             email,
+		EmailNormalized:   &normalizedEmail,
+		Role:              model.RoleUser,
+		ServerIDs:         normalizedIDs(req.ServerIDs),
+		InboundIDs:        normalizedIDs(req.InboundIDs),
+		ExpireAt:          unixToTime(req.ExpireAt),
+		ForwardingEnabled: req.ForwardingEnabled != nil && *req.ForwardingEnabled,
+		SubToken:          randHex(16),
+		ProxyToken:        randHex(32),
 	}
 	// Validate before hashing or writing so a stale node assignment cannot
 	// create a user with access data that does not exist.
@@ -782,6 +827,10 @@ func (a *App) updateUser(c *gin.Context) {
 		u.Enabled = *req.Enabled
 		columns = append(columns, "Enabled")
 	}
+	if req.ForwardingEnabled != nil && *req.ForwardingEnabled != u.ForwardingEnabled {
+		u.ForwardingEnabled = *req.ForwardingEnabled
+		columns = append(columns, "ForwardingEnabled")
+	}
 	if accessChanged {
 		// validateUserNodeIDs may merge the owning server of a selected inbound.
 		columns = append(columns, "ServerIDs", "InboundIDs")
@@ -812,6 +861,12 @@ func (a *App) updateUser(c *gin.Context) {
 	}
 
 	a.refreshUserProxyAccess(oldServerIDs, u.ServerIDs)
+	if req.ForwardingEnabled != nil {
+		var forwardServers []uint
+		if err := a.db.Model(&model.UserForward{}).Where("user_id = ?", u.ID).Pluck("server_id", &forwardServers).Error; err == nil {
+			a.refreshUserProxyAccess(forwardServers)
+		}
+	}
 	c.JSON(http.StatusOK, gin.H{"user": u})
 }
 
@@ -845,7 +900,63 @@ func (a *App) deleteUser(c *gin.Context) {
 	if a.hub != nil && a.hub.traffic != nil {
 		a.hub.traffic.dropUser(id)
 	}
+	affectedServerIDs := make([]uint, 0)
 	err := a.db.Transaction(func(tx *gorm.DB) error {
+		var userForwards []model.UserForward
+		if err := tx.Where("user_id = ?", id).Find(&userForwards).Error; err != nil {
+			return err
+		}
+		for _, forward := range userForwards {
+			affectedServerIDs = append(affectedServerIDs, forward.ServerID)
+		}
+		for _, forward := range userForwards {
+			var outbound model.Outbound
+			if err := tx.Select("tag").First(&outbound, forward.OutboundID).Error; err != nil {
+				continue
+			}
+			var rules []model.RouteRule
+			if err := tx.Where("server_id = ? AND outbound = ?", forward.ServerID, outbound.Tag).Find(&rules).Error; err != nil {
+				return err
+			}
+			for _, rule := range rules {
+				var match singbox.RuleInput
+				if len(rule.Match) == 0 || json.Unmarshal(rule.Match, &match) != nil {
+					continue
+				}
+				if len(match.AuthUser) == 1 && match.AuthUser[0] == forwardTrafficName(&u, forward.ID) {
+					if err := tx.Delete(&rule).Error; err != nil {
+						return err
+					}
+				}
+			}
+		}
+		if err := tx.Where("user_id = ?", id).Delete(&model.UserForward{}).Error; err != nil {
+			return err
+		}
+		// Private outbounds are part of the account, not a shared server
+		// resource. Refuse deletion while a route still targets one, then remove
+		// the remaining private-owned rows and re-apply their servers.
+		var owned []model.Outbound
+		if err := tx.Where("owner_user_id = ?", id).Find(&owned).Error; err != nil {
+			return err
+		}
+		for _, outbound := range owned {
+			var using int64
+			if err := tx.Model(&model.UserForward{}).Where("outbound_id = ?", outbound.ID).Count(&using).Error; err != nil {
+				return err
+			}
+			if using > 0 {
+				return fmt.Errorf("专属出站 %q 仍被转发节点使用，请先删除相关转发", outbound.Tag)
+			}
+		}
+		if err := tx.Where("owner_user_id = ?", id).Delete(&model.Outbound{}).Error; err != nil {
+			return err
+		}
+		for _, outbound := range owned {
+			if outbound.ServerID != 0 {
+				affectedServerIDs = append(affectedServerIDs, outbound.ServerID)
+			}
+		}
 		if err := tx.Delete(&model.User{}, id).Error; err != nil {
 			return err
 		}
@@ -889,6 +1000,7 @@ func (a *App) deleteUser(c *gin.Context) {
 		a.hub.traffic.dropUser(id)
 	}
 	a.refreshUserProxyAccess(u.ServerIDs)
+	a.refreshUserProxyAccess(affectedServerIDs)
 	c.JSON(http.StatusOK, gin.H{"ok": true})
 }
 

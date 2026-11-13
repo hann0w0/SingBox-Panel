@@ -22,6 +22,7 @@ type OutboundInput struct {
 type RuleInput struct {
 	Action                   string   `json:"action,omitempty"`
 	Method                   string   `json:"method,omitempty"`
+	AuthUser                 []string `json:"auth_user,omitempty"`
 	Inbound                  []string `json:"inbound,omitempty"` // match by which inbound received the traffic
 	Domain                   []string `json:"domain,omitempty"`
 	DomainSuffix             []string `json:"domain_suffix,omitempty"`
@@ -126,6 +127,9 @@ func routeRuleAction(r RuleInput) string {
 // buildRouteRule renders one route rule object.
 func buildRouteRule(r RuleInput) map[string]any {
 	m := map[string]any{}
+	if len(r.AuthUser) > 0 {
+		m["auth_user"] = r.AuthUser
+	}
 	if len(r.Inbound) > 0 {
 		m["inbound"] = r.Inbound
 	}
@@ -166,13 +170,13 @@ func buildRouteRule(r RuleInput) map[string]any {
 	// from carrying domain/IP/port conditions after it is changed to sniff/DNS.
 	if act == "sniff" {
 		for key := range m {
-			if key != "inbound" {
+			if key != "inbound" && key != "auth_user" {
 				delete(m, key)
 			}
 		}
 	} else if act == "hijack-dns" {
 		for key := range m {
-			if key != "inbound" && key != "protocol" {
+			if key != "inbound" && key != "protocol" && key != "auth_user" {
 				delete(m, key)
 			}
 		}

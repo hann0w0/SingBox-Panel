@@ -14,10 +14,10 @@ func TestOutboundTestCommandUsesQUICProbeForUDPProtocols(t *testing.T) {
 	legacyObfs.Settings = singbox.InboundSettings{ObfsPassword: "k"}
 
 	cases := []struct {
-		typ             string
-		st              outboundStoredSettings
-		wantNetwork     string
-		wantObfuscated  bool
+		typ            string
+		st             outboundStoredSettings
+		wantNetwork    string
+		wantObfuscated bool
 	}{
 		{"vless", base, "", false},
 		{"trojan", base, "", false},
@@ -43,7 +43,7 @@ func TestValidateOutboundRejectsLoopbackAndUnspecifiedServers(t *testing.T) {
 	app := &App{db: db}
 	for _, host := range []string{"127.0.0.1", "localhost", "api.localhost", "::1", "[::1]", "0.0.0.0", "::"} {
 		raw := []byte(`{"server":"` + host + `","server_port":443,"uuid":"11111111-2222-4333-8444-555555555555"}`)
-		if err := app.validateOutbound(db, 1, 0, "land", "vless", raw); err == nil {
+		if err := app.validateOutbound(db, 1, 0, "land", "vless", 0, raw); err == nil {
 			t.Fatalf("validateOutbound accepted loopback/unspecified server %q", host)
 		}
 	}

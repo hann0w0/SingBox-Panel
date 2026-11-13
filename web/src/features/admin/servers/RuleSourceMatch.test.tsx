@@ -29,12 +29,29 @@ const sourceRejectRule: RouteRule = {
 }
 
 function renderRule(rule: RouteRule | null = null) {
-  return render(<RuleForm serverId={1} rule={rule} outboundTags={[]} inboundTags={['dmit-in']}
+  return render(<RuleForm serverId={1} rule={rule} outboundTags={['direct', 'alice-hk-home']} inboundTags={['dmit-in']}
+    users={[{ id: 2, name: 'alice', auth_user: '__singbox_panel_user__:2:abcdef' }]}
     ruleSets={[{ id: 1, tag: 'geoip-cn', type: 'remote', format: 'binary', url: 'https://example.com/cn.srs' }]}
     open onClose={vi.fn()} onSaved={vi.fn()} />)
 }
 
 describe('rule-set IP match direction', () => {
+  it('creates an auth_user rule for a private exit', async () => {
+    const privateRule: RouteRule = {
+      id: 9, server_id: 1, sort: -10, enabled: true, outbound: 'alice-hk-home', remark: 'alice',
+      match: { action: 'route', auth_user: ['__singbox_panel_user__:2:abcdef'] },
+    }
+    renderRule(privateRule)
+    fireEvent.click(screen.getByRole('button', { name: '保存' }))
+    await waitFor(() => expect(updateRule).toHaveBeenCalledWith(1, 9, expect.objectContaining({
+      outbound: 'alice-hk-home',
+      match: expect.objectContaining({
+        action: 'route',
+        auth_user: ['__singbox_panel_user__:2:abcdef'],
+      }),
+    })))
+  })
+
   it('keeps legacy rules on destination IP', async () => {
     renderRule({ ...sourceRejectRule, match: { action: 'reject', rule_set: ['geoip-cn'] } })
     expect((await screen.findByRole('radio', { name: '目标 IP' })).getAttribute('aria-checked')).toBe('true')

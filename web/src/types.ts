@@ -10,6 +10,8 @@ export interface User {
   inbound_ids: number[]
   node_count?: number
   expire_at: string | null
+  /** Opt-in capability for inbound → private-outbound derived nodes. */
+  forwarding_enabled: boolean
   enabled: boolean
   last_login_at?: string | null
   last_login_ip?: string
@@ -272,6 +274,7 @@ export interface Outbound {
 // RuleMatch mirrors singbox.RuleInput match fields.
 export interface RuleMatch {
   action?: 'route' | 'sniff' | 'reject' | 'hijack-dns'
+  auth_user?: string[]
   inbound?: string[]
   domain?: string[]
   domain_suffix?: string[]

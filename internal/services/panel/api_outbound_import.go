@@ -117,7 +117,7 @@ func (a *App) previewOutboundImport(c *gin.Context) {
 		body.Tag, err = a.availableOutboundTag(sid, body.Tag)
 	}
 	if err == nil {
-		err = a.validateOutbound(a.db, sid, 0, body.Tag, body.Type, body.Settings)
+		err = a.validateOutbound(a.db, sid, 0, body.Tag, body.Type, 0, body.Settings)
 	}
 	if err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})

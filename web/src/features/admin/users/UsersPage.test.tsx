@@ -55,6 +55,7 @@ beforeEach(() => {
     }
   })
   vi.stubGlobal('matchMedia', () => ({ matches: false, addEventListener: vi.fn(), removeEventListener: vi.fn() }))
+  vi.stubGlobal('ResizeObserver', class { observe() {} unobserve() {} disconnect() {} })
   vi.spyOn(window, 'scrollTo').mockImplementation(() => {})
   vi.spyOn(window, 'scrollBy').mockImplementation(() => {})
   useAuth.setState({ token: 'test-token', user: admin })
@@ -408,7 +409,7 @@ describe('editing a selected user subscription', () => {
     fireEvent.change(screen.getByRole('textbox', { name: /用户名/ }), { target: { value: 'alice-renamed' } })
     fireEvent.click(screen.getByRole('button', { name: '确定' }))
     await screen.findByRole('heading', { name: 'alice-renamed', level: 1 })
-    expect(updateUser).toHaveBeenCalledWith(2, { email: 'alice-renamed', password: undefined })
+    expect(updateUser).toHaveBeenCalledWith(2, { email: 'alice-renamed', password: undefined, forwarding_enabled: false })
     expect(useAuth.getState().user).toEqual(admin)
     expect(updateUserAccess).not.toHaveBeenCalled()
   })

@@ -2,6 +2,7 @@ package panel
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"sort"
@@ -282,18 +283,37 @@ func (a *App) userTraffic(c *gin.Context) {
 	if !ok {
 		return
 	}
+	series, err := a.userTrafficSeries(userID, c)
+	if err != nil {
+		var statusErr *httpStatusError
+		if errors.As(err, &statusErr) {
+			c.JSON(statusErr.status, gin.H{"error": statusErr.message})
+			return
+		}
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+	c.JSON(http.StatusOK, series)
+}
+
+type httpStatusError struct {
+	status  int
+	message string
+}
+
+func (e *httpStatusError) Error() string { return e.message }
+
+func (a *App) userTrafficSeries(userID uint, c *gin.Context) (userTrafficSeries, error) {
 	var user model.User
 	if err := a.db.Select("id").First(&user, userID).Error; err != nil {
-		c.JSON(http.StatusNotFound, gin.H{"error": "user not found"})
-		return
+		return userTrafficSeries{}, &httpStatusError{http.StatusNotFound, "user not found"}
 	}
 	rangeName, rangeConfig, ok := a.parseTrafficRange(c)
 	if !ok {
-		return
+		return userTrafficSeries{}, &httpStatusError{http.StatusBadRequest, "invalid traffic range"}
 	}
 	if !rangeConfig.hourly {
-		c.JSON(http.StatusBadRequest, gin.H{"error": fmt.Sprintf("unsupported range %q", rangeName)})
-		return
+		return userTrafficSeries{}, &httpStatusError{http.StatusBadRequest, fmt.Sprintf("unsupported range %q", rangeName)}
 	}
 	a.flushTraffic()
 	loc := a.location()
@@ -303,8 +323,7 @@ func (a *App) userTraffic(c *gin.Context) {
 	offset := stepOffsetSeconds(step, start)
 	bucketExpression, err := trafficBucketExpression(a.db, stepSeconds, offset)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
-		return
+		return userTrafficSeries{}, err
 	}
 	var rows []userTrafficRow
 	if err := a.db.Model(&model.TrafficUserHourly{}).
@@ -314,12 +333,10 @@ func (a *App) userTraffic(c *gin.Context) {
 		Order("bucket_index, server_id, inbound_id").
 		Limit(maxTrafficQueryRows + 1).
 		Scan(&rows).Error; err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
-		return
+		return userTrafficSeries{}, err
 	}
 	if len(rows) > maxTrafficQueryRows {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "traffic query produced too many aggregated rows"})
-		return
+		return userTrafficSeries{}, &httpStatusError{http.StatusInternalServerError, "traffic query produced too many aggregated rows"}
 	}
 	points := emptyTrafficPoints(start, end, step)
 	type inboundKey struct{ serverID, inboundID uint }
@@ -349,13 +366,11 @@ func (a *App) userTraffic(c *gin.Context) {
 		}
 		var inboundRows []model.Inbound
 		if err := a.db.Select("id", "server_id", "tag", "type", "listen_port").Where("id IN ?", inboundIDs).Find(&inboundRows).Error; err != nil {
-			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
-			return
+			return userTrafficSeries{}, err
 		}
 		var serverRows []model.Server
 		if err := a.db.Select("id", "name").Where("id IN ?", serverIDs).Find(&serverRows).Error; err != nil {
-			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
-			return
+			return userTrafficSeries{}, err
 		}
 		inboundByID := make(map[uint]model.Inbound, len(inboundRows))
 		for _, inbound := range inboundRows {
@@ -380,10 +395,10 @@ func (a *App) userTraffic(c *gin.Context) {
 		return inbounds[i].Upload+inbounds[i].Download > inbounds[j].Upload+inbounds[j].Download
 	})
 	upload, download := sumTraffic(points)
-	c.JSON(http.StatusOK, userTrafficSeries{
+	return userTrafficSeries{
 		Range: rangeName, StepSeconds: stepSeconds, Timezone: loc.String(),
 		Upload: upload, Download: download, Points: points, Inbounds: inbounds,
-	})
+	}, nil
 }
 
 // userTrafficTotalsSince sums attributed traffic per user since a moment.

@@ -89,6 +89,56 @@ export interface UserNode {
 export const getUserNodes = (signal?: AbortSignal) =>
   http.get<{ nodes: UserNode[] }>('/api/user/nodes', { signal }).then((r) => r.data.nodes)
 
+export interface UserPrivateOutbound {
+  id: number
+  tag: string
+  type: OutboundType
+  remark: string
+}
+export const getUserOutbounds = (signal?: AbortSignal) =>
+  http.get<{ outbounds: UserPrivateOutbound[] }>('/api/user/outbounds', { signal }).then((r) => r.data.outbounds)
+
+export interface UserInboundOption {
+  id: number
+  server_id: number
+  server_name: string
+  tag: string
+  type: string
+  port: number
+  multi_user: boolean
+}
+export const getUserInbounds = (signal?: AbortSignal) =>
+  http.get<{ inbounds: UserInboundOption[] }>('/api/user/inbounds', { signal }).then((r) => r.data.inbounds)
+export interface UserForward {
+  id: number
+  server_id: number
+  server_name: string
+  inbound_tag: string
+  outbound_id: number
+  outbound_tag: string
+  node_name: string
+  remark: string
+  enabled: boolean
+}
+export const getUserForwards = (signal?: AbortSignal) =>
+  http.get<{ forwards: UserForward[] }>('/api/user/forwards', { signal }).then((r) => r.data.forwards)
+export const createUserForward = (body: { inbound_server_id: number; inbound_tag: string; outbound_id: number; remark?: string }) =>
+  http.post<{ forward: RouteRule } & ConfigApplyResult>('/api/user/forwards', body).then((r) => r.data)
+export const deleteUserForward = (id: number) =>
+  http.delete<ConfigApplyResult>(`/api/user/forwards/${id}`).then((r) => r.data)
+export const importUserOutbound = (body: { uri?: string; url?: string; tag?: string }) =>
+  http.post<{ outbounds: Outbound[] }>('/api/user/outbounds/import', body).then((r) => r.data)
+export const getMyTraffic = (range: UserTrafficRange = '24h', signal?: AbortSignal) =>
+  http.get<UserTrafficSeries>('/api/user/traffic', { params: { range }, signal }).then((r) => r.data)
+
+export interface ServerAuthUser {
+  id: number
+  name: string
+  auth_user: string
+}
+export const listServerAuthUsers = (serverId: number, signal?: AbortSignal) =>
+  http.get<{ users: ServerAuthUser[] }>(`/api/admin/servers/${serverId}/route-users`, { signal }).then((r) => r.data.users)
+
 export interface SubscriptionSyncResult {
   apply_state: ConfigApplyResult['apply_state']
   pending_servers: number
@@ -321,6 +371,7 @@ interface UserBody {
   inbound_ids?: number[]
   expire_at?: number | null
   enabled?: boolean
+  forwarding_enabled?: boolean
 }
 export const listUsers = (signal?: AbortSignal) =>
   http.get<{ users: User[] }>('/api/admin/users', { signal }).then((r) => r.data.users)

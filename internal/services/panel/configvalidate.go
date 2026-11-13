@@ -2,6 +2,7 @@ package panel
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net"
 	"strconv"
@@ -148,7 +149,7 @@ func (a *App) validateInboundConfiguration(db *gorm.DB, serverID, excludeID uint
 	return singbox.ValidateRealityGuardLayout(inputs)
 }
 
-func (a *App) validateOutbound(db *gorm.DB, serverID, excludeID uint, tag, typ string, raw json.RawMessage) error {
+func (a *App) validateOutbound(db *gorm.DB, serverID, excludeID uint, tag, typ string, ownerUserID uint, raw json.RawMessage) error {
 	if err := validateTag(tag); err != nil {
 		return err
 	}
@@ -158,8 +159,17 @@ func (a *App) validateOutbound(db *gorm.DB, serverID, excludeID uint, tag, typ s
 	if !supportedOutboundTypes[typ] || typ == "direct" {
 		return fmt.Errorf("unsupported outbound type: %s", typ)
 	}
+	if ownerUserID != 0 {
+		var cnt int64
+		if err := db.Model(&model.User{}).Where("id = ? AND role = ?", ownerUserID, model.RoleUser).Count(&cnt).Error; err != nil {
+			return err
+		}
+		if cnt == 0 {
+			return fmt.Errorf("专属出站所属用户不存在")
+		}
+	}
 	var n int64
-	q := db.Model(&model.Outbound{}).Where("server_id = ? AND tag = ?", serverID, tag)
+	q := db.Model(&model.Outbound{}).Where("server_id = ? AND tag = ? AND owner_user_id = ?", serverID, tag, ownerUserID)
 	if excludeID != 0 {
 		q = q.Where("id <> ?", excludeID)
 	}
@@ -256,6 +266,23 @@ func (a *App) validateRule(db *gorm.DB, serverID uint, raw json.RawMessage, outb
 		if err := json.Unmarshal(raw, &rule); err != nil {
 			return fmt.Errorf("规则匹配条件不是合法 JSON: %w", err)
 		}
+	}
+	// A private exit is scoped to its owner. A hand-written rule that targets
+	// it must also carry exactly that account's auth_user identity; otherwise
+	// one user's home broadband could be used by other accounts.
+	var privateOutbound model.Outbound
+	privateErr := db.Where("server_id = ? AND tag = ? AND owner_user_id <> 0", serverID, outbound).First(&privateOutbound).Error
+	if privateErr == nil {
+		var owner model.User
+		if err := db.Select("id", "email", "proxy_token", "sub_token").First(&owner, privateOutbound.OwnerUserID).Error; err != nil {
+			return fmt.Errorf("专属出站的所属用户不存在")
+		}
+		expected := proxyTrafficName(&owner)
+		if len(rule.AuthUser) != 1 || rule.AuthUser[0] != expected {
+			return fmt.Errorf("专属出站 %q 只能由所属用户的身份规则使用", outbound)
+		}
+	} else if !errors.Is(privateErr, gorm.ErrRecordNotFound) {
+		return privateErr
 	}
 	action := rule.Action
 	if action == "" {

@@ -254,7 +254,7 @@ func (a *App) outboundSourceBody(targetServerID uint, kind string, id uint) (out
 	if body.Tag, err = a.availableOutboundTag(targetServerID, client.Name); err != nil {
 		return outboundReq{}, err
 	}
-	if err := a.validateOutbound(a.db, targetServerID, 0, body.Tag, body.Type, body.Settings); err != nil {
+	if err := a.validateOutbound(a.db, targetServerID, 0, body.Tag, body.Type, 0, body.Settings); err != nil {
 		return outboundReq{}, err
 	}
 	return body, nil

@@ -34,6 +34,7 @@ import {
   isCanceledRequest,
   listOutbounds,
   listRules,
+  listServerAuthUsers,
   remoteConfig,
   reorderRules,
   serviceAction,
@@ -45,6 +46,7 @@ import {
   updateAgent,
 } from '../../../api'
 import type { ImportSummary, OutboundTest } from '../../../api'
+import type { ServerAuthUser } from '../../../api'
 import { applyWithToast, isConfigApplyResult, showConfigApplyResult } from '../../../configApply'
 import type { Inbound, Outbound, RouteRule, Server } from '../../../types'
 import InboundForm from './InboundForm'
@@ -104,6 +106,7 @@ export default function ServerDetail() {
 
   const [outbounds, setOutbounds] = useState<Outbound[]>([])
   const [rules, setRules] = useState<RouteRule[]>([])
+  const [routeUsers, setRouteUsers] = useState<ServerAuthUser[]>([])
   const [obOpen, setObOpen] = useState(false)
   const [obEditing, setObEditing] = useState<Outbound | null>(null)
   const [ruleOpen, setRuleOpen] = useState(false)
@@ -182,6 +185,7 @@ export default function ServerDetail() {
         ruleOrderRef.current = ruleRows.value
         setRules(ruleRows.value)
       }
+      void listServerAuthUsers(targetSID, controller.signal).then(setRouteUsers).catch(() => {})
       const failures = [
         outboundRows.status === 'rejected' ? `出站：${errMsg(outboundRows.reason)}` : '',
         ruleRows.status === 'rejected' ? `规则：${errMsg(ruleRows.reason)}` : '',
@@ -796,7 +800,7 @@ export default function ServerDetail() {
     const m = r.match || {}
     const groups: [string, (string | number)[] | undefined][] = [
       [m.rule_set_ip_cidr_match_source ? '来源 IP 规则集' : '规则集', m.rule_set], ['入站', m.inbound], ['域名', m.domain], ['后缀', m.domain_suffix],
-      ['关键词', m.domain_keyword], ['目标 IP', m.ip_cidr], ['来源 IP', m.source_ip_cidr],
+      ['用户', m.auth_user], ['关键词', m.domain_keyword], ['目标 IP', m.ip_cidr], ['来源 IP', m.source_ip_cidr],
       ['端口', m.port], ['协议', m.protocol], ['网络', m.network ? [m.network.toUpperCase()] : undefined],
     ]
     const chips = groups.flatMap(([label, values]) => (values || []).map((value) => (
@@ -978,6 +982,7 @@ export default function ServerDetail() {
         rule={ruleEditing}
         outboundTags={outboundTags}
         inboundTags={inboundTags}
+        users={routeUsers}
         open={ruleOpen}
         onClose={() => setRuleOpen(false)}
         onSaved={loadCurrentServer}

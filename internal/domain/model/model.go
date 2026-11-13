@@ -81,6 +81,11 @@ type User struct {
 
 	ExpireAt *time.Time `json:"expire_at"` // nil = never
 
+	// ForwardingEnabled lets this account create derived forward nodes from its
+	// own private exits. Inbound → outbound routing is an operator capability,
+	// so it is opt-in even for accounts that can manage their own outbounds.
+	ForwardingEnabled bool `gorm:"not null;default:false" json:"forwarding_enabled"`
+
 	Enabled bool `gorm:"index" json:"enabled"`
 	// SubToken is the bearer token in the user's subscription URL. It is never
 	// serialized to API responses: the frontend only needs the assembled
@@ -123,6 +128,22 @@ type UserNodeOrder struct {
 	NodeID     uint      `gorm:"not null;uniqueIndex:idx_user_node_order,priority:3" json:"node_id"`
 	SortOrder  int       `gorm:"not null;index" json:"sort_order"`
 	CustomName string    `gorm:"size:128" json:"custom_name,omitempty"`
+	CreatedAt  time.Time `json:"created_at"`
+	UpdatedAt  time.Time `json:"updated_at"`
+}
+
+// UserForward is one user-owned bridge: traffic entering an authorized
+// multi-user inbound with this record's dedicated identity is routed to the
+// user's private outbound. The derived identity is independent of the normal
+// inbound credential, so the original node stays unchanged and the forwarded
+// node can be selected separately in the subscription.
+type UserForward struct {
+	ID         uint      `gorm:"primaryKey" json:"id"`
+	UserID     uint      `gorm:"not null;index;uniqueIndex:idx_user_forward_pair,priority:1" json:"user_id"`
+	ServerID   uint      `gorm:"not null;index;uniqueIndex:idx_user_forward_pair,priority:2" json:"server_id"`
+	InboundID  uint      `gorm:"not null;index;uniqueIndex:idx_user_forward_pair,priority:3" json:"inbound_id"`
+	OutboundID uint      `gorm:"not null;index;uniqueIndex:idx_user_forward_pair,priority:4" json:"outbound_id"`
+	Remark     string    `gorm:"size:255" json:"remark"`
 	CreatedAt  time.Time `json:"created_at"`
 	UpdatedAt  time.Time `json:"updated_at"`
 }
@@ -269,11 +290,14 @@ const (
 // Outbound is a routing target on a Server: "direct" or a proxy to a landing
 // server. Settings holds proxy-specific fields as JSON.
 type Outbound struct {
-	ID       uint     `gorm:"primaryKey" json:"id"`
-	ServerID uint     `gorm:"index" json:"server_id"`
-	Tag      string   `gorm:"size:64" json:"tag"`
-	Type     string   `gorm:"size:32" json:"type"` // direct | vless | vmess | trojan | shadowsocks | hysteria2 | tuic
-	Settings JSONText `gorm:"type:text" json:"settings"`
+	ID       uint `gorm:"primaryKey" json:"id"`
+	ServerID uint `gorm:"index" json:"server_id"`
+	// OwnerUserID is 0 for a shared server outbound, or the account that owns a
+	// private outbound. Private outbounds never appear in another user's view.
+	OwnerUserID uint     `gorm:"index;not null;default:0" json:"owner_user_id,omitempty"`
+	Tag         string   `gorm:"size:64" json:"tag"`
+	Type        string   `gorm:"size:32" json:"type"` // direct | vless | vmess | trojan | shadowsocks | hysteria2 | tuic
+	Settings    JSONText `gorm:"type:text" json:"settings"`
 	// SourceKind/SourceID are set for outbounds imported from a panel node.
 	// Manual entries and URI imports leave both empty and carry their own
 	// credential in Settings; URI imports are independent snapshots.
@@ -508,7 +532,7 @@ type CustomNodeSubscription struct {
 func AllModels() []any {
 	return []any{
 		&User{}, &UserNodeOrder{}, &Server{}, &Inbound{}, &Outbound{}, &RouteRule{}, &RuleSet{}, &ServerRuleSet{}, &Setting{}, &TrafficRecord{},
-		&CustomNodeSubscription{}, &CustomNode{}, &TrafficHourly{}, &SubscriptionFetch{}, &TrafficUserHourly{}, &UserTrafficIdentity{}, &TrafficReportCursor{}, &InboundTrafficIdentity{},
+		&CustomNodeSubscription{}, &CustomNode{}, &UserForward{}, &TrafficHourly{}, &SubscriptionFetch{}, &TrafficUserHourly{}, &UserTrafficIdentity{}, &TrafficReportCursor{}, &InboundTrafficIdentity{},
 	}
 }
 

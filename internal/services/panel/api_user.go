@@ -61,6 +61,32 @@ func (a *App) handleUserNodes(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"nodes": nodes})
 }
 
+// handleUserTraffic exposes only the caller's own attributed usage. The series
+// is the same hourly data administrators see, scoped by the authenticated user
+// instead of accepting a user id from the request.
+func (a *App) handleUserTraffic(c *gin.Context) {
+	var u model.User
+	if err := a.db.First(&u, currentUID(c)).Error; err != nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "user not found"})
+		return
+	}
+	if u.Role != model.RoleAdmin && !userActive(&u) {
+		c.JSON(http.StatusForbidden, gin.H{"error": "账号已停用或已到期"})
+		return
+	}
+	series, err := a.userTrafficSeries(u.ID, c)
+	if err != nil {
+		var statusErr *httpStatusError
+		if errors.As(err, &statusErr) {
+			c.JSON(statusErr.status, gin.H{"error": statusErr.message})
+			return
+		}
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+	c.JSON(http.StatusOK, series)
+}
+
 // handleResetSub revokes both the subscription URL and per-user proxy credentials.
 func (a *App) handleResetSub(c *gin.Context) {
 	var user model.User

@@ -1,7 +1,7 @@
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import Dashboard from './Dashboard'
-import { getMe, getSubscriptionSync, getUserNodes, resetSub } from '../../api'
+import { getMe, getMyTraffic, getSubscriptionSync, getUserForwards, getUserInbounds, getUserNodes, getUserOutbounds, resetSub } from '../../api'
 import type { UserNode } from '../../api'
 import type { User } from '../../types'
 import { useAuth } from '../../store'
@@ -11,13 +11,14 @@ import { DialogHost, Modal } from '../../ui/dialogs'
 
 vi.mock('../../api', async (importOriginal) => ({
   ...await importOriginal<typeof import('../../api')>(),
-  getMe: vi.fn(), getUserNodes: vi.fn(), resetSub: vi.fn(), getSubscriptionSync: vi.fn(),
+  getMe: vi.fn(), getUserNodes: vi.fn(), getUserOutbounds: vi.fn(), getUserInbounds: vi.fn(), getUserForwards: vi.fn(),
+  getMyTraffic: vi.fn(), resetSub: vi.fn(), getSubscriptionSync: vi.fn(),
 }))
 vi.mock('../../util', async (importOriginal) => ({
   ...await importOriginal<typeof import('../../util')>(), copyToClipboard: vi.fn(),
 }))
 
-const user = { id: 2, email: 'alice', role: 'user', enabled: true, server_ids: [1], inbound_ids: [1] } as User
+const user = { id: 2, email: 'alice', role: 'user', enabled: true, forwarding_enabled: true, server_ids: [1], inbound_ids: [1] } as User
 const node: UserNode = {
   name: 'Tokyo', type: 'vless', server: 'tokyo.example', port: 443, region: 'JP',
   link: 'vless://old-uuid@tokyo.example:443', params: { UUID: 'old-uuid' },
@@ -31,6 +32,12 @@ beforeEach(() => {
   useAuth.setState({ token: 'test-token', user })
   vi.mocked(getMe).mockResolvedValue({ user, subscription_url: 'https://panel.example/sub/test' })
   vi.mocked(getUserNodes).mockResolvedValue([node])
+  vi.mocked(getUserOutbounds).mockResolvedValue([])
+  vi.mocked(getUserInbounds).mockResolvedValue([])
+  vi.mocked(getUserForwards).mockResolvedValue([])
+  vi.mocked(getMyTraffic).mockResolvedValue({
+    range: '24h', step_seconds: 3600, timezone: 'Asia/Tokyo', upload: 1024, download: 2048, points: [], inbounds: [],
+  })
   vi.mocked(resetSub).mockResolvedValue({ subscription_url: nextUrl, sync: { apply_state: 'pending', pending_servers: 1, failed_servers: 0 } })
   vi.mocked(getSubscriptionSync).mockResolvedValue({ apply_state: 'applied', pending_servers: 0, failed_servers: 0 })
   vi.mocked(copyToClipboard).mockResolvedValue(undefined)
@@ -43,7 +50,21 @@ afterEach(() => {
 })
 
 describe('user subscription dashboard', () => {
-  it.each([false, true])('places reset below the subscription links without a page title or password action (mobile: %s)', async (mobile) => {
+  it('shows the signed-in user usage and only their private outbounds', async () => {
+    vi.mocked(getUserOutbounds).mockResolvedValue([
+      { id: 1, tag: 'HK 家宽', type: 'vless', remark: '' },
+    ])
+    mount()
+    expect(await screen.findByRole('heading', { name: '用量', level: 2 })).toBeTruthy()
+    fireEvent.click(await screen.findByRole('tab', { name: /^出站/ }))
+    expect(await screen.findByText('HK 家宽')).toBeTruthy()
+    expect(screen.getByText('2.00 KB')).toBeTruthy()
+    expect(screen.getByText('1.00 KB')).toBeTruthy()
+    fireEvent.click(screen.getByRole('radio', { name: '7 天' }))
+    await waitFor(() => expect(getMyTraffic).toHaveBeenLastCalledWith('7d', expect.anything()))
+  })
+
+  it.each([false, true])('places reset in the subscription header without a page title or password action (mobile: %s)', async (mobile) => {
     vi.stubGlobal('innerWidth', mobile ? 390 : 1280)
     mount()
     const heading = await screen.findByRole('heading', { name: '订阅链接', level: 2 })
@@ -51,7 +72,7 @@ describe('user subscription dashboard', () => {
     expect(screen.queryByRole('heading', { level: 1 })).toBeNull()
     expect(document.querySelector('.ui-page-meta')).toBeNull()
     const reset = within(section).getByRole('button', { name: '重置链接' })
-    expect(reset.closest('.sub-actions')?.previousElementSibling?.classList.contains('sub-clients')).toBe(true)
+    expect(reset.closest('.ui-section-head')).toBeTruthy()
     expect(screen.queryByText(user.email)).toBeNull()
     expect(screen.queryByRole('button', { name: '修改密码' })).toBeNull()
     expect(document.querySelector('input[type="password"]')).toBeNull()

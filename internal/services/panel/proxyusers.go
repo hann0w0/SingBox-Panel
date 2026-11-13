@@ -38,6 +38,29 @@ func proxyIdentity(user *model.User, inboundID uint) singbox.ProxyUser {
 	}
 }
 
+// forwardProxyIdentity derives a second credential for the same account. A
+// forward must never reuse the normal inbound identity: clients select an
+// extra node with its own password while the original node and password remain
+// unchanged.
+func forwardProxyIdentity(user *model.User, forwardID, inboundID uint) singbox.ProxyUser {
+	seed := user.ProxyToken
+	if seed == "" {
+		seed = user.SubToken
+	}
+	identity := proxyIdentity(user, inboundID)
+	uuidSum := sha256.Sum256([]byte(fmt.Sprintf("forward-uuid:%s:%d:%d", seed, forwardID, inboundID)))
+	uuidBytes := uuidSum[:16]
+	uuidBytes[6] = (uuidBytes[6] & 0x0f) | 0x40
+	uuidBytes[8] = (uuidBytes[8] & 0x3f) | 0x80
+	passwordSum := sha256.Sum256([]byte(fmt.Sprintf("forward-password:%s:%d:%d", seed, forwardID, inboundID)))
+	identity.UUID = fmt.Sprintf("%x-%x-%x-%x-%x",
+		uuidBytes[0:4], uuidBytes[4:6], uuidBytes[6:8], uuidBytes[8:10], uuidBytes[10:16])
+	identity.Password = base64.RawURLEncoding.EncodeToString(passwordSum[:18])
+	identity.Name = forwardTrafficName(user, forwardID)
+	identity.Username = identity.Name
+	return identity
+}
+
 func proxyUsersForInbound(db *gorm.DB, inbound *model.Inbound, settings singbox.InboundSettings) ([]singbox.ProxyUser, error) {
 	if !settings.UseMultiUser(string(inbound.Type)) {
 		return nil, nil
@@ -65,6 +88,15 @@ func proxyUsersForInbound(db *gorm.DB, inbound *model.Inbound, settings singbox.
 	if err := rememberProxyTrafficIdentities(db, trafficIdentities); err != nil {
 		return nil, fmt.Errorf("register proxy traffic identities: %w", err)
 	}
+	forwards, forwardBindings, err := forwardIdentitiesForInbound(db, inbound)
+	if err != nil {
+		return nil, err
+	}
+	identities = append(identities, forwards...)
+	trafficIdentities = append(trafficIdentities, forwardBindings...)
+	if err := rememberProxyTrafficIdentities(db, forwardBindings); err != nil {
+		return nil, fmt.Errorf("register forwarded traffic identities: %w", err)
+	}
 	if len(identities) == 0 {
 		// Several protocols interpret an omitted/empty users list as anonymous or
 		// single-credential mode. Keep one unissued credential so revoking the last
@@ -83,6 +115,51 @@ func proxyUsersForInbound(db *gorm.DB, inbound *model.Inbound, settings singbox.
 		identities = append(identities, lockout)
 	}
 	return identities, nil
+}
+
+// forwardIdentitiesForInbound provisions one additional user on each inbound
+// that has derived nodes. Each identity belongs to the same account as the
+// underlying node but has a distinct name and credential, so a client can
+// select the original node or an inbound→outbound node independently.
+func forwardIdentitiesForInbound(db *gorm.DB, inbound *model.Inbound) ([]singbox.ProxyUser, []model.UserTrafficIdentity, error) {
+	var forwards []model.UserForward
+	if err := db.Where("inbound_id = ? AND server_id = ? AND user_id IN (?)",
+		inbound.ID, inbound.ServerID,
+		db.Model(&model.User{}).Select("id").Where("forwarding_enabled = ?", true),
+	).Order("id").Find(&forwards).Error; err != nil {
+		return nil, nil, err
+	}
+	if len(forwards) == 0 {
+		return nil, nil, nil
+	}
+	userIDs := make([]uint, 0, len(forwards))
+	for _, forward := range forwards {
+		userIDs = append(userIDs, forward.UserID)
+	}
+	var users []model.User
+	if err := db.Where("id IN ? AND enabled = ?", normalizedIDs(userIDs), true).Find(&users).Error; err != nil {
+		return nil, nil, err
+	}
+	byID := make(map[uint]model.User, len(users))
+	for _, user := range users {
+		byID[user.ID] = user
+	}
+	now := time.Now()
+	out := make([]singbox.ProxyUser, 0, len(forwards))
+	bindings := make([]model.UserTrafficIdentity, 0, len(forwards))
+	for _, forward := range forwards {
+		user, ok := byID[forward.UserID]
+		if !ok || user.Expired(now) || !user.HasInbound(inbound.ServerID, inbound.ID) {
+			continue
+		}
+		identity := forwardProxyIdentity(&user, forward.ID, inbound.ID)
+		out = append(out, identity)
+		bindings = append(bindings, model.UserTrafficIdentity{
+			ServerID: inbound.ServerID, InboundID: inbound.ID, Name: identity.Name,
+			UserID: user.ID, UserKey: proxyTrafficName(&user),
+		})
+	}
+	return out, bindings, nil
 }
 
 func mergeServerIDs(groups ...[]uint) []uint {

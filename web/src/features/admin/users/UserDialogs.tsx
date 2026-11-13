@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
-import { Form, Input, Modal, Segmented, Table, message } from '../../../ui'
+import { Form, Input, Modal, Segmented, Switch, Table, message } from '../../../ui'
 import { createUser, errMsg, getUserTraffic, updateUser } from '../../../api'
 import type { User, UserTrafficInbound, UserTrafficRange, UserTrafficSeries } from '../../../types'
 import { formatBytes } from '../../../util'
@@ -18,7 +18,8 @@ export function UserAccountDialog({ user, onClose, onSaved }: {
   const lock = useRef(false)
   useEffect(() => {
     form.resetFields()
-    if (user) form.setFieldsValue({ email: user.email })
+    if (user) form.setFieldsValue({ email: user.email, forwarding_enabled: !!user.forwarding_enabled })
+    else form.setFieldsValue({ forwarding_enabled: false })
   }, [user?.id])
   const submit = async () => {
     if (lock.current) return
@@ -26,7 +27,7 @@ export function UserAccountDialog({ user, onClose, onSaved }: {
     setSaving(true)
     try {
       const values = await form.validateFields()
-      const body = { email: values.email, password: values.password || undefined }
+      const body = { email: values.email, password: values.password || undefined, forwarding_enabled: !!values.forwarding_enabled }
       const saved = user ? await updateUser(user.id, body) : await createUser(body)
       message.success('已保存用户')
       onSaved(saved)
@@ -43,6 +44,9 @@ export function UserAccountDialog({ user, onClose, onSaved }: {
       </Form.Item>
       <Form.Item name="password" label={user ? '新密码' : '密码'} rules={user ? [{ max: 72 }] : [{ required: true, message: '请输入密码' }, { max: 72 }]}>
         <Input.Password placeholder={user ? '不修改' : undefined} autoComplete="new-password" />
+      </Form.Item>
+      <Form.Item name="forwarding_enabled" label="允许创建转发" valuePropName="checked" extra="授权后，该用户才能把自己的专属出站关联到入口节点。">
+        <Switch />
       </Form.Item>
     </Form>
   </Modal>

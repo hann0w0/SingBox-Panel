@@ -813,11 +813,6 @@ export function UserAccessEditor({ userId, onStateChange }: {
             </Button>
           ) : null}
         />
-        {loadedServerWide ? (
-          <p className="um-access-note">
-            整机授权：{loadedServerIDs.map((id) => servers.find((server) => server.id === id)?.name || `#${id}`).join('、')}
-          </p>
-        ) : null}
         {view === 'order' ? renderNodeOrder() : activeGroups.length === 0 ? (
           <div className="ui-empty">{allNodeGroups.length === 0 ? '暂无可分配节点' : activeNodeTab === 'managed' ? '暂无面板节点' : '暂无外部节点'}</div>
         ) : (

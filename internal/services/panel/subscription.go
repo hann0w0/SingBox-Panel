@@ -193,6 +193,54 @@ func (a *App) gatherNodesWithError(user *model.User) ([]node, error) {
 				})
 			}
 			nameServerNodes(srv.Name, out[first:])
+
+			// Each forward is a separate node with its own credential. The
+			// original inbound node above stays untouched. Forwarding is an
+			// explicit capability: without it, stale forward records must not
+			// appear in a subscription after an administrator revokes access.
+			var forwards []model.UserForward
+			if user.ForwardingEnabled {
+				if err := a.db.Where("user_id = ? AND server_id = ?", user.ID, srv.ID).Order("id").Find(&forwards).Error; err != nil {
+					return nil, err
+				}
+			}
+			for _, forward := range forwards {
+				var ib model.Inbound
+				if err := a.db.Where("id = ? AND server_id = ? AND enabled = ?", forward.InboundID, srv.ID, true).First(&ib).Error; err != nil {
+					continue
+				}
+				if !user.HasInbound(srv.ID, ib.ID) {
+					continue
+				}
+				var outbound model.Outbound
+				if err := a.db.Where("id = ? AND owner_user_id = ?", forward.OutboundID, user.ID).First(&outbound).Error; err != nil {
+					continue
+				}
+				var st singbox.InboundSettings
+				if len(ib.Settings) > 0 {
+					if err := json.Unmarshal(ib.Settings, &st); err != nil {
+						continue
+					}
+				}
+				if !st.UseMultiUser(string(ib.Type)) {
+					continue
+				}
+				st.SingleUser = false
+				st.MultiUser = true
+				name := forwardNodeName(srv.Name, ib.Tag, outbound.Tag, forward.Remark)
+				out = append(out, node{
+					orderType: userNodeTypeForward,
+					orderID:   forward.ID,
+					tag:       ib.Tag,
+					name:      name,
+					server:    host,
+					port:      ib.ListenPort,
+					typ:       string(ib.Type),
+					region:    srv.Region,
+					settings:  st,
+					user:      forwardProxyIdentity(user, forward.ID, ib.ID),
+				})
+			}
 		}
 	}
 

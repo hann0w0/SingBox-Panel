@@ -31,7 +31,7 @@ func (a *App) listOutbounds(c *gin.Context) {
 		return
 	}
 	var rows []model.Outbound
-	if err := a.db.Where("server_id = ?", id).Order("sort").Find(&rows).Error; err != nil {
+	if err := a.db.Where("server_id = ? AND owner_user_id = ?", id, 0).Order("sort").Find(&rows).Error; err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
@@ -39,11 +39,12 @@ func (a *App) listOutbounds(c *gin.Context) {
 }
 
 type outboundReq struct {
-	Tag      string          `json:"tag"`
-	Type     string          `json:"type"`
-	Settings json.RawMessage `json:"settings"`
-	Remark   *string         `json:"remark"`
-	Sort     *int            `json:"sort"`
+	Tag         string          `json:"tag"`
+	Type        string          `json:"type"`
+	OwnerUserID uint            `json:"owner_user_id,omitempty"`
+	Settings    json.RawMessage `json:"settings"`
+	Remark      *string         `json:"remark"`
+	Sort        *int            `json:"sort"`
 	// Set only when imported from a panel node; the config build then renders
 	// this outbound from that node instead of the stored snapshot.
 	SourceKind string `json:"source_kind,omitempty"`
@@ -82,7 +83,7 @@ func (a *App) createOutbound(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
-	if err := a.validateOutbound(a.db, id, 0, req.Tag, req.Type, req.Settings); err != nil {
+	if err := a.validateOutbound(a.db, id, 0, req.Tag, req.Type, req.OwnerUserID, req.Settings); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
@@ -95,7 +96,7 @@ func (a *App) createOutbound(c *gin.Context) {
 		sort = *req.Sort
 	}
 	ob := &model.Outbound{
-		ServerID: id, Tag: req.Tag, Type: req.Type,
+		ServerID: id, OwnerUserID: req.OwnerUserID, Tag: req.Tag, Type: req.Type,
 		Settings: model.JSONText(req.Settings), Remark: remark, Sort: sort,
 		SourceKind: sourceKind, SourceID: sourceID,
 	}
@@ -124,7 +125,7 @@ func (a *App) updateOutbound(c *gin.Context) {
 		return
 	}
 	var ob model.Outbound
-	if err := a.db.Where("id = ? AND server_id = ?", oid, sid).First(&ob).Error; err != nil {
+	if err := a.db.Where("id = ? AND server_id = ? AND owner_user_id = ?", oid, sid, 0).First(&ob).Error; err != nil {
 		c.JSON(http.StatusNotFound, gin.H{"error": "outbound not found"})
 		return
 	}
@@ -150,7 +151,7 @@ func (a *App) updateOutbound(c *gin.Context) {
 	if req.SourceKind == "" && req.SourceID == 0 {
 		ob.SourceKind, ob.SourceID = "", 0
 	}
-	if err := a.validateOutbound(a.db, sid, ob.ID, nextTag, nextType, nextSettings); err != nil {
+	if err := a.validateOutbound(a.db, sid, ob.ID, nextTag, nextType, ob.OwnerUserID, nextSettings); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
@@ -221,7 +222,7 @@ func (a *App) deleteOutbound(c *gin.Context) {
 		return
 	}
 	var ob model.Outbound
-	if err := a.db.Where("id = ? AND server_id = ?", oid, sid).First(&ob).Error; err != nil {
+	if err := a.db.Where("id = ? AND server_id = ? AND owner_user_id = ?", oid, sid, 0).First(&ob).Error; err != nil {
 		c.JSON(http.StatusNotFound, gin.H{"error": "outbound not found"})
 		return
 	}
@@ -267,7 +268,7 @@ func (a *App) testOutbound(c *gin.Context) {
 		return
 	}
 	var ob model.Outbound
-	if err := a.db.Where("id = ? AND server_id = ?", oid, sid).First(&ob).Error; err != nil {
+	if err := a.db.Where("id = ? AND server_id = ? AND owner_user_id = ?", oid, sid, 0).First(&ob).Error; err != nil {
 		c.JSON(http.StatusNotFound, gin.H{"error": "outbound not found"})
 		return
 	}

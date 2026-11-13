@@ -1,6 +1,7 @@
 package panel
 
 import (
+	"encoding/json"
 	"fmt"
 	"log"
 	"os"
@@ -13,6 +14,7 @@ import (
 
 	"github.com/hann0w0/singbox-panel/internal/config"
 	"github.com/hann0w0/singbox-panel/internal/domain/model"
+	"github.com/hann0w0/singbox-panel/internal/domain/singbox"
 )
 
 // schemaMigration is one ordered, atomic application-schema change. Migration
@@ -398,6 +400,26 @@ var applicationMigrations = []schemaMigration{
 		name:    "prune unreferenced rule-set assignments",
 		up:      pruneUnreferencedRuleSetAssignments,
 	},
+	{
+		version: 35,
+		name:    "user private outbounds",
+		up:      func(tx *gorm.DB) error { return tx.AutoMigrate(&model.Outbound{}) },
+	},
+	{
+		version: 36,
+		name:    "detach user private outbounds from entry servers",
+		up:      detachUserPrivateOutbounds,
+	},
+	{
+		version: 37,
+		name:    "user forward derived nodes",
+		up:      migrateUserForwards,
+	},
+	{
+		version: 38,
+		name:    "user forwarding permission",
+		up:      func(tx *gorm.DB) error { return tx.AutoMigrate(&model.User{}) },
+	},
 }
 
 // migrationReplaySafe records whether an interrupted attempt of each migration
@@ -451,6 +473,130 @@ var migrationReplaySafe = map[uint]bool{
 	32: true,  // AutoMigrate adds nullable outbound source columns
 	33: true,  // AutoMigrate plus insert-only server assignments
 	34: true,  // only removes assignments no saved route rule references
+	35: true,  // AutoMigrate adds the user-private outbound owner column
+	36: true,  // moves private exits to server_id=0 and suffixes duplicate tags
+	37: true,  // AutoMigrate of user-owned forward definitions
+	38: true,  // AutoMigrate adds the opt-in forwarding permission
+}
+
+// detachUserPrivateOutbounds upgrades the first private-exit shape, where an
+// exit belonged to one entry server, to credential-only storage. Existing
+// forwarding rules keep working because they reference the outbound by tag.
+// Duplicate tags are suffixed deterministically and their rules follow the
+// renamed exit, so configs never contain two outbounds with the same tag.
+func detachUserPrivateOutbounds(tx *gorm.DB) error {
+	var rows []model.Outbound
+	if err := tx.Where("owner_user_id <> 0").Order("id").Find(&rows).Error; err != nil {
+		return err
+	}
+	used := make(map[string]bool)
+	var sharedTags []string
+	if err := tx.Model(&model.Outbound{}).Where("owner_user_id = 0").Pluck("tag", &sharedTags).Error; err != nil {
+		return err
+	}
+	for _, tag := range sharedTags {
+		used[tag] = true
+	}
+	for _, row := range rows {
+		serverIDs := []uint{}
+		if row.ServerID != 0 {
+			serverIDs = append(serverIDs, row.ServerID)
+		}
+		var rules []model.RouteRule
+		if err := tx.Where("outbound = ? AND server_id IN ?", row.Tag, normalizedIDs(serverIDs)).Find(&rules).Error; err != nil {
+			return err
+		}
+		nextTag := row.Tag
+		for suffix := 2; used[nextTag] || builtinOutboundTags[nextTag]; suffix++ {
+			nextTag = fmt.Sprintf("%s-%d", row.Tag, suffix)
+		}
+		used[nextTag] = true
+		if nextTag != row.Tag {
+			for _, rule := range rules {
+				if err := tx.Model(&model.RouteRule{}).Where("id = ?", rule.ID).Update("outbound", nextTag).Error; err != nil {
+					return err
+				}
+			}
+		}
+		if row.ServerID != 0 || nextTag != row.Tag {
+			if err := tx.Model(&model.Outbound{}).Where("id = ?", row.ID).
+				Updates(map[string]any{"server_id": 0, "tag": nextTag}).Error; err != nil {
+				return err
+			}
+		}
+	}
+	return nil
+}
+
+// migrateUserForwards converts pre-v37 auth_user route rules that were created
+// by the member console into explicit forward records. Runtime config no longer
+// derives forwarded nodes from ad-hoc rules, so without this step an existing
+// subscription would silently lose its derived node after upgrading.
+func migrateUserForwards(tx *gorm.DB) error {
+	if err := tx.AutoMigrate(&model.UserForward{}); err != nil {
+		return err
+	}
+	var rules []model.RouteRule
+	if err := tx.Where("outbound NOT IN ?", []string{"direct", "block", "reject", "sniff", "hijack-dns"}).Order("id").Find(&rules).Error; err != nil {
+		return err
+	}
+	for _, rule := range rules {
+		var match singbox.RuleInput
+		if len(rule.Match) == 0 || json.Unmarshal(rule.Match, &match) != nil ||
+			len(match.AuthUser) != 1 || len(match.Inbound) != 1 ||
+			!strings.HasPrefix(match.AuthUser[0], proxyTrafficNamePrefix) {
+			continue
+		}
+		var identity model.UserTrafficIdentity
+		if err := tx.Where("server_id = ? AND name = ?", rule.ServerID, match.AuthUser[0]).First(&identity).Error; err != nil {
+			continue
+		}
+		var outbound model.Outbound
+		if err := tx.Where("server_id = 0 AND owner_user_id = ? AND tag = ?", identity.UserID, rule.Outbound).First(&outbound).Error; err != nil {
+			continue
+		}
+		var inbound model.Inbound
+		if err := tx.Where("server_id = ? AND tag = ?", rule.ServerID, match.Inbound[0]).First(&inbound).Error; err != nil {
+			continue
+		}
+		var count int64
+		if err := tx.Model(&model.UserForward{}).
+			Where("user_id = ? AND server_id = ? AND inbound_id = ? AND outbound_id = ?", identity.UserID, rule.ServerID, inbound.ID, outbound.ID).
+			Count(&count).Error; err != nil {
+			return err
+		}
+		var forward model.UserForward
+		if count > 0 {
+			if err := tx.Where("user_id = ? AND server_id = ? AND inbound_id = ? AND outbound_id = ?",
+				identity.UserID, rule.ServerID, inbound.ID, outbound.ID).Order("id").First(&forward).Error; err != nil {
+				return err
+			}
+		} else {
+			forward = model.UserForward{
+				UserID: identity.UserID, ServerID: rule.ServerID, InboundID: inbound.ID, OutboundID: outbound.ID,
+				Remark: rule.Remark,
+			}
+			if err := tx.Create(&forward).Error; err != nil {
+				return err
+			}
+		}
+		// The old rule used the account's original identity, which must keep
+		// routing exactly as before. Move that rule onto a materialized forward
+		// first, then replace its target with the newly-derived credential.
+		var user model.User
+		if err := tx.Select("id", "proxy_token", "sub_token").First(&user, identity.UserID).Error; err != nil {
+			return err
+		}
+		match.AuthUser = []string{forwardTrafficName(&user, forward.ID)}
+		raw, err := json.Marshal(match)
+		if err != nil {
+			return err
+		}
+		if err := tx.Model(&model.RouteRule{}).Where("id = ?", rule.ID).Update("match", model.JSONText(raw)).Error; err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 // runSchemaMigrations applies every pending migration in order. If any

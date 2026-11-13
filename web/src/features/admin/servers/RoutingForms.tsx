@@ -544,6 +544,7 @@ const ACTION_OPTIONS = [
 ]
 
 type MatchField =
+  | 'auth_user'
   | 'inbound'
   | 'rule_set'
   | 'domain'
@@ -556,6 +557,7 @@ type MatchField =
   | 'network'
 
 const MATCH_FIELD_OPTIONS: { value: MatchField; label: string }[] = [
+  { value: 'auth_user', label: '用户' },
   { value: 'inbound', label: '入站来源' },
   { value: 'rule_set', label: '规则集' },
   { value: 'domain', label: '完整域名' },
@@ -570,6 +572,7 @@ const MATCH_FIELD_OPTIONS: { value: MatchField; label: string }[] = [
 
 function activeMatchFields(match: RuleMatch): MatchField[] {
   const fields: MatchField[] = []
+  if (match.auth_user?.length) fields.push('auth_user')
   if (match.inbound?.length) fields.push('inbound')
   if (match.rule_set?.length) fields.push('rule_set')
   if (match.domain?.length) fields.push('domain')
@@ -588,6 +591,7 @@ export function RuleForm({
   rule,
   outboundTags,
   inboundTags,
+  users = [],
   ruleSets: assignedRuleSets,
   open,
   onClose,
@@ -597,6 +601,7 @@ export function RuleForm({
   rule: RouteRule | null
   outboundTags: string[]
   inboundTags: string[]
+  users?: { id: number; name: string; auth_user: string }[]
   ruleSets?: RuleSet[]
   open: boolean
   onClose: () => void
@@ -653,6 +658,7 @@ export function RuleForm({
          method: (m.method as string) || 'default',
          remark: rule.remark || '',
          match_fields: activeMatchFields(m),
+         auth_user: m.auth_user || [],
          rule_set: m.rule_set || [],
          rule_set_ip_direction: m.rule_set_ip_cidr_match_source ? 'source' : 'target',
          inbound: m.inbound || [],
@@ -674,6 +680,7 @@ export function RuleForm({
          method: 'default',
          remark: '',
          match_fields: [],
+         auth_user: [],
          rule_set: [],
          rule_set_ip_direction: 'target',
          inbound: [],
@@ -702,6 +709,7 @@ export function RuleForm({
       if (session !== submitSessionRef.current) return
       const match: RuleMatch = { action: v.action }
       const selectedFields = new Set<MatchField>(v.match_fields || [])
+      if (selectedFields.has('auth_user') && v.auth_user?.length) match.auth_user = v.auth_user
       if ((v.action === 'sniff' || v.action === 'hijack-dns' || selectedFields.has('inbound')) && v.inbound?.length) {
         match.inbound = v.inbound
       }
@@ -849,6 +857,12 @@ export function RuleForm({
             <Form.Item name="match_fields" className="fm-full">
               <Checkbox.Group className="fm-chips" options={MATCH_FIELD_OPTIONS} />
             </Form.Item>
+
+            {showMatchField('auth_user') && (
+              <Form.Item name="auth_user" label="用户" rules={[{ required: true, message: '请选择至少一个用户' }]} className="fm-full">
+                <Select mode="multiple" allowClear placeholder="选择用户" options={users.map((user) => ({ value: user.auth_user, label: user.name }))} />
+              </Form.Item>
+            )}
 
             {showMatchField('inbound') && (
               <Form.Item name="inbound" label="入站来源" rules={[{ required: true, message: '请选择至少一个入站' }]} className="fm-full">

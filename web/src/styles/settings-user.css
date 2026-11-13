@@ -115,3 +115,28 @@
   .settings-release-picker .settings-actions { width: 100%; }
   .settings-release-select.ui-select { flex: 1; min-width: 0; }
 }
+
+/* User-owned private outbounds */
+.sub-outbounds { overflow: hidden; }
+.sub-outbound { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 14px 16px; }
+.sub-outbound + .sub-outbound { border-top: 1px solid var(--console-border); }
+.sub-outbound-main { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.sub-outbound-main strong { font-weight: 500; color: var(--console-ink); overflow-wrap: anywhere; }
+.sub-outbound-main small { color: var(--console-faint); font-size: 12.5px; }
+@media (max-width: 767px) {
+  .sub-outbound { padding: 12px 14px; }
+}
+
+/* Per-user usage summary */
+.sub-usage { overflow: hidden; }
+.sub-usage-stats { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); }
+.sub-usage-stats > div { min-width: 0; padding: 16px 20px; }
+.sub-usage-stats > div + div { border-left: 1px solid var(--console-border); }
+.sub-usage-stats span { display: block; color: var(--console-muted); font-size: 12.5px; }
+.sub-usage-stats strong { display: block; margin-top: 3px; font-size: 20px; font-weight: 600; letter-spacing: -.3px; }
+@media (max-width: 767px) {
+  .sub-usage-stats > div { padding: 12px 14px; }
+  .sub-usage-stats strong { font-size: 17px; }
+}
+.sub-form { display: flex; flex-direction: column; gap: 16px; }
+.sub-form > label { display: flex; flex-direction: column; gap: 6px; color: var(--console-muted); font-size: 13px; }

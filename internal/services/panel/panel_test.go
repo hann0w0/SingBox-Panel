@@ -35,6 +35,12 @@ func testDB(t *testing.T) *gorm.DB {
 	if err := db.AutoMigrate(model.AllModels()...); err != nil {
 		t.Fatal(err)
 	}
+	pool, err := db.DB()
+	if err != nil {
+		t.Fatal(err)
+	}
+	pool.SetMaxOpenConns(1)
+	pool.SetMaxIdleConns(1)
 	return db
 }
 

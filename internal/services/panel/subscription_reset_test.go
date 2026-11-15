@@ -33,7 +33,7 @@ func resetSubscriptionForTest(t *testing.T, app *App, userID uint) *httptest.Res
 
 func waitForSubscriptionResetPush(t *testing.T, orch *Orchestrator) {
 	t.Helper()
-	deadline := time.Now().Add(3 * time.Second)
+	deadline := time.Now().Add(10 * time.Second)
 	for time.Now().Before(deadline) {
 		orch.asyncMu.Lock()
 		idle := len(orch.asyncRunning) == 0

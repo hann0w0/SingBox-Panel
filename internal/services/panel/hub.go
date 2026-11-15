@@ -61,9 +61,10 @@ type agentConn struct {
 	done     chan struct{}
 	stopped  chan struct{}
 
-	mu      sync.Mutex
-	pending map[string]chan protocol.CommandResultEvt
-	closed  bool
+	mu                           sync.Mutex
+	pending                      map[string]chan protocol.CommandResultEvt
+	closed                       bool
+	restrictedOutboundValidation bool
 }
 
 // register installs a connection for a server, displacing any previous one.
@@ -190,6 +191,14 @@ func (h *Hub) SendCommand(ctx context.Context, serverID uint, t protocol.Message
 func (h *Hub) sendCommandToConnection(ctx context.Context, ac *agentConn, t protocol.MessageType, payload any) (protocol.CommandResultEvt, error) {
 	if ac == nil || !h.isCurrentConnection(ac.serverID, ac) {
 		return protocol.CommandResultEvt{}, ErrAgentOffline
+	}
+	if command, ok := payload.(protocol.ApplyConfigCmd); ok && len(command.RestrictedOutboundTags) > 0 {
+		ac.mu.Lock()
+		supported := ac.restrictedOutboundValidation
+		ac.mu.Unlock()
+		if !supported {
+			return protocol.CommandResultEvt{}, errors.New("该节点的 Agent 需先升级，才能安全应用用户专属出站")
+		}
 	}
 
 	id := uuid.NewString()
@@ -402,6 +411,9 @@ func (h *Hub) onRegister(ac *agentConn, e protocol.RegisterEvt) {
 		return
 	}
 	serverID := ac.serverID
+	ac.mu.Lock()
+	ac.restrictedOutboundValidation = e.RestrictedOutboundValidation
+	ac.mu.Unlock()
 	now := time.Now()
 	updates := map[string]any{
 		"online":            true,

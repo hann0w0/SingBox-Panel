@@ -114,15 +114,16 @@ func (a *Agent) register() protocol.RegisterEvt {
 	installed, ver := DetectVersion(ctx)
 	si := CollectSysInfo(ctx)
 	return protocol.RegisterEvt{
-		AgentVersion:     a.cfg.AgentVersion,
-		Hostname:         si.Hostname,
-		OS:               si.OS,
-		Arch:             si.Arch,
-		Kernel:           si.Kernel,
-		PublicIP:         DetectPublicIPv4(ctx),
-		SingboxInstalled: installed,
-		SingboxVersion:   ver,
-		PanelURL:         a.cfg.PanelURL,
+		AgentVersion:                 a.cfg.AgentVersion,
+		Hostname:                     si.Hostname,
+		OS:                           si.OS,
+		Arch:                         si.Arch,
+		Kernel:                       si.Kernel,
+		PublicIP:                     DetectPublicIPv4(ctx),
+		SingboxInstalled:             installed,
+		SingboxVersion:               ver,
+		PanelURL:                     a.cfg.PanelURL,
+		RestrictedOutboundValidation: true,
 	}
 }
 
@@ -213,7 +214,7 @@ func (a *Agent) onCommand(ctx context.Context, env protocol.Envelope) protocol.C
 		if err := env.Decode(&c); err != nil {
 			return decodeResult(env.ID, err)
 		}
-		out, err := ApplyConfig(ctx, c.Config)
+		out, err := applyRequestedConfig(ctx, c, resolveRestrictedOutbound, ApplyConfig, requestedConfigSourceFile)
 		return cmdResult(env.ID, out, err)
 
 	case protocol.CmdServiceAction:
@@ -304,6 +305,9 @@ func (a *Agent) onCommand(ctx context.Context, env protocol.Envelope) protocol.C
 
 	case protocol.CmdGetConfig:
 		raw, briefs, exists := ReadConfig()
+		if exists {
+			raw = readRequestedConfig(raw)
+		}
 		data, _ := json.Marshal(protocol.ConfigData{
 			Path:     ConfigFile,
 			Exists:   exists,

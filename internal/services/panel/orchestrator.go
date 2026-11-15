@@ -153,12 +153,16 @@ func (o *Orchestrator) BuildServerConfig(srv *model.Server) ([]byte, error) {
 		return nil, fmt.Errorf("load outbounds for server %d: %w", srv.ID, err)
 	}
 	obs := make([]singbox.OutboundInput, 0, len(obRows))
+	privateByTag := make(map[string]model.Outbound)
 	seenTags := make(map[string]bool, len(obRows))
 	for _, ob := range obRows {
 		if seenTags[ob.Tag] {
 			return nil, fmt.Errorf("outbound tag %q is defined by both a shared and a private outbound", ob.Tag)
 		}
 		seenTags[ob.Tag] = true
+		if ob.OwnerUserID != 0 {
+			privateByTag[ob.Tag] = ob
+		}
 		var os outboundStoredSettings
 		if len(ob.Settings) > 0 {
 			if err := json.Unmarshal(ob.Settings, &os); err != nil {
@@ -197,6 +201,11 @@ func (o *Orchestrator) BuildServerConfig(srv *model.Server) ([]byte, error) {
 		if len(r.Match) > 0 {
 			if err := json.Unmarshal(r.Match, &ri); err != nil {
 				return nil, fmt.Errorf("route rule %d match: %w", r.ID, err)
+			}
+		}
+		if outbound, private := privateByTag[r.Outbound]; private {
+			if err := validatePrivateRouteScope(o.db, srv.ID, outbound, ri); err != nil {
+				return nil, err
 			}
 		}
 		ri.Outbound = r.Outbound
@@ -355,7 +364,11 @@ func (o *Orchestrator) pushConfigUnlocked(ctx context.Context, serverID uint) er
 	}
 	raw, err := o.BuildServerConfig(&srv)
 	if err == nil {
-		_, err = o.hub.SendCommand(ctx, serverID, protocol.CmdApplyConfig, protocol.ApplyConfigCmd{Config: raw})
+		var command protocol.ApplyConfigCmd
+		command, err = o.applyConfigCommand(raw)
+		if err == nil {
+			_, err = o.hub.SendCommand(ctx, serverID, protocol.CmdApplyConfig, command)
+		}
 	}
 	if srv.ProxySyncRevision > srv.ProxySyncAppliedRevision {
 		updates := map[string]any{"proxy_sync_failed": err != nil && !errors.Is(err, ErrAgentOffline)}
@@ -387,6 +400,10 @@ func (o *Orchestrator) ApplyRawConfig(ctx context.Context, serverID uint, raw []
 // the server configuration lock. The API uses it to keep the subsequent
 // structured-view synchronization in the same serialized operation.
 func (o *Orchestrator) applyRawConfigUnlocked(ctx context.Context, serverID uint, raw []byte) (protocol.CommandResultEvt, error) {
+	command, err := o.applyConfigCommand(raw)
+	if err != nil {
+		return protocol.CommandResultEvt{}, err
+	}
 	var old model.Server
 	if err := o.db.Select("id", "config_mode", "raw_config", "config_initialized").First(&old, serverID).Error; err != nil {
 		return protocol.CommandResultEvt{}, err
@@ -397,7 +414,7 @@ func (o *Orchestrator) applyRawConfigUnlocked(ctx context.Context, serverID uint
 	}).Error; err != nil {
 		return protocol.CommandResultEvt{}, err
 	}
-	res, err := o.hub.SendCommand(ctx, serverID, protocol.CmdApplyConfig, protocol.ApplyConfigCmd{Config: json.RawMessage(raw)})
+	res, err := o.hub.SendCommand(ctx, serverID, protocol.CmdApplyConfig, command)
 	if err != nil {
 		if rollbackErr := o.db.Model(&model.Server{}).Where("id = ?", serverID).Updates(map[string]any{
 			"config_mode": old.ConfigMode,
@@ -408,6 +425,28 @@ func (o *Orchestrator) applyRawConfigUnlocked(ctx context.Context, serverID uint
 		return res, err
 	}
 	return res, nil
+}
+
+func (o *Orchestrator) applyConfigCommand(raw []byte) (protocol.ApplyConfigCmd, error) {
+	command := protocol.ApplyConfigCmd{Config: json.RawMessage(raw)}
+	var config struct {
+		Outbounds []struct {
+			Tag string `json:"tag"`
+		} `json:"outbounds"`
+	}
+	if err := json.Unmarshal(raw, &config); err != nil {
+		return command, err
+	}
+	var tags []string
+	for _, outbound := range config.Outbounds {
+		tags = append(tags, outbound.Tag)
+	}
+	if len(tags) > 0 {
+		if err := o.db.Model(&model.Outbound{}).Where("owner_user_id <> 0 AND tag IN ?", tags).Order("tag").Pluck("tag", &command.RestrictedOutboundTags).Error; err != nil {
+			return command, err
+		}
+	}
+	return command, nil
 }
 
 // SwitchToManagedConfig serializes the mode change with every other config

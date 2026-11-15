@@ -93,7 +93,8 @@ type InstallSingboxCmd struct {
 
 // ApplyConfigCmd delivers a full official config.json to write to /etc/sing-box.
 type ApplyConfigCmd struct {
-	Config json.RawMessage `json:"config"` // full sing-box config.json; Agent validates then restarts sing-box
+	Config                 json.RawMessage `json:"config"` // full sing-box config.json; Agent validates then restarts sing-box
+	RestrictedOutboundTags []string        `json:"restricted_outbound_tags,omitempty"`
 }
 
 // Service actions map 1:1 to `systemctl <action> sing-box`.
@@ -155,15 +156,16 @@ type LogsData struct {
 
 // RegisterEvt is sent immediately after the WS handshake authenticates.
 type RegisterEvt struct {
-	AgentVersion     string `json:"agent_version"`
-	Hostname         string `json:"hostname"`
-	OS               string `json:"os"`
-	Arch             string `json:"arch"`
-	Kernel           string `json:"kernel"`
-	PublicIP         string `json:"public_ip,omitempty"`
-	SingboxInstalled bool   `json:"singbox_installed"`
-	SingboxVersion   string `json:"singbox_version,omitempty"`
-	PanelURL         string `json:"panel_url,omitempty"`
+	AgentVersion                 string `json:"agent_version"`
+	Hostname                     string `json:"hostname"`
+	OS                           string `json:"os"`
+	Arch                         string `json:"arch"`
+	Kernel                       string `json:"kernel"`
+	PublicIP                     string `json:"public_ip,omitempty"`
+	SingboxInstalled             bool   `json:"singbox_installed"`
+	SingboxVersion               string `json:"singbox_version,omitempty"`
+	PanelURL                     string `json:"panel_url,omitempty"`
+	RestrictedOutboundValidation bool   `json:"restricted_outbound_validation,omitempty"`
 }
 
 // HeartbeatEvt is sent periodically.

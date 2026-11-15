@@ -28,24 +28,25 @@ beforeEach(() => {
 afterEach(() => { cleanup(); vi.unstubAllGlobals() })
 
 describe('server remarks', () => {
-  it('shows the server address and can hide it for screenshots or shared screens', async () => {
+  it('shows the reported IP, never the export-only domain, and can hide it', async () => {
     vi.mocked(getServersMeta).mockResolvedValue(metadata([{ ...server, public_ip: '203.0.113.7' }]))
     render(<MemoryRouter><Servers /></MemoryRouter>)
     const row = (await screen.findByText('Frankfurt')).closest('.srv-row')
-    expect(row?.textContent).toContain('fra.example.com')
-    expect(row?.textContent).not.toContain('203.0.113.7')
+    expect(row?.textContent).toContain('203.0.113.7')
+    expect(row?.textContent).not.toContain('fra.example.com')
     fireEvent.click(screen.getByRole('button', { name: '隐藏服务器地址' }))
-    expect(row?.textContent).toContain('fra.example.com')
+    expect(row?.textContent).toContain('203.*.*.7')
     expect(row?.textContent).not.toContain('203.0.113.7')
     fireEvent.click(screen.getByRole('button', { name: '显示服务器地址' }))
-    expect(row?.textContent).toContain('fra.example.com')
+    expect(row?.textContent).toContain('203.0.113.7')
   })
 
-  it('falls back to the reported IP when no domain is configured', async () => {
-    vi.mocked(getServersMeta).mockResolvedValue(metadata([{ ...server, address: '', public_ip: '203.0.113.7' }]))
+  it('shows a placeholder when the agent has not reported an address yet', async () => {
+    vi.mocked(getServersMeta).mockResolvedValue(metadata([{ ...server, address: 'node.example.com', public_ip: '', public_ipv6: '' }]))
     render(<MemoryRouter><Servers /></MemoryRouter>)
     const row = (await screen.findByText('Frankfurt')).closest('.srv-row')
-    expect(row?.textContent).toContain('203.0.113.7')
+    expect(row?.textContent).toContain('未设置地址')
+    expect(row?.textContent).not.toContain('node.example.com')
   })
 
   it('shows both public addresses for a dual-stack server without a domain', async () => {
@@ -64,15 +65,15 @@ describe('server remarks', () => {
     expect(row?.textContent).not.toContain('2404:7a80:df62:8604::fde')
   })
 
-  it('shows only the configured domain for a dual-stack server', async () => {
+  it('shows both real addresses even when an export domain is configured', async () => {
     vi.mocked(getServersMeta).mockResolvedValue(metadata([{
       ...server, address: 'node.example.com', public_ip: '133.200.223.98', public_ipv6: '2404:7a80:df62:8604::fde',
     }]))
     render(<MemoryRouter><Servers /></MemoryRouter>)
     const row = (await screen.findByText('Frankfurt')).closest('.srv-row')
-    expect(row?.textContent).toContain('node.example.com')
-    expect(row?.textContent).not.toContain('133.200.223.98')
-    expect(row?.textContent).not.toContain('2404:7a80:df62:8604::fde')
+    expect(row?.textContent).toContain('133.200.223.98')
+    expect(row?.textContent).toContain('2404:7a80:df62:8604::fde')
+    expect(row?.textContent).not.toContain('node.example.com')
   })
 
   it('offers deletion directly without a duplicate sort menu', async () => {

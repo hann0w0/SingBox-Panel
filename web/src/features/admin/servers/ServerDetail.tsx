@@ -851,7 +851,6 @@ export default function ServerDetail() {
 
   const rulesTable = (
     <>
-      <p className="faint">用户转发路由由用户控制台管理，优先于本页分流规则生效。</p>
       <Table
         rowKey="id"
         scroll={{ x: 640 }}

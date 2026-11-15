@@ -19,9 +19,10 @@ function readHideAddress() {
 }
 
 function displayAddresses(server: Server) {
-  const domain = server.address?.trim()
-  if (domain) return [domain]
-  return [server.public_ip, server.public_ipv6].filter((value): value is string => !!value?.trim())
+  // The administrator panel always shows the real reported addresses. The
+  // configured domain is for exported/subscribed nodes only, so it is not
+  // displayed here (it would hide the actual IPv4/IPv6 pair).
+  return [server.public_ip?.trim(), server.public_ipv6?.trim()].filter((value): value is string => !!value)
 }
 
 export default function Servers() {
@@ -508,7 +509,7 @@ export default function Servers() {
           <Form.Item name="name" label="名称" rules={[{ required: true }]}>
             <Input />
           </Form.Item>
-          <Form.Item name="address" label="连接地址">
+          <Form.Item name="address" label="域名" extra="仅用于导出节点与分配节点；管理员面板始终显示实际 IP。">
             <Input />
           </Form.Item>
           <Form.Item name="remark" label="备注">

@@ -24,8 +24,8 @@ func TestInboundAddressFamilies(t *testing.T) {
 		ipv6               bool
 	}{
 		{"dual", "::", "ipv4-only.example.com", false},
-		{"v4", "0.0.0.0", "203.0.113.7", false},
-		{"v6", "::", "2001:db8::7", true},
+		{"v4", "0.0.0.0", "ipv4-only.example.com", false},
+		{"v6", "::", "ipv4-only.example.com", true},
 		{"imported", "2001:db8::8", "2001:db8::8", false},
 	} {
 		t.Run(test.name, func(t *testing.T) {
@@ -34,7 +34,7 @@ func TestInboundAddressFamilies(t *testing.T) {
 			if err != nil || host != test.host {
 				t.Fatalf("address=%q err=%v", host, err)
 			}
-			if test.name != "dual" && settings.TLS.ServerName != server.Address {
+			if test.name != "dual" && test.name != "v4" && test.name != "v6" && settings.TLS.ServerName != server.Address {
 				t.Fatalf("TLS domain lost: %+v", settings.TLS)
 			}
 		})
@@ -49,10 +49,14 @@ func TestInboundAddressFamilies(t *testing.T) {
 		t.Fatal("explicit SNI changed")
 	}
 	server.PublicIPv6 = ""
-	if _, err := inboundNodeAddress(&server, &settings); err == nil {
-		t.Fatal("IPv6 fell back to IPv4-only domain")
+	if host, err := inboundNodeAddress(&server, &settings); err != nil || host != "ipv4-only.example.com" {
+		t.Fatalf("configured domain must not depend on a local IPv6 address: %q %v", host, err)
 	}
+	server.Address = ""
 	server.PublicIPv6 = "2001:db8::7"
+	if host, err := inboundNodeAddress(&server, &settings); err != nil || host != "2001:db8::7" {
+		t.Fatalf("IPv6 fallback=%q err=%v", host, err)
+	}
 	stale := now.Add(-3 * time.Minute)
 	server.PublicIPv6UpdatedAt = &stale
 	if host, err := inboundNodeAddress(&server, &settings); err != nil || host != "2001:db8::7" {
@@ -86,7 +90,7 @@ func TestServerAddressAvailability(t *testing.T) {
 
 func TestAddressReportsUpdateExportsSubscriptionsAndListeners(t *testing.T) {
 	db := testDB(t)
-	server := model.Server{Name: "test", Address: "v4.example.com", AgentToken: "test-address"}
+	server := model.Server{Name: "test", AgentToken: "test-address"}
 	if err := db.Create(&server).Error; err != nil {
 		t.Fatal(err)
 	}
@@ -179,6 +183,9 @@ func TestAddressReportsUpdateExportsSubscriptionsAndListeners(t *testing.T) {
 
 func TestAddressChangeRebuildsDependentOutbound(t *testing.T) {
 	fixture := newNodeImportFixture(t)
+	if err := fixture.db.Model(&fixture.source).Update("address", "").Error; err != nil {
+		t.Fatal(err)
+	}
 	settings := singbox.InboundSettings{Listen: "::", IPv6Only: true, SingleUser: true, UUID: "11111111-2222-4333-8444-555555555555"}
 	raw, _ := json.Marshal(settings)
 	if err := fixture.db.Model(&fixture.sourceIB).Update("settings", raw).Error; err != nil {

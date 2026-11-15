@@ -46,6 +46,14 @@ func inboundNodeAddress(server *model.Server, settings *singbox.InboundSettings)
 		}
 		return "", fmt.Errorf("入站监听地址不是可导出的公网地址")
 	}
+	// A configured domain is the dial target for exported/subscribed nodes and
+	// takes precedence over the raw public IP, which cannot cover both address
+	// families behind one name.
+	if domain, err := normalizeNodeAddress(server.Address); err != nil {
+		return "", err
+	} else if domain != "" && !isLoopbackOrUnspecifiedHost(domain) {
+		return domain, nil
+	}
 	var host string
 	if settings.IPv6Only {
 		host, _ = publicAddress(server.PublicIPv6, true)
@@ -55,21 +63,10 @@ func inboundNodeAddress(server *model.Server, settings *singbox.InboundSettings)
 	} else if listen.Is4() {
 		host, _ = publicAddress(server.PublicIP, false)
 		if host == "" {
-			if explicit, err := normalizeNodeAddress(server.Address); err == nil {
-				host, _ = publicAddress(explicit, false)
-			}
-		}
-		if host == "" {
 			return "", fmt.Errorf("服务器 %q 尚无有效的公网 IPv4，请检查 Agent 或填写 IPv4 地址", server.Name)
 		}
 	} else {
-		host, err = normalizeNodeAddress(server.Address)
-		if err != nil {
-			return "", err
-		}
-		if host == "" {
-			host, _ = publicAddress(server.PublicIP, false)
-		}
+		host, _ = publicAddress(server.PublicIP, false)
 		if host == "" {
 			host, _ = publicAddress(server.PublicIPv6, true)
 		}
@@ -77,7 +74,6 @@ func inboundNodeAddress(server *model.Server, settings *singbox.InboundSettings)
 			return "", fmt.Errorf("服务器 %q 没有可用的公网连接地址", server.Name)
 		}
 	}
-	preserveNodeTLSName(server.Address, host, settings)
 	return host, nil
 }
 

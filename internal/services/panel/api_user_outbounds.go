@@ -547,6 +547,11 @@ func (a *App) createUserForward(c *gin.Context) {
 		c.JSON(http.StatusNotFound, gin.H{"error": "专属出站不存在"})
 		return
 	}
+	if err := a.validatePrivateOutbound(outbound.Tag, outbound.Type, json.RawMessage(outbound.Settings)); err != nil {
+		a.userAccessMu.Unlock()
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
 	var st singbox.InboundSettings
 	if len(inbound.Settings) > 0 {
 		if err := json.Unmarshal(inbound.Settings, &st); err != nil {
@@ -583,7 +588,10 @@ func (a *App) createUserForward(c *gin.Context) {
 		if err := tx.Create(&forward).Error; err != nil {
 			return err
 		}
-		return reconcileForwardRule(tx, &forward, &u, &inbound, &outbound)
+		if err := reconcileForwardRule(tx, &forward, &u, &inbound, &outbound); err != nil {
+			return err
+		}
+		return queueProxyAccessSync(tx, []uint{inbound.ServerID})
 	})
 	a.userAccessMu.Unlock()
 	if err != nil {
@@ -614,7 +622,10 @@ func (a *App) deleteUserForward(c *gin.Context) {
 		if err := tx.Where("id = ? AND user_id = ?", rid, currentUID(c)).First(&forward).Error; err != nil {
 			return err
 		}
-		return deleteForwardState(tx, []model.UserForward{forward})
+		if err := deleteForwardState(tx, []model.UserForward{forward}); err != nil {
+			return err
+		}
+		return queueProxyAccessSync(tx, []uint{forward.ServerID})
 	})
 	a.userAccessMu.Unlock()
 	if err != nil {

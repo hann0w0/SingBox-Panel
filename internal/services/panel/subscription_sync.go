@@ -18,6 +18,15 @@ type subscriptionSyncStatus struct {
 	FailedServers  int              `json:"failed_servers"`
 }
 
+func queueProxyAccessSync(tx *gorm.DB, serverIDs ...[]uint) error {
+	ids := mergeServerIDs(serverIDs...)
+	if len(ids) == 0 {
+		return nil
+	}
+	return tx.Model(&model.Server{}).Where("id IN ? AND (config_mode <> ? OR config_mode IS NULL OR raw_config IS NULL)", ids, model.ConfigModeRaw).
+		Updates(map[string]any{"proxy_sync_revision": gorm.Expr("proxy_sync_revision + 1"), "proxy_sync_failed": false}).Error
+}
+
 // Only managed nodes with a granted multi-user inbound derive credentials from
 // this account. Raw, shared-credential and external nodes must stay untouched.
 func subscriptionSyncServerIDs(db *gorm.DB, user *model.User) ([]uint, error) {

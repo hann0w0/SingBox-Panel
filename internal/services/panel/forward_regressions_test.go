@@ -237,3 +237,26 @@ func TestForwardRoutesRecoverStaleNamesAndPrecedeGeneralRules(t *testing.T) {
 		t.Fatal("derived forward not rebuilt")
 	}
 }
+
+func TestForwardRevocationPersistsSynchronizationRevision(t *testing.T) {
+	fixture := newForwardFixture(t)
+	forward := fixture.create(t)
+	fixture.db.First(&fixture.server, fixture.server.ID)
+	if fixture.server.ProxySyncRevision != 1 || fixture.server.ProxySyncAppliedRevision != 0 {
+		t.Fatalf("offline forward create not durable: %+v", fixture.server)
+	}
+	response := serveJSONRequest(t, fixture.router, http.MethodDelete, fmt.Sprintf("/forwards/%d", forward.ID), "")
+	if response.Code != http.StatusOK {
+		t.Fatalf("delete: %d %s", response.Code, response.Body)
+	}
+	fixture.db.First(&fixture.server, fixture.server.ID)
+	if fixture.server.ProxySyncRevision != 2 || fixture.server.ProxySyncAppliedRevision != 0 {
+		t.Fatalf("offline revocation not durable: %+v", fixture.server)
+	}
+	var scheduled []uint
+	reconciler := NewReconciler(fixture.db, func(ids []uint) { scheduled = append(scheduled, ids...) })
+	reconciler.tick()
+	if len(scheduled) != 1 || scheduled[0] != fixture.server.ID {
+		t.Fatalf("revocation not retried after restart: %v", scheduled)
+	}
+}

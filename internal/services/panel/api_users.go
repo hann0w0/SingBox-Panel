@@ -525,7 +525,10 @@ func (a *App) updateUserAccess(c *gin.Context) {
 				return err
 			}
 		}
-		return saveUserNodeOrder(tx, user.ID, order)
+		if err := saveUserNodeOrder(tx, user.ID, order); err != nil {
+			return err
+		}
+		return queueProxyAccessSync(tx, oldServerIDs, user.ServerIDs)
 	})
 	if err != nil {
 		status := http.StatusInternalServerError
@@ -851,6 +854,9 @@ func (a *App) updateUser(c *gin.Context) {
 					return err
 				}
 			}
+			if err := queueProxyAccessSync(tx, oldServerIDs, u.ServerIDs, forwardingServers); err != nil {
+				return err
+			}
 			if revokeSessions {
 				return tx.Model(&model.User{}).Where("id = ?", u.ID).
 					UpdateColumn("token_version", gorm.Expr("token_version + 1")).Error
@@ -986,7 +992,7 @@ func (a *App) deleteUser(c *gin.Context) {
 				}
 			}
 		}
-		return nil
+		return queueProxyAccessSync(tx, u.ServerIDs, affectedServerIDs)
 	})
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})

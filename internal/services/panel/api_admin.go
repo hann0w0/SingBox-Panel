@@ -886,6 +886,10 @@ func (a *App) applyRawConfig(c *gin.Context) {
 		c.JSON(status, gin.H{"error": err.Error()})
 		return
 	}
+	if _, err := validateImportedPrivateOutbounds(a.db, parsed.Outbounds); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
 	res, err := a.orch.applyRawConfigUnlocked(ctx, id, raw)
 	if err != nil {
 		c.JSON(http.StatusBadGateway, gin.H{"error": err.Error(), "output": res.Output})

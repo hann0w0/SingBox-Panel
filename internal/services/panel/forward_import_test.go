@@ -2,6 +2,8 @@ package panel
 
 import (
 	"encoding/json"
+	"fmt"
+	"net/http"
 	"testing"
 
 	"github.com/hann0w0/singbox-panel/internal/domain/model"
@@ -46,6 +48,14 @@ func TestManagedForwardConfigImportPreservesOwnershipAndIdentity(t *testing.T) {
 	if _, err := fixture.app.orch.BuildServerConfig(&fixture.server); err != nil {
 		t.Fatalf("round-trip configuration broken: %v", err)
 	}
+	fixture.db.Model(&fixture.server).Updates(map[string]any{"config_mode": model.ConfigModeRaw, "raw_config": model.JSONText(raw)})
+	if err := fixture.app.applyImport(&fixture.server, parsed, raw); err != nil {
+		t.Fatal(err)
+	}
+	fixture.db.First(&fixture.server, fixture.server.ID)
+	if fixture.server.EffectiveConfigMode() != model.ConfigModeManaged {
+		t.Fatal("identical raw apply lost managed ownership")
+	}
 }
 
 func TestImportedSharedOutboundCannotOverwritePrivateTag(t *testing.T) {
@@ -62,5 +72,21 @@ func TestImportedSharedOutboundCannotOverwritePrivateTag(t *testing.T) {
 	fixture.db.Model(&model.Outbound{}).Where("owner_user_id = 0").Count(&count)
 	if count != 0 {
 		t.Fatalf("failed import left shared rows: %d", count)
+	}
+}
+
+func TestRawApplyRejectsPrivateTagConflictBeforeAgentCommand(t *testing.T) {
+	fixture := newForwardFixture(t)
+	fixture.db.First(&fixture.server, fixture.server.ID)
+	previousRaw := string(fixture.server.RawConfig)
+	fixture.router.POST("/servers/:id/apply-raw", fixture.app.applyRawConfig)
+	body, _ := json.Marshal(map[string]any{"config": `{"outbounds":[{"type":"socks","tag":"alice-home","server":"other.example","server_port":1080}]}`})
+	response := serveJSONRequest(t, fixture.router, http.MethodPost, fmt.Sprintf("/servers/%d/apply-raw", fixture.server.ID), string(body))
+	if response.Code != http.StatusBadRequest {
+		t.Fatalf("conflict reached agent: %d %s", response.Code, response.Body)
+	}
+	fixture.db.First(&fixture.server, fixture.server.ID)
+	if fixture.server.EffectiveConfigMode() != model.ConfigModeManaged || string(fixture.server.RawConfig) != previousRaw {
+		t.Fatal("rejected apply changed config mode")
 	}
 }

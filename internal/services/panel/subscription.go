@@ -1126,9 +1126,15 @@ func clashProxy(n node, seen map[string]int) map[string]any {
 			base["obfs"] = obfsType
 			base["obfs-password"] = st.ObfsPassword
 			if obfsType == "gecko" {
-				base["obfs-opts"] = map[string]any{
-					"min-packet-size": st.GeckoMinPacketSize,
-					"max-packet-size": st.GeckoMaxPacketSize,
+				options := map[string]any{}
+				if st.GeckoMinPacketSize > 0 {
+					options["min-packet-size"] = st.GeckoMinPacketSize
+				}
+				if st.GeckoMaxPacketSize > 0 {
+					options["max-packet-size"] = st.GeckoMaxPacketSize
+				}
+				if len(options) > 0 {
+					base["obfs-opts"] = options
 				}
 			}
 		}

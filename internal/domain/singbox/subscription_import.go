@@ -951,9 +951,6 @@ func parseClashProxy(m map[string]any) (ImportedNode, error) {
 		tls = tls || typ == "trojan" || typ == "hysteria2" || typ == "hysteria" || typ == "tuic" || typ == "anytls"
 	}
 	sni := getString(m, "sni", "servername", "server-name", "server_name", "peer")
-	if sni == "" {
-		sni = server
-	}
 	cn.Settings.TLS.Enabled = tls
 	cn.Settings.TLS.ServerName = sni
 	cn.Settings.TLS.Insecure = getBool(m, "skip-cert-verify", "skip_cert_verify", "insecure", "allow-insecure")
@@ -1064,8 +1061,12 @@ func parseClashProxy(m map[string]any) (ImportedNode, error) {
 		cn.Settings.GeckoMinPacketSize = getInt(m, "min-packet-size", "min_packet_size")
 		cn.Settings.GeckoMaxPacketSize = getInt(m, "max-packet-size", "max_packet_size")
 		if obfsOpts := yamlMap(getAny(m, "obfs-opts", "obfs_opts")); obfsOpts != nil {
-			cn.Settings.GeckoMinPacketSize = getInt(obfsOpts, "min-packet-size", "min_packet_size")
-			cn.Settings.GeckoMaxPacketSize = getInt(obfsOpts, "max-packet-size", "max_packet_size")
+			if _, present := lookupMapValue(obfsOpts, "min-packet-size", "min_packet_size"); present {
+				cn.Settings.GeckoMinPacketSize = getInt(obfsOpts, "min-packet-size", "min_packet_size")
+			}
+			if _, present := lookupMapValue(obfsOpts, "max-packet-size", "max_packet_size"); present {
+				cn.Settings.GeckoMaxPacketSize = getInt(obfsOpts, "max-packet-size", "max_packet_size")
+			}
 			if cn.Settings.ObfsPassword == "" {
 				cn.Settings.ObfsPassword = getString(obfsOpts, "password", "obfs-password", "obfs_password")
 			}

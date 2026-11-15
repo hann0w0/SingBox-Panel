@@ -41,28 +41,31 @@ export function Pills({ items, active, onChange, actions, label }: {
   label?: string
 }) {
   const buttons = useRef(new Map<string, HTMLButtonElement>())
-  const focusIndex = Math.max(0, items.findIndex((item) => item.key === active && !item.disabled))
+  const enabled = items.filter((item) => !item.disabled)
+  const activeIndex = items.findIndex((item) => item.key === active && !item.disabled)
+  const focusIndex = activeIndex >= 0 ? activeIndex : items.findIndex((item) => !item.disabled)
   const moveFocus = (event: KeyboardEvent<HTMLButtonElement>, index: number) => {
-    if (event.altKey || event.ctrlKey || event.metaKey || !items.length) return
+    if (event.altKey || event.ctrlKey || event.metaKey || !enabled.length) return
+    const enabledIndex = enabled.findIndex((item) => item.key === items[index].key)
     let nextIndex: number
     switch (event.key) {
       case 'ArrowLeft':
-        nextIndex = (index - 1 + items.length) % items.length
+        nextIndex = (enabledIndex - 1 + enabled.length) % enabled.length
         break
       case 'ArrowRight':
-        nextIndex = (index + 1) % items.length
+        nextIndex = (enabledIndex + 1) % enabled.length
         break
       case 'Home':
         nextIndex = 0
         break
       case 'End':
-        nextIndex = items.length - 1
+        nextIndex = enabled.length - 1
         break
       default:
         return
     }
     event.preventDefault()
-    const next = items[nextIndex]
+    const next = enabled[nextIndex]
     buttons.current.get(next.key)?.focus()
     if (next.key !== active) onChange(next.key)
   }

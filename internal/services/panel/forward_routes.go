@@ -68,3 +68,16 @@ func materializeForwardRoutes(db *gorm.DB, serverID uint, inbounds []model.Inbou
 	}
 	return rules, nil
 }
+
+func derivedForwardMatch(raw model.JSONText) bool {
+	var match singbox.RuleInput
+	if json.Unmarshal(raw, &match) != nil {
+		return false
+	}
+	for _, name := range match.AuthUser {
+		if strings.HasPrefix(name, forwardTrafficNamePrefix) {
+			return true
+		}
+	}
+	return false
+}

@@ -360,7 +360,13 @@ func (a *App) listRules(c *gin.Context) {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
-	c.JSON(http.StatusOK, gin.H{"rules": rows})
+	editable := make([]model.RouteRule, 0, len(rows))
+	for _, row := range rows {
+		if !derivedForwardMatch(row.Match) {
+			editable = append(editable, row)
+		}
+	}
+	c.JSON(http.StatusOK, gin.H{"rules": editable})
 }
 
 type ruleReq struct {
@@ -477,6 +483,10 @@ func (a *App) updateRule(c *gin.Context) {
 		c.JSON(http.StatusNotFound, gin.H{"error": "rule not found"})
 		return
 	}
+	if derivedForwardMatch(r.Match) {
+		c.JSON(http.StatusConflict, gin.H{"error": "派生路由由用户转发功能管理，请在用户控制台修改转发"})
+		return
+	}
 	var req ruleReq
 	if !bindJSON(c, &req) {
 		return
@@ -546,6 +556,15 @@ func (a *App) deleteRule(c *gin.Context) {
 	if !a.requireManagedMode(c, sid) {
 		return
 	}
+	var rule model.RouteRule
+	if err := a.db.Where("id = ? AND server_id = ?", rid, sid).First(&rule).Error; err != nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "rule not found"})
+		return
+	}
+	if derivedForwardMatch(rule.Match) {
+		c.JSON(http.StatusConflict, gin.H{"error": "派生路由由用户转发功能管理，请在用户控制台删除转发"})
+		return
+	}
 	if err := a.db.Transaction(func(tx *gorm.DB) error {
 		res := tx.Where("id = ? AND server_id = ?", rid, sid).Delete(&model.RouteRule{})
 		if res.Error != nil {
@@ -587,10 +606,16 @@ func (a *App) reorderRules(c *gin.Context) {
 	if rejectTooManyIDs(c, req.Order) {
 		return
 	}
-	var existing []uint
-	if err := a.db.Model(&model.RouteRule{}).Where("server_id = ?", sid).Pluck("id", &existing).Error; err != nil {
+	var rows []model.RouteRule
+	if err := a.db.Where("server_id = ?", sid).Find(&rows).Error; err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
+	}
+	var existing []uint
+	for _, row := range rows {
+		if !derivedForwardMatch(row.Match) {
+			existing = append(existing, row.ID)
+		}
 	}
 	allowed := make(map[uint]bool, len(existing))
 	for _, id := range existing {

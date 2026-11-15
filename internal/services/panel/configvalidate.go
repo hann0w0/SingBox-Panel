@@ -271,6 +271,11 @@ func (a *App) validateRule(db *gorm.DB, serverID uint, raw json.RawMessage, outb
 			return fmt.Errorf("规则匹配条件不是合法 JSON: %w", err)
 		}
 	}
+	for _, name := range rule.AuthUser {
+		if strings.HasPrefix(name, forwardTrafficNamePrefix) {
+			return fmt.Errorf("转发身份的派生路由由用户转发功能管理")
+		}
+	}
 	// A private exit is scoped to its owner. A hand-written rule that targets
 	// it must also carry exactly that account's auth_user identity; otherwise
 	// one user's home broadband could be used by other accounts.

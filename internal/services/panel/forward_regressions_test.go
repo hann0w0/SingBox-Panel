@@ -260,3 +260,32 @@ func TestForwardRevocationPersistsSynchronizationRevision(t *testing.T) {
 		t.Fatalf("revocation not retried after restart: %v", scheduled)
 	}
 }
+
+func TestDerivedRulesAreManagedThroughForwardEndpoints(t *testing.T) {
+	fixture := newForwardFixture(t)
+	fixture.create(t)
+	var derived model.RouteRule
+	fixture.db.Where("outbound = ?", fixture.outbound.Tag).First(&derived)
+	fixture.router.GET("/servers/:id/rules", fixture.app.listRules)
+	fixture.router.PUT("/servers/:id/rules/:ruleID", fixture.app.updateRule)
+	fixture.router.DELETE("/servers/:id/rules/:ruleID", fixture.app.deleteRule)
+	fixture.router.PUT("/servers/:id/order", fixture.app.reorderRules)
+	base := fmt.Sprintf("/servers/%d/rules", fixture.server.ID)
+	response := serveJSONRequest(t, fixture.router, http.MethodGet, base, "")
+	var listed struct {
+		Rules []model.RouteRule `json:"rules"`
+	}
+	if json.Unmarshal(response.Body.Bytes(), &listed) != nil || len(listed.Rules) != 0 {
+		t.Fatalf("derived rules offered for editing: %s", response.Body)
+	}
+	for _, method := range []string{http.MethodPut, http.MethodDelete} {
+		response = serveJSONRequest(t, fixture.router, method, fmt.Sprintf("%s/%d", base, derived.ID), `{"enabled":false}`)
+		if response.Code != http.StatusConflict {
+			t.Fatalf("generic mutation accepted: %d %s", response.Code, response.Body)
+		}
+	}
+	response = serveJSONRequest(t, fixture.router, http.MethodPut, fmt.Sprintf("/servers/%d/order", fixture.server.ID), `{"order":[]}`)
+	if response.Code != http.StatusOK {
+		t.Fatalf("derived rows prevented ordinary reorder: %d %s", response.Code, response.Body)
+	}
+}

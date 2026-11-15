@@ -55,11 +55,11 @@ func TestInboundAddressFamilies(t *testing.T) {
 	server.PublicIPv6 = "2001:db8::7"
 	stale := now.Add(-3 * time.Minute)
 	server.PublicIPv6UpdatedAt = &stale
-	if _, err := inboundNodeAddress(&server, &settings); err == nil {
-		t.Fatal("stale IPv6 exported")
+	if host, err := inboundNodeAddress(&server, &settings); err != nil || host != "2001:db8::7" {
+		t.Fatalf("offline server lost its last confirmed IPv6: %q %v", host, err)
 	}
-	if err := resolveInboundListen(&server, &settings); err == nil {
-		t.Fatal("stale IPv6 bound")
+	if err := resolveInboundListen(&server, &settings); err != nil || settings.Listen != "2001:db8::7" {
+		t.Fatal("offline server cannot keep its confirmed IPv6 listener")
 	}
 }
 
@@ -73,8 +73,8 @@ func TestServerAddressAvailability(t *testing.T) {
 	stale := now.Add(-3 * time.Minute)
 	server.PublicIPv6UpdatedAt = &stale
 	setServerAddressAvailability(&server)
-	if server.IPv6Available {
-		t.Fatal("stale IPv6 advertised")
+	if !server.IPv6Available {
+		t.Fatal("an offline server's last confirmed address must remain usable")
 	}
 	server.PublicIPv6UpdatedAt = &now
 	server.PublicIPv6 = ""

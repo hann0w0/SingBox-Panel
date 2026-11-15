@@ -26,16 +26,9 @@ func publicAddress(raw string, ipv6 bool) (string, bool) {
 	return address.String(), true
 }
 
-func freshPublicAddress(raw string, checked *time.Time, ipv6 bool) (string, bool) {
-	if checked != nil && time.Since(*checked) > 2*time.Minute {
-		return "", false
-	}
-	return publicAddress(raw, ipv6)
-}
-
 func setServerAddressAvailability(server *model.Server) {
-	_, server.IPv4Available = freshPublicAddress(server.PublicIP, server.PublicIPv4UpdatedAt, false)
-	_, server.IPv6Available = freshPublicAddress(server.PublicIPv6, server.PublicIPv6UpdatedAt, true)
+	_, server.IPv4Available = publicAddress(server.PublicIP, false)
+	_, server.IPv6Available = publicAddress(server.PublicIPv6, true)
 }
 
 func inboundNodeAddress(server *model.Server, settings *singbox.InboundSettings) (string, error) {
@@ -55,12 +48,12 @@ func inboundNodeAddress(server *model.Server, settings *singbox.InboundSettings)
 	}
 	var host string
 	if settings.IPv6Only {
-		host, _ = freshPublicAddress(server.PublicIPv6, server.PublicIPv6UpdatedAt, true)
+		host, _ = publicAddress(server.PublicIPv6, true)
 		if host == "" {
 			return "", fmt.Errorf("服务器 %q 尚无有效的公网 IPv6，请升级或检查 Agent 与 IPv6 网络", server.Name)
 		}
 	} else if listen.Is4() {
-		host, _ = freshPublicAddress(server.PublicIP, server.PublicIPv4UpdatedAt, false)
+		host, _ = publicAddress(server.PublicIP, false)
 		if host == "" {
 			if explicit, err := normalizeNodeAddress(server.Address); err == nil {
 				host, _ = publicAddress(explicit, false)
@@ -75,10 +68,10 @@ func inboundNodeAddress(server *model.Server, settings *singbox.InboundSettings)
 			return "", err
 		}
 		if host == "" {
-			host, _ = freshPublicAddress(server.PublicIP, server.PublicIPv4UpdatedAt, false)
+			host, _ = publicAddress(server.PublicIP, false)
 		}
 		if host == "" {
-			host, _ = freshPublicAddress(server.PublicIPv6, server.PublicIPv6UpdatedAt, true)
+			host, _ = publicAddress(server.PublicIPv6, true)
 		}
 		if host == "" || isLoopbackOrUnspecifiedHost(host) {
 			return "", fmt.Errorf("服务器 %q 没有可用的公网连接地址", server.Name)
@@ -102,9 +95,9 @@ func resolveInboundListen(server *model.Server, settings *singbox.InboundSetting
 	if !settings.IPv6Only || settings.ListenAddress() != "::" {
 		return nil
 	}
-	address, ok := freshPublicAddress(server.PublicIPv6, server.PublicIPv6UpdatedAt, true)
+	address, ok := publicAddress(server.PublicIPv6, true)
 	if !ok {
-		return fmt.Errorf("服务器 %q 没有新近确认的本机公网 IPv6，无法安全配置 IPv6 监听", server.Name)
+		return fmt.Errorf("服务器 %q 没有已知的本机公网 IPv6，无法配置 IPv6 监听", server.Name)
 	}
 	settings.Listen = address
 	return nil
@@ -140,11 +133,6 @@ func (h *Hub) updatePublicAddresses(serverID uint, legacy string, ipv4, ipv6 *st
 		updates[report.column] = address
 		updates[report.timestamp] = time.Now()
 		changed = changed || address != report.previous
-		checked := server.PublicIPv4UpdatedAt
-		if report.ipv6 {
-			checked = server.PublicIPv6UpdatedAt
-		}
-		changed = changed || (checked != nil && time.Since(*checked) > 2*time.Minute)
 	}
 	if ipv4 == nil {
 		if address, ok := publicAddress(legacy, false); ok {

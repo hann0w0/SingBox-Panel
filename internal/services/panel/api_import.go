@@ -178,6 +178,15 @@ func (a *App) applyImportUnlocked(srv *model.Server, p *singbox.ParsedConfig, ra
 	a.userAccessMu.Lock()
 	defer a.userAccessMu.Unlock()
 	mode := importedConfigMode(p, raw)
+	var current model.Server
+	if err := a.db.First(&current, srv.ID).Error; err != nil {
+		return err
+	}
+	if current.EffectiveConfigMode() == model.ConfigModeManaged {
+		if generated, err := a.orch.BuildServerConfig(&current); err == nil && equivalentJSON(raw, generated) {
+			mode = model.ConfigModeManaged
+		}
+	}
 	return a.db.Transaction(func(tx *gorm.DB) error {
 		if err := validateImportedInboundTrafficTags(tx, srv.ID, raw); err != nil {
 			return err
@@ -381,11 +390,18 @@ func syncImportedInbounds(tx *gorm.DB, serverID uint, parsed []singbox.ParsedInb
 	}
 	keepIDs := make([]uint, 0, len(parsed))
 	for _, in := range parsed {
+		row := byTag[in.Tag]
+		if row != nil {
+			var previous singbox.InboundSettings
+			if json.Unmarshal(row.Settings, &previous) == nil && previous.UseMultiUser(string(row.Type)) && row.Type == model.InboundType(in.Type) {
+				in.Settings.MultiUser = true
+				in.Settings.SingleUser = false
+			}
+		}
 		settings, err := json.Marshal(in.Settings)
 		if err != nil {
 			return err
 		}
-		row := byTag[in.Tag]
 		if row == nil {
 			row = &model.Inbound{ServerID: serverID, Tag: in.Tag}
 			if err := tx.Create(row).Error; err != nil {
@@ -417,6 +433,15 @@ func syncImportedInbounds(tx *gorm.DB, serverID uint, parsed []singbox.ParsedInb
 			removedIDs = append(removedIDs, row.ID)
 		}
 	}
+	if len(removedIDs) > 0 {
+		var forwards []model.UserForward
+		if err := tx.Where("server_id = ? AND inbound_id IN ?", serverID, removedIDs).Find(&forwards).Error; err != nil {
+			return err
+		}
+		if err := deleteForwardState(tx, forwards); err != nil {
+			return err
+		}
+	}
 	if err := deleteUserNodeOrderRefs(tx, userNodeTypeManaged, removedIDs); err != nil {
 		return err
 	}
@@ -432,6 +457,14 @@ func syncImportedInbounds(tx *gorm.DB, serverID uint, parsed []singbox.ParsedInb
 }
 
 func syncImportedOutbounds(tx *gorm.DB, serverID uint, parsed []singbox.ParsedOutbound) error {
+	var private []model.Outbound
+	if err := tx.Where("owner_user_id <> 0").Find(&private).Error; err != nil {
+		return err
+	}
+	privateByTag := make(map[string]model.Outbound, len(private))
+	for _, row := range private {
+		privateByTag[row.Tag] = row
+	}
 	var existing []model.Outbound
 	if err := tx.Where("server_id = ?", serverID).Find(&existing).Error; err != nil {
 		return err
@@ -442,6 +475,24 @@ func syncImportedOutbounds(tx *gorm.DB, serverID uint, parsed []singbox.ParsedOu
 	}
 	keepIDs := make([]uint, 0, len(parsed))
 	for i, ob := range parsed {
+		if private, exists := privateByTag[ob.Tag]; exists {
+			var settings outboundStoredSettings
+			if err := json.Unmarshal(private.Settings, &settings); err != nil {
+				return err
+			}
+			expected, err := singbox.BuildClientOutbound(singbox.ClientNode{Name: ob.Tag, Type: private.Type, Server: settings.Server, ServerPort: settings.ServerPort, User: singbox.ProxyUser{UUID: settings.UUID, Username: settings.Username, Password: settings.Password}, Settings: settings.Settings})
+			if err != nil {
+				return err
+			}
+			actual, err := singbox.BuildClientOutbound(singbox.ClientNode{Name: ob.Tag, Type: ob.Type, Server: ob.Server, ServerPort: ob.ServerPort, User: singbox.ProxyUser{UUID: ob.UUID, Username: ob.Username, Password: ob.Password}, Settings: ob.Settings})
+			if err != nil {
+				return err
+			}
+			if !equivalentJSON(expected, actual) {
+				return fmt.Errorf("导入出站 %q 与专属出站标签冲突，请先重命名", ob.Tag)
+			}
+			continue
+		}
 		blob, err := json.Marshal(map[string]any{
 			"server": ob.Server, "server_port": ob.ServerPort,
 			"username": ob.Username, "uuid": ob.UUID, "password": ob.Password,

@@ -433,6 +433,7 @@ func parseRule(m map[string]any) (ParsedRule, bool) {
 		Match: RuleInput{
 			Action:                   action,
 			Method:                   mStr(m, "method"),
+			AuthUser:                 mStrSlice(m, "auth_user"),
 			Inbound:                  mStrSlice(m, "inbound"),
 			Domain:                   mStrSlice(m, "domain"),
 			DomainSuffix:             mStrSlice(m, "domain_suffix"),

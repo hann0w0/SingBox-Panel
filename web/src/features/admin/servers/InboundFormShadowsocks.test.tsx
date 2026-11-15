@@ -62,6 +62,15 @@ async function saveSettings() {
 }
 
 describe('Shadowsocks multi-user capability', () => {
+  it('defaults to all addresses and submits an explicitly selected listen mode', async () => {
+    openShadowsocks(aes128)
+    const control = screen.getByLabelText('监听')
+    expect(control.textContent).toContain('双栈')
+    fireEvent.click(control)
+    expect(screen.getAllByRole('option').map(option => option.textContent)).toEqual(['双栈', '本机', 'IPv4', 'IPv6'])
+    fireEvent.click(await screen.findByRole('option', { name: /^IPv6$/ }))
+    expect(await saveSettings()).toMatchObject({ listen: '::', ipv6_only: true })
+  })
   it.each([aes128, aes256])('lets %s opt in to multi-user mode', async (method) => {
     const psk = openShadowsocks(method)
     fireEvent.click(await screen.findByLabelText('单端口多用户'))

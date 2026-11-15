@@ -190,7 +190,7 @@ func findRealityGuardImports(root map[string]any) []realityGuardImport {
 		publicPort, internalPort := guardPort(direct, "listen_port"), guardPort(direct, "override_port")
 		if tag == "" || tags[tag] != 1 || publicPort == 0 || internalPort == 0 || publicPort == internalPort || ports[publicPort] != 1 || ports[internalPort] != 1 ||
 			!guardOnlyKeys(direct, "type", "tag", "listen", "listen_port", "network", "override_address", "override_port") ||
-			mStr(direct, "listen") != "::" || mStr(direct, "network") != "tcp" || mStr(direct, "override_address") != "127.0.0.1" {
+			(InboundSettings{Listen: mStr(direct, "listen")}).validateListen() != nil || mStr(direct, "network") != "tcp" || mStr(direct, "override_address") != "127.0.0.1" {
 			return nil
 		}
 		targetIndex := -1

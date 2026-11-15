@@ -145,7 +145,7 @@ func ValidateRealityGuardLayout(inbounds []InboundInput) error {
 func buildRealityGuardInbound(in InboundInput) map[string]any {
 	return map[string]any{
 		"type": "direct", "tag": in.Settings.RealityGuardTag(in.Tag),
-		"listen": "::", "listen_port": in.ListenPort, "network": "tcp",
+		"listen": in.Settings.ListenAddress(), "listen_port": in.ListenPort, "network": "tcp",
 		"override_address": "127.0.0.1", "override_port": in.Settings.TLS.Reality.Guard.InternalPort,
 	}
 }

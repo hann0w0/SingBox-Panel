@@ -104,8 +104,8 @@
 }
 
 .inbound-compact .fm-grid[data-panel='inbound'] > .inbound-compact-type {
-  grid-column: 1 / -1;
-  width: calc(50% - 6px);
+  grid-column: 1;
+  width: 100%;
 }
 
 .inbound-compact .fm-grid[data-panel='outbound'] > .inbound-compact-type {
@@ -359,7 +359,7 @@
   }
 
   .inbound-compact .fm-grid[data-panel='inbound'] > .inbound-compact-type {
-    width: calc(50% - 5px);
+    width: 100%;
   }
 }
 

@@ -13,6 +13,18 @@ const inbound = {
 } satisfies Inbound
 
 describe('inbound form round trip', () => {
+  it.each([
+    ['all', '::', false], ['ipv4', '0.0.0.0', false], ['ipv6', '::', true], ['local', '127.0.0.1', false],
+  ] as const)('saves and reopens the %s listen mode', (mode, listen, ipv6_only) => {
+    const saved = assembleSettings(inbound.settings, { ...toForm(inbound), listen_mode: mode }, inbound.type)
+    expect(saved).toMatchObject({ listen, ipv6_only })
+    expect(toForm({ ...inbound, settings: saved }).listen_mode).toBe(mode)
+  })
+
+  it('retains an imported bind address when other parameters are edited', () => {
+    const item = { ...inbound, settings: { ...inbound.settings, listen: '2001:db8::1' } }
+    expect(assembleSettings(item.settings, toForm(item), item.type).listen).toBe('2001:db8::1')
+  })
   it('keeps an explicit VLESS UDP encoding choice after save and reopen', () => {
     for (const encoding of ['none', 'xudp', 'packetaddr']) {
       const item = { ...inbound, type: 'vless' as const }

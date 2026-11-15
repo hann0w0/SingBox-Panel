@@ -170,7 +170,7 @@ func BuildInbound(in InboundInput) (json.RawMessage, error) {
 	m := map[string]any{
 		"type":        in.Type,
 		"tag":         in.Tag,
-		"listen":      "::",
+		"listen":      in.Settings.ListenAddress(),
 		"listen_port": in.ListenPort,
 	}
 	if in.Settings.RealityGuardEnabled() {

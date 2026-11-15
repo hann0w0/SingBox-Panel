@@ -124,6 +124,7 @@ export function toForm(ib: Inbound | null): FormVals {
     return {
       type: 'shadowsocks',
       listen_port: randomPort(),
+      listen_mode: 'all',
       enabled: true,
       flow: 'xtls-rprx-vision',
       method: '2022-blake3-aes-128-gcm',
@@ -160,6 +161,7 @@ export function toForm(ib: Inbound | null): FormVals {
     type: ib.type,
     tag: ib.tag,
     listen_port: ib.listen_port,
+    listen_mode: s.ipv6_only ? 'ipv6' : s.listen === '0.0.0.0' ? 'ipv4' : s.listen === '127.0.0.1' || s.listen === '::1' ? 'local' : 'all',
     enabled: ib.enabled,
     // Keep invalid ChaCha opt-ins visible until the administrator fixes them.
     multi_user: !!s.multi_user && (supportsMultiUser(ib.type, s.method) || (ib.type === 'shadowsocks' && s.method === SS2022_CHACHA_METHOD)),
@@ -222,6 +224,11 @@ function transportHost(headers: Record<string, string | string[]> | undefined): 
 // Build settings, preserving generated secrets from `base` (edit case).
 export function assembleSettings(base: InboundSettings, v: FormVals, type: InboundType): InboundSettings {
   const s: InboundSettings = JSON.parse(JSON.stringify(base || {}))
+  if (v.listen_mode !== undefined) {
+    const originalMode = base.ipv6_only ? 'ipv6' : base.listen === '0.0.0.0' ? 'ipv4' : base.listen === '127.0.0.1' || base.listen === '::1' ? 'local' : 'all'
+    s.listen = v.listen_mode === originalMode && base.listen ? base.listen : ({ all: '::', ipv4: '0.0.0.0', ipv6: '::', local: '127.0.0.1' } as Record<string, string>)[v.listen_mode] || '::'
+    s.ipv6_only = v.listen_mode === 'ipv6'
+  }
 
   // Multi-user is explicit and capability-gated. Snell and legacy
   // Shadowsocks always retain their stable shared credential.
@@ -527,6 +534,14 @@ export default function InboundForm({
                 jsonField('multi_user', false)
               }}
             />
+          </Form.Item>
+          <Form.Item name="listen_mode" label="监听">
+            <Select options={[
+              { value: 'all', label: '双栈' },
+              { value: 'local', label: '本机' },
+              { value: 'ipv4', label: 'IPv4' },
+              { value: 'ipv6', label: 'IPv6' },
+            ]} />
           </Form.Item>
           <Form.Item name="listen_port" label="端口">
             <InputNumber precision={0} min={1} max={65535} className="mono" />

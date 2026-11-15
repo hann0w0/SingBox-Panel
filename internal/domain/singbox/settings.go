@@ -232,6 +232,8 @@ func (t TLSSettings) ClientInsecure() bool {
 // InboundSettings is the panel-side, protocol-agnostic representation of an
 // inbound's tunables, stored as JSON on model.Inbound.Settings.
 type InboundSettings struct {
+	Listen   string `json:"listen,omitempty"`
+	IPv6Only bool   `json:"ipv6_only,omitempty"`
 	// shadowsocks
 	Method      string `json:"method,omitempty"`        // e.g. 2022-blake3-aes-128-gcm
 	SSServerPSK string `json:"ss_server_psk,omitempty"` // top-level server PSK (base64), generated on create
@@ -737,6 +739,9 @@ func (t TLSSettings) validateInbound() error {
 // `sing-box check`. Client outbounds use ValidateClientOutbound because their
 // TLS object does not carry server certificate material.
 func (s InboundSettings) Validate(typ string) error {
+	if err := s.validateListen(); err != nil {
+		return err
+	}
 	if err := s.ValidateMultiUser(typ); err != nil {
 		return err
 	}

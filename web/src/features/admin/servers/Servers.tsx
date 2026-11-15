@@ -1,28 +1,96 @@
 import { useEffect, useRef, useState, type DragEvent, type PointerEvent as ReactPointerEvent } from 'react'
 import { Button, Dropdown, Form, Grid, Input, Modal, Segmented, Select, Typography, message } from '../../../ui'
-import { ChevronDown, Eye, EyeOff, Pencil, ChevronsUpDown, Plus, Trash2 } from 'lucide-react'
+import { Check, ChevronDown, Copy, Network, Pencil, ChevronsUpDown, Plus, Trash2 } from 'lucide-react'
 import { useNavigate } from 'react-router-dom'
 import { createServer, deleteServer, errMsg, getOverview, getServersMeta, installSingbox, isCanceledRequest, updateAllAgents, updateServer, updateServerOrder } from '../../../api'
 import type { Server } from '../../../types'
-import { formatBytes } from '../../../util'
+import { copyToClipboard, formatBytes } from '../../../util'
 import { RequestState } from '../../../components/RequestState'
-import { maskAddress } from '../../../addressPrivacy'
+import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
 import { PageHeader, Pills, Stats, Status } from '../../../ui/Page'
 import '../../../styles/servers.css'
 import { MODAL_MD, MODAL_SM } from '../../../ui/modal'
 
 const rate = (n: number) => `${formatBytes(n)}/s`
-const HIDE_ADDRESS_KEY = 'singbox-panel-hide-server-address'
+type AddressRow = { label: string; value: string; copy: string }
 
-function readHideAddress() {
-  try { return window.localStorage.getItem(HIDE_ADDRESS_KEY) === '1' } catch { return false }
+/** Real reported addresses plus the export-only domain, for the network popover. */
+function addressRows(server: Server): AddressRow[] {
+  const rows: AddressRow[] = []
+  for (const [label, value, family] of [
+    ['IPv4', server.public_ip, 'v4'],
+    ['IPv6', server.public_ipv6, 'v6'],
+  ] as const) {
+    const address = value?.trim()
+    if (address) rows.push({ label, value: address, copy: address })
+  }
+  const domain = server.address?.trim()
+  if (domain) rows.push({ label: '域名', value: domain, copy: domain })
+  return rows
 }
 
-function displayAddresses(server: Server) {
-  // The administrator panel always shows the real reported addresses. The
-  // configured domain is for exported/subscribed nodes only, so it is not
-  // displayed here (it would hide the actual IPv4/IPv6 pair).
-  return [server.public_ip?.trim(), server.public_ipv6?.trim()].filter((value): value is string => !!value)
+function addressKind(server: Server) {
+  const v4 = !!server.public_ip?.trim()
+  const v6 = !!server.public_ipv6?.trim()
+  if (v4 && v6) return '双栈'
+  if (v4) return '仅 IPv4'
+  if (v6) return '仅 IPv6'
+  return '无地址'
+}
+
+function ServerNetworkButton({ server }: { server: Server }) {
+  const rows = addressRows(server)
+  const [copied, setCopied] = useState('')
+
+  const copy = (label: string, text: string) => {
+    void copyToClipboard(text)
+      .then(() => { setCopied(label); message.success(`${label} 已复制`) })
+      .catch(() => message.error('复制失败'))
+  }
+
+  const copyAll = () => {
+    const payload = rows.map((row) => `${row.label}: ${row.copy}`).join('\n')
+    if (payload) copy('全部地址', payload)
+  }
+
+  return (
+    <Popover>
+      <PopoverTrigger asChild>
+        <Button
+          size="small"
+          type="text"
+          className="srv-net-trigger"
+          aria-label={`${server.name} 的网络地址`}
+          icon={<Network />}
+        />
+      </PopoverTrigger>
+      <PopoverContent align="end" side="bottom" className="srv-net-popover">
+        <div className="srv-net-head">
+          <strong>{server.name}</strong>
+          <span className="ui-tag">{addressKind(server)}</span>
+        </div>
+        {rows.length === 0 && <p className="srv-net-empty">尚未上报地址</p>}
+        {rows.map((row) => (
+          <div className="srv-net-row" key={row.label}>
+            <span className="srv-net-label">{row.label}</span>
+            <span className="srv-net-value mono" title={row.copy}>{row.value}</span>
+            <button
+              type="button"
+              className="srv-net-copy"
+              title={`复制 ${row.label}`}
+              aria-label={`复制 ${server.name} ${row.label}`}
+              onClick={() => copy(row.label, row.copy)}
+            >
+              {copied === row.label ? <Check size={14} /> : <Copy size={14} />}
+            </button>
+          </div>
+        ))}
+        {rows.length > 1 && (
+          <Button size="small" className="srv-net-copyall" icon={<Copy />} onClick={copyAll}>复制全部地址</Button>
+        )}
+      </PopoverContent>
+    </Popover>
+  )
 }
 
 export default function Servers() {
@@ -45,7 +113,6 @@ export default function Servers() {
   const [sortAnnouncement, setSortAnnouncement] = useState('')
   const [usersTotal, setUsersTotal] = useState<number | null>(null)
   const [filter, setFilter] = useState('all')
-  const [hideAddress, setHideAddress] = useState(readHideAddress)
   const pointerDragRef = useRef<{ id: number; pointerId: number } | null>(null)
   const pointerDropRef = useRef<{ id: number; after: boolean } | null>(null)
   const loadRef = useRef<{ generation: number; controller: AbortController | null }>({ generation: 0, controller: null })
@@ -53,9 +120,6 @@ export default function Servers() {
   const submitLock = useRef(false)
   const [singboxForm] = Form.useForm()
 
-  useEffect(() => {
-    try { window.localStorage.setItem(HIDE_ADDRESS_KEY, hideAddress ? '1' : '0') } catch { /* preference only */ }
-  }, [hideAddress])
   const singboxMethod = Form.useWatch('method', singboxForm) ?? 'script'
 
   const handleUpdateAllAgents = () => {
@@ -385,13 +449,6 @@ export default function Servers() {
           { key: 'offline', label: '离线', count: servers.length - online.length },
         ]}
         actions={<>
-          <Button
-            icon={hideAddress ? <EyeOff /> : <Eye />}
-            title={hideAddress ? '显示服务器地址' : '隐藏服务器地址'}
-            aria-label={hideAddress ? '显示服务器地址' : '隐藏服务器地址'}
-            aria-pressed={hideAddress}
-            onClick={() => setHideAddress((current) => !current)}
-          />
           <Dropdown placement="bottomRight" menu={{ items: [
             { key: 'singbox', label: '更新 sing-box', disabled: updatingSingbox, onClick: handleUpdateSingbox },
             { key: 'agent', label: '同步 Agent', disabled: updatingAll, onClick: handleUpdateAllAgents },
@@ -462,14 +519,6 @@ export default function Servers() {
               </span>
               <div className="srv-name">
                 <a href={`/admin/servers/${s.id}`} onClick={(e) => { e.preventDefault(); open_(s) }}>{s.name}</a>
-                {(() => {
-                  const addresses = displayAddresses(s)
-                  if (!addresses.length) return <span className="srv-address mono">未设置地址</span>
-                  return addresses.map((address) => {
-                    const text = hideAddress ? maskAddress(address) : address
-                    return <span className="srv-address mono" key={address} title={text}>{text}</span>
-                  })
-                })()}
                 {s.remark?.trim() && <span className="srv-remark" title={s.remark}>{s.remark}</span>}
               </div>
               <div className="srv-status"><Status tone={s.online ? 'ok' : 'off'}>{s.online ? '在线' : '离线'}</Status></div>
@@ -486,6 +535,7 @@ export default function Servers() {
                 <span className="faint">↑ {s.online && s.traffic_available ? rate(s.traffic_upload_rate ?? 0) : '—'}</span>
               </div>
               <div className="ui-row-actions">
+                <ServerNetworkButton server={s} />
                 <Button size="small" type="text" icon={<Pencil />} aria-label={`编辑 ${s.name}`} onClick={() => openEdit(s)} />
                 <Button size="small" type="text" icon={<Trash2 />} aria-label={`删除 ${s.name}`} onClick={() => onDelete(s)} />
               </div>

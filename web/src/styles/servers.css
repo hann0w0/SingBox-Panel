@@ -40,3 +40,17 @@
   .srv-row .ui-row-actions { grid-area: actions; opacity: 1; }
 }
 .srv-drag.is-hidden { visibility: hidden; }
+
+/* Network addresses live in a popover, not in the row itself. */
+.srv-net-popover { width: 320px; padding: 12px; }
+.srv-net-head { display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 2px 4px 10px; }
+.srv-net-head strong { min-width: 0; font-size: 13px; font-weight: 500; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.srv-net-row { display: flex; align-items: center; gap: 10px; padding: 8px 10px; border-radius: var(--app-radius-control); background: var(--console-surface); }
+.srv-net-row + .srv-net-row { margin-top: 6px; }
+.srv-net-label { flex: none; width: 38px; color: var(--console-faint); font-size: 11px; font-weight: 600; letter-spacing: .02em; }
+.srv-net-value { flex: 1; min-width: 0; font-size: 12.5px; white-space: normal; overflow-wrap: anywhere; user-select: all; }
+.srv-net-copy { flex: none; display: grid; place-items: center; width: 24px; height: 24px; padding: 0; border: 0; border-radius: var(--app-radius-control); background: transparent; color: var(--console-faint); cursor: pointer; }
+.srv-net-copy:hover { background: var(--console-hover); color: var(--console-ink); }
+.srv-net-copy:focus-visible { outline: 2px solid var(--console-focus); }
+.srv-net-copyall { width: 100%; margin-top: 10px; }
+.srv-net-empty { margin: 0; padding: 8px 10px 4px; color: var(--console-faint); font-size: 12.5px; }

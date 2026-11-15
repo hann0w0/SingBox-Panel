@@ -433,6 +433,11 @@ var applicationMigrations = []schemaMigration{
 		name:    "drop retired custom node switches",
 		up:      dropRetiredCustomNodeSwitches,
 	},
+	{
+		version: 40,
+		name:    "agent dual stack public addresses",
+		up:      func(tx *gorm.DB) error { return tx.AutoMigrate(&model.Server{}) },
+	},
 }
 
 // migrationReplaySafe records whether an interrupted attempt of each migration
@@ -491,6 +496,7 @@ var migrationReplaySafe = map[uint]bool{
 	37: true,  // AutoMigrate of user-owned forward definitions
 	38: true,  // AutoMigrate adds the opt-in forwarding permission
 	39: true,  // HasColumn-guarded DROP COLUMN of the retired node switches
+	40: true,
 }
 
 // dropRetiredCustomNodeSwitches removes the per-node and per-subscription

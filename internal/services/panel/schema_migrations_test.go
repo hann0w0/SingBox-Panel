@@ -44,6 +44,52 @@ func TestInitDBRecordsSchemaVersion(t *testing.T) {
 	}
 }
 
+func TestPublicAddressMigrationPreservesExistingServers(t *testing.T) {
+	databaseFile := filepath.Join(t.TempDir(), "addresses.db")
+	db, err := gorm.Open(sqlite.Open(databaseFile), &gorm.Config{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := db.AutoMigrate(model.AllModels()...); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.AutoMigrate(&model.SchemaMigration{}); err != nil {
+		t.Fatal(err)
+	}
+	server := model.Server{Name: "existing", Address: "existing.example.com", AgentToken: "existing-token", PublicIP: "203.0.113.7"}
+	if err := db.Create(&server).Error; err != nil {
+		t.Fatal(err)
+	}
+	for _, column := range []string{"public_ipv6", "public_ipv4_updated_at", "public_ipv6_updated_at"} {
+		if err := db.Migrator().DropColumn(&model.Server{}, column); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for _, migration := range applicationMigrations {
+		if migration.version >= 40 {
+			break
+		}
+		if err := db.Create(&model.SchemaMigration{Version: migration.version, Name: migration.name, AppliedAt: time.Now()}).Error; err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := runSchemaMigrations(db, config.DatabaseConfig{Driver: "sqlite", DSN: databaseFile}); err != nil {
+		t.Fatal(err)
+	}
+	for _, column := range []string{"public_ipv6", "public_ipv4_updated_at", "public_ipv6_updated_at"} {
+		if !db.Migrator().HasColumn(&model.Server{}, column) {
+			t.Fatalf("missing column %s", column)
+		}
+	}
+	var upgraded model.Server
+	if err := db.First(&upgraded, server.ID).Error; err != nil {
+		t.Fatal(err)
+	}
+	if upgraded.Name != server.Name || upgraded.Address != server.Address || upgraded.PublicIP != server.PublicIP || upgraded.AgentToken != server.AgentToken {
+		t.Fatalf("existing data changed: %+v", upgraded)
+	}
+}
+
 func TestRemoveAdministratorEventRecordsMigrationDropsLegacyTable(t *testing.T) {
 	db, err := gorm.Open(sqlite.Open(filepath.Join(t.TempDir(), "remove-events.db")), &gorm.Config{})
 	if err != nil {

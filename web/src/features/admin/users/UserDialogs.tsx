@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
-import { Form, Input, Modal, Segmented, Switch, Table, message } from '../../../ui'
+import { Alert, Form, Input, Modal, Segmented, Switch, Table, message } from '../../../ui'
 import { createUser, errMsg, getUserTraffic, updateUser } from '../../../api'
 import type { User, UserTrafficInbound, UserTrafficRange, UserTrafficSeries } from '../../../types'
 import { formatBytes } from '../../../util'
@@ -15,9 +15,11 @@ export function UserAccountDialog({ user, onClose, onSaved }: {
 }) {
   const [form] = Form.useForm()
   const [saving, setSaving] = useState(false)
+  const [pending, setPending] = useState<Parameters<typeof updateUser>[1] | null>(null)
   const lock = useRef(false)
   useEffect(() => {
     form.resetFields()
+    setPending(null)
     if (user) form.setFieldsValue({ email: user.email, forwarding_enabled: !!user.forwarding_enabled })
     else form.setFieldsValue({ forwarding_enabled: false })
   }, [user?.id])
@@ -26,8 +28,12 @@ export function UserAccountDialog({ user, onClose, onSaved }: {
     lock.current = true
     setSaving(true)
     try {
-      const values = await form.validateFields()
+      const values = pending || await form.validateFields()
       const body = { email: values.email, password: values.password || undefined, forwarding_enabled: !!values.forwarding_enabled }
+      if (user?.forwarding_enabled && !body.forwarding_enabled && !pending) {
+        setPending(body)
+        return
+      }
       const saved = user ? await updateUser(user.id, body) : await createUser(body)
       message.success('已保存用户')
       onSaved(saved)
@@ -37,8 +43,9 @@ export function UserAccountDialog({ user, onClose, onSaved }: {
       setSaving(false)
     }
   }
-  return <Modal title={user ? '编辑用户' : '新增用户'} width={MODAL_SM} open onCancel={onClose} onOk={submit} confirmLoading={saving}>
-    <Form form={form} layout="vertical">
+  return <Modal title={pending ? '关闭转发权限？' : user ? '编辑用户' : '新增用户'} width={MODAL_SM} open onCancel={() => pending ? setPending(null) : onClose()} onOk={submit} confirmLoading={saving} okText={pending ? '确认关闭并保存' : '确定'} cancelText={pending ? '继续编辑' : '取消'} okButtonProps={{ danger: !!pending }}>
+    {pending && <Alert type="warning" showIcon message="将删除此用户的全部转发" description="保存后将删除此用户的所有转发配置、由转发生成的订阅节点及其排序记录，以及各服务器上关联的转发路由规则。重新开启权限不会恢复这些配置，需要重新创建。" />}
+    <Form form={form} layout="vertical" hidden={!!pending}>
       <Form.Item name="email" label="用户名" rules={[{ required: true }]}>
         <Input placeholder="alice" maxLength={191} autoComplete="off" />
       </Form.Item>

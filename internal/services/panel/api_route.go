@@ -150,7 +150,12 @@ func (a *App) updateOutbound(c *gin.Context) {
 		return
 	}
 	a.userAccessMu.Lock()
-	defer a.userAccessMu.Unlock()
+	accessLocked := true
+	defer func() {
+		if accessLocked {
+			a.userAccessMu.Unlock()
+		}
+	}()
 	nextTag := ob.Tag
 	if req.Tag != "" {
 		nextTag = strings.TrimSpace(req.Tag)
@@ -214,6 +219,8 @@ func (a *App) updateOutbound(c *gin.Context) {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
+	a.userAccessMu.Unlock()
+	accessLocked = false
 	// Losing or changing the source revokes the previous source server's
 	// credential, so rebuild that config as well.
 	if previous.Referenced() && (previous.SourceKind != ob.SourceKind || previous.SourceID != ob.SourceID) {

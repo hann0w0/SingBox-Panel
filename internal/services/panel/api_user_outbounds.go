@@ -202,7 +202,7 @@ func (a *App) importUserOutbound(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "没有解析到可用节点"})
 		return
 	}
-	created := make([]model.Outbound, 0, len(nodes))
+	prepared := make([]outboundReq, 0, len(nodes))
 	for _, imported := range nodes {
 		client, ok := a.importedNodeClient(imported)
 		if !ok {
@@ -217,26 +217,44 @@ func (a *App) importUserOutbound(c *gin.Context) {
 			tag = body.Tag
 		}
 		if len(nodes) > 1 {
-			tag = fmt.Sprintf("%s-%d", tag, len(created)+1)
+			tag = fmt.Sprintf("%s-%d", tag, len(prepared)+1)
 		}
-		resolvedTag, tagErr := a.availablePrivateOutboundTag(tag)
-		if tagErr != nil {
-			c.JSON(http.StatusBadRequest, gin.H{"error": tagErr.Error()})
+		if err := a.validatePrivateOutbound(tag, body.Type, body.Settings); err != nil {
+			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 			return
 		}
-		tag = resolvedTag
-		ob := model.Outbound{
-			ServerID: 0, OwnerUserID: u.ID, Tag: tag, Type: body.Type,
-			Settings: model.JSONText(body.Settings),
-		}
-		if err := a.db.Create(&ob).Error; err != nil {
-			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
-			return
-		}
-		created = append(created, ob)
+		body.Tag = tag
+		prepared = append(prepared, body)
 	}
-	if len(created) == 0 {
+	if len(prepared) == 0 {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "该订阅没有可转换为出站的节点"})
+		return
+	}
+	a.userAccessMu.Lock()
+	created := make([]model.Outbound, 0, len(prepared))
+	err := a.db.Transaction(func(tx *gorm.DB) error {
+		if err := tx.First(&u, currentUID(c)).Error; err != nil {
+			return err
+		}
+		if !userActive(&u) {
+			return fmt.Errorf("账号已停用或已到期")
+		}
+		for _, body := range prepared {
+			tag, err := availablePrivateOutboundTag(tx, body.Tag)
+			if err != nil {
+				return err
+			}
+			outbound := model.Outbound{OwnerUserID: u.ID, Tag: tag, Type: body.Type, Settings: model.JSONText(body.Settings)}
+			if err := tx.Create(&outbound).Error; err != nil {
+				return err
+			}
+			created = append(created, outbound)
+		}
+		return nil
+	})
+	a.userAccessMu.Unlock()
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"outbounds": created})
@@ -247,6 +265,10 @@ func (a *App) importUserOutbound(c *gin.Context) {
 // references the exit, so a private exit cannot safely reuse a shared tag.
 // Imports suffix collisions instead of failing an otherwise valid subscription.
 func (a *App) availablePrivateOutboundTag(tag string) (string, error) {
+	return availablePrivateOutboundTag(a.db, tag)
+}
+
+func availablePrivateOutboundTag(db *gorm.DB, tag string) (string, error) {
 	if strings.TrimSpace(tag) == "" {
 		return "", fmt.Errorf("出站名称必填")
 	}
@@ -256,7 +278,7 @@ func (a *App) availablePrivateOutboundTag(tag string) (string, error) {
 	base := tag
 	for suffix := 2; suffix < 100; suffix++ {
 		var count int64
-		if err := a.db.Model(&model.Outbound{}).
+		if err := db.Model(&model.Outbound{}).
 			Where("tag = ?", tag).Count(&count).Error; err != nil {
 			return "", err
 		}
@@ -285,8 +307,8 @@ func (a *App) validatePrivateOutbound(tag, typ string, raw json.RawMessage) erro
 	if strings.TrimSpace(st.Server) == "" || st.ServerPort < 1 || st.ServerPort > 65535 {
 		return fmt.Errorf("落地服务器和 1-65535 端口必填")
 	}
-	if isLoopbackOrUnspecifiedHost(st.Server) {
-		return fmt.Errorf("落地服务器不能指向本机回环或未指定地址")
+	if forbiddenPrivateOutboundHost(st.Server) {
+		return fmt.Errorf("落地服务器不能指向本机、内网或保留地址")
 	}
 	switch typ {
 	case "vless", "vmess":

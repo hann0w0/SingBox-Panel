@@ -128,7 +128,7 @@ const customNodeSubscriptionSyncWorkers = 3
 
 func (m *customNodeSubscriptionManager) syncDue(parent context.Context) {
 	var sources []model.CustomNodeSubscription
-	if err := m.db.Where("auto_update = ? AND enabled = ?", true, true).Find(&sources).Error; err != nil {
+	if err := m.db.Where("auto_update = ?", true).Find(&sources).Error; err != nil {
 		log.Printf("custom subscriptions: list due sources: %v", err)
 		return
 	}
@@ -299,7 +299,7 @@ func (m *customNodeSubscriptionManager) sync(ctx context.Context, id uint) (cust
 				updates := map[string]any{
 					"name": want.Name, "source_name": want.SourceName, "group": want.Group, "link": want.Link,
 					"protocol": want.Protocol, "address": want.Address, "port": want.Port,
-					"params": want.Params, "enabled": source.Enabled && current.UserEnabled, "sort_order": want.SortOrder,
+					"params": want.Params, "sort_order": want.SortOrder,
 					"hidden_by_subscription_rule": want.HiddenBySubscriptionRule,
 				}
 				if err := tx.Model(current).Updates(updates).Error; err != nil {
@@ -468,7 +468,7 @@ func subscriptionCustomNode(source model.CustomNodeSubscription, item singbox.Im
 		AllUsers: false, UserIDs: []uint{}, ExcludedUserIDs: []uint{},
 		Name: name, SourceName: sourceName, Group: source.Group,
 		Link: validation.Link, Protocol: validation.Protocol, Address: validation.Address,
-		Port: validation.Port, Params: model.JSONText(params), Enabled: source.Enabled,
+		Port: validation.Port, Params: model.JSONText(params),
 		HiddenBySubscriptionRule: hidden,
 		SortOrder:                source.BaseSortOrder + index, SubscriptionID: &source.ID, SubscriptionKey: key,
 	}, key, nil

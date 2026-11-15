@@ -23,7 +23,7 @@ const server = { id: 5, name: 'Tokyo', address: 'tokyo.example', inbounds: [
   { id: 10, tag: 'vless-main', type: 'vless', enabled: true, listen_port: 443 },
   { id: 11, tag: 'trojan-backup', type: 'trojan', enabled: true, listen_port: 8443 },
 ] } as Server
-const external = { id: 30, name: 'Singapore', group: 'External', protocol: 'trojan', enabled: true, all_users: true, address: 'sg.example', port: 443 } as CustomNode
+const external = { id: 30, name: 'Singapore', group: 'External', protocol: 'trojan', all_users: true, address: 'sg.example', port: 443 } as unknown as CustomNode
 const access: UserAccess = {
   user_id: 2, server_ids: [5], server_wide: false, inbound_ids: [10], custom_node_ids: [30],
   node_order: [{ node_type: 'managed', node_id: 10 }, { node_type: 'custom', node_id: 30 }],

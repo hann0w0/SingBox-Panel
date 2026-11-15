@@ -313,7 +313,7 @@ export function UserAccessEditor({ userId, onStateChange }: {
         name: node.name || '未命名节点',
         detail: node.address ? `${node.address}:${node.port}` : '分享链接',
         protocol: node.link?.trim() ? protocolOf(node.link) : node.protocol,
-        enabled: node.enabled,
+        enabled: true,
       })
     }
     const groups: AccessGroup[] = []
@@ -741,7 +741,7 @@ export function UserAccessEditor({ userId, onStateChange }: {
                   </button>
                 <span className="um-access-order-number">{index + 1}</span>
                 <div className="um-access-order-content">
-                  <strong title={(orderItem.custom_name ?? '').trim() || defaultName}>{(orderItem.custom_name ?? '').trim() || defaultName}{item && !item.enabled && <span className="ui-tag um-node-disabled">停用</span>}</strong>
+                  <strong title={(orderItem.custom_name ?? '').trim() || defaultName}>{(orderItem.custom_name ?? '').trim() || defaultName}</strong>
                   <small title={subtitle}><span className="um-access-order-mobile-meta">{index + 1} · {orderItem.node_type === 'managed' ? '面板' : '外部'} · </span>{subtitle}</small>
                 </div>
                 <div className="um-access-order-name-editor" id={`user-node-name-${userId}-${key}`}>
@@ -971,14 +971,14 @@ export function CustomNodesPanel({ nodes, loading, error, onNodesChange }: {
   const openNodeCreate = () => {
     setEditingNode(null)
     nodeForm.resetFields()
-    nodeForm.setFieldsValue({ enabled: true, link: '', tls_mode: 'tls', transport: 'tcp', snell_version: 5, snell_obfs_mode: 'none', snell_mode: '', method: '2022-blake3-aes-128-gcm', group: '' })
+    nodeForm.setFieldsValue({ link: '', tls_mode: 'tls', transport: 'tcp', snell_version: 5, snell_obfs_mode: 'none', snell_mode: '', method: '2022-blake3-aes-128-gcm', group: '' })
     setNodeOpen(true)
   }
 
   const openSubscriptionCreate = () => {
     setEditingSubscription(null)
     subscriptionForm.resetFields()
-    subscriptionForm.setFieldsValue({ enabled: true, auto_update: true, group: '', name_rewrite_rules: [] })
+    subscriptionForm.setFieldsValue({ auto_update: true, group: '', name_rewrite_rules: [] })
     setSubscriptionOpen(true)
   }
 
@@ -989,7 +989,6 @@ export function CustomNodesPanel({ nodes, loading, error, onNodesChange }: {
       name: subscription.name,
       url: subscription.url,
       group: subscription.group || '',
-      enabled: subscription.enabled,
       auto_update: subscription.auto_update,
       name_rewrite_rules: (subscription.name_rewrite_rules || []).map((rule) => {
         const action = rule.action === 'replace_text' ? 'rename' : (rule.action || 'rename')
@@ -1014,7 +1013,6 @@ export function CustomNodesPanel({ nodes, loading, error, onNodesChange }: {
         name: values.name.trim(),
         url: values.url.trim(),
         group: typeof values.group === 'string' ? values.group.trim() : '',
-        enabled: values.enabled !== false,
         auto_update: values.auto_update !== false,
         update_interval_minutes: editingSubscription?.update_interval_minutes ?? 60,
         base_sort_order: editingSubscription?.base_sort_order ?? 0,
@@ -1128,7 +1126,6 @@ export function CustomNodesPanel({ nodes, loading, error, onNodesChange }: {
       snell_mode: p.mode === 'default' ? '' : (p.mode ?? ''),
       username: p.username,
       all_users: n.all_users,
-      enabled: n.enabled,
     })
     setNodeOpen(true)
   }
@@ -1147,7 +1144,6 @@ export function CustomNodesPanel({ nodes, loading, error, onNodesChange }: {
       all_users: editingNode ? editingNode.all_users : false,
       user_ids: editingNode && !editingNode.all_users ? editingNode.user_ids ?? [] : [],
       excluded_user_ids: editingNode && editingNode.all_users ? editingNode.excluded_user_ids ?? [] : [],
-      enabled: v.enabled !== false,
       sort_order: editingNode?.sort_order ?? 0,
     }
       if (normalizedNodeLink) {
@@ -1277,7 +1273,6 @@ export function CustomNodesPanel({ nodes, loading, error, onNodesChange }: {
       render: (_: string, node: CustomNode) => (
         <span className="um-node-title">
           {nodeDisplayName(node)}
-          {!node.enabled ? <span className="ui-tag">停用</span> : null}
         </span>
       ),
     },
@@ -1389,7 +1384,6 @@ export function CustomNodesPanel({ nodes, loading, error, onNodesChange }: {
     if (subscription.last_sync_status === 'failed' || (!subscription.last_sync_status && subscription.last_error)) {
       return <span title={subscription.last_error}><Status tone="error">同步失败</Status></span>
     }
-    if (!subscription.enabled) return <Status tone="off">已停用</Status>
     return subscription.last_success_at || subscription.last_sync_at
       ? <Status tone="ok">正常</Status>
       : <Status tone="off">待同步</Status>
@@ -1605,9 +1599,6 @@ export function CustomNodesPanel({ nodes, loading, error, onNodesChange }: {
           </div>
           <div className="um-form-group um-switch-row">
             <Form.Item name="auto_update" label="自动更新" valuePropName="checked">
-              <Switch />
-            </Form.Item>
-            <Form.Item name="enabled" label="节点启用" valuePropName="checked">
               <Switch />
             </Form.Item>
           </div>
@@ -1952,9 +1943,6 @@ export function CustomNodesPanel({ nodes, loading, error, onNodesChange }: {
               <Input placeholder="HK 01" />
             </Form.Item>
           )}
-          <Form.Item name="enabled" label="启用" valuePropName="checked">
-            <Switch />
-          </Form.Item>
         </Form>
       </Modal>
     </>

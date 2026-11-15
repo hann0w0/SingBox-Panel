@@ -45,8 +45,8 @@ func TestUserAccessReplacesAssignmentsAtomically(t *testing.T) {
 	if err := db.Create(&other).Error; err != nil {
 		t.Fatal(err)
 	}
-	globalNode := model.CustomNode{Name: "global", Link: "socks5://127.0.0.1:1080#global", AllUsers: true, Enabled: true}
-	scopedNode := model.CustomNode{Name: "scoped", Link: "socks5://127.0.0.1:1081#scoped", AllUsers: false, Enabled: true}
+	globalNode := model.CustomNode{Name: "global", Link: "socks5://127.0.0.1:1080#global", AllUsers: true}
+	scopedNode := model.CustomNode{Name: "scoped", Link: "socks5://127.0.0.1:1081#scoped", AllUsers: false}
 	if err := db.Create(&globalNode).Error; err != nil {
 		t.Fatal(err)
 	}
@@ -290,8 +290,8 @@ func TestListUsersIncludesEffectiveNodeCount(t *testing.T) {
 		t.Fatal(err)
 	}
 	nodes := []model.CustomNode{
-		{Name: "global", Link: "socks5://127.0.0.1:13001#global", AllUsers: true, Enabled: true, ExcludedUserIDs: []uint{explicitUser.ID}},
-		{Name: "scoped", Link: "socks5://127.0.0.1:13002#scoped", UserIDs: []uint{wildcardUser.ID}, Enabled: true},
+		{Name: "global", Link: "socks5://127.0.0.1:13001#global", AllUsers: true, ExcludedUserIDs: []uint{explicitUser.ID}},
+		{Name: "scoped", Link: "socks5://127.0.0.1:13002#scoped", UserIDs: []uint{wildcardUser.ID}},
 	}
 	if err := db.Create(&nodes).Error; err != nil {
 		t.Fatal(err)

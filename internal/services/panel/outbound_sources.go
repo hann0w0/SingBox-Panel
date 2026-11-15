@@ -149,8 +149,8 @@ func (a *App) customNodeOutboundClient(id uint) (singbox.ClientNode, error) {
 	if err := a.db.First(&node, id).Error; err != nil {
 		return singbox.ClientNode{}, fmt.Errorf("来源外部节点已被删除")
 	}
-	if !node.Enabled || node.HiddenBySubscriptionRule {
-		return singbox.ClientNode{}, fmt.Errorf("来源外部节点 %q 已停用", node.Name)
+	if node.HiddenBySubscriptionRule {
+		return singbox.ClientNode{}, fmt.Errorf("来源外部节点 %q 已被订阅规则隐藏", node.Name)
 	}
 	n, ok := a.customNodeToNode(&node)
 	if !ok {

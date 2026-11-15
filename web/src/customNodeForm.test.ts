@@ -4,7 +4,7 @@ import { buildCustomNodeParams } from './customNodeForm'
 
 const importedNode: CustomNode = {
   id: 1, name: 'Imported VMess', group: '', link: '', protocol: 'vmess',
-  address: 'example.com', port: 443, enabled: true, sort_order: 0,
+  address: 'example.com', port: 443, sort_order: 0,
   all_users: false, user_ids: [], excluded_user_ids: [],
   params: {
     uuid: 'example-uuid', security: 'aes-128-cfb', alter_id: 16,

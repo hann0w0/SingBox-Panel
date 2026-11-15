@@ -26,7 +26,6 @@ func TestCreateCustomNodeAcceptsTypedSnellParams(t *testing.T) {
 		"address":   "104.21.1.2",
 		"port":      10023,
 		"all_users": true,
-		"enabled":   true,
 		"params": map[string]any{
 			"psk":       "secret-psk",
 			"version":   5,
@@ -88,7 +87,7 @@ func TestListCustomNodesIncludesNormalizedDetail(t *testing.T) {
 	db := testDB(t)
 	app := &App{db: db}
 	if err := db.Create(&model.CustomNode{
-		Name: "🇹🇼 TW test", Link: "socks5://alice:secret@example.com:1080#TW%20test", Enabled: true,
+		Name: "🇹🇼 TW test", Link: "socks5://alice:secret@example.com:1080#TW%20test",
 	}).Error; err != nil {
 		t.Fatal(err)
 	}
@@ -136,7 +135,7 @@ func TestSubscriptionManagedCustomNodeCanBeUpdatedAndDeleted(t *testing.T) {
 		t.Fatal(err)
 	}
 	node := model.CustomNode{
-		Name: "旧名称", Link: "socks5://127.0.0.1:1080", Enabled: true,
+		Name: "旧名称", Link: "socks5://127.0.0.1:1080",
 		SubscriptionID: &source.ID, SubscriptionKey: "managed-node-key",
 	}
 	if err := db.Create(&node).Error; err != nil {
@@ -149,7 +148,7 @@ func TestSubscriptionManagedCustomNodeCanBeUpdatedAndDeleted(t *testing.T) {
 	router.DELETE("/custom-nodes/:id", app.deleteCustomNode)
 
 	payload, err := json.Marshal(map[string]any{
-		"name": "新名称", "link": "socks5://127.0.0.1:2080", "enabled": true,
+		"name": "新名称", "link": "socks5://127.0.0.1:2080",
 		"all_users": false, "user_ids": []uint{user.ID},
 	})
 	if err != nil {
@@ -207,7 +206,7 @@ func TestBatchCustomNodeOperations(t *testing.T) {
 
 	mk := func(name, group string) *model.CustomNode {
 		return &model.CustomNode{
-			Name: name, Group: group, Enabled: true,
+			Name: name, Group: group,
 			Link: "socks5://127.0.0.1:1080",
 		}
 	}

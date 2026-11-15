@@ -404,29 +404,17 @@ func TestExplicitCustomNodeAudienceMigrationPreservesLegacyMeaning(t *testing.T)
 	}
 }
 
-func TestManagedNodeSwitchMigrationPreservesKnownDisabledNodes(t *testing.T) {
+// The per-node switch columns no longer exist, so replaying the historical v29
+// backfill against a current schema must be a no-op instead of failing.
+func TestManagedNodeSwitchMigrationSkipsRemovedColumns(t *testing.T) {
 	db := testDB(t)
-	active := model.CustomNodeSubscription{Name: "active", URL: "https://example.com/active", Enabled: true}
-	paused := model.CustomNodeSubscription{Name: "paused", URL: "https://example.com/paused", Enabled: false}
-	for _, source := range []*model.CustomNodeSubscription{&active, &paused} {
-		wasEnabled := source.Enabled
-		if err := db.Create(source).Error; err != nil {
-			t.Fatal(err)
-		}
-		if !wasEnabled {
-			if err := db.Model(source).Update("enabled", false).Error; err != nil {
-				t.Fatal(err)
-			}
-		}
+	source := model.CustomNodeSubscription{Name: "active", URL: "https://example.com/active"}
+	if err := db.Create(&source).Error; err != nil {
+		t.Fatal(err)
 	}
-	nodes := []model.CustomNode{
-		{Name: "individually disabled", SubscriptionID: &active.ID, SubscriptionKey: "active"},
-		{Name: "source disabled", SubscriptionID: &paused.ID, SubscriptionKey: "paused"},
-	}
-	for i := range nodes {
-		if err := db.Create(&nodes[i]).Error; err != nil {
-			t.Fatal(err)
-		}
+	node := model.CustomNode{Name: "managed", SubscriptionID: &source.ID, SubscriptionKey: "active"}
+	if err := db.Create(&node).Error; err != nil {
+		t.Fatal(err)
 	}
 	var migration schemaMigration
 	for _, candidate := range applicationMigrations {
@@ -441,13 +429,55 @@ func TestManagedNodeSwitchMigrationPreservesKnownDisabledNodes(t *testing.T) {
 	if err := migration.up(db); err != nil {
 		t.Fatal(err)
 	}
-	for i := range nodes {
-		if err := db.First(&nodes[i], nodes[i].ID).Error; err != nil {
-			t.Fatal(err)
+	var saved model.CustomNode
+	if err := db.First(&saved, node.ID).Error; err != nil {
+		t.Fatal(err)
+	}
+	if saved.Name != "managed" || saved.SubscriptionKey != "active" {
+		t.Fatalf("migration changed the node: %+v", saved)
+	}
+}
+
+// An upgraded database still carries the retired switch columns, while a fresh
+// one never creates them. Both must end up without them.
+func TestDropRetiredCustomNodeSwitches(t *testing.T) {
+	db := testDB(t)
+	if err := db.Exec(`ALTER TABLE "custom_nodes" ADD COLUMN "enabled" numeric`).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Exec(`ALTER TABLE "custom_nodes" ADD COLUMN "user_enabled" numeric DEFAULT true`).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Exec(`ALTER TABLE "custom_node_subscriptions" ADD COLUMN "enabled" numeric DEFAULT true`).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Exec(`CREATE INDEX "idx_custom_nodes_enabled" ON "custom_nodes"("enabled")`).Error; err != nil {
+		t.Fatal(err)
+	}
+	var migration schemaMigration
+	for _, candidate := range applicationMigrations {
+		if candidate.version == 39 {
+			migration = candidate
+			break
 		}
 	}
-	if nodes[0].UserEnabled || !nodes[1].UserEnabled {
-		t.Fatalf("managed node preferences migrated incorrectly: active=%v paused=%v", nodes[0].UserEnabled, nodes[1].UserEnabled)
+	if migration.version != 39 {
+		t.Fatal("v39 migration not found")
+	}
+	if err := migration.up(db); err != nil {
+		t.Fatal(err)
+	}
+	for _, column := range []string{"enabled", "user_enabled"} {
+		if db.Migrator().HasColumn("custom_nodes", column) {
+			t.Fatalf("custom_nodes.%s survived the migration", column)
+		}
+	}
+	if db.Migrator().HasColumn("custom_node_subscriptions", "enabled") {
+		t.Fatal("custom_node_subscriptions.enabled survived the migration")
+	}
+	// Replaying the idempotent migration must also succeed.
+	if err := migration.up(db); err != nil {
+		t.Fatal(err)
 	}
 }
 

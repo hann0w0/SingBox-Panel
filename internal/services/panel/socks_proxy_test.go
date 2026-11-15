@@ -20,7 +20,7 @@ func TestSOCKSPartialCredentialsImportSaveAndExport(t *testing.T) {
 	app := &App{db: db}
 	user := model.User{Email: "socks-user", Enabled: true, SubToken: "socks-user-sub"}
 	mustCreate(t, db, &user)
-	source := model.CustomNodeSubscription{Name: "SOCKS fixture", URL: "https://provider.example.com/sub", Enabled: true}
+	source := model.CustomNodeSubscription{Name: "SOCKS fixture", URL: "https://provider.example.com/sub"}
 	mustCreate(t, db, &source)
 	credentials := map[string][2]string{
 		"anonymous":     {"", ""},

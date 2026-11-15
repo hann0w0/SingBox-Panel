@@ -238,7 +238,7 @@ func TestCustomNodeSubscriptionKeyTracksNameNotEndpoint(t *testing.T) {
 }
 
 func TestSubscriptionCustomNodeUsesSourceSettings(t *testing.T) {
-	source := model.CustomNodeSubscription{ID: 7, Group: "airport", Enabled: false, BaseSortOrder: 20}
+	source := model.CustomNodeSubscription{ID: 7, Group: "airport", BaseSortOrder: 20}
 	item := singbox.ImportedNode{
 		Name: "node", Protocol: "trojan", Address: "example.com", Port: 443,
 		Params: map[string]any{"password": "secret", "tls": "tls"},
@@ -250,7 +250,7 @@ func TestSubscriptionCustomNodeUsesSourceSettings(t *testing.T) {
 	if row.SubscriptionID == nil || *row.SubscriptionID != source.ID || row.SubscriptionKey != key {
 		t.Fatalf("subscription identity not set: %+v", row)
 	}
-	if row.Group != "airport" || row.Enabled || row.SortOrder != 23 {
+	if row.Group != "airport" || row.SortOrder != 23 {
 		t.Fatalf("source settings not applied: %+v", row)
 	}
 	if row.AllUsers || len(row.UserIDs) != 0 || len(row.ExcludedUserIDs) != 0 {
@@ -355,21 +355,21 @@ func TestUpdateCustomNodeSubscriptionAppliesSourceSettings(t *testing.T) {
 	app := &App{db: db}
 	source := model.CustomNodeSubscription{
 		Name: "旧订阅", URL: "https://example.com/old", Group: "旧分组",
-		Enabled: true, AutoUpdate: true, UpdateIntervalMinutes: 60, BaseSortOrder: 20,
+		AutoUpdate: true, UpdateIntervalMinutes: 60, BaseSortOrder: 20,
 	}
 	if err := db.Create(&source).Error; err != nil {
 		t.Fatal(err)
 	}
 	node := model.CustomNode{
 		Name: "节点", Link: "socks5://127.0.0.1:1080", Group: source.Group,
-		Enabled: true, SortOrder: 23, SubscriptionID: &source.ID, SubscriptionKey: "node-key",
+		SortOrder: 23, SubscriptionID: &source.ID, SubscriptionKey: "node-key",
 	}
 	if err := db.Create(&node).Error; err != nil {
 		t.Fatal(err)
 	}
 	payload, err := json.Marshal(map[string]any{
 		"name": "新订阅", "url": "https://example.com/new", "group": "新分组",
-		"enabled": false, "auto_update": false, "update_interval_minutes": 120,
+		"auto_update": false, "update_interval_minutes": 120,
 		"base_sort_order": 30,
 	})
 	if err != nil {
@@ -389,85 +389,14 @@ func TestUpdateCustomNodeSubscriptionAppliesSourceSettings(t *testing.T) {
 	if err := db.First(&source, source.ID).Error; err != nil {
 		t.Fatal(err)
 	}
-	if source.Name != "新订阅" || source.Group != "新分组" || source.Enabled || source.AutoUpdate || source.BaseSortOrder != 30 {
+	if source.Name != "新订阅" || source.Group != "新分组" || source.AutoUpdate || source.BaseSortOrder != 30 {
 		t.Fatalf("subscription not updated: %+v", source)
 	}
 	if err := db.First(&node, node.ID).Error; err != nil {
 		t.Fatal(err)
 	}
-	if node.Group != "新分组" || node.Enabled || node.SortOrder != 33 {
+	if node.Group != "新分组" || node.SortOrder != 33 {
 		t.Fatalf("managed node settings not updated: %+v", node)
-	}
-}
-
-func TestManagedNodeSwitchSurvivesSourceToggle(t *testing.T) {
-	db := testDB(t)
-	app := &App{db: db}
-	source := model.CustomNodeSubscription{Name: "source", URL: "https://example.com/sub", Enabled: true, AutoUpdate: true}
-	if err := db.Create(&source).Error; err != nil {
-		t.Fatal(err)
-	}
-	node := model.CustomNode{Name: "node", Link: "socks5://127.0.0.1:1080", Enabled: true, SubscriptionID: &source.ID, SubscriptionKey: "node"}
-	if err := db.Create(&node).Error; err != nil {
-		t.Fatal(err)
-	}
-	other := model.CustomNode{Name: "other", Link: "socks5://127.0.0.1:1081", Enabled: true, SubscriptionID: &source.ID, SubscriptionKey: "other"}
-	if err := db.Create(&other).Error; err != nil {
-		t.Fatal(err)
-	}
-	gin.SetMode(gin.TestMode)
-	router := gin.New()
-	router.PUT("/custom-nodes/:id", app.updateCustomNode)
-	router.PUT("/custom-node-subscriptions/:id", app.updateCustomNodeSubscription)
-	request := func(path string, payload map[string]any) {
-		t.Helper()
-		body, err := json.Marshal(payload)
-		if err != nil {
-			t.Fatal(err)
-		}
-		req := httptest.NewRequest(http.MethodPut, path, bytes.NewReader(body))
-		req.Header.Set("Content-Type", "application/json")
-		w := httptest.NewRecorder()
-		router.ServeHTTP(w, req)
-		if w.Code != http.StatusOK {
-			t.Fatalf("PUT %s: %d %s", path, w.Code, w.Body.String())
-		}
-	}
-	nodePath := "/custom-nodes/" + strconv.FormatUint(uint64(node.ID), 10)
-	sourcePath := "/custom-node-subscriptions/" + strconv.FormatUint(uint64(source.ID), 10)
-	request(nodePath, map[string]any{"name": node.Name, "link": node.Link, "enabled": false})
-	if err := db.First(&node, node.ID).Error; err != nil {
-		t.Fatal(err)
-	}
-	if node.Enabled || node.UserEnabled {
-		t.Fatal("individual disable did not persist")
-	}
-	request(sourcePath, map[string]any{"name": source.Name, "url": source.URL, "enabled": false})
-	if err := db.First(&other, other.ID).Error; err != nil {
-		t.Fatal(err)
-	}
-	if other.Enabled || !other.UserEnabled {
-		t.Fatal("source disable lost the other node's own enabled preference")
-	}
-	request(sourcePath, map[string]any{"name": source.Name, "url": source.URL, "enabled": true})
-	if err := db.First(&other, other.ID).Error; err != nil {
-		t.Fatal(err)
-	}
-	if !other.Enabled || !other.UserEnabled {
-		t.Fatal("source enable did not restore the other node")
-	}
-	if err := db.First(&node, node.ID).Error; err != nil {
-		t.Fatal(err)
-	}
-	if node.Enabled || node.UserEnabled {
-		t.Fatal("source toggle enabled an individually disabled node")
-	}
-	request(nodePath, map[string]any{"name": node.Name, "link": node.Link, "enabled": true})
-	if err := db.First(&node, node.ID).Error; err != nil {
-		t.Fatal(err)
-	}
-	if !node.Enabled || !node.UserEnabled {
-		t.Fatal("individual enable did not restore the node")
 	}
 }
 
@@ -475,14 +404,14 @@ func TestUpdateCustomNodeSubscriptionRewritesExistingNamesWithoutFetch(t *testin
 	db := testDB(t)
 	app := &App{db: db}
 	source := model.CustomNodeSubscription{
-		Name: "订阅", URL: "https://example.com/sub", Enabled: true, AutoUpdate: true, UpdateIntervalMinutes: 60,
+		Name: "订阅", URL: "https://example.com/sub", AutoUpdate: true, UpdateIntervalMinutes: 60,
 	}
 	if err := db.Create(&source).Error; err != nil {
 		t.Fatal(err)
 	}
 	node := model.CustomNode{
 		Name: "🇸🇬 新加坡 01", SourceName: "🇸🇬 新加坡 01", Link: "trojan://secret@example.com:443#name",
-		UserIDs: []uint{7}, SubscriptionID: &source.ID, SubscriptionKey: "stable-key", Enabled: true,
+		UserIDs: []uint{7}, SubscriptionID: &source.ID, SubscriptionKey: "stable-key",
 	}
 	if err := db.Create(&node).Error; err != nil {
 		t.Fatal(err)
@@ -521,18 +450,18 @@ func TestUpdateCustomNodeSubscriptionFiltersAndRestoresProtocolAssignments(t *te
 	db := testDB(t)
 	app := &App{db: db}
 	source := model.CustomNodeSubscription{
-		Name: "订阅", URL: "https://example.com/sub", Enabled: true, AutoUpdate: true, UpdateIntervalMinutes: 60,
+		Name: "订阅", URL: "https://example.com/sub", AutoUpdate: true, UpdateIntervalMinutes: 60,
 	}
 	if err := db.Create(&source).Error; err != nil {
 		t.Fatal(err)
 	}
 	anyTLS := model.CustomNode{
 		Name: "AnyTLS", SourceName: "AnyTLS", Link: "anytls://secret@example.com:443#AnyTLS", Protocol: "anytls", Address: "example.com", Port: 443,
-		UserIDs: []uint{7}, SubscriptionID: &source.ID, SubscriptionKey: "anytls-key", Enabled: true,
+		UserIDs: []uint{7}, SubscriptionID: &source.ID, SubscriptionKey: "anytls-key",
 	}
 	trojan := model.CustomNode{
 		Name: "Trojan", SourceName: "Trojan", Link: "trojan://secret@example.com:443#Trojan", Protocol: "trojan", Address: "example.com", Port: 443,
-		UserIDs: []uint{7}, SubscriptionID: &source.ID, SubscriptionKey: "trojan-key", Enabled: true,
+		UserIDs: []uint{7}, SubscriptionID: &source.ID, SubscriptionKey: "trojan-key",
 	}
 	if err := db.Create(&anyTLS).Error; err != nil {
 		t.Fatal(err)
@@ -624,7 +553,7 @@ func TestDeleteCustomNodeSubscriptionDeletesManagedNodes(t *testing.T) {
 		t.Fatal(err)
 	}
 	node := model.CustomNode{
-		Name: "节点", Link: "socks5://127.0.0.1:1080", Enabled: true,
+		Name: "节点", Link: "socks5://127.0.0.1:1080",
 		SubscriptionID: &source.ID, SubscriptionKey: "node-key",
 	}
 	if err := db.Create(&node).Error; err != nil {

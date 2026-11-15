@@ -20,7 +20,7 @@ func TestCustomNodeSubscriptionSyncDueIsBounded(t *testing.T) {
 	for i := 0; i < total; i++ {
 		src := model.CustomNodeSubscription{
 			Name: fmt.Sprintf("s%d", i), URL: "https://example.com/sub",
-			Enabled: true, AutoUpdate: true, UpdateIntervalMinutes: 60,
+			AutoUpdate: true, UpdateIntervalMinutes: 60,
 		}
 		if err := db.Create(&src).Error; err != nil {
 			t.Fatal(err)

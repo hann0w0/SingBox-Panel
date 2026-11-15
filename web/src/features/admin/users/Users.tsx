@@ -29,7 +29,6 @@ export default function Users() {
     const shared = new Map<string, number>()
     const adjustments = new Map<number, Map<string, number>>()
     for (const node of nodes) {
-      if (!node.enabled) continue
       const group = node.group || '未分组'
       if (node.all_users) shared.set(group, (shared.get(group) ?? 0) + 1)
       for (const userID of new Set(node.all_users ? node.excluded_user_ids : node.user_ids)) {

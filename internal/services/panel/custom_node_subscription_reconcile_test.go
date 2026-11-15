@@ -27,7 +27,7 @@ func newSubscriptionReconcileFixture(t *testing.T, entries ...string) *subscript
 	t.Helper()
 	f := &subscriptionReconcileFixture{db: testDB(t)}
 	f.source = model.CustomNodeSubscription{
-		Name: "synthetic source", URL: "https://example.com/subscription", Enabled: true,
+		Name: "synthetic source", URL: "https://example.com/subscription",
 		NameRewriteRules: []model.NameRewriteRule{{Pattern: "source-", Replacement: "shown-"}},
 	}
 	f.whole = model.User{Email: "whole@example.com", SubToken: "whole-test-token"}
@@ -122,9 +122,6 @@ func TestSubscriptionSyncNamedFailureCleansStaleNodes(t *testing.T) {
 		t.Fatal("initial nodes missing")
 	}
 	f.grantPartialAndOrder(t, broken)
-	if err := f.db.Model(&broken).Updates(map[string]any{"user_enabled": false, "enabled": false}).Error; err != nil {
-		t.Fatal(err)
-	}
 	if err := f.db.First(&broken, broken.ID).Error; err != nil {
 		t.Fatal(err)
 	}

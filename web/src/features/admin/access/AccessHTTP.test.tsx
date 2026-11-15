@@ -15,7 +15,7 @@ vi.mock('../../../api', async (importOriginal) => ({
 
 const node: CustomNode = {
   id: 1, name: 'Imported HTTP', group: '', link: '', protocol: 'http',
-  address: 'proxy.example.com', port: 8443, enabled: true, sort_order: 0,
+  address: 'proxy.example.com', port: 8443, sort_order: 0,
   all_users: false, user_ids: [2], excluded_user_ids: [], params: {},
 }
 const originalScrollIntoView = Object.getOwnPropertyDescriptor(Element.prototype, 'scrollIntoView')
@@ -34,7 +34,7 @@ describe('subscription sync feedback', () => {
   it('shows partial synchronization as a warning', async () => {
     const source: CustomNodeSubscription = {
       id: 1, name: 'Partial source', url: 'https://provider.example.com/sub', group: '',
-      enabled: true, auto_update: true, update_interval_minutes: 60, base_sort_order: 0,
+      auto_update: true, update_interval_minutes: 60, base_sort_order: 0,
       name_rewrite_rules: [], node_count: 28, last_error: '有 1 个节点解析失败，保留 0 个仍在源中的旧节点',
       last_sync_status: 'partial', source_type: 'clash-yaml', created_at: '', updated_at: '',
     }
@@ -55,7 +55,7 @@ describe('subscription sync feedback', () => {
   ] as const)('shows $label for status=$status with legacy compatibility', async ({ status, error, lastSync, label, tone }) => {
     const source: CustomNodeSubscription = {
       id: 1, name: 'Source', url: 'https://provider.example.com/sub', group: '',
-      enabled: true, auto_update: true, update_interval_minutes: 60, base_sort_order: 0,
+      auto_update: true, update_interval_minutes: 60, base_sort_order: 0,
       name_rewrite_rules: [], node_count: 28, last_error: error, last_sync_status: status,
       last_sync_at: lastSync, source_type: 'clash-yaml', created_at: '', updated_at: '',
     }
@@ -67,7 +67,7 @@ describe('subscription sync feedback', () => {
   it.each([0, 1])('reports skipped=%s without showing a false success', async (skipped) => {
     const source: CustomNodeSubscription = {
       id: 1, name: 'Source', url: 'https://provider.example.com/sub', group: '',
-      enabled: true, auto_update: true, update_interval_minutes: 60, base_sort_order: 0,
+      auto_update: true, update_interval_minutes: 60, base_sort_order: 0,
       name_rewrite_rules: [], node_count: 81, last_error: '', source_type: 'clash-yaml',
       created_at: '', updated_at: '',
     }
@@ -183,5 +183,15 @@ describe('新增节点 dialog', () => {
     expect(screen.queryByRole('listbox', { name: '分组建议' })).toBeNull()
     fireEvent.pointerDown(group)
     expect(await screen.findByRole('listbox', { name: '分组建议' })).toBeTruthy()
+  })
+})
+
+describe('新增节点 dialog', () => {
+  it('offers no enable switch for a manual node', async () => {
+    await showNodes()
+    fireEvent.click(screen.getByRole('button', { name: '新增节点' }))
+    await screen.findByLabelText('分组')
+    expect(screen.queryByText('启用')).toBeNull()
+    expect(screen.queryByRole('switch')).toBeNull()
   })
 })

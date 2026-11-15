@@ -367,6 +367,14 @@ var applicationMigrations = []schemaMigration{
 			if err := tx.AutoMigrate(&model.CustomNode{}); err != nil {
 				return err
 			}
+			// Later versions removed the per-node switch entirely, so a fresh
+			// database never creates these columns. Only backfill a database
+			// that still carries them.
+			if !tx.Migrator().HasColumn("custom_nodes", "user_enabled") ||
+				!tx.Migrator().HasColumn("custom_nodes", "enabled") ||
+				!tx.Migrator().HasColumn("custom_node_subscriptions", "enabled") {
+				return nil
+			}
 			// An enabled source's disabled nodes were switched off individually.
 			// Disabled sources erased that distinction, so retain the old behavior
 			// of enabling those nodes when the source is turned on again.
@@ -419,6 +427,11 @@ var applicationMigrations = []schemaMigration{
 		version: 38,
 		name:    "user forwarding permission",
 		up:      func(tx *gorm.DB) error { return tx.AutoMigrate(&model.User{}) },
+	},
+	{
+		version: 39,
+		name:    "drop retired custom node switches",
+		up:      dropRetiredCustomNodeSwitches,
 	},
 }
 
@@ -477,6 +490,46 @@ var migrationReplaySafe = map[uint]bool{
 	36: true,  // moves private exits to server_id=0 and suffixes duplicate tags
 	37: true,  // AutoMigrate of user-owned forward definitions
 	38: true,  // AutoMigrate adds the opt-in forwarding permission
+	39: true,  // HasColumn-guarded DROP COLUMN of the retired node switches
+}
+
+// dropRetiredCustomNodeSwitches removes the per-node and per-subscription
+// enabled flags. Assignment and visibility are now decided only by the audience
+// list and subscription rules, so keeping a switch column would let an upgraded
+// database filter out rows that the current code assumes are always live.
+func dropRetiredCustomNodeSwitches(tx *gorm.DB) error {
+	// SQLite refuses to drop an indexed column, and both flags were indexed.
+	if tx.Dialector.Name() == "sqlite" {
+		for _, index := range []string{"idx_custom_nodes_enabled", "idx_custom_node_subscriptions_enabled"} {
+			if err := tx.Exec(`DROP INDEX IF EXISTS "` + index + `"`).Error; err != nil {
+				return fmt.Errorf("drop index %s: %w", index, err)
+			}
+		}
+	}
+	for _, column := range []string{"enabled", "user_enabled"} {
+		if !tx.Migrator().HasColumn("custom_nodes", column) {
+			continue
+		}
+		if tx.Dialector.Name() == "sqlite" {
+			if err := tx.Exec(`ALTER TABLE "custom_nodes" DROP COLUMN "` + column + `"`).Error; err != nil {
+				return fmt.Errorf("drop custom_nodes.%s: %w", column, err)
+			}
+			continue
+		}
+		if err := tx.Migrator().DropColumn("custom_nodes", column); err != nil {
+			return fmt.Errorf("drop custom_nodes.%s: %w", column, err)
+		}
+	}
+	if tx.Migrator().HasColumn("custom_node_subscriptions", "enabled") {
+		if tx.Dialector.Name() == "sqlite" {
+			if err := tx.Exec(`ALTER TABLE "custom_node_subscriptions" DROP COLUMN "enabled"`).Error; err != nil {
+				return fmt.Errorf("drop custom_node_subscriptions.enabled: %w", err)
+			}
+		} else if err := tx.Migrator().DropColumn("custom_node_subscriptions", "enabled"); err != nil {
+			return fmt.Errorf("drop custom_node_subscriptions.enabled: %w", err)
+		}
+	}
+	return nil
 }
 
 // detachUserPrivateOutbounds upgrades the first private-exit shape, where an

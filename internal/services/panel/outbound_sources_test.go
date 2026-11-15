@@ -249,7 +249,7 @@ func TestInboundReferencedByOutboundCannotBeDeletedOrDisabled(t *testing.T) {
 func TestCustomNodeImportUsesTheNodeCredential(t *testing.T) {
 	f := newNodeImportFixture(t)
 	node := model.CustomNode{
-		Name: "机场节点 A", Enabled: true, Link: "trojan://airport-secret@a.example.net:443?sni=a.example.net#airport",
+		Name: "机场节点 A", Link: "trojan://airport-secret@a.example.net:443?sni=a.example.net#airport",
 	}
 	if err := f.db.Create(&node).Error; err != nil {
 		t.Fatal(err)
@@ -260,12 +260,12 @@ func TestCustomNodeImportUsesTheNodeCredential(t *testing.T) {
 	if preview.Code != http.StatusOK {
 		t.Fatalf("preview: %d %s", preview.Code, preview.Body.String())
 	}
-	if err := f.db.Model(&model.CustomNode{}).Where("id = ?", node.ID).Update("enabled", false).Error; err != nil {
+	if err := f.db.Model(&model.CustomNode{}).Where("id = ?", node.ID).Update("hidden_by_subscription_rule", true).Error; err != nil {
 		t.Fatal(err)
 	}
 	if w := f.call(t, http.MethodPost, fmt.Sprint(f.target.ID), "preview", gin.H{
 		"source_kind": model.OutboundSourceCustomNode, "source_id": node.ID,
 	}); w.Code != http.StatusBadRequest {
-		t.Fatalf("disabled custom node accepted: %d %s", w.Code, w.Body.String())
+		t.Fatalf("hidden custom node accepted: %d %s", w.Code, w.Body.String())
 	}
 }

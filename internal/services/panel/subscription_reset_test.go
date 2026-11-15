@@ -66,7 +66,7 @@ func TestSubscriptionResetRotatesOnlyCurrentUserCredentialsAndPushesConfig(t *te
 	}
 	mustCreate(t, f.db, &model.CustomNode{
 		Name: "external", Protocol: "vless", Address: "external.example.com", Port: 443,
-		Enabled: true, AllUsers: true, Params: model.JSONText(`{"uuid":"external-uuid"}`),
+		AllUsers: true, Params: model.JSONText(`{"uuid":"external-uuid"}`),
 	})
 	hub := NewHub(f.db)
 	orch := NewOrchestrator(f.db, hub)

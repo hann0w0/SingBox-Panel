@@ -16,7 +16,6 @@ type customNodeSubscriptionReq struct {
 	Name                  string                  `json:"name"`
 	URL                   string                  `json:"url"`
 	Group                 string                  `json:"group"`
-	Enabled               *bool                   `json:"enabled"`
 	AutoUpdate            *bool                   `json:"auto_update"`
 	UpdateIntervalMinutes int                     `json:"update_interval_minutes"`
 	BaseSortOrder         int                     `json:"base_sort_order"`
@@ -57,27 +56,21 @@ func (a *App) createCustomNodeSubscription(c *gin.Context) {
 	if req.AutoUpdate != nil {
 		autoUpdate = *req.AutoUpdate
 	}
-	enabled := true
-	if req.Enabled != nil {
-		enabled = *req.Enabled
-	}
 	normalizedRules := nonNilNameRewriteRules(req.NameRewriteRules)
 	row := model.CustomNodeSubscription{
 		Name: name, URL: url, Group: trimRunes(strings.TrimSpace(req.Group), 64),
-		Enabled: enabled, AutoUpdate: autoUpdate, UpdateIntervalMinutes: normalizeCustomNodeSubscriptionInterval(req.UpdateIntervalMinutes),
+		AutoUpdate: autoUpdate, UpdateIntervalMinutes: normalizeCustomNodeSubscriptionInterval(req.UpdateIntervalMinutes),
 		BaseSortOrder: req.BaseSortOrder, NameRewriteRules: normalizedRules,
 	}
 	if err := a.db.Transaction(func(tx *gorm.DB) error {
 		if err := tx.Create(&row).Error; err != nil {
 			return err
 		}
-		// GORM applies default:true to zero-value bools during Create. Restore
-		// explicit false values before the row becomes visible to the scheduler.
-		row.Enabled, row.AutoUpdate = enabled, autoUpdate
-		if !enabled || !autoUpdate {
-			return tx.Model(&row).UpdateColumns(map[string]any{
-				"enabled": enabled, "auto_update": autoUpdate,
-			}).Error
+		// GORM applies default:true to a zero-value bool during Create. Restore
+		// an explicit false before the row becomes visible to the scheduler.
+		row.AutoUpdate = autoUpdate
+		if !autoUpdate {
+			return tx.Model(&row).UpdateColumn("auto_update", false).Error
 		}
 		return nil
 	}); err != nil {
@@ -133,10 +126,6 @@ func (a *App) updateCustomNodeSubscription(c *gin.Context) {
 		if req.AutoUpdate != nil {
 			autoUpdate = *req.AutoUpdate
 		}
-		enabled := row.Enabled
-		if req.Enabled != nil {
-			enabled = *req.Enabled
-		}
 		name := trimRunes(strings.TrimSpace(req.Name), 128)
 		if name == "" {
 			name = "订阅"
@@ -144,7 +133,7 @@ func (a *App) updateCustomNodeSubscription(c *gin.Context) {
 		group := trimRunes(strings.TrimSpace(req.Group), 64)
 		baseSortOrder := req.BaseSortOrder
 		updates := map[string]any{
-			"name": name, "url": url, "group": group, "enabled": enabled, "auto_update": autoUpdate,
+			"name": name, "url": url, "group": group, "auto_update": autoUpdate,
 			"update_interval_minutes": normalizeCustomNodeSubscriptionInterval(req.UpdateIntervalMinutes),
 			"base_sort_order":         baseSortOrder,
 		}
@@ -169,9 +158,7 @@ func (a *App) updateCustomNodeSubscription(c *gin.Context) {
 		}
 		// Apply source-level presentation changes immediately, including a base
 		// sort offset, without waiting for a remote fetch.
-		if err := tx.Model(&model.CustomNode{}).Where("subscription_id = ?", id).Updates(map[string]any{
-			"group": group, "enabled": gorm.Expr("user_enabled AND ?", enabled),
-		}).Error; err != nil {
+		if err := tx.Model(&model.CustomNode{}).Where("subscription_id = ?", id).Update("group", group).Error; err != nil {
 			return err
 		}
 		delta := baseSortOrder - oldBaseSortOrder

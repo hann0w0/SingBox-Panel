@@ -458,7 +458,6 @@ export interface CustomNode {
   address: string
   port: number
   params: Record<string, unknown> | null
-  enabled: boolean
   sort_order: number
   subscription_id?: number | null
   detail?: {
@@ -481,7 +480,6 @@ export interface CustomNodeBody {
   all_users?: boolean
   user_ids?: number[]
   excluded_user_ids?: number[]
-  enabled?: boolean
   sort_order?: number
 }
 export const listCustomNodes = (signal?: AbortSignal) =>
@@ -499,7 +497,6 @@ export interface CustomNodeSubscription {
   name: string
   url: string
   group: string
-  enabled: boolean
   auto_update: boolean
   update_interval_minutes: number
   base_sort_order: number
@@ -525,7 +522,6 @@ export interface CustomNodeSubscriptionBody {
   name: string
   url: string
   group?: string
-  enabled?: boolean
   auto_update?: boolean
   update_interval_minutes?: number
   base_sort_order?: number

@@ -8,7 +8,7 @@ import (
 )
 
 func TestSubscriptionIdentityPreservesDuplicateNodeAudiences(t *testing.T) {
-	source := model.CustomNodeSubscription{ID: 1, Enabled: true}
+	source := model.CustomNodeSubscription{ID: 1}
 	makeDesired := func(addresses ...string) (map[string]model.CustomNode, []string) {
 		t.Helper()
 		rows := make(map[string]model.CustomNode)
@@ -81,7 +81,7 @@ func TestSubscriptionIdentityRecoversLegacyURIEdit(t *testing.T) {
 	if err != nil || len(parsed.Nodes) != 2 {
 		t.Fatalf("parse URI nodes: %v, %+v", err, parsed)
 	}
-	source := model.CustomNodeSubscription{ID: 1, Enabled: true}
+	source := model.CustomNodeSubscription{ID: 1}
 	desired := make(map[string]model.CustomNode)
 	order := make([]string, 0, 2)
 	for index, item := range parsed.Nodes {

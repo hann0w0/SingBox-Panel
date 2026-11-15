@@ -28,7 +28,6 @@ type customNodeReq struct {
 	AllUsers        *bool           `json:"all_users"`
 	UserIDs         []uint          `json:"user_ids"`
 	ExcludedUserIDs *[]uint         `json:"excluded_user_ids"`
-	Enabled         *bool           `json:"enabled"`
 	SortOrder       *int            `json:"sort_order"`
 }
 
@@ -221,10 +220,6 @@ func (a *App) createCustomNode(c *gin.Context) {
 	if name == "" {
 		name = parsedName
 	}
-	enabled := true
-	if req.Enabled != nil {
-		enabled = *req.Enabled
-	}
 	// Audience defaults to "nobody": an empty user_ids list means "not assigned
 	// to anyone", never "publish to every account". Callers must explicitly pass
 	// all_users=true to broadcast a node. (The admin UI always sends the field.)
@@ -241,7 +236,6 @@ func (a *App) createCustomNode(c *gin.Context) {
 		Address:   req.Address,
 		Port:      req.Port,
 		Params:    model.JSONText(req.Params),
-		Enabled:   enabled,
 		SortOrder: 0,
 	}
 	if allUsers {
@@ -347,30 +341,6 @@ func (a *App) updateCustomNode(c *gin.Context) {
 			return
 		}
 		columns = append(columns, "AllUsers", "UserIDs", "ExcludedUserIDs")
-	}
-	if req.Enabled != nil {
-		if !*req.Enabled && node.Enabled {
-			// An outbound imported from this node would lose its credential.
-			if n, err := outboundSourceReference(a.db, model.OutboundSourceCustomNode, node.ID); err != nil {
-				c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
-				return
-			} else if n > 0 {
-				c.JSON(http.StatusConflict, gin.H{"error": "该节点仍被出站引用，请先修改或删除那些出站"})
-				return
-			}
-		}
-		node.UserEnabled = *req.Enabled
-		node.Enabled = *req.Enabled
-		if node.SubscriptionID != nil {
-			var source model.CustomNodeSubscription
-			if err := a.db.First(&source, *node.SubscriptionID).Error; err != nil {
-				c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
-				return
-			}
-			node.Enabled = node.Enabled && source.Enabled
-			columns = append(columns, "UserEnabled")
-		}
-		columns = append(columns, "Enabled")
 	}
 	if req.SortOrder != nil {
 		node.SortOrder = *req.SortOrder

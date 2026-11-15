@@ -23,7 +23,7 @@ func TestHTTPProxyImportSaveAndSubscriptionRoundTrip(t *testing.T) {
 	bob := model.User{Email: "http-bob", Enabled: true, SubToken: "http-bob-sub"}
 	mustCreate(t, db, &alice)
 	mustCreate(t, db, &bob)
-	source := model.CustomNodeSubscription{Name: "HTTP fixture", URL: "https://provider.example.com/sub", Enabled: true}
+	source := model.CustomNodeSubscription{Name: "HTTP fixture", URL: "https://provider.example.com/sub"}
 	mustCreate(t, db, &source)
 	// The real-world source uses type:http + tls:true, including anonymous
 	// nodes and a username with no password. Keep only synthetic endpoints.

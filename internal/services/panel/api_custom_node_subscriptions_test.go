@@ -12,18 +12,15 @@ import (
 	"github.com/hann0w0/singbox-panel/internal/domain/model"
 )
 
-func TestCreateCustomNodeSubscriptionPreservesSwitches(t *testing.T) {
+func TestCreateCustomNodeSubscriptionPreservesAutoUpdate(t *testing.T) {
 	for _, test := range []struct {
 		name       string
 		fields     string
-		enabled    bool
 		autoUpdate bool
 	}{
-		{name: "omitted defaults", enabled: true, autoUpdate: true},
-		{name: "both enabled", fields: `,"enabled":true,"auto_update":true`, enabled: true, autoUpdate: true},
-		{name: "disabled", fields: `,"enabled":false,"auto_update":true`, autoUpdate: true},
-		{name: "manual updates", fields: `,"enabled":true,"auto_update":false`, enabled: true},
-		{name: "both disabled", fields: `,"enabled":false,"auto_update":false`},
+		{name: "omitted defaults", autoUpdate: true},
+		{name: "enabled", fields: `,"auto_update":true`, autoUpdate: true},
+		{name: "manual updates", fields: `,"auto_update":false`},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			db := testDB(t)
@@ -50,9 +47,8 @@ func TestCreateCustomNodeSubscriptionPreservesSwitches(t *testing.T) {
 				t.Fatal(err)
 			}
 			for name, source := range map[string]model.CustomNodeSubscription{"response": result.Subscription, "database": saved} {
-				if source.Enabled != test.enabled || source.AutoUpdate != test.autoUpdate {
-					t.Errorf("%s switches = enabled:%t auto_update:%t, want %t/%t", name,
-						source.Enabled, source.AutoUpdate, test.enabled, test.autoUpdate)
+				if source.AutoUpdate != test.autoUpdate {
+					t.Errorf("%s auto_update = %t, want %t", name, source.AutoUpdate, test.autoUpdate)
 				}
 			}
 		})
@@ -61,7 +57,7 @@ func TestCreateCustomNodeSubscriptionPreservesSwitches(t *testing.T) {
 
 func TestCreateCustomNodeSubscriptionRollsBackSwitchFailure(t *testing.T) {
 	db := testDB(t)
-	if err := db.Exec(`CREATE TRIGGER reject_subscription_switches BEFORE UPDATE OF enabled, auto_update ON custom_node_subscriptions
+	if err := db.Exec(`CREATE TRIGGER reject_subscription_switches BEFORE UPDATE OF auto_update ON custom_node_subscriptions
 		BEGIN SELECT RAISE(ABORT, 'simulated switch update failure'); END`).Error; err != nil {
 		t.Fatal(err)
 	}
@@ -69,7 +65,7 @@ func TestCreateCustomNodeSubscriptionRollsBackSwitchFailure(t *testing.T) {
 	router := gin.New()
 	router.POST("/subscriptions", app.createCustomNodeSubscription)
 	req := httptest.NewRequest(http.MethodPost, "/subscriptions", bytes.NewBufferString(
-		`{"name":"source","url":"http://127.0.0.1/sub","enabled":false,"auto_update":false}`))
+		`{"name":"source","url":"http://127.0.0.1/sub","auto_update":false}`))
 	req.Header.Set("Content-Type", "application/json")
 	response := httptest.NewRecorder()
 	router.ServeHTTP(response, req)

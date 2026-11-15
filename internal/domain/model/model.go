@@ -477,10 +477,7 @@ type CustomNode struct {
 	Address    string   `gorm:"size:255" json:"address"`    // structured node host
 	Port       int      `json:"port"`
 	Params     JSONText `gorm:"type:text" json:"params"` // protocol-specific JSON (psk, version, obfs...)
-	Enabled    bool     `gorm:"index" json:"enabled"`
-	// UserEnabled retains a managed node's own switch when its source is disabled.
-	UserEnabled bool `gorm:"not null;default:true" json:"-"`
-	SortOrder   int  `json:"sort_order"`
+	SortOrder  int      `json:"sort_order"`
 	// HiddenBySubscriptionRule keeps a filtered subscription node in storage so
 	// removing the filter restores its stable row and per-user assignments.
 	// Manual nodes never set this field.
@@ -513,7 +510,6 @@ type CustomNodeSubscription struct {
 	Name                  string                 `gorm:"size:128;not null" json:"name"`
 	URL                   string                 `gorm:"size:2048;not null" json:"url"`
 	Group                 string                 `gorm:"size:64;index" json:"group"`
-	Enabled               bool                   `gorm:"index;not null;default:true" json:"enabled"`
 	AutoUpdate            bool                   `gorm:"index;not null;default:true" json:"auto_update"`
 	UpdateIntervalMinutes int                    `gorm:"not null;default:60" json:"update_interval_minutes"`
 	BaseSortOrder         int                    `json:"base_sort_order"`

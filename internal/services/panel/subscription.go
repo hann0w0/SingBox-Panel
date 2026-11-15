@@ -124,8 +124,8 @@ func setSubscriptionUserinfo(c *gin.Context, u *model.User) {
 }
 
 // gatherNodes returns the subscribable nodes for a user: the panel-managed
-// inbounds the user is granted, plus any enabled custom (external) nodes
-// scoped to them or to everyone.
+// inbounds the user is granted, plus the custom (external) nodes scoped to them
+// or to everyone that no subscription rule hides.
 func (a *App) gatherNodes(user *model.User) []node {
 	nodes, _ := a.gatherNodesWithError(user)
 	return nodes
@@ -247,7 +247,7 @@ func (a *App) gatherNodesWithError(user *model.User) ([]node, error) {
 	// Custom external nodes carry their own credentials (share link or the
 	// structured protocol fields), so no per-user derivation happens here.
 	var customs []model.CustomNode
-	if err := a.db.Where("enabled = ? AND hidden_by_subscription_rule = ?", true, false).Order("sort_order, id").Find(&customs).Error; err != nil {
+	if err := a.db.Where("hidden_by_subscription_rule = ?", false).Order("sort_order, id").Find(&customs).Error; err != nil {
 		return nil, err
 	}
 	for i := range customs {

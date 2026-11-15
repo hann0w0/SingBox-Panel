@@ -29,7 +29,7 @@ func TestGatherNodesUsesPerUserMixedOrder(t *testing.T) {
 	}
 	custom := model.CustomNode{
 		Name: "custom-node", Link: "socks5://127.0.0.1:1080#custom-node",
-		UserIDs: []uint{user.ID}, Enabled: true, SortOrder: 0,
+		UserIDs: []uint{user.ID}, SortOrder: 0,
 	}
 	if err := db.Create(&custom).Error; err != nil {
 		t.Fatal(err)

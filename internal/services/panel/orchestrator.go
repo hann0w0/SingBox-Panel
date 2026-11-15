@@ -132,6 +132,10 @@ func (o *Orchestrator) BuildServerConfig(srv *model.Server) ([]byte, error) {
 	if err := o.db.Where("server_id = ? AND enabled = ?", srv.ID, true).Order("sort").Find(&ruleRows).Error; err != nil {
 		return nil, fmt.Errorf("load route rules for server %d: %w", srv.ID, err)
 	}
+	ruleRows, err := materializeForwardRoutes(o.db, srv.ID, inbounds, ruleRows)
+	if err != nil {
+		return nil, fmt.Errorf("load forward routes for server %d: %w", srv.ID, err)
+	}
 	privateTags, err := privateOutboundTagsForRules(o.db, ruleRows)
 	if err != nil {
 		return nil, fmt.Errorf("load private outbounds for server %d: %w", srv.ID, err)

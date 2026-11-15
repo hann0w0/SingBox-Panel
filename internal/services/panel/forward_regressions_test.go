@@ -196,3 +196,44 @@ func TestRawServersCannotOfferOrCreateForwards(t *testing.T) {
 		t.Fatalf("raw forward accepted: %d %s", response.Code, response.Body)
 	}
 }
+
+func TestForwardRoutesRecoverStaleNamesAndPrecedeGeneralRules(t *testing.T) {
+	fixture := newForwardFixture(t)
+	forward := fixture.create(t)
+	fixture.db.Where("server_id = ?", fixture.server.ID).Delete(&model.RouteRule{})
+	old := fixture.user
+	old.ProxyToken = "previous-seed"
+	match, _ := json.Marshal(singbox.RuleInput{AuthUser: []string{forwardTrafficName(&old, forward.ID)}, Inbound: []string{fixture.inbound.Tag}})
+	mustCreate(t, fixture.db, &model.RouteRule{ServerID: fixture.server.ID, Outbound: fixture.outbound.Tag, Match: model.JSONText(match), Enabled: true})
+	mustCreate(t, fixture.db, &model.RouteRule{ServerID: fixture.server.ID, Outbound: "direct", Match: model.JSONText(`{"inbound":["entry-in"]}`), Sort: -100, Enabled: true})
+	raw, err := fixture.app.orch.BuildServerConfig(&fixture.server)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var config struct {
+		Route struct {
+			Rules []struct {
+				AuthUser []string `json:"auth_user"`
+				Outbound string   `json:"outbound"`
+			} `json:"rules"`
+		} `json:"route"`
+	}
+	if err := json.Unmarshal(raw, &config); err != nil {
+		t.Fatal(err)
+	}
+	matched := false
+	for _, rule := range config.Route.Rules {
+		if rule.Outbound == "direct" && !matched {
+			t.Fatal("general route precedes derived forward")
+		}
+		if rule.Outbound == fixture.outbound.Tag {
+			if matched || len(rule.AuthUser) != 1 || rule.AuthUser[0] != forwardTrafficName(&fixture.user, forward.ID) {
+				t.Fatalf("duplicate or stale forward: %+v", rule)
+			}
+			matched = true
+		}
+	}
+	if !matched {
+		t.Fatal("derived forward not rebuilt")
+	}
+}

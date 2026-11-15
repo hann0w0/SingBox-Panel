@@ -1,5 +1,5 @@
 import type { ReactNode } from 'react'
-import { Form, Input, Modal, Select, Table, type FormInstance } from '../../../ui'
+import { Button, Form, Input, Modal, Select, Table, type FormInstance } from '../../../ui'
 import type { ImportSummary } from '../../../api'
 import '../../../styles/forms.css'
 import { MODAL_LG, MODAL_SM } from '../../../ui/modal'
@@ -91,18 +91,19 @@ export function ImportPreviewModal({
 }
 
 export function ConfigEditorModal({
-  open, loading, saving, text, onText, onCancel, onSave,
+  open, loading, saving, preview = false, text, onText, onCancel, onSave,
 }: {
   open: boolean
   loading: boolean
   saving: boolean
+  preview?: boolean
   text: string
   onText: (value: string) => void
   onCancel: () => void
   onSave: () => void
 }) {
   return (
-    <Modal className="fm-modal" title="编辑配置" open={open} onCancel={onCancel} onOk={onSave} okText="校验并下发" okButtonProps={{ disabled: loading }} confirmLoading={saving} width={MODAL_LG}>
+    <Modal className="fm-modal" title={preview ? '配置预览（未下发）' : '编辑配置'} open={open} onCancel={onCancel} onOk={onSave} okText="校验并下发" okButtonProps={{ disabled: loading }} confirmLoading={saving} width={MODAL_LG} footer={preview ? <Button onClick={onCancel}>关闭</Button> : undefined}>
       {loading ? (
         <div className="fm-loading">读取中…</div>
       ) : (
@@ -111,6 +112,7 @@ export function ConfigEditorModal({
           aria-label="config.json"
           spellCheck={false}
           value={text}
+          readOnly={preview}
           disabled={saving}
           onChange={(event) => onText(event.target.value)}
           autoSize={false} rows={18}

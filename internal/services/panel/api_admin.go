@@ -832,9 +832,28 @@ func (a *App) remoteConfig(c *gin.Context) {
 	if !ok {
 		return
 	}
+	c.Header("Cache-Control", "no-store")
+	var srv model.Server
+	if err := a.db.First(&srv, id).Error; err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			c.JSON(http.StatusNotFound, gin.H{"error": "server not found"})
+		} else {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		}
+		return
+	}
 	ctx, cancel := context.WithTimeout(c.Request.Context(), 15*time.Second)
 	defer cancel()
 	res, err := a.hub.SendCommand(ctx, id, protocol.CmdGetConfig, nil)
+	if errors.Is(err, ErrAgentOffline) {
+		raw, buildErr := a.orch.BuildServerConfig(&srv)
+		if buildErr != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": buildErr.Error()})
+			return
+		}
+		c.JSON(http.StatusOK, gin.H{"exists": true, "raw": string(raw), "path": "", "source": "panel"})
+		return
+	}
 	if err != nil {
 		c.JSON(http.StatusBadGateway, gin.H{"error": err.Error()})
 		return

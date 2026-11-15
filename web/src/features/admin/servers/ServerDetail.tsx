@@ -92,6 +92,7 @@ export default function ServerDetail() {
   const [installOpen, setInstallOpen] = useState(false)
   const [cfgOpen, setCfgOpen] = useState(false)
   const [cfgText, setCfgText] = useState('')
+  const [cfgPreview, setCfgPreview] = useState(true)
   const [cfgLoading, setCfgLoading] = useState(false)
   const [cfgSaving, setCfgSaving] = useState(false)
   const [cfgSessionID, setCfgSessionID] = useState(0)
@@ -667,9 +668,11 @@ export default function ServerDetail() {
     setCfgLoading(true)
     setCfgSaving(false)
     setCfgText('')
+    setCfgPreview(true)
     try {
       const cfg = await remoteConfig(targetSID, controller.signal)
       if (!isCurrentSession()) return
+      setCfgPreview(cfg.source === 'panel')
       let text = cfg.raw || ''
       try {
         text = JSON.stringify(JSON.parse(text), null, 2)
@@ -689,7 +692,7 @@ export default function ServerDetail() {
 
   const saveConfig = async () => {
     const session = cfgSessionRef.current
-    if (!session || session.saving || session.request) return
+    if (!session || session.saving || session.request || cfgPreview) return
     const targetSID = session.serverID
     if (targetSID !== sid || currentSIDRef.current !== targetSID) {
       message.error('服务器已切换，请重新打开配置编辑器')
@@ -1015,6 +1018,7 @@ export default function ServerDetail() {
         open={cfgOpen}
         loading={cfgLoading}
         saving={cfgSaving}
+        preview={cfgPreview}
         text={cfgText}
         onText={setCfgText}
         onCancel={closeConfigEditor}

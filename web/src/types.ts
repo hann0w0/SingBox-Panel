@@ -371,6 +371,7 @@ export interface StatusData {
 }
 
 export interface RemoteConfig {
+  source?: 'panel' | 'remote'
   path: string
   exists: boolean
   raw: string

@@ -86,7 +86,7 @@ export default function RuleSetsPage() {
       setOpen(false)
       load()
     } catch (cause) {
-      message.error(errMsg(cause))
+      if (!(cause && typeof cause === 'object' && 'errorFields' in cause)) message.error(errMsg(cause))
     } finally {
       setSaving(false)
     }

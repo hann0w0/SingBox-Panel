@@ -1,15 +1,17 @@
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import { MemoryRouter } from 'react-router-dom'
 import { afterEach, beforeEach, expect, it, vi } from 'vitest'
-import { listServers, listSharedRuleSets, updateSharedRuleSet } from '../../../api'
+import { createSharedRuleSet, listServers, listSharedRuleSets, updateSharedRuleSet } from '../../../api'
 import type { Server } from '../../../types'
 import RuleSetsPage from './RuleSetsPage'
+import { message } from '../../../ui/feedback'
 
 vi.mock('../../../api', async (importOriginal) => ({
   ...await importOriginal<typeof import('../../../api')>(),
   listSharedRuleSets: vi.fn(),
   listServers: vi.fn(),
   updateSharedRuleSet: vi.fn(),
+  createSharedRuleSet: vi.fn(),
 }))
 
 beforeEach(() => {
@@ -30,6 +32,25 @@ it('shows referenced servers without a manual assignment action', async () => {
   expect(screen.getByText('Tokyo')).toBeTruthy()
   expect(screen.queryByRole('button', { name: '分配' })).toBeNull()
   expect(screen.getByRole('button', { name: '编辑规则集 geosite-cn' })).toBeTruthy()
+})
+
+it('shows field validation without a generic error toast and reports real save failures', async () => {
+  const errorToast = vi.spyOn(message, 'error')
+  vi.mocked(createSharedRuleSet).mockRejectedValueOnce(new Error('保存失败'))
+  render(<MemoryRouter><RuleSetsPage /></MemoryRouter>)
+  await screen.findByText('geosite-cn')
+  fireEvent.click(screen.getByRole('button', { name: '新增规则集' }))
+  const dialog = screen.getByRole('dialog', { name: '新增规则集' })
+  fireEvent.click(within(dialog).getByRole('button', { name: '确定' }))
+  await screen.findByText('请输入规则集标签')
+  await screen.findByText('请输入远程规则集下载 URL')
+  expect(errorToast).not.toHaveBeenCalled()
+  expect(createSharedRuleSet).not.toHaveBeenCalled()
+  fireEvent.change(within(dialog).getByRole('textbox', { name: /标签/ }), { target: { value: 'test-rules' } })
+  fireEvent.change(within(dialog).getByRole('textbox', { name: /URL/ }), { target: { value: 'https://example.com/test.srs' } })
+  fireEvent.click(within(dialog).getByRole('button', { name: '确定' }))
+  await waitFor(() => expect(errorToast).toHaveBeenCalledWith('保存失败'))
+  expect((within(dialog).getByRole('textbox', { name: /标签/ }) as HTMLInputElement).value).toBe('test-rules')
 })
 
 it('keeps full rule-set details and editing available across mobile and desktop layouts', async () => {

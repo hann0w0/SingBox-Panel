@@ -1,6 +1,7 @@
 package panel
 
 import (
+	"encoding/json"
 	"errors"
 	"net/http"
 	"strconv"
@@ -10,6 +11,7 @@ import (
 	"gorm.io/gorm/clause"
 
 	"github.com/hann0w0/singbox-panel/internal/domain/model"
+	"github.com/hann0w0/singbox-panel/internal/domain/singbox"
 )
 
 var errPasswordChangedConcurrently = errors.New("password changed concurrently")
@@ -89,6 +91,7 @@ func (a *App) handleUserTraffic(c *gin.Context) {
 
 // handleResetSub revokes both the subscription URL and per-user proxy credentials.
 func (a *App) handleResetSub(c *gin.Context) {
+	a.userAccessMu.Lock()
 	var user model.User
 	var syncServerIDs []uint
 	err := a.db.Transaction(func(tx *gorm.DB) error {
@@ -101,11 +104,15 @@ func (a *App) handleResetSub(c *gin.Context) {
 			return err
 		}
 		oldTrafficKey := proxyTrafficName(&user)
+		previous := user
 		user.SubToken = randHex(16)
 		user.ProxyToken = randHex(32)
 		if err := tx.Model(&user).Updates(map[string]any{
 			"sub_token": user.SubToken, "proxy_token": user.ProxyToken,
 		}).Error; err != nil {
+			return err
+		}
+		if err := rotateUserRouteIdentities(tx, &previous, &user); err != nil {
 			return err
 		}
 		// Keep delayed usage and historical logs attached to this same account,
@@ -123,6 +130,7 @@ func (a *App) handleResetSub(c *gin.Context) {
 			"proxy_sync_failed":   false,
 		}).Error
 	})
+	a.userAccessMu.Unlock()
 	if errors.Is(err, gorm.ErrRecordNotFound) {
 		c.JSON(http.StatusNotFound, gin.H{"error": "user not found"})
 		return
@@ -138,6 +146,45 @@ func (a *App) handleResetSub(c *gin.Context) {
 		status.ApplyState = ConfigPending
 	}
 	c.JSON(http.StatusOK, gin.H{"sub_token": user.SubToken, "subscription_url": a.subURL(user.SubToken), "sync": status})
+}
+
+func rotateUserRouteIdentities(tx *gorm.DB, previous, current *model.User) error {
+	names := map[string]string{proxyTrafficName(previous): proxyTrafficName(current)}
+	var forwards []model.UserForward
+	if err := tx.Where("user_id = ?", current.ID).Find(&forwards).Error; err != nil {
+		return err
+	}
+	for _, forward := range forwards {
+		names[forwardTrafficName(previous, forward.ID)] = forwardTrafficName(current, forward.ID)
+	}
+	var rules []model.RouteRule
+	if err := tx.Find(&rules).Error; err != nil {
+		return err
+	}
+	for _, rule := range rules {
+		var match singbox.RuleInput
+		if len(rule.Match) == 0 || json.Unmarshal(rule.Match, &match) != nil {
+			continue
+		}
+		changed := false
+		for index, name := range match.AuthUser {
+			if replacement, ok := names[name]; ok {
+				match.AuthUser[index] = replacement
+				changed = true
+			}
+		}
+		if !changed {
+			continue
+		}
+		raw, err := json.Marshal(match)
+		if err != nil {
+			return err
+		}
+		if err := tx.Model(&model.RouteRule{}).Where("id = ?", rule.ID).Update("match", model.JSONText(raw)).Error; err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 type changePasswordReq struct {

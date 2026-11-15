@@ -934,12 +934,15 @@ func (a *App) deleteUser(c *gin.Context) {
 			return err
 		}
 		for _, outbound := range owned {
-			var using int64
-			if err := tx.Model(&model.UserForward{}).Where("outbound_id = ?", outbound.ID).Count(&using).Error; err != nil {
+			var rules []model.RouteRule
+			if err := tx.Where("outbound = ?", outbound.Tag).Find(&rules).Error; err != nil {
 				return err
 			}
-			if using > 0 {
-				return fmt.Errorf("专属出站 %q 仍被转发节点使用，请先删除相关转发", outbound.Tag)
+			for _, rule := range rules {
+				affectedServerIDs = append(affectedServerIDs, rule.ServerID)
+				if err := tx.Delete(&rule).Error; err != nil {
+					return err
+				}
 			}
 		}
 		if err := tx.Where("owner_user_id = ?", id).Delete(&model.Outbound{}).Error; err != nil {

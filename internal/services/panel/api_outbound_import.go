@@ -47,7 +47,7 @@ func (a *App) availableOutboundTag(serverID uint, name string) (string, error) {
 		base = "imported-outbound"
 	}
 	var tags []string
-	if err := a.db.Model(&model.Outbound{}).Where("server_id = ?", serverID).Pluck("tag", &tags).Error; err != nil {
+	if err := a.db.Model(&model.Outbound{}).Where("server_id = ? OR owner_user_id <> 0", serverID).Pluck("tag", &tags).Error; err != nil {
 		return "", err
 	}
 	used := map[string]bool{"direct": true, "block": true, "reject": true, "sniff": true, "hijack-dns": true}

@@ -65,25 +65,35 @@ func (a *App) createOutbound(c *gin.Context) {
 	if !bindJSON(c, &req) {
 		return
 	}
+	if req.OwnerUserID != 0 {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "专属出站请通过用户出站接口创建"})
+		return
+	}
+	a.userAccessMu.Lock()
 	req.Tag = strings.TrimSpace(req.Tag)
 	if req.Tag == "" {
+		a.userAccessMu.Unlock()
 		c.JSON(http.StatusBadRequest, gin.H{"error": "标签必填"})
 		return
 	}
 	if req.Tag == "direct" {
+		a.userAccessMu.Unlock()
 		c.JSON(http.StatusBadRequest, gin.H{"error": "direct 为内置出站，无需添加"})
 		return
 	}
 	if !supportedOutboundTypes[req.Type] {
+		a.userAccessMu.Unlock()
 		c.JSON(http.StatusBadRequest, gin.H{"error": "unsupported outbound type: " + req.Type})
 		return
 	}
 	sourceKind, sourceID, err := a.outboundSourceLink(id, req.SourceKind, req.SourceID)
 	if err != nil {
+		a.userAccessMu.Unlock()
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
 	if err := a.validateOutbound(a.db, id, 0, req.Tag, req.Type, req.OwnerUserID, req.Settings); err != nil {
+		a.userAccessMu.Unlock()
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
@@ -101,9 +111,11 @@ func (a *App) createOutbound(c *gin.Context) {
 		SourceKind: sourceKind, SourceID: sourceID,
 	}
 	if err := a.db.Create(ob).Error; err != nil {
+		a.userAccessMu.Unlock()
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
+	a.userAccessMu.Unlock()
 	if ob.Referenced() {
 		a.pushRoutingSourceChanges(ob)
 	}
@@ -133,6 +145,12 @@ func (a *App) updateOutbound(c *gin.Context) {
 	if !bindJSON(c, &req) {
 		return
 	}
+	if req.OwnerUserID != 0 {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "公共出站不能更改所属用户"})
+		return
+	}
+	a.userAccessMu.Lock()
+	defer a.userAccessMu.Unlock()
 	nextTag := ob.Tag
 	if req.Tag != "" {
 		nextTag = strings.TrimSpace(req.Tag)

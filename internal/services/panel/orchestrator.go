@@ -186,6 +186,9 @@ func (o *Orchestrator) BuildServerConfig(srv *model.Server) ([]byte, error) {
 
 	rules := make([]singbox.RuleInput, 0, len(ruleRows))
 	for _, r := range ruleRows {
+		if !builtinOutboundTags[r.Outbound] && !seenTags[r.Outbound] {
+			return nil, fmt.Errorf("route rule %d references missing outbound %q", r.ID, r.Outbound)
+		}
 		var ri singbox.RuleInput
 		if len(r.Match) > 0 {
 			if err := json.Unmarshal(r.Match, &ri); err != nil {
@@ -194,6 +197,9 @@ func (o *Orchestrator) BuildServerConfig(srv *model.Server) ([]byte, error) {
 		}
 		ri.Outbound = r.Outbound
 		rules = append(rules, ri)
+	}
+	if srv.FinalOutbound != "" && srv.FinalOutbound != "direct" && !seenTags[srv.FinalOutbound] {
+		return nil, fmt.Errorf("final references missing outbound %q", srv.FinalOutbound)
 	}
 
 	// Rule-sets.

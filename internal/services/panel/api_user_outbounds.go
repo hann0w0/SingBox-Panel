@@ -709,6 +709,8 @@ func (a *App) createAdminUserOutbound(c *gin.Context) {
 	if !bindJSON(c, &req) {
 		return
 	}
+	a.userAccessMu.Lock()
+	defer a.userAccessMu.Unlock()
 	req.Tag = strings.TrimSpace(req.Tag)
 	if req.Tag == "" {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "标签必填"})
@@ -742,6 +744,8 @@ func (a *App) deleteAdminUserOutbound(c *gin.Context) {
 	if !ok {
 		return
 	}
+	a.userAccessMu.Lock()
+	defer a.userAccessMu.Unlock()
 	oid, ok := uintParam(c, "outboundID")
 	if !ok {
 		return
@@ -764,6 +768,14 @@ func (a *App) deleteAdminUserOutbound(c *gin.Context) {
 	}
 	if using > 0 {
 		c.JSON(http.StatusConflict, gin.H{"error": "该专属出站仍被转发节点使用，请先删除相关转发"})
+		return
+	}
+	if err := a.db.Model(&model.RouteRule{}).Where("outbound = ?", ob.Tag).Count(&using).Error; err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+	if using > 0 {
+		c.JSON(http.StatusConflict, gin.H{"error": "该专属出站仍被分流规则使用，请先删除相关规则"})
 		return
 	}
 	if err := a.db.Transaction(func(tx *gorm.DB) error {

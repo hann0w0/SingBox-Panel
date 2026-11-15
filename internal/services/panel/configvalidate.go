@@ -169,7 +169,7 @@ func (a *App) validateOutbound(db *gorm.DB, serverID, excludeID uint, tag, typ s
 		}
 	}
 	var n int64
-	q := db.Model(&model.Outbound{}).Where("server_id = ? AND tag = ? AND owner_user_id = ?", serverID, tag, ownerUserID)
+	q := db.Model(&model.Outbound{}).Where("tag = ? AND (server_id = ? OR owner_user_id <> 0)", tag, serverID)
 	if excludeID != 0 {
 		q = q.Where("id <> ?", excludeID)
 	}

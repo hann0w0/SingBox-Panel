@@ -324,6 +324,19 @@
   opacity: .82;
 }
 
+:root[data-console-theme='dark'] .ui-modal.inbound-compact .ui-modal-footer > .ui-btn-primary:not(.ui-btn-dangerous) {
+  border-color: var(--inbound-line-strong);
+  background: transparent;
+  color: var(--inbound-ink);
+  opacity: 1;
+}
+
+:root[data-console-theme='dark'] .ui-modal.inbound-compact .ui-modal-footer > .ui-btn-primary:not(.ui-btn-dangerous):hover {
+  border-color: var(--inbound-hover-line);
+  background: var(--inbound-hover);
+  opacity: 1;
+}
+
 :root[data-console-theme='dark'] .ui-modal.inbound-compact {
   color-scheme: dark;
 }

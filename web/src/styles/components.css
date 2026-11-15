@@ -11,6 +11,34 @@ button:disabled { cursor: not-allowed; }
 .ui-btn-dangerous:not(.ui-btn-primary) { color: var(--console-error); }
 .ui-btn-default, .ui-btn-dashed { border-color: var(--console-border-strong); background: var(--console-container); }
 .ui-btn-default:hover { background: var(--console-hover); }
+/* Night theme: every button uses the same thin outline, and only hover lifts it
+   with a grey fill. The primary action keeps a brighter border so dialogs still
+   read as "confirm" versus "cancel"; destructive primaries stay red. */
+:root[data-console-theme='dark'] :is(.ui-btn-default, .ui-btn-dashed, [data-slot='button'][data-variant='outline'], [data-slot='button'][data-variant='default']) {
+  border: 1px solid var(--console-border-strong);
+  background: transparent;
+  color: var(--console-ink);
+  box-shadow: none;
+}
+:root[data-console-theme='dark'] .ui-btn-primary:not(.ui-btn-dangerous) {
+  border: 1px solid var(--console-border-hover);
+  background: transparent;
+  color: var(--console-ink);
+}
+:root[data-console-theme='dark'] .ui-btn-primary.ui-btn-dangerous {
+  border: 1px solid color-mix(in srgb, var(--console-error) 55%, transparent);
+  background: transparent;
+  color: var(--console-error);
+}
+:root[data-console-theme='dark'] :is(.ui-btn-default, .ui-btn-dashed, .ui-btn-primary:not(.ui-btn-dangerous), [data-slot='button'][data-variant='outline'], [data-slot='button'][data-variant='default']):not(:disabled):hover {
+  border-color: var(--console-border-hover);
+  background: var(--console-hover);
+  color: var(--console-ink);
+}
+:root[data-console-theme='dark'] .ui-btn-primary.ui-btn-dangerous:not(:disabled):hover {
+  border-color: color-mix(in srgb, var(--console-error) 75%, transparent);
+  background: color-mix(in srgb, var(--console-error) 14%, transparent);
+}
 .ui-input, .ui-input-affix-wrapper, .ui-input-number, .ui-select-selector { width: 100%; min-width: 0; min-height: 36px; border: 1px solid var(--console-border-strong); border-radius: var(--app-radius-control); background: var(--console-container); color: var(--console-ink); box-shadow: none; outline: none; font-size: 13px; transition: border-color .12s; }
 .ui-input { display: block; padding: 7px 11px; }
 input.ui-input { height: 36px; }

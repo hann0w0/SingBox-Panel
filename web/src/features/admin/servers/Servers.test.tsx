@@ -28,13 +28,33 @@ beforeEach(() => {
 afterEach(() => { cleanup(); vi.unstubAllGlobals() })
 
 describe('server remarks', () => {
-  it.each([false, true])('shows network badges without exposing addresses (IPv6 %s)', async (ipv6) => {
-    vi.mocked(getServersMeta).mockResolvedValue(metadata([{ ...server, public_ip: '203.0.113.7', public_ipv6: ipv6 ? '2001:db8::7' : '', ipv4_available: true, ipv6_available: ipv6 }]))
+  it('shows the server address and can hide it for screenshots or shared screens', async () => {
+    vi.mocked(getServersMeta).mockResolvedValue(metadata([{ ...server, public_ip: '203.0.113.7' }]))
     render(<MemoryRouter><Servers /></MemoryRouter>)
     const row = (await screen.findByText('Frankfurt')).closest('.srv-row')
-    expect(row?.textContent).toContain('IPv4')
-    expect(row?.textContent.includes('IPv6')).toBe(ipv6)
-    for (const address of ['fra.example.com', '203.0.113.7', '2001:db8::7']) expect(row?.textContent).not.toContain(address)
+    expect(row?.textContent).toContain('fra.example.com')
+    expect(row?.textContent).not.toContain('203.0.113.7')
+    fireEvent.click(screen.getByRole('button', { name: '隐藏服务器地址' }))
+    expect(row?.textContent).not.toContain('fra.example.com')
+    expect(row?.textContent).not.toContain('203.0.113.7')
+    fireEvent.click(screen.getByRole('button', { name: '显示服务器地址' }))
+    expect(row?.textContent).toContain('fra.example.com')
+  })
+
+  it('falls back to the reported IP when no domain is configured', async () => {
+    vi.mocked(getServersMeta).mockResolvedValue(metadata([{ ...server, address: '', public_ip: '203.0.113.7' }]))
+    render(<MemoryRouter><Servers /></MemoryRouter>)
+    const row = (await screen.findByText('Frankfurt')).closest('.srv-row')
+    expect(row?.textContent).toContain('203.0.113.7')
+  })
+
+  it('offers deletion directly without a duplicate sort menu', async () => {
+    render(<MemoryRouter><Servers /></MemoryRouter>)
+    await screen.findByText('Frankfurt')
+    expect(screen.queryByRole('button', { name: 'Frankfurt 更多操作' })).toBeNull()
+    expect(screen.getByRole('button', { name: '删除 Frankfurt' })).toBeTruthy()
+    expect(screen.queryByText('上移')).toBeNull()
+    expect(screen.queryByText('下移')).toBeNull()
   })
   it('never shows an inbound count in the server list', async () => {
     const serverWithInbounds = {

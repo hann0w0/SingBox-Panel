@@ -1,17 +1,21 @@
 import { useEffect, useRef, useState, type DragEvent, type PointerEvent as ReactPointerEvent } from 'react'
 import { Button, Dropdown, Form, Grid, Input, Modal, Segmented, Select, Typography, message } from '../../../ui'
-import { ChevronDown, Pencil, ChevronsUpDown, Ellipsis, Plus } from 'lucide-react'
+import { ChevronDown, Eye, EyeOff, Pencil, ChevronsUpDown, Plus, Trash2 } from 'lucide-react'
 import { useNavigate } from 'react-router-dom'
 import { createServer, deleteServer, errMsg, getOverview, getServersMeta, installSingbox, isCanceledRequest, updateAllAgents, updateServer, updateServerOrder } from '../../../api'
 import type { Server } from '../../../types'
 import { formatBytes } from '../../../util'
 import { RequestState } from '../../../components/RequestState'
-import { Badge } from '../../../components/ui/badge'
 import { PageHeader, Pills, Stats, Status } from '../../../ui/Page'
 import '../../../styles/servers.css'
 import { MODAL_MD, MODAL_SM } from '../../../ui/modal'
 
 const rate = (n: number) => `${formatBytes(n)}/s`
+const HIDE_ADDRESS_KEY = 'singbox-panel-hide-server-address'
+
+function readHideAddress() {
+  try { return window.localStorage.getItem(HIDE_ADDRESS_KEY) === '1' } catch { return false }
+}
 
 export default function Servers() {
   const nav = useNavigate()
@@ -33,12 +37,17 @@ export default function Servers() {
   const [sortAnnouncement, setSortAnnouncement] = useState('')
   const [usersTotal, setUsersTotal] = useState<number | null>(null)
   const [filter, setFilter] = useState('all')
+  const [hideAddress, setHideAddress] = useState(readHideAddress)
   const pointerDragRef = useRef<{ id: number; pointerId: number } | null>(null)
   const pointerDropRef = useRef<{ id: number; after: boolean } | null>(null)
   const loadRef = useRef<{ generation: number; controller: AbortController | null }>({ generation: 0, controller: null })
   const [form] = Form.useForm()
   const submitLock = useRef(false)
   const [singboxForm] = Form.useForm()
+
+  useEffect(() => {
+    try { window.localStorage.setItem(HIDE_ADDRESS_KEY, hideAddress ? '1' : '0') } catch { /* preference only */ }
+  }, [hideAddress])
   const singboxMethod = Form.useWatch('method', singboxForm) ?? 'script'
 
   const handleUpdateAllAgents = () => {
@@ -368,6 +377,13 @@ export default function Servers() {
           { key: 'offline', label: '离线', count: servers.length - online.length },
         ]}
         actions={<>
+          <Button
+            icon={hideAddress ? <EyeOff /> : <Eye />}
+            title={hideAddress ? '显示服务器地址' : '隐藏服务器地址'}
+            aria-label={hideAddress ? '显示服务器地址' : '隐藏服务器地址'}
+            aria-pressed={hideAddress}
+            onClick={() => setHideAddress((current) => !current)}
+          />
           <Dropdown placement="bottomRight" menu={{ items: [
             { key: 'singbox', label: '更新 sing-box', disabled: updatingSingbox, onClick: handleUpdateSingbox },
             { key: 'agent', label: '同步 Agent', disabled: updatingAll, onClick: handleUpdateAllAgents },
@@ -381,7 +397,6 @@ export default function Servers() {
       <div className="srv-list" role="list">
         {shown.map((s) => {
           const memPct = s.mem_total ? Math.round((s.mem_used / s.mem_total) * 100) : null
-          const position = servers.findIndex((item) => item.id === s.id)
           const dropClass = dropTarget?.id === s.id ? (dropTarget.after ? ' is-drop-after' : ' is-drop-before') : ''
           return (
             <div
@@ -439,10 +454,9 @@ export default function Servers() {
               </span>
               <div className="srv-name">
                 <a href={`/admin/servers/${s.id}`} onClick={(e) => { e.preventDefault(); open_(s) }}>{s.name}</a>
-                <div className="flex flex-wrap items-center gap-1" aria-label="网络支持">
-                  {s.ipv4_available && <Badge variant="outline">IPv4</Badge>}
-                  {s.ipv6_available && <Badge variant="outline">IPv6</Badge>}
-                </div>
+                <span className="mono" title={hideAddress ? undefined : (s.address || s.public_ip || s.public_ipv6 || '未设置地址')}>
+                  {hideAddress ? '••••••' : s.address || s.public_ip || s.public_ipv6 || '未设置地址'}
+                </span>
               </div>
               <span className="srv-remark" title={s.remark?.trim() || undefined}>{s.remark?.trim()}</span>
               <div className="srv-status"><Status tone={s.online ? 'ok' : 'off'}>{s.online ? '在线' : '离线'}</Status></div>
@@ -460,14 +474,7 @@ export default function Servers() {
               </div>
               <div className="ui-row-actions">
                 <Button size="small" type="text" icon={<Pencil />} aria-label={`编辑 ${s.name}`} onClick={() => openEdit(s)} />
-                <Dropdown placement="bottomRight" menu={{ items: [
-                  { key: 'up', label: '上移', disabled: !canSort || position <= 0 || sorting, onClick: () => moveServerByKeyboard(s, -1) },
-                  { key: 'down', label: '下移', disabled: !canSort || position >= servers.length - 1 || sorting, onClick: () => moveServerByKeyboard(s, 1) },
-                  { type: 'divider' },
-                  { key: 'delete', label: '删除', danger: true, onClick: () => onDelete(s) },
-                ] }}>
-                  <Button size="small" type="text" icon={<Ellipsis />} aria-label={`${s.name} 更多操作`} />
-                </Dropdown>
+                <Button size="small" type="text" icon={<Trash2 />} aria-label={`删除 ${s.name}`} onClick={() => onDelete(s)} />
               </div>
             </div>
           )

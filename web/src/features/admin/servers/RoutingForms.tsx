@@ -226,7 +226,7 @@ export function OutboundForm({
       <Form form={form} layout="vertical" className="fm-form">
         <FormGroup title="基本">
           <Form.Item name="tag" label="标签" rules={[{ required: true }]}>
-            <Input placeholder="hk-out" />
+            <Input />
           </Form.Item>
           <Form.Item name="type" label="类型" rules={[{ required: true }]}>
             <Select
@@ -237,10 +237,10 @@ export function OutboundForm({
             />
           </Form.Item>
           <Form.Item name="server" label="服务器地址" rules={[{ required: true }]}>
-            <Input placeholder="hk.example.com" className="mono" />
+            <Input className="mono" />
           </Form.Item>
           <Form.Item name="server_port" label="端口" rules={[{ required: true, message: '请填写落地服务器的端口' }]}>
-            <InputNumber precision={0} min={1} max={65535} placeholder="443" className="mono" />
+            <InputNumber precision={0} min={1} max={65535} className="mono" />
           </Form.Item>
         </FormGroup>
 
@@ -344,7 +344,7 @@ export function OutboundForm({
           <FormGroup title="协议参数">
             {type === 'vless' && (
               <Form.Item name="flow" label="Flow" className="fm-full">
-                <Input placeholder="xtls-rprx-vision" className="mono" />
+                <Input className="mono" />
               </Form.Item>
             )}
 
@@ -400,7 +400,7 @@ export function OutboundForm({
                     </Form.Item>
                     {(snellObfsMode === 'http' || snellObfsMode === 'tls') && (
                       <Form.Item name="snell_obfs_host" label="混淆 Host">
-                        <Input placeholder="bing.com" className="mono" />
+                        <Input className="mono" />
                       </Form.Item>
                     )}
                   </>
@@ -435,10 +435,10 @@ export function OutboundForm({
             {(transportType === 'ws' || transportType === 'httpupgrade') && (
               <>
                 <Form.Item name="ws_path" label="路径">
-                  <Input placeholder="/ws" className="mono" />
+                  <Input className="mono" />
                 </Form.Item>
                 <Form.Item name="ws_host" label="Host">
-                  <Input placeholder="example.com" className="mono" />
+                  <Input className="mono" />
                 </Form.Item>
               </>
             )}
@@ -460,16 +460,16 @@ export function OutboundForm({
             {tlsMode === 'reality' && (
               <>
                 <Form.Item name="reality_server_name" label="SNI" rules={[{ required: true, message: 'REALITY 需要伪装域名' }]}>
-                  <Input placeholder="www.microsoft.com" className="mono" />
+                  <Input className="mono" />
                 </Form.Item>
                 <Form.Item name="reality_public_key" label="公钥" rules={[{ required: true, message: '请输入 REALITY 公钥' }]} className="fm-full">
                   <Input className="mono" />
                 </Form.Item>
                 <Form.Item name="reality_short_id" label="Short ID">
-                  <Input placeholder="0123456789abcdef" className="mono" />
+                  <Input className="mono" />
                 </Form.Item>
                 <Form.Item name="tls_alpn" label="ALPN">
-                  <Input placeholder="h2, http/1.1" className="mono" />
+                  <Input className="mono" />
                 </Form.Item>
                 <Form.Item name="tls_fingerprint" label="uTLS 指纹">
                   <Select options={['chrome', 'firefox', 'safari', 'ios', 'random', 'randomized'].map((v) => ({ value: v, label: v }))} />
@@ -480,10 +480,10 @@ export function OutboundForm({
             {tlsMode === 'tls' && (
               <>
                 <Form.Item name="sni" label="SNI">
-                  <Input placeholder="example.com" className="mono" />
+                  <Input className="mono" />
                 </Form.Item>
                 <Form.Item name="tls_alpn" label="ALPN">
-                  <Input placeholder="h2, http/1.1" className="mono" />
+                  <Input className="mono" />
                 </Form.Item>
                 <Form.Item name="tls_fingerprint" label="uTLS 指纹">
                   <Select options={['chrome', 'firefox', 'safari', 'ios', 'random', 'randomized'].map((v) => ({ value: v, label: v }))} />
@@ -501,10 +501,10 @@ export function OutboundForm({
         {showGenericTLS && (
           <FormGroup title="TLS">
             <Form.Item name="sni" label="SNI">
-              <Input placeholder="example.com" className="mono" />
+              <Input className="mono" />
             </Form.Item>
             <Form.Item name="tls_alpn" label="ALPN">
-              <Input placeholder={type === 'tuic' || type === 'hysteria2' ? 'h3' : 'h2, http/1.1'} className="mono" />
+              <Input className="mono" />
             </Form.Item>
             <div className="fm-switches">
               <Form.Item name="tls" label="启用 TLS" valuePropName="checked" className="fm-switch">
@@ -896,31 +896,31 @@ export function RuleForm({
 
             {showMatchField('domain') && (
               <Form.Item name="domain" label="完整域名" rules={[{ required: true, message: '请输入至少一个完整域名' }]} className="fm-full">
-                <Input.TextArea autoSize={{ minRows: 1, maxRows: 3 }} placeholder="www.example.com" className="mono" />
+                <Input.TextArea autoSize={{ minRows: 1, maxRows: 3 }} className="mono" />
               </Form.Item>
             )}
 
             {showMatchField('domain_suffix') && (
               <Form.Item name="domain_suffix" label="域名后缀" rules={[{ required: true, message: '请输入至少一个域名后缀' }]} className="fm-full">
-                <Input.TextArea autoSize={{ minRows: 1, maxRows: 3 }} placeholder="example.com, google.com" className="mono" />
+                <Input.TextArea autoSize={{ minRows: 1, maxRows: 3 }} className="mono" />
               </Form.Item>
             )}
 
             {showMatchField('domain_keyword') && (
               <Form.Item name="domain_keyword" label="域名关键词" rules={[{ required: true, message: '请输入至少一个域名关键词' }]} className="fm-full">
-                <Input.TextArea autoSize={{ minRows: 1, maxRows: 3 }} placeholder="google, youtube" className="mono" />
+                <Input.TextArea autoSize={{ minRows: 1, maxRows: 3 }} className="mono" />
               </Form.Item>
             )}
 
             {showMatchField('ip_cidr') && (
               <Form.Item name="ip_cidr" label="目标 IP / CIDR" rules={[{ required: true, message: '请输入至少一个 IP 或 CIDR' }]} className="fm-full">
-                <Input.TextArea autoSize={{ minRows: 1, maxRows: 3 }} placeholder="8.8.8.8, 10.0.0.0/8" className="mono" />
+                <Input.TextArea autoSize={{ minRows: 1, maxRows: 3 }} className="mono" />
               </Form.Item>
             )}
 
             {showMatchField('source_ip_cidr') && (
               <Form.Item name="source_ip_cidr" label="来源 IP / CIDR" rules={[{ required: true, message: '请输入至少一个来源 IP 或 CIDR' }]} className="fm-full">
-                <Input.TextArea autoSize={{ minRows: 1, maxRows: 3 }} placeholder="192.168.1.0/24" className="mono" />
+                <Input.TextArea autoSize={{ minRows: 1, maxRows: 3 }} className="mono" />
               </Form.Item>
             )}
 
@@ -939,7 +939,7 @@ export function RuleForm({
                   },
                 ]}
               >
-                <Input placeholder="80, 443" className="mono" />
+                <Input className="mono" />
               </Form.Item>
             )}
 
@@ -948,7 +948,6 @@ export function RuleForm({
                 <Select
                   mode="tags"
                   allowClear
-                  placeholder="dns, tls"
                   options={[
                     { value: 'dns', label: 'DNS' },
                     { value: 'http', label: 'HTTP' },
@@ -965,7 +964,6 @@ export function RuleForm({
               <Form.Item name="network" label="网络类型" rules={[{ required: true, message: '请选择网络类型' }]}>
                 <Select
                   allowClear
-                  placeholder="TCP / UDP"
                   options={[
                     { value: 'tcp', label: 'TCP' },
                     { value: 'udp', label: 'UDP' },
@@ -979,7 +977,7 @@ export function RuleForm({
 
         <FormGroup title="其他">
           <Form.Item name="remark" label="备注" className="fm-full">
-            <Input placeholder="国内直连" maxLength={120} />
+            <Input maxLength={120} />
           </Form.Item>
           <div className="fm-switches">
             <Form.Item name="enabled" label="启用" valuePropName="checked" className="fm-switch">

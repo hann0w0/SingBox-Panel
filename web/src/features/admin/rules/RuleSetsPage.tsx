@@ -165,7 +165,7 @@ export default function RuleSetsPage() {
             { required: true, message: '请输入规则集标签' },
             { pattern: /^[a-zA-Z0-9_-]+$/, message: '标签只能包含字母、数字、下划线与连字符' },
           ]}>
-            <Input placeholder="geosite-cn" />
+            <Input />
           </Form.Item>
           <Form.Item name="type" label="类型">
             <Segmented<'remote' | 'local'> onChange={setRsType} options={[{ value: 'remote', label: '远程' }, { value: 'local', label: '本地' }]} />
@@ -175,14 +175,14 @@ export default function RuleSetsPage() {
           </Form.Item>
           {rsType === 'remote' ? <>
             <Form.Item name="url" label="URL" rules={[{ required: true, message: '请输入远程规则集下载 URL' }]}>
-              <Input placeholder="https://" />
+              <Input />
             </Form.Item>
             <Form.Item name="update_interval" label="更新间隔">
-              <Input placeholder="1d" />
+              <Input />
             </Form.Item>
           </> : (
             <Form.Item name="path" label="路径" rules={[{ required: true, message: '请输入服务器上的本地文件路径' }]}>
-              <Input placeholder="/etc/sing-box/rules.json" />
+              <Input />
             </Form.Item>
           )}
         </Form>

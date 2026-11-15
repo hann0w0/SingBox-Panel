@@ -483,10 +483,10 @@ export default function Servers() {
       >
         <Form form={form} layout="vertical" initialValues={{ traffic_reset_day: 1 }}>
           <Form.Item name="name" label="名称" rules={[{ required: true }]}>
-            <Input placeholder="hk-1" />
+            <Input />
           </Form.Item>
           <Form.Item name="address" label="连接地址">
-            <Input placeholder="hk.example.com" />
+            <Input />
           </Form.Item>
           <Form.Item name="remark" label="备注">
             <Input />

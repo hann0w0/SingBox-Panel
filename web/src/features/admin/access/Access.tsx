@@ -1309,7 +1309,6 @@ export function CustomNodesPanel({ nodes, loading, error, onNodesChange }: {
                   filterOption={(input, option) => (option?.value ?? '').toLowerCase().includes(input.toLowerCase())}
                   placeholder="分组名"
                   style={{ width: '100%' }}
-
                 />
                 <div className="um-quick-group-actions">
                   <Button size="small" onClick={closeQuickGroup}>取消</Button>
@@ -1522,14 +1521,13 @@ export function CustomNodesPanel({ nodes, loading, error, onNodesChange }: {
       >
         <Form form={subscriptionForm} layout="vertical">
           <Form.Item name="name" label="名称" rules={[{ required: true, whitespace: true, message: '请输入订阅名称' }]}>
-            <Input placeholder="机场 A" />
+            <Input />
           </Form.Item>
           <Form.Item name="url" label="订阅链接" rules={[{ required: true, whitespace: true, message: '请输入 HTTP(S) 订阅链接' }]}>
-            <Input.TextArea rows={3} placeholder="https://example.com/sub" spellCheck={false} />
+            <Input.TextArea rows={3} spellCheck={false} />
           </Form.Item>
           <Form.Item name="group" label="节点分组">
             <AutoComplete
-              placeholder="机场 A"
               options={groupOptions}
               allowClear
               filterOption={(input, option) => (option?.value ?? '').toLowerCase().includes(input.toLowerCase())}
@@ -1571,14 +1569,13 @@ export function CustomNodesPanel({ nodes, loading, error, onNodesChange }: {
                       >
                         <Input
                           aria-label="匹配"
-                          placeholder={action === 'exclude_protocol' ? 'anytls,tuic' : action === 'include_node' ? '新加坡,HK' : action === 'exclude_node' ? '测试,US' : '香港 或 re:^HK'}
                           maxLength={256}
                           spellCheck={false}
                         />
                       </Form.Item>
                       {action === 'rename' ? (
                         <Form.Item {...field} name={[field.name, 'replacement']} className="um-rule-replacement">
-                          <Input aria-label="替换为" placeholder="HK" maxLength={512} spellCheck={false} />
+                          <Input aria-label="替换为" maxLength={512} spellCheck={false} />
                         </Form.Item>
                       ) : (
                         <span className="um-rule-none faint">—</span>
@@ -1653,7 +1650,6 @@ export function CustomNodesPanel({ nodes, loading, error, onNodesChange }: {
         <Form form={nodeForm} layout="vertical">
           <Form.Item name="group" label="分组">
             <AutoComplete
-              placeholder="朋友分享"
               options={groupOptions}
               allowClear
               filterOption={(input, option) => (option?.value ?? '').toLowerCase().includes(input.toLowerCase())}
@@ -1661,7 +1657,6 @@ export function CustomNodesPanel({ nodes, loading, error, onNodesChange }: {
           </Form.Item>
           <Form.Item name="link" label="URI 链接">
             <Input.TextArea
-              placeholder="支持 vless://、http:// 等节点 URI"
               autoSize={{ minRows: 2, maxRows: 4 }}
               spellCheck={false}
             />
@@ -1694,17 +1689,17 @@ export function CustomNodesPanel({ nodes, loading, error, onNodesChange }: {
               <Form.Item label="地址 / 端口" required>
                 <Space.Compact style={{ width: '100%' }}>
                   <Form.Item name="address" noStyle rules={[{ required: true, message: '请填写地址' }]}>
-                    <Input aria-label="地址" placeholder="example.com" style={{ width: '70%' }} />
+                    <Input aria-label="地址" style={{ width: '70%' }} />
                   </Form.Item>
                   <Form.Item name="port" noStyle rules={[{ required: true, message: '请填写端口' }]}>
-                    <InputNumber precision={0} aria-label="端口" min={1} max={65535} placeholder="443" style={{ width: '30%' }} />
+                    <InputNumber precision={0} aria-label="端口" min={1} max={65535} style={{ width: '30%' }} />
                   </Form.Item>
                 </Space.Compact>
               </Form.Item>
 
               {HAS_UUID.includes(nodeProtocol) && (
                 <Form.Item name="uuid" label="UUID" rules={[{ required: true, message: '请填写 UUID' }]}>
-                  <Input placeholder="xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx" />
+                  <Input />
                 </Form.Item>
               )}
               {HAS_PASSWORD.includes(nodeProtocol) && (
@@ -1752,7 +1747,6 @@ export function CustomNodesPanel({ nodes, loading, error, onNodesChange }: {
                   </Form.Item>
                   <Form.Item name="udp_relay_mode" label="UDP 中继模式">
                     <Select
-                      placeholder="native"
                       options={[
                         { value: 'native', label: 'native' },
                         { value: 'quic', label: 'quic' },
@@ -1768,7 +1762,7 @@ export function CustomNodesPanel({ nodes, loading, error, onNodesChange }: {
               )}
               {nodeProtocol === 'shadowsocks' && (
                 <Form.Item name="ss_plugin" label="SIP002 Plugin">
-                  <Input placeholder="obfs-local;obfs=http" />
+                  <Input />
                 </Form.Item>
               )}
 
@@ -1796,12 +1790,12 @@ export function CustomNodesPanel({ nodes, loading, error, onNodesChange }: {
                     />
                   </Form.Item>
                   <Form.Item name="sni" label="SNI">
-                    <Input placeholder="example.com" />
+                    <Input />
                   </Form.Item>
                   {(nodeProtocol === 'vless' || nodeProtocol === 'vmess' || nodeProtocol === 'trojan' || nodeProtocol === 'http') && (
                     <>
                       <Form.Item name="alpn" label="ALPN">
-                        <Input placeholder="h2, http/1.1" />
+                        <Input />
                       </Form.Item>
                       <Form.Item name="fingerprint" label="uTLS 指纹">
                         <Select
@@ -1822,7 +1816,7 @@ export function CustomNodesPanel({ nodes, loading, error, onNodesChange }: {
                   )}
                   {nodeTLSMode === 'reality' && (
                     <Form.Item name="sid" label="REALITY Short ID">
-                      <Input placeholder="0000000000000000" />
+                      <Input />
                     </Form.Item>
                   )}
                 </div>
@@ -1843,10 +1837,10 @@ export function CustomNodesPanel({ nodes, loading, error, onNodesChange }: {
                   {(nodeTransport === 'ws' || nodeTransport === 'httpupgrade') && (
                     <>
                       <Form.Item name="path" label="传输路径">
-                        <Input placeholder="/ws" />
+                        <Input />
                       </Form.Item>
                       <Form.Item name="host" label="Host 头">
-                        <Input placeholder="example.com" />
+                        <Input />
                       </Form.Item>
                     </>
                   )}
@@ -1876,10 +1870,10 @@ export function CustomNodesPanel({ nodes, loading, error, onNodesChange }: {
                   )}
                   <div className="um-form-grid">
                     <Form.Item name="up_mbps" label="上行 Mbps">
-                      <InputNumber precision={0} min={1} style={{ width: '100%' }} placeholder="100" />
+                      <InputNumber precision={0} min={1} style={{ width: '100%' }} />
                     </Form.Item>
                     <Form.Item name="down_mbps" label="下行 Mbps">
-                      <InputNumber precision={0} min={1} style={{ width: '100%' }} placeholder="100" />
+                      <InputNumber precision={0} min={1} style={{ width: '100%' }} />
                     </Form.Item>
                   </div>
                 </div>
@@ -1928,7 +1922,7 @@ export function CustomNodesPanel({ nodes, loading, error, onNodesChange }: {
                         </Form.Item>
                         {(nodeSnellObfsMode === 'http' || nodeSnellObfsMode === 'tls') && (
                           <Form.Item name="snell_obfs_host" label="混淆 Host">
-                            <Input placeholder="bing.com" />
+                            <Input />
                           </Form.Item>
                         )}
                       </>
@@ -1940,7 +1934,7 @@ export function CustomNodesPanel({ nodes, loading, error, onNodesChange }: {
           )}
           {(!hasNodeURI || editingNode) && (
             <Form.Item name="name" label="显示名称">
-              <Input placeholder="HK 01" />
+              <Input />
             </Form.Item>
           )}
         </Form>

@@ -114,7 +114,7 @@ export function ConfigEditorModal({
           disabled={saving}
           onChange={(event) => onText(event.target.value)}
           autoSize={false} rows={18}
-          placeholder="粘贴完整 config.json"
+         
         />
       )}
     </Modal>

@@ -47,7 +47,7 @@ export function UserAccountDialog({ user, onClose, onSaved }: {
     {pending && <Alert type="warning" showIcon message="将删除此用户的全部转发" description="保存后将删除此用户的所有转发配置、由转发生成的订阅节点及其排序记录，以及各服务器上关联的转发路由规则。重新开启权限不会恢复这些配置，需要重新创建。" />}
     <Form form={form} layout="vertical" hidden={!!pending}>
       <Form.Item name="email" label="用户名" rules={[{ required: true }]}>
-        <Input placeholder="alice" maxLength={191} autoComplete="off" />
+        <Input maxLength={191} autoComplete="off" />
       </Form.Item>
       <Form.Item name="password" label={user ? '新密码' : '密码'} rules={user ? [{ max: 72 }] : [{ required: true, message: '请输入密码' }, { max: 72 }]}>
         <Input.Password placeholder={user ? '不修改' : undefined} autoComplete="new-password" />

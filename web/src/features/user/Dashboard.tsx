@@ -224,7 +224,7 @@ export default function Dashboard() {
         <Modal title="添加出站" width={MODAL_SM} open={importOpen} onCancel={() => setImportOpen(false)} onOk={submitImport} confirmLoading={importing} okText="导入">
           <Form form={importForm} className="sub-form" onFinish={submitImport}>
             <Segmented<'uri' | 'subscription'> options={[{ value: 'uri', label: 'URI 导入' }, { value: 'subscription', label: '订阅导入' }]} value={importMode} onChange={setImportMode} />
-            <Form.Item name="value" label={importMode === 'uri' ? '节点 URI' : '订阅地址'} rules={[{ required: true, whitespace: true, message: importMode === 'uri' ? '请输入节点 URI' : '请输入订阅地址' }]}><Input.TextArea autoSize={{ minRows: 3, maxRows: 6 }} className="mono" placeholder={importMode === 'uri' ? 'vless://…' : 'https://…'} disabled={importing} /></Form.Item>
+            <Form.Item name="value" label={importMode === 'uri' ? '节点 URI' : '订阅地址'} rules={[{ required: true, whitespace: true, message: importMode === 'uri' ? '请输入节点 URI' : '请输入订阅地址' }]}><Input.TextArea autoSize={{ minRows: 3, maxRows: 6 }} className="mono" disabled={importing} /></Form.Item>
           </Form>
         </Modal>
         <Modal title="添加转发" width={MODAL_SM} open={forwardOpen} onCancel={() => setForwardOpen(false)} onOk={submitForward} confirmLoading={forwarding} okText="添加">

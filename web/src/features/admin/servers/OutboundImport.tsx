@@ -159,7 +159,7 @@ export function OutboundImport({ serverId, mode, onClose, onSaved, onSavingChang
           <div className="flex h-[264px] flex-col gap-2 rounded-lg border bg-background p-2">
             <TextareaPrimitive
               aria-label="节点 URI"
-              placeholder="粘贴节点链接，例如 vless://…"
+             
               className="mono min-h-0 flex-1 resize-none border-0 shadow-none focus-visible:ring-0"
               value={uri}
               disabled={saving}

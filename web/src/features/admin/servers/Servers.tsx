@@ -6,6 +6,7 @@ import { createServer, deleteServer, errMsg, getOverview, getServersMeta, instal
 import type { Server } from '../../../types'
 import { formatBytes } from '../../../util'
 import { RequestState } from '../../../components/RequestState'
+import { maskAddress } from '../../../addressPrivacy'
 import { PageHeader, Pills, Stats, Status } from '../../../ui/Page'
 import '../../../styles/servers.css'
 import { MODAL_MD, MODAL_SM } from '../../../ui/modal'
@@ -462,9 +463,11 @@ export default function Servers() {
                 <a href={`/admin/servers/${s.id}`} onClick={(e) => { e.preventDefault(); open_(s) }}>{s.name}</a>
                 {(() => {
                   const addresses = displayAddresses(s)
-                  if (hideAddress) return <span className="srv-address mono">••••••</span>
                   if (!addresses.length) return <span className="srv-address mono">未设置地址</span>
-                  return addresses.map((address) => <span className="srv-address mono" key={address} title={address}>{address}</span>)
+                  return addresses.map((address) => {
+                    const text = hideAddress ? maskAddress(address) : address
+                    return <span className="srv-address mono" key={address} title={text}>{text}</span>
+                  })
                 })()}
               </div>
               <span className="srv-remark" title={s.remark?.trim() || undefined}>{s.remark?.trim()}</span>

@@ -35,20 +35,13 @@ const (
 	maxAgentBinarySize  = int64(128 << 20)
 )
 
-const agentUpgradeScriptBody = `#!/bin/sh
-sleep 3
+const agentUpgradeScriptBody = "#!/bin/sh\n" + agentTaskStartupScript + `sleep 3
 READY=/run/singbox-panel-agent.ready
 EXPECTED=/run/singbox-panel-agent.expected-sha256
 BIN=/usr/local/bin/singbox-panel-agent
 PREV=/usr/local/bin/singbox-panel-agent.prev
 STATUS=/var/lib/singbox-panel-agent/update-status
 PIDFILE=/run/singbox-panel-agent-upgrade.pid
-
-if [ -d /run/systemd/system ] && command -v systemctl >/dev/null 2>&1; then
-  SERVICE_MANAGER=systemd
-else
-  SERVICE_MANAGER=openrc
-fi
 
 service_active() {
   if [ "$SERVICE_MANAGER" = systemd ]; then
@@ -115,7 +108,9 @@ const agentUpgradeUnitBody = `[Unit]
 Description=Upgrade SingBox Panel Agent with automatic rollback
 
 [Service]
-Type=oneshot
+Type=notify
+NotifyAccess=all
+TimeoutStartSec=10s
 ExecStart=/bin/sh /run/singbox-panel-agent-upgrade.sh
 `
 
@@ -290,7 +285,7 @@ func scheduleAgentUpgrade(ctx context.Context) error {
 			cleanupAgentUpgradeFiles()
 			return fmt.Errorf("reload systemd for Agent upgrade: %w: %s", err, out)
 		}
-		if out, err := run(ctx, "systemctl", "--no-block", "start", agentUpgradeUnitName); err != nil {
+		if out, err := startSystemdAgentTask(ctx, agentUpgradeUnitName, run); err != nil {
 			cleanupAgentUpgradeFiles()
 			_, _ = manager.Prepare(context.Background())
 			return fmt.Errorf("start Agent upgrade service: %w: %s", err, out)

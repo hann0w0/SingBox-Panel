@@ -2,6 +2,7 @@ package agent
 
 import (
 	"context"
+	"errors"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -55,6 +56,108 @@ func TestSystemdServiceManagerUsesNativeCommands(t *testing.T) {
 	wantTail := []string{"systemctl", "disable", "sing-box"}
 	if !containsCommandCall(calls, wantTail) {
 		t.Fatalf("systemd calls missing %q: %q", wantTail, calls)
+	}
+}
+
+func TestSystemdAgentTasksWaitForReadinessWithoutWaitingForCompletion(t *testing.T) {
+	for _, task := range []struct {
+		name string
+		unit string
+		body string
+	}{
+		{"upgrade", agentUpgradeUnitName, agentUpgradeUnitBody},
+		{"uninstall", agentUninstallUnitName, selfUninstallUnit},
+	} {
+		t.Run(task.name, func(t *testing.T) {
+			for _, setting := range []string{"Type=notify", "NotifyAccess=all", "TimeoutStartSec=10s"} {
+				if !strings.Contains(task.body, "\n"+setting+"\n") {
+					t.Fatalf("helper readiness configuration missing %q", setting)
+				}
+			}
+			ctx, cancel := context.WithCancel(context.Background())
+			defer cancel()
+			launchFailure := errors.New("systemd helper failed to execute")
+			for _, resultErr := range []error{nil, launchFailure} {
+				out, err := startSystemdAgentTask(ctx, task.unit, func(commandCtx context.Context, command string, args ...string) (string, error) {
+					if commandCtx != ctx || command != "systemctl" || !reflect.DeepEqual(args, []string{"start", task.unit}) {
+						t.Fatalf("helper startup = %s %q, context retained = %v", command, args, commandCtx == ctx)
+					}
+					return "helper launch result", resultErr
+				})
+				if out != "helper launch result" || !errors.Is(err, resultErr) {
+					t.Fatalf("helper startup failure was swallowed: output=%q error=%v", out, err)
+				}
+			}
+		})
+	}
+}
+
+func TestAgentTaskScriptsConfirmStartupBeforeDelay(t *testing.T) {
+	for _, task := range []struct {
+		name   string
+		script string
+	}{
+		{"upgrade", agentUpgradeScriptBody},
+		{"uninstall", selfUninstallScript},
+	} {
+		for _, scenario := range []struct {
+			name        string
+			systemd     bool
+			notifier    string
+			wantFailure bool
+		}{
+			{"systemd ready", true, "exit 0", false},
+			{"systemd notification failed", true, "exit 7", true},
+			{"systemd notifier missing", true, "", true},
+			{"OpenRC without notifier", false, "", false},
+			{"OpenRC with notifier", false, "exit 7", false},
+		} {
+			t.Run(task.name+"/"+scenario.name, func(t *testing.T) {
+				startup, _, found := strings.Cut(task.script, "\nsleep ")
+				if !found || startup != "#!/bin/sh\n"+strings.TrimSuffix(agentTaskStartupScript, "\n") {
+					t.Fatal("helper must confirm startup before its initial delay")
+				}
+				dir := t.TempDir()
+				runtimeDir := filepath.Join(dir, "systemd")
+				if scenario.systemd {
+					if err := os.Mkdir(runtimeDir, 0o700); err != nil {
+						t.Fatal(err)
+					}
+				}
+				if err := os.WriteFile(filepath.Join(dir, "systemctl"), []byte("#!/bin/sh\nexit 0\n"), 0o700); err != nil {
+					t.Fatal(err)
+				}
+				if scenario.notifier != "" {
+					fixture := "#!/bin/sh\nprintf '%s\\n' \"$*\"\n[ \"$1\" = --ready ] && [ \"$2\" = \"--pid=$PPID\" ] || exit 8\n" + scenario.notifier + "\n"
+					if err := os.WriteFile(filepath.Join(dir, "systemd-notify"), []byte(fixture), 0o700); err != nil {
+						t.Fatal(err)
+					}
+				}
+				startup = strings.ReplaceAll(startup, "/run/systemd/system", runtimeDir)
+				startup += "\nprintf 'body-started:%s\\n' \"$SERVICE_MANAGER\"\n"
+				ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+				defer cancel()
+				cmd := exec.CommandContext(ctx, "/bin/sh", "-c", startup)
+				cmd.Env = append(os.Environ(), "PATH="+dir)
+				out, err := cmd.CombinedOutput()
+				if (err != nil) != scenario.wantFailure {
+					t.Fatalf("helper startup error=%v, output=%q", err, out)
+				}
+				if scenario.wantFailure {
+					if strings.Contains(string(out), "body-started:") {
+						t.Fatal("helper ran its task after notification failure")
+					}
+					return
+				}
+				if scenario.systemd {
+					if !strings.HasPrefix(string(out), "--ready --pid=") || !strings.HasSuffix(string(out), "body-started:systemd\n") {
+						t.Fatalf("helper did not announce readiness before its task: %q", out)
+					}
+				} else if string(out) != "body-started:openrc\n" {
+					t.Fatalf("OpenRC helper attempted systemd notification: %q", out)
+				}
+			})
+		}
 	}
 }
 

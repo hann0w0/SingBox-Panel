@@ -13,9 +13,8 @@ const (
 	agentUninstallPIDFile  = "/run/singbox-panel-agent-uninstall.pid"
 )
 
-const selfUninstallScript = `#!/bin/sh
-sleep 5
-if [ -d /run/systemd/system ] && command -v systemctl >/dev/null 2>&1; then
+const selfUninstallScript = "#!/bin/sh\n" + agentTaskStartupScript + `sleep 5
+if [ "$SERVICE_MANAGER" = systemd ]; then
   systemctl disable --now singbox-panel-agent.service >/dev/null 2>&1 || true
 else
   rc-service singbox-panel-agent stop >/dev/null 2>&1 || true
@@ -27,7 +26,7 @@ rm -f /etc/systemd/system/singbox-panel-agent.service
 rm -f /etc/systemd/system/singbox-panel-agent-uninstall.service
 rm -f /etc/init.d/singbox-panel-agent
 rm -f /run/singbox-panel-agent.pid
-if [ -d /run/systemd/system ] && command -v systemctl >/dev/null 2>&1; then
+if [ "$SERVICE_MANAGER" = systemd ]; then
   systemctl daemon-reload >/dev/null 2>&1 || true
 fi
 rm -f /run/singbox-panel-agent-uninstall.sh
@@ -38,7 +37,9 @@ const selfUninstallUnit = `[Unit]
 Description=Remove SingBox Panel Agent
 
 [Service]
-Type=oneshot
+Type=notify
+NotifyAccess=all
+TimeoutStartSec=10s
 ExecStart=/bin/sh /run/singbox-panel-agent-uninstall.sh
 `
 
@@ -63,7 +64,7 @@ func ScheduleSelfUninstall(ctx context.Context) (string, error) {
 			cleanupAgentUninstallFiles()
 			return out, fmt.Errorf("reload systemd for Agent cleanup: %w", err)
 		}
-		if out, err := run(ctx, "systemctl", "--no-block", "start", agentUninstallUnitName); err != nil {
+		if out, err := startSystemdAgentTask(ctx, agentUninstallUnitName, run); err != nil {
 			cleanupAgentUninstallFiles()
 			_, _ = manager.Prepare(context.Background())
 			return out, fmt.Errorf("start Agent cleanup: %w", err)

@@ -22,6 +22,18 @@ type commandRunner func(context.Context, string, ...string) (string, error)
 
 const openRCStartStopDaemon = "/sbin/start-stop-daemon"
 
+const agentTaskStartupScript = `if [ -d /run/systemd/system ] && command -v systemctl >/dev/null 2>&1; then
+  SERVICE_MANAGER=systemd
+  if ! command -v systemd-notify >/dev/null 2>&1; then
+    printf '%s\n' 'systemd-notify is required to confirm Agent helper startup' >&2
+    exit 1
+  fi
+  systemd-notify --ready --pid="$$" || exit 1
+else
+  SERVICE_MANAGER=openrc
+fi
+`
+
 // serviceManager isolates the init-system-specific parts of managing the
 // official sing-box installation. ApplyConfig and the command handlers work
 // against this interface so Alpine uses OpenRC without weakening the existing
@@ -86,6 +98,10 @@ func launchOpenRCDetachedShell(ctx context.Context, script, pidFile string) erro
 		return fmt.Errorf("start detached OpenRC task: %w: %s", err, out)
 	}
 	return nil
+}
+
+func startSystemdAgentTask(ctx context.Context, unit string, runner commandRunner) (string, error) {
+	return runner(ctx, "systemctl", "start", unit)
 }
 
 type systemdServiceManager struct {

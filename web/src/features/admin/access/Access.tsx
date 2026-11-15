@@ -1307,6 +1307,7 @@ export function CustomNodesPanel({ nodes, loading, error, onNodesChange }: {
                 <AutoComplete
                   autoFocus
                   allowClear
+                  openOnFocus
                   value={quickGroupValue}
                   onChange={setQuickGroupValue}
                   options={groupOptions}

@@ -767,9 +767,13 @@ export const AutoComplete = forwardRef<
     value?: string
     onChange?: (value: string) => void
     filterOption?: (input: string, option?: SelectOption) => boolean
+    // Dialogs focus their first field when they open, so the list stays closed
+    // until the user clicks or types. Callers that focus the field as a direct
+    // result of a user gesture (e.g. an inline editor popover) opt in here.
+    openOnFocus?: boolean
   }
 >(function AutoComplete(
-  { options = [], value = '', onChange, filterOption, ...props },
+  { options = [], value = '', onChange, filterOption, openOnFocus, ...props },
   ref,
 ) {
   const [open, setOpen] = useState(false)
@@ -810,6 +814,13 @@ export const AutoComplete = forwardRef<
             value={value}
             onFocus={(event) => {
               props.onFocus?.(event)
+              if (openOnFocus) setOpen(true)
+            }}
+            onPointerDown={(event) => {
+              props.onPointerDown?.(event)
+              // Only an explicit click opens the list. Dialogs focus their
+              // first field when they open, and expanding the suggestions
+              // there would cover the rest of a freshly created form.
               setOpen(true)
             }}
             onKeyDown={(event) => {

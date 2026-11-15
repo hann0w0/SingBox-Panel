@@ -173,3 +173,15 @@ describe('external HTTP and SOCKS proxy forms', () => {
     })])
   })
 })
+
+describe('新增节点 dialog', () => {
+  it('keeps the group suggestions closed until the field is clicked', async () => {
+    await showNodes([{ ...node, group: '自建' }])
+    fireEvent.click(screen.getByRole('button', { name: '新增节点' }))
+    const group = await screen.findByRole('combobox', { name: '分组' })
+    expect(group.getAttribute('aria-expanded')).toBe('false')
+    expect(screen.queryByRole('listbox', { name: '分组建议' })).toBeNull()
+    fireEvent.pointerDown(group)
+    expect(await screen.findByRole('listbox', { name: '分组建议' })).toBeTruthy()
+  })
+})

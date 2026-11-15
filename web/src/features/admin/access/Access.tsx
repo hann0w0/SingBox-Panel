@@ -9,7 +9,6 @@ import {
   Modal,
   Popover,
   Select,
-  Space,
   Switch,
   Table,
   Typography,
@@ -53,8 +52,10 @@ import { SHADOWSOCKS_METHODS } from '../../../util'
 import { RequestState } from '../../../components/RequestState'
 import { buildCustomNodeParams } from '../../../customNodeForm'
 import { Pills, Status } from '../../../ui/Page'
+import { Field, FieldContent, FieldDescription, FieldGroup, FieldLabel, FieldLegend, FieldSet } from '@/components/ui/field'
+import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import '../../../styles/users.css'
-import { MODAL_LG, MODAL_MD } from '../../../ui/modal'
+import { MODAL_MD } from '../../../ui/modal'
 
 // ======================= 节点分配 =======================
 
@@ -888,6 +889,7 @@ export function CustomNodesPanel({ nodes, loading, error, onNodesChange }: {
   const [nodeOpen, setNodeOpen] = useState(false)
   const [nodeSaving, setNodeSaving] = useState(false)
   const [editingNode, setEditingNode] = useState<CustomNode | null>(null)
+  const [nodeMode, setNodeMode] = useState<'manual' | 'uri'>('manual')
   const [nodeForm] = Form.useForm()
   const nodeProtocol = Form.useWatch('protocol', nodeForm)
   const nodeTransport = Form.useWatch('transport', nodeForm)
@@ -917,7 +919,6 @@ export function CustomNodesPanel({ nodes, loading, error, onNodesChange }: {
   const [quickGroup, setQuickGroup] = useState<CustomNode | null>(null)
   const [quickGroupValue, setQuickGroupValue] = useState('')
   const normalizedNodeLink = typeof nodeLinkSource === 'string' ? nodeLinkSource.trim() : ''
-  const hasNodeURI = normalizedNodeLink.length > 0
 
   const loadSubscriptions = useCallback(() => {
     subscriptionLoadRef.current.controller?.abort()
@@ -970,6 +971,7 @@ export function CustomNodesPanel({ nodes, loading, error, onNodesChange }: {
 
   const openNodeCreate = () => {
     setEditingNode(null)
+    setNodeMode('manual')
     nodeForm.resetFields()
     nodeForm.setFieldsValue({ link: '', tls_mode: 'tls', transport: 'tcp', snell_version: 5, snell_obfs_mode: 'none', snell_mode: '', method: '2022-blake3-aes-128-gcm', group: '' })
     setNodeOpen(true)
@@ -1085,6 +1087,7 @@ export function CustomNodesPanel({ nodes, loading, error, onNodesChange }: {
 
   const openNodeEdit = (n: CustomNode) => {
     setEditingNode(n)
+    setNodeMode(n.link?.trim() ? 'uri' : 'manual')
     const p = n.params ?? {}
     nodeForm.resetFields()
     nodeForm.setFieldsValue({
@@ -1146,7 +1149,7 @@ export function CustomNodesPanel({ nodes, loading, error, onNodesChange }: {
       excluded_user_ids: editingNode && editingNode.all_users ? editingNode.excluded_user_ids ?? [] : [],
       sort_order: editingNode?.sort_order ?? 0,
     }
-      if (normalizedNodeLink) {
+      if (nodeMode === 'uri') {
         const sameLink = editingNode?.link === normalizedNodeLink
         Object.assign(body, {
         link: normalizedNodeLink,
@@ -1516,15 +1519,16 @@ export function CustomNodesPanel({ nodes, loading, error, onNodesChange }: {
         onCancel={() => setSubscriptionOpen(false)}
         okText={editingSubscription ? '保存' : '保存并同步'}
         confirmLoading={subscriptionSaving}
-        className="um-modal"
-        width={MODAL_LG}
+        className="um-modal um-source-modal"
+        width={MODAL_MD}
       >
-        <Form form={subscriptionForm} layout="vertical">
+        <Form form={subscriptionForm} fieldLayout onFinish={saveSubscription}>
+          <FieldGroup>
+          <FieldSet>
+          <FieldLegend>基本信息</FieldLegend>
+          <FieldGroup className="um-source-grid">
           <Form.Item name="name" label="名称" rules={[{ required: true, whitespace: true, message: '请输入订阅名称' }]}>
             <Input />
-          </Form.Item>
-          <Form.Item name="url" label="订阅链接" rules={[{ required: true, whitespace: true, message: '请输入 HTTP(S) 订阅链接' }]}>
-            <Input.TextArea rows={3} spellCheck={false} />
           </Form.Item>
           <Form.Item name="group" label="节点分组">
             <AutoComplete
@@ -1533,25 +1537,30 @@ export function CustomNodesPanel({ nodes, loading, error, onNodesChange }: {
               filterOption={(input, option) => (option?.value ?? '').toLowerCase().includes(input.toLowerCase())}
             />
           </Form.Item>
-          <div className="um-form-group">
-            <h4>处理规则</h4>
+          </FieldGroup>
+          <Form.Item name="url" label="订阅链接" rules={[{ required: true, whitespace: true, message: '请输入 HTTP(S) 订阅链接' }]}>
+            <Input.TextArea rows={2} spellCheck={false} />
+          </Form.Item>
+          </FieldSet>
+          <FieldSet className="um-source-section">
+            <FieldLegend>处理规则</FieldLegend>
             <Form.List name="name_rewrite_rules">
               {(fields, { add, remove, move }) => (
-                <div>
-                  {fields.length > 0 ? (
-                    <div className="um-rule-head">
-                      <span>#</span>
-                      <span>操作</span>
-                      <span>匹配</span>
-                      <span>替换为</span>
-                      <span><span className="sr-only">调整</span></span>
-                    </div>
-                  ) : null}
+                <FieldGroup className="gap-3">
+                  {fields.length === 0 && <FieldDescription>按顺序重命名或筛选节点，可选。</FieldDescription>}
                   {fields.map((field, index) => {
                     const action = subscriptionRules?.[field.name]?.action || 'rename'
-                    return <div className="um-rule-row" key={field.key}>
-                      <span className="um-rule-order mono">{index + 1}</span>
-                      <Form.Item {...field} name={[field.name, 'action']} className="um-rule-action">
+                    return <FieldSet className="um-source-rule" key={field.key}>
+                      <div className="um-source-rule-head">
+                        <span>规则 {index + 1}</span>
+                        <div className="ui-row-actions">
+                          <Button type="text" size="small" icon={<ChevronUp />} title="上移" aria-label="上移规则" disabled={index === 0} onClick={() => move(index, index - 1)} />
+                          <Button type="text" size="small" icon={<ChevronDown />} title="下移" aria-label="下移规则" disabled={index === fields.length - 1} onClick={() => move(index, index + 1)} />
+                          <Button type="text" size="small" icon={<Trash2 />} title="删除" aria-label="删除规则" onClick={() => remove(field.name)} />
+                        </div>
+                      </div>
+                      <FieldGroup className="um-source-rule-fields">
+                      <Form.Item {...field} name={[field.name, 'action']} label="操作">
                         <Select
                           options={[
                             { value: 'rename', label: '节点重命名' },
@@ -1565,7 +1574,7 @@ export function CustomNodesPanel({ nodes, loading, error, onNodesChange }: {
                         {...field}
                         name={[field.name, 'pattern']}
                         rules={[{ required: true, whitespace: true, message: action === 'exclude_protocol' ? '请输入协议' : '请输入匹配内容' }]}
-                        className="um-rule-pattern"
+                        label="匹配"
                       >
                         <Input
                           aria-label="匹配"
@@ -1574,31 +1583,28 @@ export function CustomNodesPanel({ nodes, loading, error, onNodesChange }: {
                         />
                       </Form.Item>
                       {action === 'rename' ? (
-                        <Form.Item {...field} name={[field.name, 'replacement']} className="um-rule-replacement">
+                        <Form.Item {...field} name={[field.name, 'replacement']} label="替换为">
                           <Input aria-label="替换为" maxLength={512} spellCheck={false} />
                         </Form.Item>
-                      ) : (
-                        <span className="um-rule-none faint">—</span>
-                      )}
-                      <div className="um-rule-actions ui-row-actions">
-                        <Button type="text" size="small" icon={<ChevronUp />} title="上移" aria-label="上移规则" disabled={index === 0} onClick={() => move(index, index - 1)} />
-                        <Button type="text" size="small" icon={<ChevronDown />} title="下移" aria-label="下移规则" disabled={index === fields.length - 1} onClick={() => move(index, index + 1)} />
-                        <Button type="text" size="small" icon={<Trash2 />} title="删除" aria-label="删除规则" onClick={() => remove(field.name)} />
-                      </div>
-                    </div>
+                      ) : null}
+                      </FieldGroup>
+                    </FieldSet>
                   })}
-                  <Button type="dashed" icon={<Plus />} onClick={() => add({ action: 'rename', pattern: '', replacement: '', match_mode: 'text' })} disabled={fields.length >= 50} block>
+                  <Button icon={<Plus />} onClick={() => add({ action: 'rename', pattern: '', replacement: '', match_mode: 'text' })} disabled={fields.length >= 50} className="self-start">
                     {fields.length >= 50 ? '已达 50 条上限' : '添加规则'}
                   </Button>
-                </div>
+                </FieldGroup>
               )}
             </Form.List>
-          </div>
-          <div className="um-form-group um-switch-row">
-            <Form.Item name="auto_update" label="自动更新" valuePropName="checked">
-              <Switch />
-            </Form.Item>
-          </div>
+          </FieldSet>
+          <Field className="um-source-section" orientation="horizontal">
+            <Form.Item name="auto_update" valuePropName="checked" noStyle><Switch /></Form.Item>
+            <FieldContent>
+              <FieldLabel htmlFor={`${subscriptionForm._id}-auto_update`}>自动更新</FieldLabel>
+              <FieldDescription>每 {editingSubscription?.update_interval_minutes ?? 60} 分钟同步一次。</FieldDescription>
+            </FieldContent>
+          </Field>
+          </FieldGroup>
         </Form>
       </Modal>
 
@@ -1643,26 +1649,26 @@ export function CustomNodesPanel({ nodes, loading, error, onNodesChange }: {
         confirmLoading={nodeSaving}
         okText="保存"
         cancelText="取消"
-        className="um-modal"
+        className="um-modal um-source-modal"
         width={MODAL_MD}
-        style={{ maxWidth: 'calc(100vw - 24px)' }}
       >
-        <Form form={nodeForm} layout="vertical">
-          <Form.Item name="group" label="分组">
-            <AutoComplete
-              options={groupOptions}
-              allowClear
-              filterOption={(input, option) => (option?.value ?? '').toLowerCase().includes(input.toLowerCase())}
-            />
-          </Form.Item>
-          <Form.Item name="link" label="URI 链接">
+        <Form form={nodeForm} fieldLayout onFinish={submitNode}>
+          <FieldGroup>
+          <Tabs value={nodeMode} onValueChange={(value) => setNodeMode(value as 'manual' | 'uri')}>
+            <TabsList aria-label="节点添加方式">
+              <TabsTrigger value="manual">手动配置</TabsTrigger>
+              <TabsTrigger value="uri">URI 导入</TabsTrigger>
+            </TabsList>
+          <TabsContent value="uri" className="mt-5">
+          <Form.Item name="link" label="URI 链接" extra="粘贴节点分享链接，保存时自动解析连接参数。" rules={[{ required: true, whitespace: true, message: '请粘贴节点 URI 链接' }]}>
             <Input.TextArea
-              autoSize={{ minRows: 2, maxRows: 4 }}
+              rows={3}
               spellCheck={false}
             />
           </Form.Item>
-          {!hasNodeURI && (
-            <>
+          </TabsContent>
+          <TabsContent value="manual" className="mt-5">
+            <FieldGroup>
               <Form.Item name="protocol" label="协议" rules={[{ required: true, message: '请选择协议' }]}>
                 <Select
                   placeholder="选择协议"
@@ -1686,16 +1692,14 @@ export function CustomNodesPanel({ nodes, loading, error, onNodesChange }: {
                   ]}
                 />
               </Form.Item>
-              <Form.Item label="地址 / 端口" required>
-                <Space.Compact style={{ width: '100%' }}>
-                  <Form.Item name="address" noStyle rules={[{ required: true, message: '请填写地址' }]}>
-                    <Input aria-label="地址" style={{ width: '70%' }} />
+                <FieldGroup className="um-source-address">
+                  <Form.Item name="address" label="地址" rules={[{ required: true, message: '请填写地址' }]}>
+                    <Input aria-label="地址" />
                   </Form.Item>
-                  <Form.Item name="port" noStyle rules={[{ required: true, message: '请填写端口' }]}>
-                    <InputNumber precision={0} aria-label="端口" min={1} max={65535} style={{ width: '30%' }} />
+                  <Form.Item name="port" label="端口" rules={[{ required: true, message: '请填写端口' }]}>
+                    <InputNumber precision={0} aria-label="端口" min={1} max={65535} style={{ width: '100%' }} />
                   </Form.Item>
-                </Space.Compact>
-              </Form.Item>
+                </FieldGroup>
 
               {HAS_UUID.includes(nodeProtocol) && (
                 <Form.Item name="uuid" label="UUID" rules={[{ required: true, message: '请填写 UUID' }]}>
@@ -1767,8 +1771,8 @@ export function CustomNodesPanel({ nodes, loading, error, onNodesChange }: {
               )}
 
               {HAS_TLS.includes(nodeProtocol) && (
-                <div className="um-form-group">
-                  <h4>TLS</h4>
+                <FieldSet className="um-source-section">
+                  <FieldLegend>TLS</FieldLegend>
                   <Form.Item name="tls_mode" label="TLS 模式">
                     <Select
                       options={
@@ -1819,12 +1823,12 @@ export function CustomNodesPanel({ nodes, loading, error, onNodesChange }: {
                       <Input />
                     </Form.Item>
                   )}
-                </div>
+                </FieldSet>
               )}
 
               {HAS_TRANSPORT.includes(nodeProtocol) && (
-                <div className="um-form-group">
-                  <h4>传输</h4>
+                <FieldSet className="um-source-section">
+                  <FieldLegend>传输</FieldLegend>
                   <Form.Item name="transport" label="传输协议">
                     <Select
                       options={[
@@ -1844,12 +1848,12 @@ export function CustomNodesPanel({ nodes, loading, error, onNodesChange }: {
                       </Form.Item>
                     </>
                   )}
-                </div>
+                </FieldSet>
               )}
 
               {HAS_BANDWIDTH.includes(nodeProtocol) && (
-                <div className="um-form-group">
-                  <h4>混淆与带宽</h4>
+                <FieldSet className="um-source-section">
+                  <FieldLegend>混淆与带宽</FieldLegend>
                   <Form.Item name="obfs" label="混淆类型">
                     <Select
                       options={[
@@ -1863,20 +1867,20 @@ export function CustomNodesPanel({ nodes, loading, error, onNodesChange }: {
                     <Input.Password />
                   </Form.Item>
                   {nodeProtocol === 'hysteria2' && nodeObfsType === 'gecko' && (
-                    <div className="um-form-grid">
+                    <FieldGroup className="um-source-grid">
                       <Form.Item name="gecko_min_packet_size" label="最小包大小"><InputNumber min={512} precision={0} style={{ width: '100%' }} /></Form.Item>
                       <Form.Item name="gecko_max_packet_size" label="最大包大小"><InputNumber min={512} precision={0} style={{ width: '100%' }} /></Form.Item>
-                    </div>
+                    </FieldGroup>
                   )}
-                  <div className="um-form-grid">
+                  <FieldGroup className="um-source-grid">
                     <Form.Item name="up_mbps" label="上行 Mbps">
                       <InputNumber precision={0} min={1} style={{ width: '100%' }} />
                     </Form.Item>
                     <Form.Item name="down_mbps" label="下行 Mbps">
                       <InputNumber precision={0} min={1} style={{ width: '100%' }} />
                     </Form.Item>
-                  </div>
-                </div>
+                  </FieldGroup>
+                </FieldSet>
               )}
 
               {nodeProtocol === 'snell' && (
@@ -1900,7 +1904,7 @@ export function CustomNodesPanel({ nodes, loading, error, onNodesChange }: {
                   >
                     <Input />
                   </Form.Item>
-                  <div className="um-form-grid">
+                  <FieldGroup className="um-source-grid">
                     <Form.Item name="snell_version" label="版本">
                       <Select options={[{ value: 5, label: 'v5' }, { value: 6, label: 'v6' }]} />
                     </Form.Item>
@@ -1927,16 +1931,24 @@ export function CustomNodesPanel({ nodes, loading, error, onNodesChange }: {
                         )}
                       </>
                     )}
-                  </div>
+                  </FieldGroup>
                 </>
               )}
-            </>
-          )}
-          {(!hasNodeURI || editingNode) && (
+            </FieldGroup>
+          </TabsContent>
+          </Tabs>
+          <FieldSet className="um-source-section">
+            <FieldLegend>节点信息</FieldLegend>
+            <FieldGroup className="um-source-grid">
             <Form.Item name="name" label="显示名称">
               <Input />
             </Form.Item>
-          )}
+            <Form.Item name="group" label="分组">
+              <AutoComplete options={groupOptions} allowClear filterOption={(input, option) => (option?.value ?? '').toLowerCase().includes(input.toLowerCase())} />
+            </Form.Item>
+            </FieldGroup>
+          </FieldSet>
+          </FieldGroup>
         </Form>
       </Modal>
     </>

@@ -15,6 +15,7 @@ import {
   type UseFormReturn,
 } from 'react-hook-form'
 import { Label } from '@/components/ui/label'
+import { Field, FieldDescription, FieldError, FieldLabel } from '@/components/ui/field'
 import { cn } from '@/lib/utils'
 import { message } from './feedback'
 import { InputNumber } from './controls'
@@ -38,6 +39,7 @@ export type FormInstance<T extends Values = any> = {
 const FormContext = createContext<FormInstance | null>(null)
 const ListContext = createContext<string>('')
 const RequiredMarkContext = createContext(true)
+const FieldLayoutContext = createContext(false)
 const ItemErrorsContext = createContext<((id: string, error?: string) => void) | null>(null)
 const path = (name: Name) =>
   Array.isArray(name) ? name.join('.') : String(name)
@@ -147,6 +149,7 @@ function ItemLayout({
   error,
 }: ItemProps & { id?: string; error?: string }) {
   const showRequiredMark = useContext(RequiredMarkContext)
+  const fieldLayout = useContext(FieldLayoutContext)
   const reportToParent = useContext(ItemErrorsContext)
   const [childErrors, setChildErrors] = useState<Record<string, string>>({})
   const reportError = useCallback((fieldId: string, message?: string) => {
@@ -174,6 +177,15 @@ function ItemLayout({
         )}
       </>
     )
+  if (fieldLayout) return (
+    <Field className={className} style={style} hidden={hidden} data-invalid={!!error || Object.keys(childErrors).length > 0 || undefined}>
+      {label && <FieldLabel htmlFor={id}>{label}{required && showRequiredMark && <span className="ui-required">*</span>}</FieldLabel>}
+      <ItemErrorsContext.Provider value={reportError}>{children}</ItemErrorsContext.Provider>
+      {Object.entries(childErrors).map(([fieldId, message]) => <FieldError key={fieldId} id={`${fieldId}-error`}>{message}</FieldError>)}
+      {(error || help) && <FieldError id={id ? `${id}-error` : undefined}>{error || help}</FieldError>}
+      {extra && <FieldDescription>{extra}</FieldDescription>}
+    </Field>
+  )
   return (
     <div
       className={cn(
@@ -356,6 +368,7 @@ function FormRoot({
   className,
   layout = 'vertical',
   requiredMark,
+  fieldLayout = false,
   name,
   ...rest
 }: Omit<React.FormHTMLAttributes<HTMLFormElement>, 'onFinish'> & {
@@ -365,6 +378,7 @@ function FormRoot({
   onFinishFailed?: (error: any) => void
   layout?: string
   requiredMark?: boolean
+  fieldLayout?: boolean
   name?: string
 }) {
   const [fallback] = useForm()
@@ -405,7 +419,7 @@ function FormRoot({
         }}
       >
         <RequiredMarkContext.Provider value={requiredMark !== false}>
-          {children}
+          <FieldLayoutContext.Provider value={fieldLayout}>{children}</FieldLayoutContext.Provider>
         </RequiredMarkContext.Provider>
       </form>
     </FormContext.Provider>

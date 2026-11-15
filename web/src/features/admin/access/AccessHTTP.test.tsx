@@ -1,6 +1,6 @@
 import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { createCustomNode, listCustomNodeSubscriptions, syncCustomNodeSubscription, updateCustomNode } from '../../../api'
+import { createCustomNode, createCustomNodeSubscription, listCustomNodeSubscriptions, syncCustomNodeSubscription, updateCustomNode } from '../../../api'
 import type { CustomNode, CustomNodeSubscription } from '../../../api'
 import { message } from '../../../ui'
 import { CustomNodesPanel } from './Access'
@@ -8,6 +8,7 @@ import { CustomNodesPanel } from './Access'
 vi.mock('../../../api', async (importOriginal) => ({
   ...await importOriginal<typeof import('../../../api')>(),
   createCustomNode: vi.fn(),
+  createCustomNodeSubscription: vi.fn(),
   updateCustomNode: vi.fn(),
   listCustomNodeSubscriptions: vi.fn(),
   syncCustomNodeSubscription: vi.fn(),
@@ -175,6 +176,29 @@ describe('external HTTP and SOCKS proxy forms', () => {
 })
 
 describe('新增节点 dialog', () => {
+  it('validates the active source and preserves draft parameters when switching modes', async () => {
+    await create('SOCKS5')
+    fireEvent.mouseDown(screen.getByRole('tab', { name: 'URI 导入' }), { button: 0, ctrlKey: false })
+    expect(screen.queryByLabelText('地址')).toBeNull()
+    fireEvent.click(screen.getByRole('button', { name: '保存' }))
+    await screen.findByText('请粘贴节点 URI 链接')
+    expect(createCustomNode).not.toHaveBeenCalled()
+    fireEvent.change(screen.getByLabelText(/^URI 链接/), { target: { value: 'socks5://uri.example.com:1080#Imported' } })
+    fireEvent.mouseDown(screen.getByRole('tab', { name: '手动配置' }), { button: 0, ctrlKey: false })
+    expect((screen.getByLabelText('地址') as HTMLInputElement).value).toBe('proxy.example.com')
+    expect(await saveCreate()).toMatchObject({ link: '', protocol: 'socks', address: 'proxy.example.com', port: 8443 })
+  })
+
+  it('imports a URI without requiring hidden manual parameters', async () => {
+    await showNodes()
+    fireEvent.click(screen.getByRole('button', { name: '新增节点' }))
+    fireEvent.mouseDown(screen.getByRole('tab', { name: 'URI 导入' }), { button: 0, ctrlKey: false })
+    const link = 'socks5://uri.example.com:1080#Imported'
+    fireEvent.change(screen.getByLabelText(/^URI 链接/), { target: { value: link } })
+    fireEvent.change(screen.getByLabelText('显示名称'), { target: { value: '自定义名称' } })
+    expect(await saveCreate()).toMatchObject({ link, name: '自定义名称', protocol: '', address: '', params: null })
+  })
+
   it('keeps the group suggestions closed until the field is clicked', async () => {
     await showNodes([{ ...node, group: '自建' }])
     fireEvent.click(screen.getByRole('button', { name: '新增节点' }))
@@ -183,6 +207,26 @@ describe('新增节点 dialog', () => {
     expect(screen.queryByRole('listbox', { name: '分组建议' })).toBeNull()
     fireEvent.pointerDown(group)
     expect(await screen.findByRole('listbox', { name: '分组建议' })).toBeTruthy()
+  })
+})
+
+describe('subscription editor', () => {
+  it('saves ordered processing rules and the automatic update setting', async () => {
+    vi.mocked(createCustomNodeSubscription).mockResolvedValue({ subscription: {} as CustomNodeSubscription, sync: { created: 0, updated: 0, deleted: 0, total: 0, skipped: 0, filtered: 0 } })
+    render(<CustomNodesPanel nodes={[]} loading={false} onNodesChange={vi.fn()} />)
+    fireEvent.click(screen.getByRole('button', { name: '新增订阅' }))
+    fireEvent.change(screen.getByLabelText(/^名称/), { target: { value: '测试订阅' } })
+    fireEvent.change(screen.getByLabelText(/^订阅链接/), { target: { value: 'https://provider.example.com/sub' } })
+    fireEvent.click(screen.getByRole('button', { name: '添加规则' }))
+    fireEvent.change(screen.getByLabelText('匹配'), { target: { value: '旧名称' } })
+    fireEvent.change(screen.getByLabelText('替换为'), { target: { value: '新名称' } })
+    fireEvent.click(screen.getByLabelText('自动更新'))
+    fireEvent.click(screen.getByRole('button', { name: '保存并同步' }))
+    await waitFor(() => expect(createCustomNodeSubscription).toHaveBeenCalledOnce())
+    expect(vi.mocked(createCustomNodeSubscription).mock.calls[0][0]).toMatchObject({
+      name: '测试订阅', auto_update: false,
+      name_rewrite_rules: [{ action: 'rename', pattern: '旧名称', replacement: '新名称', match_mode: 'text' }],
+    })
   })
 })
 

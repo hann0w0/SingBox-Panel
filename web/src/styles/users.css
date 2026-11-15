@@ -64,14 +64,17 @@
 .um-detail dt { font-size: 13px; }
 .um-detail-value { font-size: 12.5px; overflow-wrap: anywhere; word-break: break-all; }
 
-/* Subscription rules */
-.um-rule-head, .um-rule-row { display: grid; grid-template-columns: 24px 132px minmax(0, 1fr) minmax(0, 1fr) 84px; gap: 8px; align-items: start; }
-.um-rule-head { padding: 0 0 6px; color: var(--console-faint); font-size: 12px; }
-.um-rule-row { margin-bottom: 8px; }
-.um-rule-row .ui-form-item { margin: 0; min-width: 0; }
-.um-rule-order { display: grid; place-items: center; height: 32px; color: var(--console-faint); }
-.um-rule-none { display: flex; align-items: center; height: 32px; padding-left: 4px; }
-.um-rule-actions { height: 32px; }
+.um-source-modal [data-slot='field-legend'] { margin-bottom: 0; font-size: 13px; }
+.um-source-modal [data-slot='field-label'] { font-size: 13px; }
+.um-source-modal [data-slot='field-description'] { font-size: 12px; }
+.um-source-modal [data-slot='field-set'] > [data-slot='field-legend'] { float: left; }
+.um-source-modal [data-slot='field-set'] > [data-slot='field-legend'] + * { clear: both; }
+.um-source-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 16px; }
+.um-source-address { display: grid; grid-template-columns: minmax(0, 1fr) 120px; gap: 16px; }
+.um-source-section { padding-top: 20px; border-top: 1px solid var(--console-border); }
+.um-source-rule { gap: 12px; padding: 12px; border: 1px solid var(--console-border); border-radius: var(--app-radius-control); }
+.um-source-rule-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; color: var(--console-muted); font-size: 12px; }
+.um-source-rule-fields { display: grid; grid-template-columns: 132px minmax(0, 1fr) minmax(0, 1fr); gap: 12px; }
 
 /* ---------- Assign modal ---------- */
 .um-access-assign-modal .ui-modal-body > .request-state-loading { min-height: min(360px, calc(50 * var(--dvh))); }
@@ -147,12 +150,8 @@
   .um-mini-stats.is-3 > div:last-child { grid-column: 1 / -1; }
   .um-switch-row { gap: 24px; }
   .um-form-grid { grid-template-columns: minmax(0, 1fr); }
-  .um-rule-head { display: none; }
-  .um-rule-row { grid-template-columns: 24px minmax(0, 1fr) auto; padding: 10px 0; margin: 0; border-top: 1px solid var(--console-border); }
-  .um-rule-head + .um-rule-row { border-top: 0; }
-  .um-rule-pattern, .um-rule-replacement, .um-rule-none { grid-column: 2 / -1; }
-  .um-rule-none { display: none; }
-  .um-rule-actions { grid-column: 3; grid-row: 1; }
+  .um-source-grid, .um-source-rule-fields { grid-template-columns: minmax(0, 1fr); }
+  .um-source-address { grid-template-columns: minmax(0, 1fr) 100px; gap: 12px; }
   .um-access-modal-items { grid-template-columns: minmax(0, 1fr); padding-left: 14px; }
   .um-access-order-item { grid-template-columns: var(--app-control-h) minmax(0, 1fr) auto; grid-template-areas: 'handle content actions'; column-gap: 4px; row-gap: 6px; min-height: 64px; padding: 8px 6px; }
   .um-access-order-item.is-renaming { grid-template-areas: 'handle content actions' 'input input input'; }

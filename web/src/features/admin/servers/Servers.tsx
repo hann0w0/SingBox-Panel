@@ -469,8 +469,8 @@ export default function Servers() {
                     return <span className="srv-address mono" key={address} title={text}>{text}</span>
                   })
                 })()}
+                {s.remark?.trim() && <span className="srv-remark" title={s.remark}>{s.remark}</span>}
               </div>
-              <span className="srv-remark" title={s.remark?.trim() || undefined}>{s.remark?.trim()}</span>
               <div className="srv-status"><Status tone={s.online ? 'ok' : 'off'}>{s.online ? '在线' : '离线'}</Status></div>
               <div className="srv-version">
                 <span>{s.singbox_installed ? `sing-box ${s.singbox_version || ''}` : '未安装 sing-box'}{s.singbox_has_update && <i className="srv-up" title={`可升级至 ${s.singbox_latest_version || ''}`}>↑</i>}</span>

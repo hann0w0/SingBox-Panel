@@ -14,14 +14,13 @@
   width: 680px;
   max-height: min(calc(88 * var(--dvh)), 840px);
   border-color: var(--inbound-line);
-  border-radius: 12px;
+  border-radius: var(--radius-lg);
   background: var(--inbound-bg);
   color: var(--inbound-ink);
 }
 
 .ui-modal.inbound-compact .ui-modal-header {
-  padding: 14px 48px 12px 20px;
-  border-bottom-color: var(--inbound-line);
+  padding: 22px 48px 0 24px;
 }
 
 .ui-modal.inbound-compact .ui-modal-title {
@@ -31,14 +30,17 @@
 }
 
 .ui-modal.inbound-compact .ui-modal-body {
-  padding: 12px 20px 14px;
+  padding: 16px 24px 24px;
   background: var(--inbound-bg);
 }
 
+.ui-modal.inbound-compact:has(.ui-modal-footer) .ui-modal-body {
+  padding-bottom: 0;
+}
+
 .ui-modal.inbound-compact .ui-modal-footer {
-  padding: 10px 20px;
-  border-top-color: var(--inbound-line);
-  background: var(--inbound-panel);
+  padding: 20px 24px;
+  background: transparent;
 }
 
 .ui-modal.inbound-compact [data-slot='dialog-close'] {
@@ -347,15 +349,15 @@
   }
 
   .ui-modal.inbound-compact .ui-modal-header {
-    padding: 12px 44px 10px 16px;
+    padding: 20px 44px 0 18px;
   }
 
   .ui-modal.inbound-compact .ui-modal-body {
-    padding: 10px 16px 12px;
+    padding: 14px 18px 20px;
   }
 
   .ui-modal.inbound-compact .ui-modal-footer {
-    padding: 9px 16px;
+    padding: 18px;
   }
 
   .inbound-compact .fm-grid[data-panel='inbound'] > .inbound-compact-type {

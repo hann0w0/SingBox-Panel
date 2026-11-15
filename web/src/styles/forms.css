@@ -3,7 +3,7 @@
 /* ---------- Groups ---------- */
 .fm-group { padding: 18px 0 4px; }
 .fm-group:first-child { padding-top: 6px; }
-.fm-group + .fm-group { border-top: 1px solid var(--console-border); }
+.fm-group + .fm-group { margin-top: 8px; }
 .fm-group-title { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; margin: 0 0 14px; font-size: 13px; font-weight: 600; line-height: 1.4; letter-spacing: -.1px; color: var(--console-ink); }
 .fm-group-title small { font-size: 12px; font-weight: 400; color: var(--console-faint); font-variant-numeric: tabular-nums; }
 
@@ -45,10 +45,10 @@
 
 /* ---------- Import preview ---------- */
 .fm-preview .fm-group-title { margin-bottom: 10px; }
-.fm-export-user { margin-bottom: 16px; padding-bottom: 16px; border-bottom: 1px solid var(--console-border); }
+.fm-export-user { margin-bottom: 16px; }
 .fm-export-user .ui-select { width: 100%; max-width: 320px; }
 .fm-preview .ui-table-wrapper { margin-bottom: 14px; }
-.fm-preview-final { display: flex; align-items: center; gap: 10px; padding: 14px 0 4px; border-top: 1px solid var(--console-border); color: var(--console-muted); font-size: 13px; }
+.fm-preview-final { display: flex; align-items: center; gap: 10px; padding: 14px 0 4px; color: var(--console-muted); font-size: 13px; }
 .fm-preview-skipped { margin-top: 12px; color: var(--console-warning); font-size: 12.5px; }
 .fm-preview-skipped ul { margin: 4px 0 0; padding-left: 18px; }
 
@@ -101,7 +101,7 @@
 .fm-modal .fm-group-fold > summary:hover { background: var(--console-surface); }
 .fm-modal .fm-group-fold > summary:focus-visible { outline: 2px solid var(--console-focus); outline-offset: -3px; }
 .fm-modal .fm-group-fold > summary small { margin-left: auto; }
-.fm-modal .fm-group-fold[open] > summary { border-bottom: 1px solid var(--console-border); }
+.fm-modal .fm-group-fold[open] > summary { box-shadow: inset 0 -1px var(--console-border); }
 .fm-modal .fm-group-fold > .fm-grid { padding: 20px 16px 0; }
 .fm-import-form > .ui-form-item:last-child { margin-bottom: 0; }
 .fm-import-hint { margin-top: 8px; color: var(--console-faint); font-size: 12px; }
@@ -135,6 +135,6 @@
 .fm-node-item-type { flex: none; color: var(--console-faint); font-size: 11px; text-transform: uppercase; }
 .fm-node-item-meta { color: var(--console-faint); font-size: 11px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .fm-import-preview { margin: 8px 0 20px; border: 1px solid var(--console-border); border-radius: var(--app-radius-pop); overflow: hidden; }
-.fm-import-preview h3 { display: flex; align-items: center; justify-content: space-between; margin: 0; padding: 12px 16px; border-bottom: 1px solid var(--console-border); font-size: 13px; font-weight: 500; }
+.fm-import-preview h3 { display: flex; align-items: center; justify-content: space-between; margin: 0; padding: 12px 16px 0; font-size: 13px; font-weight: 500; }
 .fm-import-preview .ui-kv { grid-template-columns: 90px minmax(0, 1fr); font-size: 13px; }
 .fm-import-preview .ui-kv dt, .fm-import-preview .ui-kv dd { padding: 10px 16px; }

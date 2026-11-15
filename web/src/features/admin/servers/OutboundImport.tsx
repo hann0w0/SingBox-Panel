@@ -183,7 +183,7 @@ export function OutboundImport({ serverId, mode, onClose, onSaved, onSavingChang
             ) : groups.map((group) => {
               const open = expandedGroups.has(group.label)
               return (
-                <div key={group.label} className="border-b last:border-b-0">
+                <div key={group.label}>
                   <button
                     type="button"
                     className="flex min-h-11 w-full items-center gap-2 px-3 text-left outline-none transition-colors hover:bg-muted/60 focus-visible:ring-[3px] focus-visible:ring-ring/50"

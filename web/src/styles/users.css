@@ -43,11 +43,11 @@
 
 /* ---------- Modals ---------- */
 .um-group { padding: 16px 0 4px; }
-.um-group + .um-group { margin-top: 12px; border-top: 1px solid var(--console-border); }
+.um-group + .um-group { margin-top: 20px; }
 .um-modal .ui-modal-body > .um-group:first-child { padding-top: 4px; }
 .um-group-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 12px; font-size: 12.5px; }
 .um-group-head h4, .um-form-group > h4 { margin: 0; font-size: 13px; font-weight: 600; color: var(--console-ink); }
-.um-form-group { margin-top: 4px; padding-top: 16px; border-top: 1px solid var(--console-border); }
+.um-form-group { margin-top: 12px; padding-top: 4px; }
 .um-form-group > h4 { margin-bottom: 12px; }
 .um-form-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 0 12px; }
 .um-switch-row { display: flex; gap: 32px; }
@@ -71,7 +71,7 @@
 .um-source-modal [data-slot='field-set'] > [data-slot='field-legend'] + * { clear: both; }
 .um-source-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 16px; }
 .um-source-address { display: grid; grid-template-columns: minmax(0, 1fr) 120px; gap: 16px; }
-.um-source-section { padding-top: 20px; border-top: 1px solid var(--console-border); }
+.um-source-section { padding-top: 4px; }
 .um-source-rule { gap: 12px; padding: 12px; border: 1px solid var(--console-border); border-radius: var(--app-radius-control); }
 .um-source-rule-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; color: var(--console-muted); font-size: 12px; }
 .um-source-rule-fields { display: grid; grid-template-columns: 132px minmax(0, 1fr) minmax(0, 1fr); gap: 12px; }
@@ -81,7 +81,7 @@
 .um-access-assign-modal .ui-modal-body { padding-top: 8px; }
 .um-access-modal-body { display: flex; flex-direction: column; border: 1px solid var(--console-border); border-radius: var(--app-radius); overflow: hidden; }
 .um-access-modal-group { flex: none; }
-.um-access-modal-group + .um-access-modal-group { border-top: 1px solid var(--console-border); }
+.um-access-modal-group + .um-access-modal-group { margin-top: 12px; }
 .um-access-modal-group-head { display: flex; align-items: center; gap: 10px; min-height: 44px; padding: 6px 14px 6px 8px; }
 .um-access-modal-group-head:hover { background: var(--console-surface); }
 .um-access-modal-group-head strong { min-width: 0; font-weight: 500; color: var(--console-ink); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
@@ -103,7 +103,7 @@
 
 .um-access-order-list { display: flex; flex-direction: column; max-height: min(calc(56 * var(--dvh)), 520px); overflow-y: auto; overscroll-behavior: contain; border: 1px solid var(--console-border); border-radius: var(--app-radius); }
 .um-access-order-item { position: relative; flex: none; display: grid; grid-template-columns: 28px 24px minmax(0, 1fr) minmax(130px, 200px) 36px 80px 60px; align-items: center; gap: 8px; min-height: 58px; padding: 6px 14px 6px 6px; background: var(--console-container); }
-.um-access-order-item + .um-access-order-item { border-top: 1px solid var(--console-border); }
+.um-access-order-item + .um-access-order-item { margin-top: 2px; }
 .um-access-order-item:hover { background: var(--console-surface); }
 .um-access-order-item.dragging { opacity: .45; }
 .um-access-order-item.sort-drop-before { box-shadow: inset 0 2px 0 var(--console-ink); }

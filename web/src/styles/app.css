@@ -126,8 +126,8 @@ a { color: inherit; }
   .ui-kv { grid-template-columns: 96px minmax(0, 1fr); }
   .ui-kv dt, .ui-kv dd { padding: 10px 14px; }
   :root .ui-modal { max-width: calc(100vw - 24px); }
-  :root .ui-modal .ui-modal-header { padding: 14px 48px 14px 18px; }
-  :root .ui-modal .ui-modal-footer { padding: 12px 18px; }
+  :root .ui-modal .ui-modal-header { padding: 20px 48px 0 18px; }
+  :root .ui-modal .ui-modal-footer { padding: 20px 18px; }
 }
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { animation-duration: .01ms !important; transition-duration: .01ms !important; }

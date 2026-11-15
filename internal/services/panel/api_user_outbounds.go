@@ -2,6 +2,7 @@ package panel
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"strings"
@@ -46,13 +47,15 @@ func (a *App) listUserInbounds(c *gin.Context) {
 		return
 	}
 	var servers []model.Server
-	if err := a.db.Select("id", "name").Where("id IN ?", normalizedIDs(u.ServerIDs)).Find(&servers).Error; err != nil {
+	if err := a.db.Select("id", "name", "config_mode", "raw_config").Where("id IN ?", normalizedIDs(u.ServerIDs)).Find(&servers).Error; err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
 	names := make(map[uint]string, len(servers))
 	for _, server := range servers {
-		names[server.ID] = server.Name
+		if server.EffectiveConfigMode() == model.ConfigModeManaged {
+			names[server.ID] = server.Name
+		}
 	}
 	var inbounds []model.Inbound
 	if err := a.db.Where("server_id IN ? AND enabled = ?", normalizedIDs(u.ServerIDs), true).Order("server_id, id").Find(&inbounds).Error; err != nil {
@@ -61,7 +64,7 @@ func (a *App) listUserInbounds(c *gin.Context) {
 	}
 	out := make([]UserInboundOption, 0, len(inbounds))
 	for _, inbound := range inbounds {
-		if !u.HasInbound(inbound.ServerID, inbound.ID) {
+		if _, managed := names[inbound.ServerID]; !managed || !u.HasInbound(inbound.ServerID, inbound.ID) {
 			continue
 		}
 		var st singbox.InboundSettings
@@ -464,26 +467,13 @@ func forwardNodeName(serverName, inboundTag, outboundTag, remark string) string 
 // createUserForward derives a separately selectable node with its own
 // credential. It leaves the original inbound node and its password untouched.
 func (a *App) createUserForward(c *gin.Context) {
-	var u model.User
-	if err := a.db.First(&u, currentUID(c)).Error; err != nil {
-		c.JSON(http.StatusNotFound, gin.H{"error": "user not found"})
-		return
-	}
-	if u.Role != model.RoleAdmin && !userActive(&u) {
-		c.JSON(http.StatusForbidden, gin.H{"error": "账号已停用或已到期"})
-		return
-	}
-	if !u.ForwardingEnabled {
-		c.JSON(http.StatusForbidden, gin.H{"error": "管理员尚未为用户开启转发权限"})
-		return
-	}
 	var req userForwardReq
 	if !bindJSON(c, &req) {
 		return
 	}
-	var outbound model.Outbound
-	if err := a.db.Where("id = ? AND owner_user_id = ? AND server_id = 0", req.OutboundID, u.ID).First(&outbound).Error; err != nil {
-		c.JSON(http.StatusNotFound, gin.H{"error": "专属出站不存在"})
+	var u model.User
+	if err := a.db.First(&u, currentUID(c)).Error; err != nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "user not found"})
 		return
 	}
 	if strings.TrimSpace(req.InboundTag) == "" {
@@ -503,18 +493,48 @@ func (a *App) createUserForward(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "入口节点不存在或未启用"})
 		return
 	}
+	unlockOperation := a.lockServerOperation(inbound.ServerID)
+	defer unlockOperation()
+	if !a.requireManagedMode(c, inbound.ServerID) {
+		return
+	}
+	a.userAccessMu.Lock()
+	if err := a.db.First(&u, currentUID(c)).Error; err != nil {
+		a.userAccessMu.Unlock()
+		c.JSON(http.StatusNotFound, gin.H{"error": "user not found"})
+		return
+	}
+	if !userActive(&u) || !u.ForwardingEnabled {
+		a.userAccessMu.Unlock()
+		c.JSON(http.StatusForbidden, gin.H{"error": "账号不可用或尚未开启转发权限"})
+		return
+	}
+	if err := a.db.Where("id = ? AND enabled = ?", inbound.ID, true).First(&inbound).Error; err != nil {
+		a.userAccessMu.Unlock()
+		c.JSON(http.StatusBadRequest, gin.H{"error": "入口节点不存在或未启用"})
+		return
+	}
 	if !u.HasInbound(inbound.ServerID, inbound.ID) {
+		a.userAccessMu.Unlock()
 		c.JSON(http.StatusForbidden, gin.H{"error": "没有该入口节点的访问权限"})
+		return
+	}
+	var outbound model.Outbound
+	if err := a.db.Where("id = ? AND owner_user_id = ? AND server_id = 0", req.OutboundID, u.ID).First(&outbound).Error; err != nil {
+		a.userAccessMu.Unlock()
+		c.JSON(http.StatusNotFound, gin.H{"error": "专属出站不存在"})
 		return
 	}
 	var st singbox.InboundSettings
 	if len(inbound.Settings) > 0 {
 		if err := json.Unmarshal(inbound.Settings, &st); err != nil {
+			a.userAccessMu.Unlock()
 			c.JSON(http.StatusBadRequest, gin.H{"error": "入口节点参数无效"})
 			return
 		}
 	}
 	if !st.UseMultiUser(string(inbound.Type)) {
+		a.userAccessMu.Unlock()
 		c.JSON(http.StatusBadRequest, gin.H{"error": "入口节点必须启用多用户模式，才能按用户分流"})
 		return
 	}
@@ -522,10 +542,12 @@ func (a *App) createUserForward(c *gin.Context) {
 	if err := a.db.Model(&model.UserForward{}).
 		Where("user_id = ? AND server_id = ? AND inbound_id = ? AND outbound_id = ?", u.ID, inbound.ServerID, inbound.ID, outbound.ID).
 		Count(&duplicate).Error; err != nil {
+		a.userAccessMu.Unlock()
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
 	if duplicate > 0 {
+		a.userAccessMu.Unlock()
 		c.JSON(http.StatusConflict, gin.H{"error": "该入口与出站的转发已存在"})
 		return
 	}
@@ -535,57 +557,51 @@ func (a *App) createUserForward(c *gin.Context) {
 	if req.Remark != nil {
 		forward.Remark = *req.Remark
 	}
-	if err := a.db.Create(&forward).Error; err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
-		return
-	}
-	if err := a.reconcileForwardRule(&forward, &u, &inbound, &outbound); err != nil {
-		_ = a.db.Delete(&forward).Error
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+	err := a.db.Transaction(func(tx *gorm.DB) error {
+		if err := tx.Create(&forward).Error; err != nil {
+			return err
+		}
+		return reconcileForwardRule(tx, &forward, &u, &inbound, &outbound)
+	})
+	a.userAccessMu.Unlock()
+	if err != nil {
+		status := http.StatusInternalServerError
+		if duplicateDatabaseError(err) {
+			status = http.StatusConflict
+		}
+		c.JSON(status, gin.H{"error": err.Error()})
 		return
 	}
 	a.applyConfigAndRespond(c, inbound.ServerID, gin.H{"forward": forward})
 }
 
 func (a *App) deleteUserForward(c *gin.Context) {
-	var u model.User
-	if err := a.db.First(&u, currentUID(c)).Error; err != nil {
-		c.JSON(http.StatusNotFound, gin.H{"error": "user not found"})
-		return
-	}
 	rid, ok := uintParam(c, "forwardID")
 	if !ok {
 		return
 	}
 	var forward model.UserForward
-	if err := a.db.Where("id = ? AND user_id = ?", rid, u.ID).First(&forward).Error; err != nil {
+	if err := a.db.Where("id = ? AND user_id = ?", rid, currentUID(c)).First(&forward).Error; err != nil {
 		c.JSON(http.StatusNotFound, gin.H{"error": "转发不存在"})
 		return
 	}
-	var outbound model.Outbound
-	if err := a.db.Select("id", "tag").First(&outbound, forward.OutboundID).Error; err != nil {
-		c.JSON(http.StatusNotFound, gin.H{"error": "转发不存在"})
-		return
-	}
-	if err := a.db.Delete(&forward).Error; err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
-		return
-	}
-	_ = a.db.Where("user_id = ? AND node_type = ? AND node_id = ?", u.ID, userNodeTypeForward, forward.ID).Delete(&model.UserNodeOrder{}).Error
-	var rules []model.RouteRule
-	if err := a.db.Where("server_id = ? AND outbound = ?", forward.ServerID, outbound.Tag).Find(&rules).Error; err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
-		return
-	}
-	for _, rule := range rules {
-		var match singbox.RuleInput
-		if len(rule.Match) > 0 && json.Unmarshal(rule.Match, &match) == nil &&
-			len(match.AuthUser) == 1 && match.AuthUser[0] == forwardTrafficName(&u, forward.ID) {
-			if err := a.db.Delete(&rule).Error; err != nil {
-				c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
-				return
-			}
+	unlockOperation := a.lockServerOperation(forward.ServerID)
+	defer unlockOperation()
+	a.userAccessMu.Lock()
+	err := a.db.Transaction(func(tx *gorm.DB) error {
+		if err := tx.Where("id = ? AND user_id = ?", rid, currentUID(c)).First(&forward).Error; err != nil {
+			return err
 		}
+		return deleteForwardState(tx, []model.UserForward{forward})
+	})
+	a.userAccessMu.Unlock()
+	if err != nil {
+		status := http.StatusInternalServerError
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			status = http.StatusNotFound
+		}
+		c.JSON(status, gin.H{"error": err.Error()})
+		return
 	}
 	a.applyConfigAndRespond(c, forward.ServerID, gin.H{"ok": true})
 }
@@ -593,7 +609,7 @@ func (a *App) deleteUserForward(c *gin.Context) {
 // reconcileForwardRule keeps the derived credential's route rule in sync with
 // a forward record. The rule matches only the derived identity and inbound;
 // the account's original identity keeps its existing route and password.
-func (a *App) reconcileForwardRule(forward *model.UserForward, user *model.User, inbound *model.Inbound, outbound *model.Outbound) error {
+func reconcileForwardRule(db *gorm.DB, forward *model.UserForward, user *model.User, inbound *model.Inbound, outbound *model.Outbound) error {
 	match, err := json.Marshal(singbox.RuleInput{
 		Action:   "route",
 		AuthUser: []string{forwardTrafficName(user, forward.ID)},
@@ -603,19 +619,56 @@ func (a *App) reconcileForwardRule(forward *model.UserForward, user *model.User,
 		return err
 	}
 	var rules []model.RouteRule
-	if err := a.db.Where("server_id = ? AND outbound = ?", forward.ServerID, outbound.Tag).Find(&rules).Error; err != nil {
+	if err := db.Where("server_id = ?", forward.ServerID).Find(&rules).Error; err != nil {
 		return err
 	}
 	for _, rule := range rules {
 		var existing singbox.RuleInput
 		if len(rule.Match) > 0 && json.Unmarshal(rule.Match, &existing) == nil &&
-			len(existing.AuthUser) == 1 && existing.AuthUser[0] == forwardTrafficName(user, forward.ID) {
-			return a.db.Model(&model.RouteRule{}).Where("id = ?", rule.ID).Update("match", model.JSONText(match)).Error
+			forwardRuleMatches(existing, *forward) {
+			return db.Model(&model.RouteRule{}).Where("id = ?", rule.ID).Updates(map[string]any{"match": model.JSONText(match), "outbound": outbound.Tag}).Error
 		}
 	}
-	return a.db.Create(&model.RouteRule{
+	return db.Create(&model.RouteRule{
 		ServerID: forward.ServerID, Outbound: outbound.Tag, Match: model.JSONText(match), Enabled: true,
 	}).Error
+}
+
+func forwardRuleMatches(match singbox.RuleInput, forward model.UserForward) bool {
+	return len(match.AuthUser) == 1 && strings.HasPrefix(match.AuthUser[0], fmt.Sprintf("%s%d:%d:", forwardTrafficNamePrefix, forward.UserID, forward.ID))
+}
+
+func deleteForwardState(tx *gorm.DB, forwards []model.UserForward) error {
+	if len(forwards) == 0 {
+		return nil
+	}
+	var serverIDs, forwardIDs []uint
+	for _, forward := range forwards {
+		serverIDs = append(serverIDs, forward.ServerID)
+		forwardIDs = append(forwardIDs, forward.ID)
+	}
+	var rules []model.RouteRule
+	if err := tx.Where("server_id IN ?", normalizedIDs(serverIDs)).Find(&rules).Error; err != nil {
+		return err
+	}
+	for _, rule := range rules {
+		var match singbox.RuleInput
+		if json.Unmarshal(rule.Match, &match) != nil {
+			continue
+		}
+		for _, forward := range forwards {
+			if rule.ServerID == forward.ServerID && forwardRuleMatches(match, forward) {
+				if err := tx.Delete(&rule).Error; err != nil {
+					return err
+				}
+				break
+			}
+		}
+	}
+	if err := deleteUserNodeOrderRefs(tx, userNodeTypeForward, forwardIDs); err != nil {
+		return err
+	}
+	return tx.Where("id IN ?", forwardIDs).Delete(&model.UserForward{}).Error
 }
 
 // createAdminUserOutbound creates a credential-only exit owned by one user.

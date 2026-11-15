@@ -532,30 +532,14 @@ func (a *App) inboundReferenced(db *gorm.DB, serverID uint, tag string) (bool, e
 	if err := db.Where("server_id = ?", serverID).Find(&forwards).Error; err != nil {
 		return false, err
 	}
-	forwardNames := make(map[string]bool, len(forwards))
-	if len(forwards) > 0 {
-		var users []model.User
-		userIDs := make([]uint, 0, len(forwards))
-		for _, forward := range forwards {
-			userIDs = append(userIDs, forward.UserID)
-		}
-		if err := db.Where("id IN ?", normalizedIDs(userIDs)).Find(&users).Error; err != nil {
-			return false, err
-		}
-		byID := make(map[uint]model.User, len(users))
-		for _, user := range users {
-			byID[user.ID] = user
-		}
-		for _, forward := range forwards {
-			if user, ok := byID[forward.UserID]; ok {
-				forwardNames[forwardTrafficName(&user, forward.ID)] = true
-			}
-		}
-	}
 	for _, row := range rows {
 		var rule singbox.RuleInput
 		if json.Unmarshal(row.Match, &rule) == nil {
-			if len(rule.AuthUser) == 1 && forwardNames[rule.AuthUser[0]] && len(rule.Inbound) == 1 && rule.Inbound[0] == tag {
+			derived := false
+			for _, forward := range forwards {
+				derived = derived || forwardRuleMatches(rule, forward)
+			}
+			if derived && len(rule.Inbound) == 1 && rule.Inbound[0] == tag {
 				continue
 			}
 			for _, value := range rule.Inbound {

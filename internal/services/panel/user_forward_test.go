@@ -225,6 +225,7 @@ func TestRevokingForwardingPermissionRemovesDerivedState(t *testing.T) {
 	outbound := model.Outbound{ServerID: 0, OwnerUserID: user.ID, Tag: "alice-home", Type: "vless", Settings: model.JSONText(`{"server":"home.example","server_port":443,"uuid":"11111111-2222-4333-8444-555555555555"}`)}
 	mustCreate(t, db, &outbound)
 	app := &App{db: db, orch: NewOrchestrator(db, NewHub(db))}
+	t.Cleanup(func() { waitForSubscriptionResetPush(t, app.orch) })
 	router := gin.New()
 	router.POST("/user/forwards", func(c *gin.Context) { c.Set("uid", user.ID) }, app.createUserForward)
 	router.PUT("/admin/users/:id", app.updateUser)

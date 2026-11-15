@@ -1,7 +1,6 @@
 package panel
 
 import (
-	"encoding/json"
 	"errors"
 	"fmt"
 	"net/http"
@@ -15,7 +14,6 @@ import (
 	"gorm.io/gorm"
 
 	"github.com/hann0w0/singbox-panel/internal/domain/model"
-	"github.com/hann0w0/singbox-panel/internal/domain/singbox"
 )
 
 var (
@@ -848,29 +846,8 @@ func (a *App) updateUser(c *gin.Context) {
 				}
 				for _, forward := range forwards {
 					forwardingServers = append(forwardingServers, forward.ServerID)
-					var outbound model.Outbound
-					if err := tx.Select("id", "tag").First(&outbound, forward.OutboundID).Error; err != nil {
-						continue
-					}
-					var rules []model.RouteRule
-					if err := tx.Where("server_id = ? AND outbound = ?", forward.ServerID, outbound.Tag).Find(&rules).Error; err != nil {
-						return err
-					}
-					for _, rule := range rules {
-						var match singbox.RuleInput
-						if len(rule.Match) > 0 && json.Unmarshal(rule.Match, &match) == nil &&
-							len(match.AuthUser) == 1 && match.AuthUser[0] == forwardTrafficName(&u, forward.ID) {
-							if err := tx.Delete(&rule).Error; err != nil {
-								return err
-							}
-						}
-					}
-					if err := tx.Where("user_id = ? AND node_type = ? AND node_id = ?", u.ID, userNodeTypeForward, forward.ID).
-						Delete(&model.UserNodeOrder{}).Error; err != nil {
-						return err
-					}
 				}
-				if err := tx.Where("user_id = ?", u.ID).Delete(&model.UserForward{}).Error; err != nil {
+				if err := deleteForwardState(tx, forwards); err != nil {
 					return err
 				}
 			}
@@ -946,28 +923,7 @@ func (a *App) deleteUser(c *gin.Context) {
 		for _, forward := range userForwards {
 			affectedServerIDs = append(affectedServerIDs, forward.ServerID)
 		}
-		for _, forward := range userForwards {
-			var outbound model.Outbound
-			if err := tx.Select("tag").First(&outbound, forward.OutboundID).Error; err != nil {
-				continue
-			}
-			var rules []model.RouteRule
-			if err := tx.Where("server_id = ? AND outbound = ?", forward.ServerID, outbound.Tag).Find(&rules).Error; err != nil {
-				return err
-			}
-			for _, rule := range rules {
-				var match singbox.RuleInput
-				if len(rule.Match) == 0 || json.Unmarshal(rule.Match, &match) != nil {
-					continue
-				}
-				if len(match.AuthUser) == 1 && match.AuthUser[0] == forwardTrafficName(&u, forward.ID) {
-					if err := tx.Delete(&rule).Error; err != nil {
-						return err
-					}
-				}
-			}
-		}
-		if err := tx.Where("user_id = ?", id).Delete(&model.UserForward{}).Error; err != nil {
+		if err := deleteForwardState(tx, userForwards); err != nil {
 			return err
 		}
 		// Private outbounds are part of the account, not a shared server

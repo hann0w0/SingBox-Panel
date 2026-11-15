@@ -612,25 +612,35 @@ func validateImportedPrivateRouting(db *gorm.DB, serverID uint, p *singbox.Parse
 	if err := json.Unmarshal(raw, &root); err != nil {
 		return err
 	}
-	var inspect func(any, *singbox.RuleInput, bool) error
-	inspect = func(value any, inherited *singbox.RuleInput, inverted bool) error {
+	var inspect func(any, bool) error
+	inspect = func(value any, inverted bool) error {
 		switch item := value.(type) {
 		case []any:
 			for _, child := range item {
-				if err := inspect(child, inherited, inverted); err != nil {
+				if err := inspect(child, inverted); err != nil {
 					return err
 				}
 			}
 		case map[string]any:
-			if invert, _ := item["invert"].(bool); invert {
+			if invert, exists := item["invert"]; exists && invert != false {
 				inverted = true
 			}
-			for _, key := range []string{"final", "default_outbound", "detour", "download_detour"} {
+			for _, key := range []string{"final", "default", "default_outbound", "detour", "download_detour"} {
 				if tag, _ := item[key].(string); privateByTag[tag].OwnerUserID != 0 {
 					return fmt.Errorf("专属出站 %q 不能用于 %s", tag, key)
 				}
 			}
+			if members, ok := item["outbounds"].([]any); ok {
+				for _, member := range members {
+					if tag, _ := member.(string); privateByTag[tag].OwnerUserID != 0 {
+						return fmt.Errorf("专属出站 %q 不能作为出站组成员", tag)
+					}
+				}
+			}
 			if tag, _ := item["outbound"].(string); privateByTag[tag].OwnerUserID != 0 {
+				if ruleType, exists := item["type"]; exists && ruleType != "default" {
+					return fmt.Errorf("专属出站 %q 只能由 default 类型的身份规则使用", tag)
+				}
 				if inverted {
 					return fmt.Errorf("专属出站 %q 的身份范围不能取反", tag)
 				}
@@ -648,23 +658,19 @@ func validateImportedPrivateRouting(db *gorm.DB, serverID uint, p *singbox.Parse
 						}
 					}
 				}
-				if _, ownScope := item["auth_user"]; !ownScope && inherited != nil {
-					match = *inherited
-				}
 				if err := validatePrivateRouteScope(db, serverID, privateByTag[tag], match); err != nil {
 					return err
 				}
-				inherited = &match
 			}
 			for _, child := range item {
-				if err := inspect(child, inherited, inverted); err != nil {
+				if err := inspect(child, inverted); err != nil {
 					return err
 				}
 			}
 		}
 		return nil
 	}
-	return inspect(root, nil, false)
+	return inspect(root, false)
 }
 
 func replaceImportedRules(tx *gorm.DB, serverID uint, parsed []singbox.ParsedRule) error {

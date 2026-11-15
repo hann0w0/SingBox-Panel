@@ -17,7 +17,7 @@ import {
   Copy,
   Trash2,
   Pencil,
-  GripVertical,
+  ChevronsUpDown,
   Plus,
   RotateCw,
 } from 'lucide-react'
@@ -900,7 +900,7 @@ export default function ServerDetail() {
                 onPointerUp={finishRulePointerDrag}
                 onPointerCancel={cancelRulePointerDrag}
               >
-                <GripVertical />
+                <ChevronsUpDown />
               </button>
             ),
           },

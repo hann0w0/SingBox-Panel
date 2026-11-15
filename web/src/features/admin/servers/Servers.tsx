@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState, type DragEvent, type PointerEvent as ReactPointerEvent } from 'react'
 import { Button, Dropdown, Form, Grid, Input, Modal, Segmented, Select, Typography, message } from '../../../ui'
-import { ChevronDown, Pencil, GripVertical, Ellipsis, Plus } from 'lucide-react'
+import { ChevronDown, Pencil, ChevronsUpDown, Ellipsis, Plus } from 'lucide-react'
 import { useNavigate } from 'react-router-dom'
 import { createServer, deleteServer, errMsg, getOverview, getServersMeta, installSingbox, isCanceledRequest, updateAllAgents, updateServer, updateServerOrder } from '../../../api'
 import type { Server } from '../../../types'
@@ -435,7 +435,7 @@ export default function Servers() {
                   pointerDropRef.current = null
                 }}
               >
-                <GripVertical />
+                <ChevronsUpDown />
               </span>
               <div className="srv-name">
                 <a href={`/admin/servers/${s.id}`} onClick={(e) => { e.preventDefault(); open_(s) }}>{s.name}</a>

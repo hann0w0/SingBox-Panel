@@ -20,7 +20,7 @@ import {
   ChevronDown,
   Pencil,
   Eye,
-  GripVertical,
+  ChevronsUpDown,
   Plus,
   RotateCw,
   ChevronRight,
@@ -738,7 +738,7 @@ export function UserAccessEditor({ userId, onStateChange }: {
                     onPointerCancel={cancelPointerDrag}
                     onLostPointerCapture={cancelPointerDrag}
                   >
-                    <GripVertical />
+                    <ChevronsUpDown />
                   </button>
                 <span className="um-access-order-number">{index + 1}</span>
                 <div className="um-access-order-content">

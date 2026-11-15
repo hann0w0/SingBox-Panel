@@ -1,6 +1,6 @@
 import React, { useMemo, useRef, useState } from 'react'
 import { useVirtualizer } from '@tanstack/react-virtual'
-import { ArrowDown, ArrowUp, ArrowUpDown } from 'lucide-react'
+import { ArrowDown, ArrowUp, ChevronsUpDown } from 'lucide-react'
 import {
   TableHeader,
   TableBody,
@@ -210,7 +210,7 @@ function TableRoot<T extends object>({
                             <ArrowDown size={12} />
                           )
                         ) : (
-                          <ArrowUpDown size={12} />
+                          <ChevronsUpDown size={12} />
                         )}
                       </button>
                     ) : (

@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { Collapsible } from 'radix-ui'
-import { ChevronDown, Clock3, History, MapPin } from 'lucide-react'
+import { ChevronDown, ChevronsUpDown, Clock3, History, MapPin } from 'lucide-react'
 import dayjs from 'dayjs'
 import { Button, Input, Segmented } from '../../../ui'
 import { DropdownMenu, DropdownMenuContent, DropdownMenuRadioGroup, DropdownMenuRadioItem, DropdownMenuTrigger } from '../../../components/ui/dropdown-menu'
@@ -147,7 +147,7 @@ export function SubscriptionFetchHistory({ userID }: { userID: number }) {
     <div className="sh-history-toolbar"><Segmented options={ranges} value={range} onChange={setRange} /></div>
     <div className="sh-history-search">
       <Input aria-label="筛选 IP、地区或客户端" placeholder="筛选 IP、地区或客户端" value={filter} onChange={event => { setFilter(event.target.value); setVisible(50) }} />
-      <div className="sh-sort-control"><span>排序</span><DropdownMenu><DropdownMenuTrigger asChild><Button type="text" size="small" className="sh-sort-trigger" aria-label={`排序：${sortOptions.find(option => option.value === sort)?.label}`}>{sortOptions.find(option => option.value === sort)?.label}<ChevronDown size={14} /></Button></DropdownMenuTrigger>
+      <div className="sh-sort-control"><span>排序</span><DropdownMenu><DropdownMenuTrigger asChild><Button type="text" size="small" className="sh-sort-trigger" aria-label={`排序：${sortOptions.find(option => option.value === sort)?.label}`}>{sortOptions.find(option => option.value === sort)?.label}<ChevronsUpDown size={14} /></Button></DropdownMenuTrigger>
         <DropdownMenuContent className="ui-dropdown ui-dropdown-menu sh-sort-menu" align="end" aria-label="排序方式"><DropdownMenuRadioGroup value={sort} onValueChange={value => { if (value === 'recent' || value === 'count') setSort(value) }}>{sortOptions.map(option => <DropdownMenuRadioItem key={option.value} value={option.value}>{option.label}</DropdownMenuRadioItem>)}</DropdownMenuRadioGroup></DropdownMenuContent>
       </DropdownMenu></div>
     </div>

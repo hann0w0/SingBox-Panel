@@ -119,6 +119,7 @@ export default function ServerDetail() {
   const [tabToolbar, setTabToolbar] = useState<HTMLDivElement | null>(null)
 
   const loadAbortRef = useRef<AbortController | null>(null)
+  const routeUsersAbortRef = useRef<AbortController | null>(null)
   const loadGenerationRef = useRef(0)
   const delayedLoadsRef = useRef<Set<number>>(new Set())
   const scopedControllersRef = useRef<Set<AbortController>>(new Set())
@@ -164,9 +165,12 @@ export default function ServerDetail() {
     const targetSID = sid
     if (currentSIDRef.current !== targetSID) return
     loadAbortRef.current?.abort()
+    routeUsersAbortRef.current?.abort()
     const controller = new AbortController()
+    const routeUsersController = new AbortController()
     const generation = ++loadGenerationRef.current
     loadAbortRef.current = controller
+    routeUsersAbortRef.current = routeUsersController
     const ruleOrderGeneration = ruleOrderGenerationRef.current
     setPageLoading(true)
     setLoadError(null)
@@ -185,7 +189,14 @@ export default function ServerDetail() {
         ruleOrderRef.current = ruleRows.value
         setRules(ruleRows.value)
       }
-      void listServerAuthUsers(targetSID, controller.signal).then(setRouteUsers).catch(() => {})
+      void listServerAuthUsers(targetSID, routeUsersController.signal)
+        .then((users) => {
+          if (!routeUsersController.signal.aborted && generation === loadGenerationRef.current && currentSIDRef.current === targetSID) setRouteUsers(users)
+        })
+        .catch(() => {})
+        .finally(() => {
+          if (routeUsersAbortRef.current === routeUsersController) routeUsersAbortRef.current = null
+        })
       const failures = [
         outboundRows.status === 'rejected' ? `出站：${errMsg(outboundRows.reason)}` : '',
         ruleRows.status === 'rejected' ? `规则：${errMsg(ruleRows.reason)}` : '',
@@ -314,6 +325,7 @@ export default function ServerDetail() {
     setServer(null)
     setOutbounds([])
     setRules([])
+    setRouteUsers([])
     ruleOrderRef.current = []
     setCfgOpen(false)
     setCfgText('')
@@ -338,6 +350,7 @@ export default function ServerDetail() {
     return () => {
       loadGenerationRef.current += 1
       loadAbortRef.current?.abort()
+      routeUsersAbortRef.current?.abort()
       for (const controller of scopedControllersRef.current) controller.abort()
       scopedControllersRef.current.clear()
       for (const timer of delayedLoadsRef.current) window.clearTimeout(timer)

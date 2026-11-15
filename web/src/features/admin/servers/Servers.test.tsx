@@ -19,6 +19,18 @@ const metadata = (servers: Server[]) => ({ servers, latest_agent_version: 'v1.0.
 
 beforeEach(() => {
   vi.resetAllMocks()
+  // jsdom only provides localStorage when node is given --localstorage-file,
+  // while CI has one. Install a real in-memory store so the address-visibility
+  // toggle cannot leak between tests in either environment.
+  const values = new Map<string, string>()
+  vi.stubGlobal('localStorage', {
+    getItem: (key: string) => values.get(key) ?? null,
+    setItem: (key: string, value: string) => { values.set(key, String(value)) },
+    removeItem: (key: string) => { values.delete(key) },
+    clear: () => values.clear(),
+    key: (index: number) => [...values.keys()][index] ?? null,
+    get length() { return values.size },
+  })
   vi.stubGlobal('matchMedia', () => ({ matches: false, addEventListener: vi.fn(), removeEventListener: vi.fn() }))
   vi.mocked(getServersMeta).mockResolvedValue(metadata([server]))
   vi.mocked(getOverview).mockResolvedValue({ users_total: 0 } as Awaited<ReturnType<typeof getOverview>>)
@@ -63,6 +75,7 @@ describe('server remarks', () => {
     expect(row?.textContent).toContain('2404:*:*:8604::fde')
     expect(row?.textContent).not.toContain('133.200.223.98')
     expect(row?.textContent).not.toContain('2404:7a80:df62:8604::fde')
+    fireEvent.click(screen.getByRole('button', { name: '显示服务器地址' }))
   })
 
   it('shows both real addresses even when an export domain is configured', async () => {

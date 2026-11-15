@@ -178,6 +178,7 @@ func (a *App) applyImportUnlocked(srv *model.Server, p *singbox.ParsedConfig, ra
 	a.userAccessMu.Lock()
 	defer a.userAccessMu.Unlock()
 	mode := importedConfigMode(p, raw)
+	preserveManagedUsers := false
 	var current model.Server
 	if err := a.db.First(&current, srv.ID).Error; err != nil {
 		return err
@@ -185,12 +186,32 @@ func (a *App) applyImportUnlocked(srv *model.Server, p *singbox.ParsedConfig, ra
 	current.ConfigMode = model.ConfigModeManaged
 	if generated, err := a.orch.BuildServerConfig(&current); err == nil && equivalentJSON(raw, generated) {
 		mode = model.ConfigModeManaged
+		preserveManagedUsers = true
 	}
 	return a.db.Transaction(func(tx *gorm.DB) error {
+		if err := validateImportedPrivateRouting(tx, srv.ID, p, raw); err != nil {
+			return err
+		}
 		if err := validateImportedInboundTrafficTags(tx, srv.ID, raw); err != nil {
 			return err
 		}
-		if err := syncImportedInbounds(tx, srv.ID, p.Inbounds); err != nil {
+		inbounds := append([]singbox.ParsedInbound(nil), p.Inbounds...)
+		if preserveManagedUsers {
+			var previous []model.Inbound
+			if err := tx.Where("server_id = ?", srv.ID).Find(&previous).Error; err != nil {
+				return err
+			}
+			for index := range inbounds {
+				for _, inbound := range previous {
+					var settings singbox.InboundSettings
+					if inbound.Tag == inbounds[index].Tag && string(inbound.Type) == inbounds[index].Type && json.Unmarshal(inbound.Settings, &settings) == nil && settings.UseMultiUser(string(inbound.Type)) {
+						inbounds[index].Settings.MultiUser = true
+						inbounds[index].Settings.SingleUser = false
+					}
+				}
+			}
+		}
+		if err := syncImportedInbounds(tx, srv.ID, inbounds); err != nil {
 			return err
 		}
 		if err := syncImportedOutbounds(tx, srv.ID, p.Outbounds); err != nil {
@@ -390,13 +411,6 @@ func syncImportedInbounds(tx *gorm.DB, serverID uint, parsed []singbox.ParsedInb
 	keepIDs := make([]uint, 0, len(parsed))
 	for _, in := range parsed {
 		row := byTag[in.Tag]
-		if row != nil {
-			var previous singbox.InboundSettings
-			if json.Unmarshal(row.Settings, &previous) == nil && previous.UseMultiUser(string(row.Type)) && row.Type == model.InboundType(in.Type) {
-				in.Settings.MultiUser = true
-				in.Settings.SingleUser = false
-			}
-		}
 		settings, err := json.Marshal(in.Settings)
 		if err != nil {
 			return err
@@ -529,6 +543,128 @@ func validateImportedPrivateOutbounds(db *gorm.DB, parsed []singbox.ParsedOutbou
 		}
 	}
 	return privateByTag, nil
+}
+
+func validatePrivateRouteScope(db *gorm.DB, serverID uint, outbound model.Outbound, match singbox.RuleInput) error {
+	if outbound.OwnerUserID == 0 {
+		return nil
+	}
+	if outbound.ServerID != 0 && outbound.ServerID != serverID {
+		return fmt.Errorf("专属出站 %q 绑定在其它入口服务器", outbound.Tag)
+	}
+	if len(match.AuthUser) != 1 {
+		return fmt.Errorf("专属出站 %q 必须限定为所属用户或对应转发的唯一身份", outbound.Tag)
+	}
+	var owner model.User
+	if err := db.Select("id", "email", "proxy_token", "sub_token").First(&owner, outbound.OwnerUserID).Error; err != nil {
+		return fmt.Errorf("读取专属出站 %q 所属用户失败: %w", outbound.Tag, err)
+	}
+	if match.AuthUser[0] == proxyTrafficName(&owner) {
+		return nil
+	}
+	var forwards []model.UserForward
+	if err := db.Where("user_id = ? AND outbound_id = ? AND server_id = ?", owner.ID, outbound.ID, serverID).Find(&forwards).Error; err != nil {
+		return err
+	}
+	for _, forward := range forwards {
+		if match.AuthUser[0] != forwardTrafficName(&owner, forward.ID) || len(match.Inbound) != 1 {
+			continue
+		}
+		var inbound model.Inbound
+		if err := db.Where("id = ? AND server_id = ?", forward.InboundID, serverID).First(&inbound).Error; err != nil {
+			if errors.Is(err, gorm.ErrRecordNotFound) {
+				continue
+			}
+			return err
+		}
+		if match.Inbound[0] == inbound.Tag {
+			return nil
+		}
+	}
+	return fmt.Errorf("专属出站 %q 只能由所属用户或对应转发的身份规则使用", outbound.Tag)
+}
+
+func validateImportedPrivateRouting(db *gorm.DB, serverID uint, p *singbox.ParsedConfig, raw []byte) error {
+	var private []model.Outbound
+	if err := db.Where("owner_user_id <> 0").Find(&private).Error; err != nil {
+		return err
+	}
+	privateByTag := make(map[string]model.Outbound, len(private))
+	for _, outbound := range private {
+		privateByTag[outbound.Tag] = outbound
+	}
+	if _, exists := privateByTag[p.Final]; exists {
+		return fmt.Errorf("专属出站 %q 不能作为默认出站", p.Final)
+	}
+	for _, rule := range p.Rules {
+		if outbound, exists := privateByTag[rule.Outbound]; exists {
+			if err := validatePrivateRouteScope(db, serverID, outbound, rule.Match); err != nil {
+				return err
+			}
+		}
+	}
+	for _, ruleSet := range p.RuleSets {
+		if _, exists := privateByTag[ruleSet.DownloadDetour]; exists {
+			return fmt.Errorf("专属出站 %q 不能用于规则集下载", ruleSet.DownloadDetour)
+		}
+	}
+	var root map[string]any
+	if err := json.Unmarshal(raw, &root); err != nil {
+		return err
+	}
+	var inspect func(any, *singbox.RuleInput, bool) error
+	inspect = func(value any, inherited *singbox.RuleInput, inverted bool) error {
+		switch item := value.(type) {
+		case []any:
+			for _, child := range item {
+				if err := inspect(child, inherited, inverted); err != nil {
+					return err
+				}
+			}
+		case map[string]any:
+			if invert, _ := item["invert"].(bool); invert {
+				inverted = true
+			}
+			for _, key := range []string{"final", "default_outbound", "detour", "download_detour"} {
+				if tag, _ := item[key].(string); privateByTag[tag].OwnerUserID != 0 {
+					return fmt.Errorf("专属出站 %q 不能用于 %s", tag, key)
+				}
+			}
+			if tag, _ := item["outbound"].(string); privateByTag[tag].OwnerUserID != 0 {
+				if inverted {
+					return fmt.Errorf("专属出站 %q 的身份范围不能取反", tag)
+				}
+				var match singbox.RuleInput
+				for key, field := range map[string]*[]string{"auth_user": &match.AuthUser, "inbound": &match.Inbound} {
+					if text, ok := item[key].(string); ok {
+						*field = []string{text}
+					} else if values, exists := item[key]; exists {
+						encoded, err := json.Marshal(values)
+						if err != nil {
+							return err
+						}
+						if err := json.Unmarshal(encoded, field); err != nil {
+							return err
+						}
+					}
+				}
+				if _, ownScope := item["auth_user"]; !ownScope && inherited != nil {
+					match = *inherited
+				}
+				if err := validatePrivateRouteScope(db, serverID, privateByTag[tag], match); err != nil {
+					return err
+				}
+				inherited = &match
+			}
+			for _, child := range item {
+				if err := inspect(child, inherited, inverted); err != nil {
+					return err
+				}
+			}
+		}
+		return nil
+	}
+	return inspect(root, nil, false)
 }
 
 func replaceImportedRules(tx *gorm.DB, serverID uint, parsed []singbox.ParsedRule) error {

@@ -90,3 +90,24 @@ func TestRawApplyRejectsPrivateTagConflictBeforeAgentCommand(t *testing.T) {
 		t.Fatal("rejected apply changed config mode")
 	}
 }
+
+func TestImportExplicitSingleCredentialDoesNotRestoreMultiUserMode(t *testing.T) {
+	fixture := newForwardFixture(t)
+	raw, err := singbox.BuildServerConfig(singbox.ServerConfigInput{Inbounds: []singbox.InboundInput{{Tag: fixture.inbound.Tag, Type: "vless", ListenPort: 443, Settings: singbox.InboundSettings{SingleUser: true, UUID: "11111111-2222-4333-8444-555555555555"}}}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	parsed, err := singbox.ParseServerConfig(raw)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := fixture.app.applyImport(&fixture.server, parsed, raw); err != nil {
+		t.Fatal(err)
+	}
+	fixture.db.First(&fixture.inbound, fixture.inbound.ID)
+	var settings singbox.InboundSettings
+	json.Unmarshal(fixture.inbound.Settings, &settings)
+	if settings.MultiUser || !settings.SingleUser || settings.UUID != "11111111-2222-4333-8444-555555555555" {
+		t.Fatalf("imported credential overwritten: %+v", settings)
+	}
+}

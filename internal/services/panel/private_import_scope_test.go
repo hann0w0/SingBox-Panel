@@ -1,0 +1,195 @@
+package panel
+
+import (
+	"encoding/json"
+	"strings"
+	"testing"
+
+	"github.com/hann0w0/singbox-panel/internal/domain/model"
+	"github.com/hann0w0/singbox-panel/internal/domain/singbox"
+)
+
+func TestPrivateRouteScope(t *testing.T) {
+	fixture := newForwardFixture(t)
+	forward := fixture.create(t)
+	foreign := model.User{Email: "bob", Enabled: true, ProxyToken: "bob-seed"}
+	mustCreate(t, fixture.db, &foreign)
+	staleOwner := fixture.user
+	staleOwner.ProxyToken = "previous-seed"
+	otherOutbound := fixture.outbound
+	otherOutbound.ID = 0
+	otherOutbound.Tag = "other-private"
+	mustCreate(t, fixture.db, &otherOutbound)
+	foreignForward := model.UserForward{UserID: foreign.ID, ServerID: fixture.server.ID, InboundID: fixture.inbound.ID, OutboundID: fixture.outbound.ID}
+	mustCreate(t, fixture.db, &foreignForward)
+	for _, test := range []struct {
+		name     string
+		serverID uint
+		outbound model.Outbound
+		match    singbox.RuleInput
+		allowed  bool
+	}{
+		{name: "owner account without inbound", match: singbox.RuleInput{AuthUser: []string{proxyTrafficName(&fixture.user)}}, allowed: true},
+		{name: "corresponding forward", match: singbox.RuleInput{AuthUser: []string{forwardTrafficName(&fixture.user, forward.ID)}, Inbound: []string{fixture.inbound.Tag}}, allowed: true},
+		{name: "global", match: singbox.RuleInput{}},
+		{name: "foreign account", match: singbox.RuleInput{AuthUser: []string{proxyTrafficName(&foreign)}}},
+		{name: "multiple accounts", match: singbox.RuleInput{AuthUser: []string{proxyTrafficName(&fixture.user), proxyTrafficName(&foreign)}}},
+		{name: "stale owner", match: singbox.RuleInput{AuthUser: []string{proxyTrafficName(&staleOwner)}}},
+		{name: "stale forward", match: singbox.RuleInput{AuthUser: []string{forwardTrafficName(&staleOwner, forward.ID)}, Inbound: []string{fixture.inbound.Tag}}},
+		{name: "missing forward inbound", match: singbox.RuleInput{AuthUser: []string{forwardTrafficName(&fixture.user, forward.ID)}}},
+		{name: "wrong forward inbound", match: singbox.RuleInput{AuthUser: []string{forwardTrafficName(&fixture.user, forward.ID)}, Inbound: []string{"other-in"}}},
+		{name: "multiple forward inbounds", match: singbox.RuleInput{AuthUser: []string{forwardTrafficName(&fixture.user, forward.ID)}, Inbound: []string{fixture.inbound.Tag, "other-in"}}},
+		{name: "wrong server", serverID: fixture.server.ID + 1, match: singbox.RuleInput{AuthUser: []string{forwardTrafficName(&fixture.user, forward.ID)}, Inbound: []string{fixture.inbound.Tag}}},
+		{name: "wrong outbound", outbound: otherOutbound, match: singbox.RuleInput{AuthUser: []string{forwardTrafficName(&fixture.user, forward.ID)}, Inbound: []string{fixture.inbound.Tag}}},
+		{name: "forward owned by foreign account", match: singbox.RuleInput{AuthUser: []string{forwardTrafficName(&foreign, foreignForward.ID)}, Inbound: []string{fixture.inbound.Tag}}},
+		{name: "nonexistent forward", match: singbox.RuleInput{AuthUser: []string{forwardTrafficName(&fixture.user, forward.ID+100)}, Inbound: []string{fixture.inbound.Tag}}},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			serverID := test.serverID
+			if serverID == 0 {
+				serverID = fixture.server.ID
+			}
+			outbound := test.outbound
+			if outbound.ID == 0 {
+				outbound = fixture.outbound
+			}
+			err := validatePrivateRouteScope(fixture.db, serverID, outbound, test.match)
+			if (err == nil) != test.allowed {
+				t.Fatalf("allowed=%v error=%v", test.allowed, err)
+			}
+		})
+	}
+}
+
+func TestImportedPrivateRoutingRawScopes(t *testing.T) {
+	fixture := newForwardFixture(t)
+	forward := fixture.create(t)
+	owner := proxyTrafficName(&fixture.user)
+	identity := forwardTrafficName(&fixture.user, forward.ID)
+	for _, test := range []struct {
+		name    string
+		route   map[string]any
+		extra   map[string]any
+		allowed bool
+	}{
+		{name: "owner array", route: map[string]any{"rules": []any{map[string]any{"outbound": fixture.outbound.Tag, "auth_user": []string{owner}}}}, allowed: true},
+		{name: "owner scalar", route: map[string]any{"rules": []any{map[string]any{"outbound": fixture.outbound.Tag, "auth_user": owner}}}, allowed: true},
+		{name: "forward scalar", route: map[string]any{"rules": []any{map[string]any{"outbound": fixture.outbound.Tag, "auth_user": identity, "inbound": fixture.inbound.Tag}}}, allowed: true},
+		{name: "global hidden from parsed config", route: map[string]any{"rules": []any{map[string]any{"outbound": fixture.outbound.Tag}}}},
+		{name: "foreign identity", route: map[string]any{"rules": []any{map[string]any{"outbound": fixture.outbound.Tag, "auth_user": "foreign"}}}},
+		{name: "private final hidden by parser fallback", route: map[string]any{"final": fixture.outbound.Tag}},
+		{name: "private default", route: map[string]any{"default_outbound": fixture.outbound.Tag}},
+		{name: "legacy rule set detour", route: map[string]any{"rule_set": []any{map[string]any{"type": "remote", "tag": "rules", "download_detour": fixture.outbound.Tag}}}},
+		{name: "http client detour", extra: map[string]any{"http_clients": []any{map[string]any{"tag": "rules-client", "detour": fixture.outbound.Tag}}}},
+		{name: "nested unscoped logical", route: map[string]any{"rules": []any{map[string]any{"type": "logical", "mode": "or", "rules": []any{map[string]any{"outbound": fixture.outbound.Tag}}}}}},
+		{name: "nested foreign logical", route: map[string]any{"rules": []any{map[string]any{"type": "logical", "mode": "and", "rules": []any{map[string]any{"outbound": fixture.outbound.Tag, "auth_user": "foreign"}}}}}},
+		{name: "inverted owner", route: map[string]any{"rules": []any{map[string]any{"outbound": fixture.outbound.Tag, "auth_user": owner, "invert": true}}}},
+		{name: "inverted ancestor", route: map[string]any{"rules": []any{map[string]any{"type": "logical", "invert": true, "rules": []any{map[string]any{"outbound": fixture.outbound.Tag, "auth_user": owner}}}}}},
+		{name: "nested explicit owner", route: map[string]any{"rules": []any{map[string]any{"type": "logical", "mode": "and", "rules": []any{map[string]any{"outbound": fixture.outbound.Tag, "auth_user": owner}}}}}, allowed: true},
+		{name: "nested inherited verified owner", route: map[string]any{"rules": []any{map[string]any{"type": "logical", "mode": "and", "outbound": fixture.outbound.Tag, "auth_user": owner, "rules": []any{map[string]any{"outbound": fixture.outbound.Tag}}}}}, allowed: true},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			root := map[string]any{"route": test.route}
+			for key, value := range test.extra {
+				root[key] = value
+			}
+			raw, err := json.Marshal(root)
+			if err != nil {
+				t.Fatal(err)
+			}
+			parsed, err := singbox.ParseServerConfig(raw)
+			if err != nil {
+				t.Fatal(err)
+			}
+			err = validateImportedPrivateRouting(fixture.db, fixture.server.ID, parsed, raw)
+			if (err == nil) != test.allowed {
+				t.Fatalf("allowed=%v error=%v raw=%s", test.allowed, err, raw)
+			}
+		})
+	}
+}
+
+func TestImportedPrivateRoutingParsedScopes(t *testing.T) {
+	fixture := newForwardFixture(t)
+	for _, test := range []struct {
+		name   string
+		parsed singbox.ParsedConfig
+	}{
+		{name: "unscoped rule", parsed: singbox.ParsedConfig{Rules: []singbox.ParsedRule{{Outbound: fixture.outbound.Tag}}}},
+		{name: "private final", parsed: singbox.ParsedConfig{Final: fixture.outbound.Tag}},
+		{name: "private download detour", parsed: singbox.ParsedConfig{RuleSets: []singbox.RuleSetInput{{Tag: "rules", DownloadDetour: fixture.outbound.Tag}}}},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			if err := validateImportedPrivateRouting(fixture.db, fixture.server.ID, &test.parsed, []byte(`{}`)); err == nil {
+				t.Fatal("private routing without owner scope was accepted")
+			}
+		})
+	}
+}
+
+func TestPrivateImportScopeFailurePreservesExistingData(t *testing.T) {
+	fixture := newForwardFixture(t)
+	forward := fixture.create(t)
+	mustCreate(t, fixture.db, &model.UserNodeOrder{UserID: fixture.user.ID, NodeType: userNodeTypeForward, NodeID: forward.ID})
+	var previous model.Server
+	if err := fixture.db.First(&previous, fixture.server.ID).Error; err != nil {
+		t.Fatal(err)
+	}
+	raw := []byte(`{"outbounds":[{"type":"vless","tag":"alice-home","server":"home.example","server_port":443,"uuid":"11111111-2222-4333-8444-555555555555"}],"route":{"rules":[{"outbound":"alice-home"}]}}`)
+	parsed, err := singbox.ParseServerConfig(raw)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := validateImportedPrivateOutbounds(fixture.db, parsed.Outbounds); err != nil {
+		t.Fatalf("credential validation unexpectedly failed: %v", err)
+	}
+	if err := fixture.app.applyImport(&fixture.server, parsed, raw); err == nil || !strings.Contains(err.Error(), "专属出站") {
+		t.Fatalf("unsafe import error=%v", err)
+	}
+	for _, row := range []any{&model.Inbound{}, &model.Outbound{}, &model.UserForward{}, &model.RouteRule{}, &model.UserNodeOrder{}} {
+		var count int64
+		if err := fixture.db.Model(row).Count(&count).Error; err != nil || count != 1 {
+			t.Fatalf("failed import changed %T: count=%d error=%v", row, count, err)
+		}
+	}
+	var server model.Server
+	if err := fixture.db.First(&server, fixture.server.ID).Error; err != nil {
+		t.Fatal(err)
+	}
+	if server.ConfigMode != previous.ConfigMode || string(server.RawConfig) != string(previous.RawConfig) {
+		t.Fatal("failed import changed server source of truth")
+	}
+}
+
+func TestPrivateImportOwnerRouteWithoutInbound(t *testing.T) {
+	fixture := newForwardFixture(t)
+	raw, err := json.Marshal(map[string]any{
+		"outbounds": []any{map[string]any{"type": "vless", "tag": fixture.outbound.Tag, "server": "home.example", "server_port": 443, "uuid": "11111111-2222-4333-8444-555555555555"}},
+		"route":     map[string]any{"rules": []any{map[string]any{"outbound": fixture.outbound.Tag, "auth_user": []string{proxyTrafficName(&fixture.user)}}}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	parsed, err := singbox.ParseServerConfig(raw)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := fixture.app.applyImport(&fixture.server, parsed, raw); err != nil {
+		t.Fatalf("owner import rejected: %v", err)
+	}
+	var rule model.RouteRule
+	if err := fixture.db.Where("server_id = ? AND outbound = ?", fixture.server.ID, fixture.outbound.Tag).First(&rule).Error; err != nil {
+		t.Fatal(err)
+	}
+	var match singbox.RuleInput
+	if err := json.Unmarshal(rule.Match, &match); err != nil {
+		t.Fatal(err)
+	}
+	if len(match.AuthUser) != 1 || match.AuthUser[0] != proxyTrafficName(&fixture.user) || len(match.Inbound) != 0 {
+		t.Fatalf("owner scope changed: %+v", match)
+	}
+	var shared int64
+	if err := fixture.db.Model(&model.Outbound{}).Where("owner_user_id = 0").Count(&shared).Error; err != nil || shared != 0 {
+		t.Fatalf("private outbound copied: count=%d error=%v", shared, err)
+	}
+}

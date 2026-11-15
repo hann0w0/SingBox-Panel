@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { Link, useNavigate } from 'react-router-dom'
 import { Table } from '../../../ui'
 import type { ColumnsType } from '../../../ui'
@@ -21,7 +21,29 @@ export default function Users() {
   const [, setNodesError] = useState<string | null>(null)
   const userLoadRef = useRef<{ generation: number; controller: AbortController | null }>({ generation: 0, controller: null })
   const nodeLoadRef = useRef<{ generation: number; controller: AbortController | null }>({ generation: 0, controller: null })
-  const serverNames = (u: User) => (u.server_ids ?? []).map((id) => servers.find((s) => s.id === id)?.name ?? `#${id}`)
+  const serverNamesByUser = useMemo(() => {
+    const names = new Map(servers.map((server) => [server.id, server.name]))
+    return new Map(users.map((user) => [user.id, (user.server_ids ?? []).map((id) => names.get(id) ?? `#${id}`)]))
+  }, [users, servers])
+  const externalGroupsByUser = useMemo(() => {
+    const shared = new Map<string, number>()
+    const adjustments = new Map<number, Map<string, number>>()
+    for (const node of nodes) {
+      if (!node.enabled) continue
+      const group = node.group || '未分组'
+      if (node.all_users) shared.set(group, (shared.get(group) ?? 0) + 1)
+      for (const userID of new Set(node.all_users ? node.excluded_user_ids : node.user_ids)) {
+        const counts = adjustments.get(userID) ?? new Map<string, number>()
+        counts.set(group, (counts.get(group) ?? 0) + (node.all_users ? -1 : 1))
+        adjustments.set(userID, counts)
+      }
+    }
+    return new Map(users.map((user) => {
+      const counts = new Map(shared)
+      for (const [group, count] of adjustments.get(user.id) ?? []) counts.set(group, (counts.get(group) ?? 0) + count)
+      return [user.id, [...counts.entries()].filter(([, count]) => count > 0).sort((a, b) => b[1] - a[1])]
+    }))
+  }, [users, nodes])
 
   const load = () => {
     userLoadRef.current.controller?.abort()
@@ -92,19 +114,6 @@ export default function Users() {
     return () => controller.abort()
   }, [])
 
-  // A custom node is visible to a user when it targets everyone (minus
-  // exclusions) or lists the user explicitly. Mirrors model.CustomNode.HasUser.
-  const nodeVisible = (node: CustomNode, userID: number) =>
-    node.enabled && (node.all_users ? !node.excluded_user_ids?.includes(userID) : node.user_ids?.includes(userID))
-  const externalGroups = (u: User) => {
-    const counts = new Map<string, number>()
-    for (const node of nodes) {
-      if (!nodeVisible(node, u.id)) continue
-      const key = node.group || '未分组'
-      counts.set(key, (counts.get(key) ?? 0) + 1)
-    }
-    return [...counts.entries()].sort((a, b) => b[1] - a[1])
-  }
   const lastActive = (u: User) => {
     const login = u.last_login_at ? new Date(u.last_login_at).getTime() : 0
     const sub = u.last_sub_at ? new Date(u.last_sub_at).getTime() : 0
@@ -132,8 +141,8 @@ export default function Users() {
       render: (_, u) => {
         // Panel nodes by server, external nodes by group; no per-node detail.
         const chips = [
-          ...serverNames(u).map((name) => ({ key: `s-${name}`, label: name, external: false })),
-          ...externalGroups(u).map(([group]) => ({ key: `g-${group}`, label: group, external: true })),
+          ...(serverNamesByUser.get(u.id) ?? []).map((name) => ({ key: `s-${name}`, label: name, external: false })),
+          ...(externalGroupsByUser.get(u.id) ?? []).map(([group]) => ({ key: `g-${group}`, label: group, external: true })),
         ]
         if (!chips.length) return <span className="faint">未分配</span>
         const shown = chips.slice(0, 3)

@@ -52,7 +52,7 @@ import { SHADOWSOCKS_METHODS } from '../../../util'
 import { RequestState } from '../../../components/RequestState'
 import { buildCustomNodeParams } from '../../../customNodeForm'
 import { Pills, Status } from '../../../ui/Page'
-import { Field, FieldContent, FieldDescription, FieldGroup, FieldLabel, FieldLegend, FieldSet } from '@/components/ui/field'
+import { Field, FieldGroup, FieldLabel, FieldLegend, FieldSet } from '@/components/ui/field'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import '../../../styles/users.css'
 import { MODAL_MD } from '../../../ui/modal'
@@ -1140,7 +1140,7 @@ export function CustomNodesPanel({ nodes, loading, error, onNodesChange }: {
     try {
       const v = await nodeForm.validateFields()
       const body: Record<string, unknown> = {
-      name: v.name,
+      name: editingNode?.name,
       group: typeof v.group === 'string' ? v.group.trim() : '',
       // 归属在「节点分配」里统一管理：新增默认不分配给任何用户，
       // 管理员在节点分配弹窗里勾选后才对指定用户可见；编辑保持原受众。
@@ -1524,8 +1524,7 @@ export function CustomNodesPanel({ nodes, loading, error, onNodesChange }: {
       >
         <Form form={subscriptionForm} fieldLayout onFinish={saveSubscription}>
           <FieldGroup>
-          <FieldSet>
-          <FieldLegend>基本信息</FieldLegend>
+          <FieldGroup>
           <FieldGroup className="um-source-grid">
           <Form.Item name="name" label="名称" rules={[{ required: true, whitespace: true, message: '请输入订阅名称' }]}>
             <Input />
@@ -1541,13 +1540,12 @@ export function CustomNodesPanel({ nodes, loading, error, onNodesChange }: {
           <Form.Item name="url" label="订阅链接" rules={[{ required: true, whitespace: true, message: '请输入 HTTP(S) 订阅链接' }]}>
             <Input.TextArea rows={2} spellCheck={false} />
           </Form.Item>
-          </FieldSet>
+          </FieldGroup>
           <FieldSet className="um-source-section">
             <FieldLegend>处理规则</FieldLegend>
             <Form.List name="name_rewrite_rules">
               {(fields, { add, remove, move }) => (
                 <FieldGroup className="gap-3">
-                  {fields.length === 0 && <FieldDescription>按顺序重命名或筛选节点，可选。</FieldDescription>}
                   {fields.map((field, index) => {
                     const action = subscriptionRules?.[field.name]?.action || 'rename'
                     return <FieldSet className="um-source-rule" key={field.key}>
@@ -1599,10 +1597,7 @@ export function CustomNodesPanel({ nodes, loading, error, onNodesChange }: {
           </FieldSet>
           <Field className="um-source-section" orientation="horizontal">
             <Form.Item name="auto_update" valuePropName="checked" noStyle><Switch /></Form.Item>
-            <FieldContent>
-              <FieldLabel htmlFor={`${subscriptionForm._id}-auto_update`}>自动更新</FieldLabel>
-              <FieldDescription>每 {editingSubscription?.update_interval_minutes ?? 60} 分钟同步一次。</FieldDescription>
-            </FieldContent>
+            <FieldLabel htmlFor={`${subscriptionForm._id}-auto_update`}>自动更新</FieldLabel>
           </Field>
           </FieldGroup>
         </Form>
@@ -1660,7 +1655,7 @@ export function CustomNodesPanel({ nodes, loading, error, onNodesChange }: {
               <TabsTrigger value="uri">URI 导入</TabsTrigger>
             </TabsList>
           <TabsContent value="uri" className="mt-5">
-          <Form.Item name="link" label="URI 链接" extra="粘贴节点分享链接，保存时自动解析连接参数。" rules={[{ required: true, whitespace: true, message: '请粘贴节点 URI 链接' }]}>
+          <Form.Item name="link" label="URI 链接" rules={[{ required: true, whitespace: true, message: '请粘贴节点 URI 链接' }]}>
             <Input.TextArea
               rows={3}
               spellCheck={false}
@@ -1937,17 +1932,9 @@ export function CustomNodesPanel({ nodes, loading, error, onNodesChange }: {
             </FieldGroup>
           </TabsContent>
           </Tabs>
-          <FieldSet className="um-source-section">
-            <FieldLegend>节点信息</FieldLegend>
-            <FieldGroup className="um-source-grid">
-            <Form.Item name="name" label="显示名称">
-              <Input />
-            </Form.Item>
-            <Form.Item name="group" label="分组">
-              <AutoComplete options={groupOptions} allowClear filterOption={(input, option) => (option?.value ?? '').toLowerCase().includes(input.toLowerCase())} />
-            </Form.Item>
-            </FieldGroup>
-          </FieldSet>
+          <Form.Item name="group" label="分组">
+            <AutoComplete options={groupOptions} allowClear filterOption={(input, option) => (option?.value ?? '').toLowerCase().includes(input.toLowerCase())} />
+          </Form.Item>
           </FieldGroup>
         </Form>
       </Modal>

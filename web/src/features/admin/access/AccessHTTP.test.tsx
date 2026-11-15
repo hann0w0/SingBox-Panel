@@ -170,7 +170,7 @@ describe('external HTTP and SOCKS proxy forms', () => {
     fireEvent.click(screen.getByRole('button', { name: '保存' }))
     await waitFor(() => expect(updateCustomNode).toHaveBeenCalledOnce())
     expect(vi.mocked(updateCustomNode).mock.calls[0]).toEqual([1, expect.objectContaining({
-      protocol: 'http', user_ids: [2], params: expect.objectContaining({ ...params, tls: secure ? 'tls' : 'none' }),
+      name: node.name, protocol: 'http', user_ids: [2], params: expect.objectContaining({ ...params, tls: secure ? 'tls' : 'none' }),
     })])
   })
 })
@@ -195,8 +195,8 @@ describe('新增节点 dialog', () => {
     fireEvent.mouseDown(screen.getByRole('tab', { name: 'URI 导入' }), { button: 0, ctrlKey: false })
     const link = 'socks5://uri.example.com:1080#Imported'
     fireEvent.change(screen.getByLabelText(/^URI 链接/), { target: { value: link } })
-    fireEvent.change(screen.getByLabelText('显示名称'), { target: { value: '自定义名称' } })
-    expect(await saveCreate()).toMatchObject({ link, name: '自定义名称', protocol: '', address: '', params: null })
+    expect(screen.queryByLabelText('显示名称')).toBeNull()
+    expect(await saveCreate()).toMatchObject({ link, protocol: '', address: '', params: null })
   })
 
   it('keeps the group suggestions closed until the field is clicked', async () => {

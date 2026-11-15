@@ -13,7 +13,7 @@
 .srv-name { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
 .srv-name a { color: var(--console-ink); font-weight: 500; text-decoration: none; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .srv-name a:hover { text-decoration: underline; text-underline-offset: 3px; }
-.srv-name .mono { color: var(--console-faint); font-size: 12px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.srv-address { color: var(--console-faint); font-size: 12px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .srv-remark { min-width: 0; color: var(--console-muted); font-size: 12px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .srv-version { display: flex; flex-direction: column; gap: 2px; font-size: 13px; min-width: 0; }
 .srv-version small { color: var(--console-faint); font-size: 12px; }

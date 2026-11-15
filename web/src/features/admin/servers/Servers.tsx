@@ -17,6 +17,12 @@ function readHideAddress() {
   try { return window.localStorage.getItem(HIDE_ADDRESS_KEY) === '1' } catch { return false }
 }
 
+function displayAddresses(server: Server) {
+  const domain = server.address?.trim()
+  if (domain) return [domain]
+  return [server.public_ip, server.public_ipv6].filter((value): value is string => !!value?.trim())
+}
+
 export default function Servers() {
   const nav = useNavigate()
   const screens = Grid.useBreakpoint()
@@ -454,9 +460,12 @@ export default function Servers() {
               </span>
               <div className="srv-name">
                 <a href={`/admin/servers/${s.id}`} onClick={(e) => { e.preventDefault(); open_(s) }}>{s.name}</a>
-                <span className="mono" title={hideAddress ? undefined : (s.address || s.public_ip || s.public_ipv6 || '未设置地址')}>
-                  {hideAddress ? '••••••' : s.address || s.public_ip || s.public_ipv6 || '未设置地址'}
-                </span>
+                {(() => {
+                  const addresses = displayAddresses(s)
+                  if (hideAddress) return <span className="srv-address mono">••••••</span>
+                  if (!addresses.length) return <span className="srv-address mono">未设置地址</span>
+                  return addresses.map((address) => <span className="srv-address mono" key={address} title={address}>{address}</span>)
+                })()}
               </div>
               <span className="srv-remark" title={s.remark?.trim() || undefined}>{s.remark?.trim()}</span>
               <div className="srv-status"><Status tone={s.online ? 'ok' : 'off'}>{s.online ? '在线' : '离线'}</Status></div>

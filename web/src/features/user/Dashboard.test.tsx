@@ -1,18 +1,21 @@
+import { StrictMode } from 'react'
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import Dashboard from './Dashboard'
-import { getMe, getMyTraffic, getSubscriptionSync, getUserForwards, getUserInbounds, getUserNodes, getUserOutbounds, resetSub } from '../../api'
-import type { UserNode } from '../../api'
-import type { User } from '../../types'
+import { createUserForward, deleteUserForward, getMe, getMyTraffic, getSubscriptionSync, getUserForwards, getUserInbounds, getUserNodes, getUserOutbounds, importUserOutbound, resetSub } from '../../api'
+import type { UserForward, UserInboundOption, UserNode, UserPrivateOutbound } from '../../api'
+import type { RouteRule, User, UserTrafficSeries } from '../../types'
 import { useAuth } from '../../store'
 import { copyToClipboard } from '../../util'
 import { TooltipProvider } from '../../components/ui/tooltip'
 import { DialogHost, Modal } from '../../ui/dialogs'
+import { message } from '../../ui/feedback'
 
 vi.mock('../../api', async (importOriginal) => ({
   ...await importOriginal<typeof import('../../api')>(),
   getMe: vi.fn(), getUserNodes: vi.fn(), getUserOutbounds: vi.fn(), getUserInbounds: vi.fn(), getUserForwards: vi.fn(),
   getMyTraffic: vi.fn(), resetSub: vi.fn(), getSubscriptionSync: vi.fn(),
+  createUserForward: vi.fn(), deleteUserForward: vi.fn(), importUserOutbound: vi.fn(),
 }))
 vi.mock('../../util', async (importOriginal) => ({
   ...await importOriginal<typeof import('../../util')>(), copyToClipboard: vi.fn(),
@@ -25,10 +28,38 @@ const node: UserNode = {
 }
 const nextNode: UserNode = { ...node, link: 'vless://new-uuid@tokyo.example:443', params: { UUID: 'new-uuid' } }
 const nextUrl = 'https://panel.example/sub/reset'
+const outbound: UserPrivateOutbound = { id: 7, tag: 'HK 家宽', type: 'vless', remark: '' }
+const inbound: UserInboundOption = { id: 8, server_id: 1, server_name: 'Tokyo', tag: 'vless-in', type: 'vless', port: 443, multi_user: true }
+const forward: UserForward = { id: 9, server_id: 1, server_name: 'Tokyo', inbound_tag: inbound.tag, outbound_id: 7, outbound_tag: outbound.tag, node_name: '我的转发', remark: '', enabled: true }
+function deferred<T>() {
+  let resolve!: (value: T) => void
+  let reject!: (error: Error) => void
+  const promise = new Promise<T>((done, fail) => { resolve = done; reject = fail })
+  return { promise, resolve, reject }
+}
 const mount = () => render(<TooltipProvider><Dashboard /><DialogHost /></TooltipProvider>)
+const openForward = async () => {
+  fireEvent.click(await screen.findByRole('tab', { name: /^转发/ }))
+  fireEvent.click(screen.getByRole('button', { name: '添加转发' }))
+}
+const selectForward = async () => {
+  fireEvent.click(screen.getByRole('combobox', { name: /入口节点/ }))
+  fireEvent.click(await screen.findByRole('option', { name: 'Tokyo · vless-in' }))
+  await waitFor(() => expect(screen.getByRole('combobox', { name: /入口节点/ }).textContent).toContain('Tokyo · vless-in'))
+  fireEvent.click(screen.getByRole('combobox', { name: /^出站/ }))
+  fireEvent.click(await screen.findByRole('option', { name: outbound.tag }))
+  await waitFor(() => expect(screen.getByRole('combobox', { name: /^出站/ }).textContent).toContain(outbound.tag))
+}
+const reset = async () => {
+  fireEvent.click(screen.getByRole('button', { name: '重置链接' }))
+  fireEvent.click(within(screen.getByRole('alertdialog')).getByRole('button', { name: '重置' }))
+  await waitFor(() => expect(screen.queryByRole('alertdialog')).toBeNull())
+}
 
 beforeEach(() => {
-  vi.clearAllMocks()
+  vi.resetAllMocks()
+  vi.stubGlobal('ResizeObserver', class { observe() {} unobserve() {} disconnect() {} })
+  Element.prototype.scrollIntoView = vi.fn()
   useAuth.setState({ token: 'test-token', user })
   vi.mocked(getMe).mockResolvedValue({ user, subscription_url: 'https://panel.example/sub/test' })
   vi.mocked(getUserNodes).mockResolvedValue([node])
@@ -73,6 +104,7 @@ describe('user subscription dashboard', () => {
     expect(screen.getByText('1.00 KB')).toBeTruthy()
     fireEvent.click(screen.getByRole('radio', { name: '7 天' }))
     await waitFor(() => expect(getMyTraffic).toHaveBeenLastCalledWith('7d', expect.anything()))
+    for (const request of [getMe, getUserNodes, getUserOutbounds, getUserInbounds, getUserForwards]) expect(request).toHaveBeenCalledTimes(1)
   })
 
   it.each([false, true])('places reset in the subscription header without a page title or password action (mobile: %s)', async (mobile) => {
@@ -163,5 +195,205 @@ describe('user subscription dashboard', () => {
     fireEvent.click(screen.getByRole('button', { name: '重试' }))
     await screen.findByText('Tokyo')
     expect(getUserNodes).toHaveBeenCalledTimes(3)
+  })
+
+  it.each(['resolve', 'reject'] as const)('ignores obsolete list responses and finalizers after effect replay (%s)', async (settle) => {
+    const oldMe = deferred<Awaited<ReturnType<typeof getMe>>>()
+    const oldNodes = deferred<UserNode[]>()
+    const oldOutbounds = deferred<UserPrivateOutbound[]>()
+    const oldInbounds = deferred<UserInboundOption[]>()
+    const oldForwards = deferred<UserForward[]>()
+    const oldTraffic = deferred<UserTrafficSeries>()
+    const currentOutbounds = deferred<UserPrivateOutbound[]>()
+    vi.mocked(getMe).mockReturnValueOnce(oldMe.promise)
+    vi.mocked(getUserNodes).mockReturnValueOnce(oldNodes.promise)
+    vi.mocked(getUserOutbounds).mockReturnValueOnce(oldOutbounds.promise).mockReturnValueOnce(currentOutbounds.promise)
+    vi.mocked(getUserInbounds).mockReturnValueOnce(oldInbounds.promise)
+    vi.mocked(getUserForwards).mockReturnValueOnce(oldForwards.promise)
+    vi.mocked(getMyTraffic).mockReturnValueOnce(oldTraffic.promise)
+    render(<StrictMode><TooltipProvider><Dashboard /><DialogHost /></TooltipProvider></StrictMode>)
+    await screen.findByText('Tokyo')
+    expect(vi.mocked(getUserOutbounds).mock.calls[0][0]?.aborted).toBe(true)
+    await act(async () => {
+      if (settle === 'resolve') {
+        oldMe.resolve({ user: { ...user, forwarding_enabled: false }, subscription_url: 'https://stale.example' })
+        oldNodes.resolve([{ ...node, name: 'Stale node' }])
+        oldOutbounds.resolve([{ ...outbound, tag: 'Stale outbound' }])
+        oldInbounds.resolve([{ ...inbound, tag: 'Stale inbound' }])
+        oldForwards.resolve([{ ...forward, node_name: 'Stale forward' }])
+        oldTraffic.resolve({ range: '24h', upload: 0, download: 999999, points: [], inbounds: [], step_seconds: 3600, timezone: 'UTC' })
+      } else {
+        for (const request of [oldMe, oldNodes, oldOutbounds, oldInbounds, oldForwards, oldTraffic]) request.reject(new Error('Obsolete error'))
+      }
+    })
+    expect(screen.getByText('Tokyo')).toBeTruthy()
+    expect(screen.getByText('2.00 KB')).toBeTruthy()
+    fireEvent.click(screen.getByRole('tab', { name: /^出站/ }))
+    expect(screen.getAllByRole('status', { name: '加载中' }).length).toBeGreaterThan(0)
+    expect(screen.queryByText(/Stale|Obsolete/)).toBeNull()
+    await act(async () => currentOutbounds.resolve([outbound]))
+    expect(screen.getByText(outbound.tag)).toBeTruthy()
+    await openForward()
+    fireEvent.click(screen.getByRole('combobox', { name: /入口节点/ }))
+    expect(screen.queryByRole('option', { name: /Stale/ })).toBeNull()
+    expect(screen.queryByText('Stale forward')).toBeNull()
+  })
+
+  it('retains traffic during failures and ignores a superseded range response', async () => {
+    mount()
+    await screen.findByText('2.00 KB')
+    const week = deferred<UserTrafficSeries>()
+    const month = deferred<UserTrafficSeries>()
+    vi.mocked(getMyTraffic).mockReturnValueOnce(week.promise).mockReturnValueOnce(month.promise)
+    fireEvent.click(screen.getByRole('radio', { name: '7 天' }))
+    fireEvent.click(screen.getByRole('radio', { name: '30 天' }))
+    expect(vi.mocked(getMyTraffic).mock.calls[1][1]?.aborted).toBe(true)
+    await act(async () => week.resolve({ range: '7d', upload: 0, download: 999999, points: [], inbounds: [], step_seconds: 3600, timezone: 'UTC' }))
+    expect(screen.getByRole('status', { name: '正在刷新' })).toBeTruthy()
+    expect(screen.getByText('2.00 KB')).toBeTruthy()
+    await act(async () => month.reject(new Error('用量加载失败')))
+    expect(screen.getByText('用量加载失败')).toBeTruthy()
+    expect(screen.getByText('2.00 KB')).toBeTruthy()
+    fireEvent.click(screen.getByRole('button', { name: '重试' }))
+    await waitFor(() => expect(getMyTraffic).toHaveBeenLastCalledWith('30d', expect.anything()))
+    await waitFor(() => expect(screen.queryByText('用量加载失败')).toBeNull())
+    expect(getMe).toHaveBeenCalledTimes(1)
+  })
+
+  it('keeps saved list data on refresh errors and retries each failed list independently', async () => {
+    vi.mocked(getUserOutbounds).mockResolvedValue([outbound])
+    vi.mocked(getUserForwards).mockResolvedValue([forward])
+    vi.mocked(getUserInbounds).mockResolvedValue([inbound])
+    mount()
+    await screen.findByText('Tokyo')
+    vi.mocked(getUserOutbounds).mockRejectedValueOnce(new Error('出站加载失败'))
+    vi.mocked(getUserForwards).mockRejectedValueOnce(new Error('转发加载失败'))
+    vi.mocked(getUserInbounds).mockRejectedValueOnce(new Error('入口加载失败'))
+    await reset()
+    fireEvent.click(screen.getByRole('tab', { name: /^出站/ }))
+    expect(await screen.findByText('出站加载失败')).toBeTruthy()
+    expect(screen.getByText(outbound.tag)).toBeTruthy()
+    fireEvent.click(screen.getByRole('button', { name: '重试' }))
+    await waitFor(() => expect(screen.queryByText('出站加载失败')).toBeNull())
+    expect(getUserOutbounds).toHaveBeenCalledTimes(3)
+    expect(getMe).toHaveBeenCalledTimes(2)
+    await openForward()
+    expect(screen.getByText('我的转发')).toBeTruthy()
+    const dialog = screen.getByRole('dialog', { name: '添加转发' })
+    expect(within(dialog).getByText('入口加载失败')).toBeTruthy()
+    fireEvent.click(within(dialog).getByRole('button', { name: '重试' }))
+    await waitFor(() => expect(screen.queryByText('入口加载失败')).toBeNull())
+    expect(getUserInbounds).toHaveBeenCalledTimes(3)
+    fireEvent.click(within(dialog).getByRole('button', { name: '取消' }))
+    expect(screen.getByText('转发加载失败')).toBeTruthy()
+    fireEvent.click(screen.getByRole('button', { name: '重试' }))
+    await waitFor(() => expect(screen.queryByText('转发加载失败')).toBeNull())
+    expect(getUserForwards).toHaveBeenCalledTimes(3)
+  })
+
+  it.each(['uri', 'subscription'] as const)('validates %s imports and retains a failed draft with duplicate submission protection', async (mode) => {
+    const pending = deferred<Awaited<ReturnType<typeof importUserOutbound>>>()
+    vi.mocked(importUserOutbound).mockReturnValueOnce(pending.promise).mockResolvedValueOnce({ outbounds: [] })
+    const errorToast = vi.spyOn(message, 'error')
+    mount()
+    fireEvent.click(await screen.findByRole('tab', { name: /^出站/ }))
+    fireEvent.click(screen.getByRole('button', { name: '添加出站' }))
+    const dialog = screen.getByRole('dialog', { name: '添加出站' })
+    if (mode === 'subscription') fireEvent.click(within(dialog).getByRole('radio', { name: '订阅导入' }))
+    fireEvent.click(within(dialog).getByRole('button', { name: '导入' }))
+    await screen.findByText(mode === 'uri' ? '请输入节点 URI' : '请输入订阅地址')
+    expect(importUserOutbound).not.toHaveBeenCalled()
+    expect(errorToast).not.toHaveBeenCalled()
+    const value = mode === 'uri' ? 'vless://uuid@hk.example:443#HK' : 'https://example.com/sub'
+    fireEvent.change(within(dialog).getByRole('textbox'), { target: { value: ` ${value} ` } })
+    const submit = within(dialog).getByRole('button', { name: '导入' })
+    fireEvent.click(submit)
+    fireEvent.submit(dialog.querySelector('form')!)
+    await waitFor(() => expect(importUserOutbound).toHaveBeenCalledTimes(1))
+    expect(importUserOutbound).toHaveBeenCalledWith(mode === 'uri' ? { uri: value } : { url: value })
+    await act(async () => pending.reject(new Error('导入失败')))
+    expect(errorToast).toHaveBeenCalledWith('导入失败')
+    expect((within(dialog).getByRole('textbox') as HTMLTextAreaElement).value).toBe(` ${value} `)
+    fireEvent.click(submit)
+    await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull())
+    expect(importUserOutbound).toHaveBeenCalledTimes(2)
+  })
+
+  it.each(['pending', 'failed'] as const)('reports a saved forward with %s apply state and prevents duplicate requests', async (apply_state) => {
+    vi.mocked(getUserInbounds).mockResolvedValue([inbound])
+    vi.mocked(getUserOutbounds).mockResolvedValue([outbound])
+    const pending = deferred<Awaited<ReturnType<typeof createUserForward>>>()
+    vi.mocked(createUserForward).mockReturnValueOnce(pending.promise)
+    const info = vi.spyOn(message, 'info')
+    const warning = vi.spyOn(message, 'warning')
+    const error = vi.spyOn(message, 'error')
+    mount()
+    await openForward()
+    const dialog = screen.getByRole('dialog', { name: '添加转发' })
+    fireEvent.click(within(dialog).getByRole('button', { name: '添加' }))
+    await screen.findByText('请选择入口节点')
+    await screen.findByText('请选择出站')
+    expect(createUserForward).not.toHaveBeenCalled()
+    expect(error).not.toHaveBeenCalled()
+    await selectForward()
+    fireEvent.click(within(dialog).getByRole('button', { name: '添加' }))
+    fireEvent.submit(dialog.querySelector('form')!)
+    await waitFor(() => expect(createUserForward).toHaveBeenCalledTimes(1))
+    expect(createUserForward).toHaveBeenCalledWith({ inbound_server_id: 1, inbound_tag: 'vless-in', outbound_id: 7 })
+    await act(async () => pending.resolve({ forward: { id: 9 } as RouteRule, apply_state, apply_error: 'agent rejected config' }))
+    await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull())
+    if (apply_state === 'failed') expect(warning).toHaveBeenCalledWith(expect.objectContaining({ content: '已保存，但节点下发失败：agent rejected config' }))
+    else expect(info).toHaveBeenCalledWith(expect.objectContaining({ content: '已保存；节点当前离线，重连后会自动下发' }))
+    expect(getUserForwards).toHaveBeenCalledTimes(2)
+  })
+
+  it('keeps a failed forward draft available for retry', async () => {
+    vi.mocked(getUserInbounds).mockResolvedValue([inbound])
+    vi.mocked(getUserOutbounds).mockResolvedValue([outbound])
+    vi.mocked(createUserForward).mockRejectedValueOnce(new Error('保存转发失败')).mockResolvedValueOnce({ forward: { id: 9 } as RouteRule, apply_state: 'applied' })
+    const error = vi.spyOn(message, 'error')
+    mount()
+    await openForward()
+    await selectForward()
+    fireEvent.click(screen.getByRole('button', { name: '添加' }))
+    await waitFor(() => expect(error).toHaveBeenCalledWith('保存转发失败'))
+    expect(screen.getByRole('combobox', { name: /入口节点/ }).textContent).toContain('Tokyo · vless-in')
+    expect(screen.getByRole('combobox', { name: /^出站/ }).textContent).toContain(outbound.tag)
+    fireEvent.click(screen.getByRole('button', { name: '添加' }))
+    await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull())
+    expect(createUserForward).toHaveBeenCalledTimes(2)
+  })
+
+  it.each(['pending', 'failed'] as const)('reports %s configuration apply after forward deletion', async (apply_state) => {
+    vi.mocked(getUserForwards).mockResolvedValue([forward])
+    vi.mocked(deleteUserForward).mockResolvedValue({ apply_state, apply_error: 'apply deletion failed' })
+    const info = vi.spyOn(message, 'info')
+    const warning = vi.spyOn(message, 'warning')
+    mount()
+    fireEvent.click(await screen.findByRole('tab', { name: /^转发/ }))
+    fireEvent.click(await screen.findByRole('button', { name: '删除转发 vless-in' }))
+    const dialog = screen.getByRole('alertdialog')
+    fireEvent.click(within(dialog).getByRole('button', { name: '删除' }))
+    await waitFor(() => expect(screen.queryByRole('alertdialog')).toBeNull())
+    expect(deleteUserForward).toHaveBeenCalledWith(9)
+    if (apply_state === 'failed') expect(warning).toHaveBeenCalledWith(expect.objectContaining({ content: '已保存，但节点下发失败：apply deletion failed' }))
+    else expect(info).toHaveBeenCalled()
+    expect(getUserForwards).toHaveBeenCalledTimes(2)
+  })
+
+  it('does not refresh or notify after an import completes on an unmounted dashboard', async () => {
+    const pending = deferred<Awaited<ReturnType<typeof importUserOutbound>>>()
+    vi.mocked(importUserOutbound).mockReturnValueOnce(pending.promise)
+    const success = vi.spyOn(message, 'success')
+    const view = mount()
+    fireEvent.click(await screen.findByRole('tab', { name: /^出站/ }))
+    fireEvent.click(screen.getByRole('button', { name: '添加出站' }))
+    fireEvent.change(screen.getByRole('textbox'), { target: { value: 'vless://uuid@hk.example:443' } })
+    fireEvent.click(screen.getByRole('button', { name: '导入' }))
+    await waitFor(() => expect(importUserOutbound).toHaveBeenCalledTimes(1))
+    view.unmount()
+    await act(async () => pending.resolve({ outbounds: [] }))
+    expect(success).not.toHaveBeenCalled()
+    expect(getUserOutbounds).toHaveBeenCalledTimes(1)
   })
 })

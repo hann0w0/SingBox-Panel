@@ -31,6 +31,8 @@ const (
 	minReconnectBackoff  = time.Second
 	maxReconnectBackoff  = 30 * time.Second
 	maxAgentMessageSize  = 16 << 20
+	maxSessionCommands   = 4
+	maxQueuedCommands    = 8
 )
 
 // Client is the agent's reverse WebSocket connection to the panel. It handles
@@ -406,6 +408,33 @@ func (c *Client) connectOnce(ctx context.Context) (time.Duration, error) {
 }
 
 func (c *Client) readLoop(ctx context.Context, conn *websocket.Conn) error {
+	ctx, cancel := context.WithCancel(ctx)
+	commands := make(chan protocol.Envelope, maxQueuedCommands)
+	var workers sync.WaitGroup
+	if c.OnCommand != nil {
+		for worker := 0; worker < maxSessionCommands; worker++ {
+			workers.Go(func() {
+				for {
+					select {
+					case <-ctx.Done():
+						return
+					case env := <-commands:
+						if ctx.Err() != nil {
+							return
+						}
+						res := c.OnCommand(ctx, env)
+						if out, err := protocol.NewEnvelope(protocol.EvtCommandResult, env.ID, res); err == nil {
+							c.trySend(ctx, out)
+						}
+					}
+				}
+			})
+		}
+	}
+	defer func() {
+		cancel()
+		workers.Wait()
+	}()
 	conn.SetReadLimit(maxAgentMessageSize)
 	_ = conn.SetReadDeadline(time.Now().Add(pongWait))
 	conn.SetPongHandler(func(string) error {
@@ -432,15 +461,26 @@ func (c *Client) readLoop(ctx context.Context, conn *websocket.Conn) error {
 		if c.OnCommand == nil {
 			continue
 		}
-		// Commands belong to this WebSocket session. A disconnect cancels active
-		// work, while the Agent handler adds a command-specific deadline so a
-		// stuck package manager or systemctl cannot run for the Agent lifetime.
-		go func(env protocol.Envelope) {
-			res := c.OnCommand(ctx, env)
-			if out, err := protocol.NewEnvelope(protocol.EvtCommandResult, env.ID, res); err == nil {
-				c.trySend(ctx, out)
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case commands <- env:
+		default:
+			out, err := protocol.NewEnvelope(protocol.EvtCommandResult, env.ID, protocol.CommandResultEvt{
+				ID: env.ID, OK: false, Error: "agent command queue is full; retry later",
+			})
+			if err != nil {
+				return err
 			}
-		}(env)
+			session, _ := ctx.Value(clientSessionContextKey{}).(uint64)
+			select {
+			case <-ctx.Done():
+				return ctx.Err()
+			case c.send <- sessionEnvelope{session: session, env: out}:
+			default:
+				return errors.New("agent command result queue is full")
+			}
+		}
 	}
 }
 

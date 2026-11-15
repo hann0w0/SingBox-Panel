@@ -3,6 +3,7 @@ package agent
 import (
 	"context"
 	"errors"
+	"fmt"
 	"net"
 	"net/http"
 	"net/http/httptest"
@@ -211,5 +212,128 @@ func TestDisconnectCompletesQueuedReceiptsBeforeNextSession(t *testing.T) {
 		if client.activeSession.Load() != 0 || len(client.send) != 0 {
 			t.Fatal("session returned before its writer and queue were cleaned up")
 		}
+	}
+}
+
+func TestCommandDispatchBoundsWorkKeepsTrafficACKAndDropsOldQueue(t *testing.T) {
+	connections := make(chan *websocket.Conn, 2)
+	release := make(chan struct{})
+	upgrader := websocket.Upgrader{CheckOrigin: func(*http.Request) bool { return true }}
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		conn, err := upgrader.Upgrade(w, r, nil)
+		if err != nil {
+			return
+		}
+		defer conn.Close()
+		connections <- conn
+		<-release
+	}))
+	defer server.Close()
+	defer close(release)
+	client := NewClient(server.URL, "token", false)
+	client.wsURL = "ws" + strings.TrimPrefix(server.URL, "http")
+	started := make(chan string, maxSessionCommands+maxQueuedCommands+1)
+	canceled := make(chan string, maxSessionCommands+1)
+	acks := make(chan protocol.TrafficAck, 1)
+	client.OnCommand = func(ctx context.Context, env protocol.Envelope) protocol.CommandResultEvt {
+		started <- env.ID
+		<-ctx.Done()
+		canceled <- env.ID
+		return protocol.CommandResultEvt{ID: env.ID, OK: false, Error: ctx.Err().Error()}
+	}
+	client.OnTrafficAck = func(ack protocol.TrafficAck) { acks <- ack }
+
+	for session := 0; session < 2; session++ {
+		ctx, cancel := context.WithCancel(context.Background())
+		t.Cleanup(cancel)
+		done := make(chan struct{})
+		go func() {
+			_, _ = client.connectOnce(ctx)
+			close(done)
+		}()
+		var conn *websocket.Conn
+		select {
+		case conn = <-connections:
+		case <-time.After(3 * time.Second):
+			t.Fatal("client did not connect")
+		}
+		t.Cleanup(func() { _ = conn.Close() })
+		send := func(typ protocol.MessageType, id string, payload any) {
+			t.Helper()
+			env, err := protocol.NewEnvelope(typ, id, payload)
+			if err != nil {
+				t.Fatal(err)
+			}
+			_ = conn.SetWriteDeadline(time.Now().Add(3 * time.Second))
+			if err := conn.WriteJSON(env); err != nil {
+				t.Fatal(err)
+			}
+		}
+		active := maxSessionCommands
+		if session == 1 {
+			active = 1
+		}
+		for command := 0; command < active; command++ {
+			id := fmt.Sprintf("session-%d-active-%d", session, command)
+			send(protocol.CmdGetStatus, id, struct{}{})
+			select {
+			case got := <-started:
+				if got != id {
+					t.Fatalf("stale queued command started: %q, want %q", got, id)
+				}
+			case <-time.After(3 * time.Second):
+				t.Fatal("worker did not dispatch command")
+			}
+		}
+		if session == 0 {
+			for command := 0; command < maxQueuedCommands; command++ {
+				send(protocol.CmdGetStatus, fmt.Sprintf("queued-%d", command), struct{}{})
+			}
+			send(protocol.CmdGetStatus, "overflow", struct{}{})
+			ack := protocol.TrafficAck{Session: "accounting-session", Sequence: 42}
+			send(protocol.EvtTrafficAck, "", ack)
+			select {
+			case got := <-acks:
+				if got != ack {
+					t.Fatalf("ACK changed: %+v", got)
+				}
+			case <-time.After(3 * time.Second):
+				t.Fatal("command overload blocked traffic ACK")
+			}
+			_ = conn.SetReadDeadline(time.Now().Add(3 * time.Second))
+			var env protocol.Envelope
+			if err := conn.ReadJSON(&env); err != nil {
+				t.Fatal(err)
+			}
+			var result protocol.CommandResultEvt
+			if err := env.Decode(&result); err != nil {
+				t.Fatal(err)
+			}
+			if env.Type != protocol.EvtCommandResult || env.ID != "overflow" || result.ID != env.ID || result.OK || !strings.Contains(result.Error, "queue is full") {
+				t.Fatalf("missing explicit overflow failure: %+v %+v", env, result)
+			}
+			select {
+			case id := <-started:
+				t.Fatalf("concurrency limit exceeded: %q", id)
+			default:
+			}
+		}
+		cancel()
+		select {
+		case <-done:
+		case <-time.After(3 * time.Second):
+			t.Fatal("disconnect did not cancel and join command workers")
+		}
+		for command := 0; command < active; command++ {
+			select {
+			case <-canceled:
+			default:
+				t.Fatal("command context survived disconnect")
+			}
+		}
+		if len(started) != 0 || len(client.send) != 0 {
+			t.Fatal("disconnect retained queued work or command results")
+		}
+		_ = conn.Close()
 	}
 }

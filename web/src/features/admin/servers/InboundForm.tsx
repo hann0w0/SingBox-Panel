@@ -379,6 +379,7 @@ export function assembleSettings(base: InboundSettings, v: FormVals, type: Inbou
 
 export default function InboundForm({
   serverId,
+  ipv6Available = false,
   inbound,
   prefill,
   preview = false,
@@ -388,6 +389,7 @@ export default function InboundForm({
   onSaved,
 }: {
   serverId: number
+  ipv6Available?: boolean
   inbound: Inbound | null
   prefill?: Record<string, any>
   preview?: boolean
@@ -411,6 +413,7 @@ export default function InboundForm({
   const invalidSSMultiUser = type === 'shadowsocks' && method === SS2022_CHACHA_METHOD && requestedMultiUser
   const guardEnabled = !!Form.useWatch('guard_enabled', form)
   const guardPort = Form.useWatch('guard_internal_port', form)
+  const listenMode = Form.useWatch('listen_mode', form)
 
   useLayoutEffect(() => {
     submitSessionRef.current += 1
@@ -535,13 +538,15 @@ export default function InboundForm({
               }}
             />
           </Form.Item>
-          <Form.Item name="listen_mode" label="监听">
+          <Form.Item name="listen_mode" label="监听" getValueProps={(value) => ({ value: value === 'ipv6' && !ipv6Available ? null : value })} rules={[{ validator: (_, value) => {
+            if (value === 'ipv6' && !ipv6Available) throw new Error('服务器当前没有可用的 IPv6 地址，请选择其他监听方式')
+          } }]}>
             <Select options={[
               { value: 'all', label: '双栈' },
               { value: 'local', label: '本机' },
               { value: 'ipv4', label: 'IPv4' },
-              { value: 'ipv6', label: 'IPv6' },
-            ]} />
+              ...(ipv6Available ? [{ value: 'ipv6', label: 'IPv6' }] : []),
+            ]} placeholder={listenMode === 'ipv6' ? 'IPv6 不可用' : undefined} />
           </Form.Item>
           <Form.Item name="listen_port" label="端口">
             <InputNumber precision={0} min={1} max={65535} className="mono" />

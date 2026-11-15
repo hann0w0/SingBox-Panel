@@ -120,6 +120,15 @@ func (a *App) validateInboundIdentity(db *gorm.DB, serverID, excludeID uint, tag
 // validateInboundConfiguration includes virtual guard listeners in identity
 // checks. Disabled rows still reserve their ports and tags for later enabling.
 func (a *App) validateInboundConfiguration(db *gorm.DB, serverID, excludeID uint, tag, typ string, port int, settings singbox.InboundSettings) error {
+	if settings.IPv6Only && settings.ListenAddress() == "::" {
+		var server model.Server
+		if err := db.First(&server, serverID).Error; err != nil {
+			return err
+		}
+		if err := resolveInboundListen(&server, &settings); err != nil {
+			return err
+		}
+	}
 	if err := a.validateInboundIdentity(db, serverID, excludeID, tag, port); err != nil {
 		return err
 	}

@@ -140,13 +140,7 @@ func BuildServerConfig(in ServerConfigInput) ([]byte, error) {
 	// Gate traffic must reach only its own local VLESS listener before the
 	// general loopback protection. The terminal reject isolates all other
 	// gate traffic from user rules and the global sniff fallback.
-	rules := make([]map[string]any, 0)
-	for _, ib := range in.Inbounds {
-		if ib.Settings.IPv6Only {
-			rules = append(rules, ipv6OnlyRule(inboundListenTag(ib)))
-		}
-	}
-	rules = append(rules, guardRules...)
+	rules := append([]map[string]any{}, guardRules...)
 	if in.StatsController != "" {
 		rules = append(rules, LoopbackGuardRule())
 	}

@@ -45,6 +45,11 @@ export interface Server {
   arch: string
   kernel: string
   public_ip: string
+  public_ipv6?: string
+  public_ipv4_updated_at?: string
+  public_ipv6_updated_at?: string
+  ipv4_available?: boolean
+  ipv6_available?: boolean
   agent_version: string
   agent_has_update?: boolean
   agent_latest_version?: string

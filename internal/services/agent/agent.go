@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"log"
+	"sync"
 	"sync/atomic"
 	"time"
 
@@ -32,6 +33,8 @@ type Agent struct {
 	logStream *logStreamer
 	// Only one delta-bearing report may be queued until its write completes.
 	trafficReportInFlight atomic.Bool
+	addressMu             sync.Mutex
+	addressProbeAt        time.Time
 }
 
 // New builds an Agent and wires the client callbacks.
@@ -113,13 +116,16 @@ func (a *Agent) register() protocol.RegisterEvt {
 	defer cancel()
 	installed, ver := DetectVersion(ctx)
 	si := CollectSysInfo(ctx)
+	addresses := a.publicAddresses(ctx, true)
 	return protocol.RegisterEvt{
 		AgentVersion:                 a.cfg.AgentVersion,
 		Hostname:                     si.Hostname,
 		OS:                           si.OS,
 		Arch:                         si.Arch,
 		Kernel:                       si.Kernel,
-		PublicIP:                     DetectPublicIPv4(ctx),
+		PublicIPv4:                   addresses.IPv4,
+		PublicIPv6:                   addresses.IPv6,
+		PublicIP:                     addressValue(addresses.IPv4),
 		SingboxInstalled:             installed,
 		SingboxVersion:               ver,
 		PanelURL:                     a.cfg.PanelURL,
@@ -172,7 +178,10 @@ func (a *Agent) heartbeat() protocol.HeartbeatEvt {
 	defer cancel()
 	si := CollectSysInfo(ctx)
 	_, ver := DetectVersion(ctx)
+	addresses := a.publicAddresses(ctx, false)
 	event := protocol.HeartbeatEvt{
+		PublicIPv4:     addresses.IPv4,
+		PublicIPv6:     addresses.IPv6,
 		TS:             time.Now().Unix(),
 		Load1:          si.Load1,
 		MemUsed:        si.MemUsed,
@@ -283,6 +292,7 @@ func (a *Agent) onCommand(ctx context.Context, env protocol.Envelope) protocol.C
 		installed, ver := DetectVersion(ctx)
 		si := CollectSysInfo(ctx)
 		_, briefs, hasCfg := ReadConfig()
+		addresses := a.publicAddresses(ctx, true)
 		data, _ := json.Marshal(protocol.StatusData{
 			AgentVersion:     a.cfg.AgentVersion,
 			SingboxInstalled: installed,
@@ -295,7 +305,9 @@ func (a *Agent) onCommand(ctx context.Context, env protocol.Envelope) protocol.C
 			OS:               si.OS,
 			Arch:             si.Arch,
 			Kernel:           si.Kernel,
-			PublicIP:         DetectPublicIPv4(ctx),
+			PublicIPv4:       addresses.IPv4,
+			PublicIPv6:       addresses.IPv6,
+			PublicIP:         addressValue(addresses.IPv4),
 			Load1:            si.Load1,
 			MemUsed:          si.MemUsed,
 			MemTotal:         si.MemTotal,
@@ -319,6 +331,24 @@ func (a *Agent) onCommand(ctx context.Context, env protocol.Envelope) protocol.C
 	default:
 		return protocol.CommandResultEvt{ID: env.ID, OK: false, Error: "unknown command " + string(env.Type)}
 	}
+}
+
+func (a *Agent) publicAddresses(ctx context.Context, force bool) publicAddresses {
+	a.addressMu.Lock()
+	defer a.addressMu.Unlock()
+	if !force && time.Since(a.addressProbeAt) < 30*time.Second {
+		return publicAddresses{}
+	}
+	addresses := detectPublicAddresses(ctx)
+	a.addressProbeAt = time.Now()
+	return addresses
+}
+
+func addressValue(address *string) string {
+	if address == nil {
+		return ""
+	}
+	return *address
 }
 
 func decodeResult(id string, err error) protocol.CommandResultEvt {

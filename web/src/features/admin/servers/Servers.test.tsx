@@ -28,6 +28,14 @@ beforeEach(() => {
 afterEach(() => { cleanup(); vi.unstubAllGlobals() })
 
 describe('server remarks', () => {
+  it.each([false, true])('shows network badges without exposing addresses (IPv6 %s)', async (ipv6) => {
+    vi.mocked(getServersMeta).mockResolvedValue(metadata([{ ...server, public_ip: '203.0.113.7', public_ipv6: ipv6 ? '2001:db8::7' : '', ipv4_available: true, ipv6_available: ipv6 }]))
+    render(<MemoryRouter><Servers /></MemoryRouter>)
+    const row = (await screen.findByText('Frankfurt')).closest('.srv-row')
+    expect(row?.textContent).toContain('IPv4')
+    expect(row?.textContent.includes('IPv6')).toBe(ipv6)
+    for (const address of ['fra.example.com', '203.0.113.7', '2001:db8::7']) expect(row?.textContent).not.toContain(address)
+  })
   it('never shows an inbound count in the server list', async () => {
     const serverWithInbounds = {
       ...server,

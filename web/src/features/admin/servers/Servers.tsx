@@ -6,6 +6,7 @@ import { createServer, deleteServer, errMsg, getOverview, getServersMeta, instal
 import type { Server } from '../../../types'
 import { formatBytes } from '../../../util'
 import { RequestState } from '../../../components/RequestState'
+import { Badge } from '../../../components/ui/badge'
 import { PageHeader, Pills, Stats, Status } from '../../../ui/Page'
 import '../../../styles/servers.css'
 import { MODAL_MD, MODAL_SM } from '../../../ui/modal'
@@ -438,7 +439,10 @@ export default function Servers() {
               </span>
               <div className="srv-name">
                 <a href={`/admin/servers/${s.id}`} onClick={(e) => { e.preventDefault(); open_(s) }}>{s.name}</a>
-                <span className="mono">{s.address || s.public_ip || '未设置地址'}</span>
+                <div className="flex flex-wrap items-center gap-1" aria-label="网络支持">
+                  {s.ipv4_available && <Badge variant="outline">IPv4</Badge>}
+                  {s.ipv6_available && <Badge variant="outline">IPv6</Badge>}
+                </div>
                 {s.remark?.trim() && <span className="srv-remark" title={s.remark}>{s.remark}</span>}
               </div>
               <div className="srv-status"><Status tone={s.online ? 'ok' : 'off'}>{s.online ? '在线' : '离线'}</Status></div>

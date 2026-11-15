@@ -223,6 +223,7 @@ func (a *App) listServers(c *gin.Context) {
 	releases := getLatestSingboxReleases()
 	latestAgentVersion := a.latestAgentVersion()
 	for i := range servers {
+		setServerAddressAvailability(&servers[i])
 		servers[i].Online = a.hub.IsOnline(servers[i].ID)
 		if !servers[i].Online {
 			servers[i].TrafficUploadRate, servers[i].TrafficDownloadRate = 0, 0
@@ -296,6 +297,7 @@ func (a *App) getServer(c *gin.Context) {
 		return
 	}
 	srv.Online = a.hub.IsOnline(srv.ID)
+	setServerAddressAvailability(&srv)
 	if srv.SingboxInstalled && srv.SingboxVersion != "" {
 		releases := getLatestSingboxReleases()
 		hasUp, latest := checkSingboxUpdate(srv.SingboxVersion, releases)
@@ -353,6 +355,9 @@ func (a *App) updateServer(c *gin.Context) {
 	if err := a.db.Model(&model.Server{}).Where("id = ?", id).Updates(updates).Error; err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
+	}
+	if req.Address != nil && a.orch != nil {
+		a.reconcileNodeConsumers(id)
 	}
 	// Server metadata and traffic cycles do not belong in the
 	// sing-box config, so editing a node must not restart its service.
@@ -791,7 +796,11 @@ func (h *Hub) persistServerStatus(connection *agentConn, status protocol.StatusD
 	if !h.isCurrentConnection(connection.serverID, connection) {
 		return
 	}
+	changed := h.updatePublicAddresses(connection.serverID, status.PublicIP, status.PublicIPv4, status.PublicIPv6)
 	persistServerStatus(h.db, connection.serverID, status)
+	if changed && h.AfterAddressChange != nil {
+		h.AfterAddressChange(connection.serverID)
+	}
 }
 
 // persistServerStatus stores a status snapshot explicitly requested by the

@@ -96,17 +96,6 @@ func (a *App) inboundOutboundClient(inboundID, consumerServerID uint) (singbox.C
 	if srv.EffectiveConfigMode() == model.ConfigModeRaw {
 		return singbox.ClientNode{}, fmt.Errorf("来源服务器已切换到原始配置模式")
 	}
-	host := srv.Address
-	if host == "" {
-		host = srv.PublicIP
-	}
-	host, err := normalizeNodeAddress(host)
-	if err != nil || host == "" {
-		return singbox.ClientNode{}, fmt.Errorf("来源服务器 %q 没有可用的连接地址", srv.Name)
-	}
-	if isLoopbackOrUnspecifiedHost(host) {
-		return singbox.ClientNode{}, fmt.Errorf("来源服务器的连接地址是本机回环地址")
-	}
 	if ib.ListenPort < 1 || ib.ListenPort > 65535 {
 		return singbox.ClientNode{}, fmt.Errorf("来源节点 %q 的监听端口无效", ib.Tag)
 	}
@@ -119,6 +108,10 @@ func (a *App) inboundOutboundClient(inboundID, consumerServerID uint) (singbox.C
 	}
 	if err := st.ValidateMultiUser(string(ib.Type)); err != nil {
 		return singbox.ClientNode{}, err
+	}
+	host, err := inboundNodeAddress(&srv, &st)
+	if err != nil {
+		return singbox.ClientNode{}, nodeAddressError(err)
 	}
 
 	var identity singbox.ProxyUser

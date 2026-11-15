@@ -98,6 +98,9 @@ func (o *Orchestrator) BuildServerConfig(srv *model.Server) ([]byte, error) {
 		if err := st.ValidateMultiUser(string(ib.Type)); err != nil {
 			return nil, fmt.Errorf("inbound %q settings: %w", ib.Tag, err)
 		}
+		if err := resolveInboundListen(srv, &st); err != nil {
+			return nil, fmt.Errorf("inbound %q: %w", ib.Tag, err)
+		}
 		var users []singbox.ProxyUser
 		if st.UseMultiUser(string(ib.Type)) {
 			st.SingleUser = false
@@ -182,6 +185,9 @@ func (o *Orchestrator) BuildServerConfig(srv *model.Server) ([]byte, error) {
 				}
 				ob.Type = client.Type
 			} else {
+				if errors.Is(err, errNodeAddress) {
+					return nil, fmt.Errorf("outbound %q: %w", ob.Tag, err)
+				}
 				log.Printf("orchestrator: outbound %q on server %d keeps its imported snapshot: %v", ob.Tag, srv.ID, err)
 			}
 		}

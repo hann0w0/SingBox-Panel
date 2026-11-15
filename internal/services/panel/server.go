@@ -112,6 +112,9 @@ func NewApp(cfg config.PanelConfig, db *gorm.DB) *App {
 	hub.AfterStatsCapabilityChange = func(serverID uint) {
 		go orch.PushConfigIfManaged(serverID)
 	}
+	hub.AfterAddressChange = func(serverID uint) {
+		go a.reconcileNodeAddresses(serverID)
+	}
 	a.engine = a.routes()
 	return a
 }

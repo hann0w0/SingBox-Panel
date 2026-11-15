@@ -2,6 +2,7 @@ package panel
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"strconv"
@@ -33,16 +34,6 @@ func (a *App) serverNodeFormats(c *gin.Context) {
 		return
 	}
 
-	host := srv.Address
-	if host == "" {
-		host = srv.PublicIP
-	}
-	host, err := normalizeNodeAddress(host)
-	if err != nil || host == "" {
-		c.JSON(http.StatusUnprocessableEntity, gin.H{"error": "节点地址未配置或无效"})
-		return
-	}
-
 	var userID uint
 	if raw, present := c.GetQuery("user_id"); present {
 		parsed, err := strconv.ParseUint(raw, 10, strconv.IntSize)
@@ -54,6 +45,7 @@ func (a *App) serverNodeFormats(c *gin.Context) {
 	}
 
 	settings := make(map[uint]singbox.InboundSettings)
+	hosts := make(map[uint]string)
 	var multiInbounds []uint
 	for _, ib := range srv.Inbounds {
 		if !ib.Enabled {
@@ -61,8 +53,20 @@ func (a *App) serverNodeFormats(c *gin.Context) {
 		}
 		var st singbox.InboundSettings
 		if len(ib.Settings) > 0 {
-			_ = json.Unmarshal(ib.Settings, &st)
+			if err := json.Unmarshal(ib.Settings, &st); err != nil {
+				c.JSON(http.StatusUnprocessableEntity, gin.H{"error": fmt.Sprintf("入站 %q 参数无效", ib.Tag)})
+				return
+			}
 		}
+		host, err := inboundNodeAddress(&srv, &st)
+		if errors.Is(err, errLocalInbound) {
+			continue
+		}
+		if err != nil {
+			c.JSON(http.StatusUnprocessableEntity, gin.H{"error": fmt.Sprintf("入站 %q: %v", ib.Tag, err)})
+			return
+		}
+		hosts[ib.ID] = host
 		if err := st.ValidateMultiUser(string(ib.Type)); err != nil {
 			c.JSON(http.StatusUnprocessableEntity, gin.H{"error": fmt.Sprintf("inbound %q settings: %v", ib.Tag, err)})
 			return
@@ -123,7 +127,7 @@ func (a *App) serverNodeFormats(c *gin.Context) {
 		}
 		nodes = append(nodes, node{
 			tag:      ib.Tag,
-			server:   host,
+			server:   hosts[ib.ID],
 			port:     ib.ListenPort,
 			typ:      string(ib.Type),
 			settings: st,

@@ -44,6 +44,7 @@ type Hub struct {
 	// sing-box version that crosses the stats API threshold (e.g. after an
 	// in-place upgrade to 1.14), so the config can enable or drop the service.
 	AfterStatsCapabilityChange func(serverID uint)
+	AfterAddressChange         func(serverID uint)
 }
 
 // NewHub builds a Hub bound to a database.
@@ -427,10 +428,10 @@ func (h *Hub) onRegister(ac *agentConn, e protocol.RegisterEvt) {
 		"singbox_version":   e.SingboxVersion,
 		"agent_url":         e.PanelURL,
 	}
-	if ip, ok := normalizedIPv4(e.PublicIP); ok {
-		updates["public_ip"] = ip
-	}
 	h.db.Model(&model.Server{}).Where("id = ?", serverID).Updates(updates)
+	if h.updatePublicAddresses(serverID, e.PublicIP, e.PublicIPv4, e.PublicIPv6) && h.AfterAddressChange != nil {
+		h.AfterAddressChange(serverID)
+	}
 	if h.AfterRegister != nil {
 		h.AfterRegister(serverID)
 	}
@@ -463,6 +464,9 @@ func (h *Hub) onHeartbeat(ac *agentConn, e protocol.HeartbeatEvt) {
 		}
 	}
 	h.db.Model(&model.Server{}).Where("id = ?", serverID).Updates(updates)
+	if h.updatePublicAddresses(serverID, "", e.PublicIPv4, e.PublicIPv6) && h.AfterAddressChange != nil {
+		h.AfterAddressChange(serverID)
+	}
 	if capabilityChanged && h.AfterStatsCapabilityChange != nil {
 		h.AfterStatsCapabilityChange(serverID)
 	}

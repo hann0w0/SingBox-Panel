@@ -159,6 +159,9 @@ func BuildInbound(in InboundInput) (json.RawMessage, error) {
 	if err := in.Settings.Validate(in.Type); err != nil {
 		return nil, err
 	}
+	if in.Settings.IPv6Only && in.Settings.ListenAddress() == "::" {
+		return nil, fmt.Errorf("IPv6 入站必须绑定具体的本机 IPv6 地址")
+	}
 	if !in.Settings.SingleUser && len(in.Users) > 0 {
 		// Imported wire-mode inputs can carry users without the panel opt-in.
 		multiSettings := in.Settings

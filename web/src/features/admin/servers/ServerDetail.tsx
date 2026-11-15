@@ -87,6 +87,22 @@ export default function ServerDetail() {
   const [install, setInstall] = useState('')
   const [busy, setBusy] = useState('')
   const [formOpen, setFormOpen] = useState(false)
+  useEffect(() => {
+    if (!formOpen) return
+    const controller = new AbortController()
+    const refresh = async () => {
+      try {
+        const result = await getServer(sid, controller.signal)
+        if (controller.signal.aborted) return
+        setServer((previous) => previous?.id === sid ? { ...previous, ipv4_available: result.server.ipv4_available, ipv6_available: result.server.ipv6_available } : previous)
+      } catch {
+        if (!controller.signal.aborted) setServer((previous) => previous?.id === sid ? { ...previous, ipv6_available: false } : previous)
+      }
+    }
+    void refresh()
+    const timer = window.setInterval(() => void refresh(), 10000)
+    return () => { controller.abort(); window.clearInterval(timer) }
+  }, [formOpen, sid])
   const [editing, setEditing] = useState<Inbound | null>(null)
   const [installForm] = Form.useForm()
   const [installOpen, setInstallOpen] = useState(false)
@@ -978,6 +994,7 @@ export default function ServerDetail() {
       <InboundForm
         key={`inbound-${sid}`}
         serverId={sid}
+        ipv6Available={server.ipv6_available === true}
         inbound={editing}
         open={formOpen}
         onClose={() => setFormOpen(false)}

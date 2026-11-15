@@ -175,6 +175,11 @@ type Server struct {
 	Arch                 string     `gorm:"size:32" json:"arch"`
 	Kernel               string     `gorm:"size:64" json:"kernel"`
 	PublicIP             string     `gorm:"size:64" json:"public_ip"`
+	PublicIPv6           string     `gorm:"size:64" json:"public_ipv6"`
+	PublicIPv4UpdatedAt  *time.Time `json:"public_ipv4_updated_at,omitempty"`
+	PublicIPv6UpdatedAt  *time.Time `json:"public_ipv6_updated_at,omitempty"`
+	IPv4Available        bool       `gorm:"-" json:"ipv4_available"`
+	IPv6Available        bool       `gorm:"-" json:"ipv6_available"`
 	AgentVersion         string     `gorm:"size:64" json:"agent_version"`
 	AgentHasUpdate       bool       `gorm:"-" json:"agent_has_update,omitempty"`
 	AgentLatestVersion   string     `gorm:"-" json:"agent_latest_version,omitempty"`

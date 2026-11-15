@@ -38,14 +38,14 @@ afterEach(() => {
   else Reflect.deleteProperty(Element.prototype, 'scrollIntoView')
 })
 
-function openShadowsocks(method: string, multiUser = false) {
+function openShadowsocks(method: string, multiUser = false, ipv6Available = true) {
   const psk = btoa('a'.repeat(ss2022KeyLen(method)))
   const inbound: Inbound = {
     id: 2, server_id: 1, type: 'shadowsocks', tag: 'ss', listen_port: 8388, enabled: true, remark: '',
     created_at: '2026-09-06T00:00:00Z', updated_at: '2026-09-06T00:00:00Z',
     settings: { method, ss_server_psk: psk, multi_user: multiUser, single_user: !multiUser },
   }
-  render(<InboundForm serverId={1} inbound={inbound} open onClose={vi.fn()} onSaved={vi.fn()} />)
+  render(<InboundForm serverId={1} ipv6Available={ipv6Available} inbound={inbound} open onClose={vi.fn()} onSaved={vi.fn()} />)
   fireEvent.click(screen.getByText('认证'))
   return psk
 }
@@ -62,6 +62,22 @@ async function saveSettings() {
 }
 
 describe('Shadowsocks multi-user capability', () => {
+  it('hides IPv6 when the server has no available IPv6', () => {
+    openShadowsocks(aes128, false, false)
+    fireEvent.click(screen.getByLabelText('监听'))
+    expect(screen.getAllByRole('option').map(option => option.textContent)).toEqual(['双栈', '本机', 'IPv4'])
+  })
+  it('does not silently broaden an existing IPv6 listener when IPv6 is unavailable', async () => {
+    const inbound: Inbound = {
+      id: 2, server_id: 1, type: 'shadowsocks', tag: 'ss', listen_port: 8388, enabled: true, remark: '',
+      created_at: '', updated_at: '', settings: { method: aes128, ss_server_psk: btoa('a'.repeat(16)), listen: '::', ipv6_only: true },
+    }
+    render(<InboundForm serverId={1} ipv6Available={false} inbound={inbound} open onClose={vi.fn()} onSaved={vi.fn()} />)
+    expect(screen.getByLabelText('监听').textContent).toContain('IPv6 不可用')
+    fireEvent.click(screen.getByRole('button', { name: '应用' }))
+    await screen.findByText('服务器当前没有可用的 IPv6 地址，请选择其他监听方式')
+    expect(updateInbound).not.toHaveBeenCalled()
+  })
   it('defaults to all addresses and submits an explicitly selected listen mode', async () => {
     openShadowsocks(aes128)
     const control = screen.getByLabelText('监听')

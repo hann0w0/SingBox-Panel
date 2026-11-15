@@ -23,9 +23,9 @@ func TestListenModesRoundTrip(t *testing.T) {
 	}{
 		{"default", "", false},
 		{"ipv4", "0.0.0.0", false},
-		{"ipv6", "::", true},
+		{"ipv6", "2001:db8::2", true},
 		{"local", "127.0.0.1", false},
-		{"imported", "2001:db8::1", false},
+		{"imported", "2001:db8::1", true},
 	} {
 		for _, guarded := range []bool{false, true} {
 			t.Run(mode.name+map[bool]string{false: "", true: "-guard"}[guarded], func(t *testing.T) {
@@ -46,12 +46,6 @@ func TestListenModesRoundTrip(t *testing.T) {
 				public := mSlice(root, "inbounds")[0].(map[string]any)
 				if mStr(public, "listen") != inbound.Settings.ListenAddress() {
 					t.Fatalf("wrong bind address: %s", raw)
-				}
-				if mode.ipv6Only {
-					rules := mSlice(mMap(root, "route"), "rules")
-					if len(rules) == 0 || !guardSame(rules[0], ipv6OnlyRule(inboundListenTag(inbound))) {
-						t.Fatalf("IPv4 must be rejected before other routing: %s", raw)
-					}
 				}
 				if guarded && mStr(mSlice(root, "inbounds")[1].(map[string]any), "listen") != "127.0.0.1" {
 					t.Fatalf("internal listener is not loopback: %s", raw)
@@ -78,6 +72,7 @@ func TestListenValidation(t *testing.T) {
 	for _, settings := range []InboundSettings{
 		{Listen: "example.com"}, {Listen: "127.0.0.1:1080"},
 		{Listen: "0.0.0.0", IPv6Only: true}, {Listen: "::ffff:127.0.0.1", IPv6Only: true},
+		{Listen: "::", IPv6Only: true},
 	} {
 		if _, err := BuildInbound(InboundInput{Tag: "invalid", Type: "socks", ListenPort: 1080, Settings: settings}); err == nil {
 			t.Fatalf("accepted invalid listen settings: %+v", settings)
@@ -100,7 +95,7 @@ func TestIPv6OnlyLive(t *testing.T) {
 		io.WriteString(writer, "ipv6-only-ok")
 	}))
 	defer origin.Close()
-	raw, err := BuildServerConfig(ServerConfigInput{Inbounds: []InboundInput{{Tag: "ipv6", Type: "socks", ListenPort: port, Settings: InboundSettings{Listen: "::", IPv6Only: true}}}})
+	raw, err := BuildServerConfig(ServerConfigInput{Inbounds: []InboundInput{{Tag: "ipv6", Type: "socks", ListenPort: port, Settings: InboundSettings{Listen: "::1", IPv6Only: true}}}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -131,6 +126,13 @@ func TestIPv6OnlyLive(t *testing.T) {
 		time.Sleep(25 * time.Millisecond)
 	}
 	for _, host := range []string{"::1", "127.0.0.1"} {
+		if host == "127.0.0.1" {
+			connection, err := net.DialTimeout("tcp4", net.JoinHostPort(host, strconv.Itoa(port)), time.Second)
+			if err == nil {
+				connection.Close()
+				t.Fatal("IPv4 TCP handshake succeeded on IPv6-only inbound")
+			}
+		}
 		proxy, _ := url.Parse("socks5://" + net.JoinHostPort(host, strconv.Itoa(port)))
 		transport := &http.Transport{Proxy: http.ProxyURL(proxy)}
 		client := &http.Client{Transport: transport, Timeout: 2 * time.Second}

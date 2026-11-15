@@ -9,14 +9,93 @@ import (
 	"net/netip"
 	"os"
 	"runtime"
+	"slices"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 )
 
 var publicIPv4Endpoints = []string{
 	"https://api4.ipify.org",
 	"https://ipv4.icanhazip.com",
+}
+
+type publicAddresses struct {
+	IPv4 *string
+	IPv6 *string
+}
+
+func detectPublicAddresses(ctx context.Context) publicAddresses {
+	var addresses publicAddresses
+	var probes sync.WaitGroup
+	probes.Add(2)
+	go func() {
+		defer probes.Done()
+		if address := DetectPublicIPv4(ctx); address != "" {
+			addresses.IPv4 = &address
+		}
+	}()
+	go func() {
+		defer probes.Done()
+		if address, err := detectLocalIPv6(ctx); err == nil {
+			addresses.IPv6 = &address
+		}
+	}()
+	probes.Wait()
+	return addresses
+}
+
+func selectLocalIPv6(candidates []netip.Addr, preferred netip.Addr) string {
+	available := make([]netip.Addr, 0, len(candidates))
+	for _, address := range candidates {
+		if usablePublicAddress(address, true) {
+			if address == preferred {
+				return address.String()
+			}
+			available = append(available, address)
+		}
+	}
+	slices.SortFunc(available, func(left, right netip.Addr) int { return left.Compare(right) })
+	if len(available) == 0 {
+		return ""
+	}
+	return available[0].String()
+}
+
+func detectLocalIPv6(ctx context.Context) (string, error) {
+	interfaces, err := net.Interfaces()
+	if err != nil {
+		return "", err
+	}
+	var candidates []netip.Addr
+	for _, network := range interfaces {
+		if network.Flags&net.FlagUp == 0 || network.Flags&net.FlagLoopback != 0 {
+			continue
+		}
+		addresses, err := network.Addrs()
+		if err != nil {
+			return "", err
+		}
+		for _, value := range addresses {
+			if prefix, err := netip.ParsePrefix(value.String()); err == nil {
+				candidates = append(candidates, prefix.Addr())
+			}
+		}
+	}
+	preferred := netip.Addr{}
+	dialer := net.Dialer{Timeout: 500 * time.Millisecond}
+	if connection, err := dialer.DialContext(ctx, "udp6", "[2606:4700:4700::1111]:53"); err == nil {
+		if local, ok := connection.LocalAddr().(*net.UDPAddr); ok {
+			preferred = local.AddrPort().Addr()
+		}
+		connection.Close()
+	}
+	return selectLocalIPv6(candidates, preferred), nil
+}
+
+func usablePublicAddress(address netip.Addr, ipv6 bool) bool {
+	return address.IsValid() && address.Is6() == ipv6 && !address.Is4In6() && address.IsGlobalUnicast() && !address.IsPrivate() && address.Zone() == ""
 }
 
 // SysInfo is a snapshot of host metrics reported to the panel.
@@ -53,15 +132,18 @@ func DetectPublicIPv4(ctx context.Context) string {
 }
 
 func detectPublicIPv4From(ctx context.Context, endpoints []string) string {
+	return detectPublicAddressFrom(ctx, endpoints, false)
+}
+
+func detectPublicAddressFrom(ctx context.Context, endpoints []string, ipv6 bool) string {
+	network := "tcp4"
+	if ipv6 {
+		network = "tcp6"
+	}
 	dialer := &net.Dialer{Timeout: 2 * time.Second}
 	transport := &http.Transport{
-		Proxy: http.ProxyFromEnvironment,
-		DialContext: func(ctx context.Context, network, address string) (net.Conn, error) {
-			conn, err := dialer.DialContext(ctx, "tcp4", address)
-			if err != nil {
-				return dialer.DialContext(ctx, network, address)
-			}
-			return conn, nil
+		DialContext: func(ctx context.Context, _ string, address string) (net.Conn, error) {
+			return dialer.DialContext(ctx, network, address)
 		},
 		TLSHandshakeTimeout: 2 * time.Second,
 		ForceAttemptHTTP2:   true,
@@ -89,7 +171,7 @@ func detectPublicIPv4From(ctx context.Context, endpoints []string) string {
 			continue
 		}
 		addr, err := netip.ParseAddr(strings.TrimSpace(string(raw)))
-		if err == nil && addr.Is4() {
+		if err == nil && usablePublicAddress(addr, ipv6) {
 			return addr.String()
 		}
 	}

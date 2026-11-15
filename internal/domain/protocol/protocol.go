@@ -156,20 +156,24 @@ type LogsData struct {
 
 // RegisterEvt is sent immediately after the WS handshake authenticates.
 type RegisterEvt struct {
-	AgentVersion                 string `json:"agent_version"`
-	Hostname                     string `json:"hostname"`
-	OS                           string `json:"os"`
-	Arch                         string `json:"arch"`
-	Kernel                       string `json:"kernel"`
-	PublicIP                     string `json:"public_ip,omitempty"`
-	SingboxInstalled             bool   `json:"singbox_installed"`
-	SingboxVersion               string `json:"singbox_version,omitempty"`
-	PanelURL                     string `json:"panel_url,omitempty"`
-	RestrictedOutboundValidation bool   `json:"restricted_outbound_validation,omitempty"`
+	AgentVersion                 string  `json:"agent_version"`
+	Hostname                     string  `json:"hostname"`
+	OS                           string  `json:"os"`
+	Arch                         string  `json:"arch"`
+	Kernel                       string  `json:"kernel"`
+	PublicIP                     string  `json:"public_ip,omitempty"`
+	PublicIPv4                   *string `json:"public_ipv4,omitempty"`
+	PublicIPv6                   *string `json:"public_ipv6,omitempty"`
+	SingboxInstalled             bool    `json:"singbox_installed"`
+	SingboxVersion               string  `json:"singbox_version,omitempty"`
+	PanelURL                     string  `json:"panel_url,omitempty"`
+	RestrictedOutboundValidation bool    `json:"restricted_outbound_validation,omitempty"`
 }
 
 // HeartbeatEvt is sent periodically.
 type HeartbeatEvt struct {
+	PublicIPv4     *string          `json:"public_ipv4,omitempty"`
+	PublicIPv6     *string          `json:"public_ipv6,omitempty"`
 	TS             int64            `json:"ts"`
 	Load1          float64          `json:"load1"`
 	MemUsed        uint64           `json:"mem_used"`
@@ -283,6 +287,8 @@ type StatusData struct {
 	Arch             string         `json:"arch,omitempty"`
 	Kernel           string         `json:"kernel,omitempty"`
 	PublicIP         string         `json:"public_ip,omitempty"`
+	PublicIPv4       *string        `json:"public_ipv4,omitempty"`
+	PublicIPv6       *string        `json:"public_ipv6,omitempty"`
 	Load1            float64        `json:"load1,omitempty"`
 	MemUsed          uint64         `json:"mem_used,omitempty"`
 	MemTotal         uint64         `json:"mem_total,omitempty"`

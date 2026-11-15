@@ -3,6 +3,7 @@ package panel
 import (
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"sort"
@@ -145,14 +146,6 @@ func (a *App) gatherNodesWithError(user *model.User) ([]node, error) {
 
 		for i := range servers {
 			srv := &servers[i]
-			host := srv.Address
-			if host == "" {
-				host = srv.PublicIP
-			}
-			host, err := normalizeNodeAddress(host)
-			if err != nil || host == "" {
-				continue
-			}
 			var inbounds []model.Inbound
 			if err := a.db.Where("server_id = ? AND enabled = ?", srv.ID, true).Order("id").Find(&inbounds).Error; err != nil {
 				return nil, err
@@ -166,7 +159,16 @@ func (a *App) gatherNodesWithError(user *model.User) ([]node, error) {
 				}
 				var st singbox.InboundSettings
 				if len(ib.Settings) > 0 {
-					_ = json.Unmarshal(ib.Settings, &st)
+					if err := json.Unmarshal(ib.Settings, &st); err != nil {
+						return nil, fmt.Errorf("inbound %q settings: %w", ib.Tag, err)
+					}
+				}
+				host, err := inboundNodeAddress(srv, &st)
+				if errors.Is(err, errLocalInbound) {
+					continue
+				}
+				if err != nil {
+					return nil, fmt.Errorf("入站 %q: %w", ib.Tag, err)
 				}
 				if err := st.ValidateMultiUser(string(ib.Type)); err != nil {
 					return nil, fmt.Errorf("inbound %q settings: %w", ib.Tag, err)
@@ -224,6 +226,13 @@ func (a *App) gatherNodesWithError(user *model.User) ([]node, error) {
 				}
 				if !st.UseMultiUser(string(ib.Type)) {
 					continue
+				}
+				host, err := inboundNodeAddress(srv, &st)
+				if errors.Is(err, errLocalInbound) {
+					continue
+				}
+				if err != nil {
+					return nil, fmt.Errorf("转发入站 %q: %w", ib.Tag, err)
 				}
 				st.SingleUser = false
 				st.MultiUser = true

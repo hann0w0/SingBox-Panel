@@ -76,6 +76,7 @@ func uintParam(c *gin.Context, name string) (uint, bool) {
 
 func (a *App) applyConfigAndRespond(c *gin.Context, serverID uint, payload gin.H) {
 	result := a.orch.ApplyDesiredConfig(c.Request.Context(), serverID)
+	a.reconcileNodeConsumers(serverID)
 	if payload == nil {
 		payload = gin.H{}
 	}

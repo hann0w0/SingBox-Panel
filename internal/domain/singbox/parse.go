@@ -246,6 +246,7 @@ func parseInbound(m map[string]any) (ParsedInbound, bool) {
 	}
 	s := InboundSettings{
 		Listen:    mStr(m, "listen"),
+		IPv6Only:  specificIPv6(mStr(m, "listen")),
 		TLS:       parseTLS(mMap(m, "tls")),
 		Transport: parseTransport(mMap(m, "transport")),
 	}
@@ -481,7 +482,6 @@ func ParseServerConfig(raw []byte) (*ParsedConfig, error) {
 		return nil, fmt.Errorf("配置不是合法 JSON: %w", err)
 	}
 	out := &ParsedConfig{Final: "direct"}
-	ipv6Only := extractIPv6OnlyRules(root)
 	guards := findRealityGuardImports(root)
 	guardTargets := make(map[int]realityGuardImport, len(guards))
 	guardInbounds := make(map[int]bool, len(guards))
@@ -519,14 +519,11 @@ func ParseServerConfig(raw []byte) (*ParsedConfig, error) {
 			in.ListenPort = guard.publicPort
 			publicInbound, _ := mSlice(root, "inbounds")[guard.directIndex].(map[string]any)
 			in.Settings.Listen = mStr(publicInbound, "listen")
-			in.Settings.IPv6Only = ipv6Only[guard.tag]
+			in.Settings.IPv6Only = specificIPv6(in.Settings.Listen)
 			in.Settings.TLS.Reality.Guard = &RealityGuardSettings{
 				Enabled: true, InternalPort: guard.internalPort,
 				SniffTimeout: guard.timeout, ServerNames: guard.serverNames, Tag: guard.tag,
 			}
-		}
-		if ipv6Only[in.Tag] {
-			in.Settings.IPv6Only = true
 		}
 		out.Inbounds = append(out.Inbounds, in)
 	}

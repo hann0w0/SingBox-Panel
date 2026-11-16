@@ -1,6 +1,6 @@
 import type { ComponentProps } from 'react'
 import { Label } from '@/components/ui/label'
-import { cn } from '@/lib/utils'
+import { cn } from '@/lib/util'
 
 function FieldSet({ className, ...props }: ComponentProps<'fieldset'>) {
   return <fieldset data-slot="field-set" className={cn('flex min-w-0 flex-col gap-4', className)} {...props} />

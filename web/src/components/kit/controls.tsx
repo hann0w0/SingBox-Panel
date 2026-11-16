@@ -35,8 +35,8 @@ import {
   TooltipContent,
   TooltipTrigger,
 } from '@/components/ui/tooltip'
-import { cn } from '@/lib/utils'
-import { copyToClipboard } from '../util'
+import { cn } from '@/lib/util'
+import { copyToClipboard } from '../../lib/util'
 import { message } from './feedback'
 
 export type ButtonProps = Omit<

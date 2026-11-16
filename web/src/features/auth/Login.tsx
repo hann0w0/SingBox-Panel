@@ -1,8 +1,8 @@
 import { useState } from 'react'
-import { Button, Form, Input, message } from '../../ui'
+import { Button, Form, Input, message } from '../../components/kit'
 import { useNavigate } from 'react-router-dom'
-import { errMsg, login } from '../../api'
-import { useAuth } from '../../store'
+import { errMsg, login } from '../../lib/api'
+import { useAuth } from '../../lib/store'
 import './Login.css'
 import logo from '../../assets/logo.svg'
 

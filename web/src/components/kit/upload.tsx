@@ -1,7 +1,7 @@
 import React, { useId, useRef } from 'react'
 import { UploadCloud, X } from 'lucide-react'
-import { cn } from '@/lib/utils'
-import { randomUUID } from '../util'
+import { cn } from '@/lib/util'
+import { randomUUID } from '../../lib/util'
 export type UploadFile = {
   uid: string
   name: string

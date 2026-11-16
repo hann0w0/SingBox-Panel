@@ -1,13 +1,16 @@
 import { act, cleanup, fireEvent, render as renderComponent, screen, waitFor } from '@testing-library/react'
 import type { ReactElement } from 'react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { getNodeFormats, type NodeFormats } from '../../../api'
+import { getNodeFormats, type NodeFormats } from '../../../lib/api'
 import { NodeFormatsExportModal } from './NodeFormatsModal'
-import { copyToClipboard } from '../../../util'
+import { copyToClipboard } from '../../../lib/util'
 import { TooltipProvider } from '../../../components/ui/tooltip'
 
-vi.mock('../../../api', () => ({ getNodeFormats: vi.fn(), errMsg: (error: Error) => error.message }))
-vi.mock('../../../util', () => ({ copyToClipboard: vi.fn().mockResolvedValue(undefined) }))
+vi.mock('../../../lib/api', () => ({ getNodeFormats: vi.fn(), errMsg: (error: Error) => error.message }))
+vi.mock('../../../lib/util', async (original) => ({
+  ...await original<typeof import('../../../lib/util')>(),
+  copyToClipboard: vi.fn().mockResolvedValue(undefined),
+}))
 
 const initial: NodeFormats = { items: [], uri: '', clash: '', surge: '', users: [{ id: 1, email: 'alice' }, { id: 2, email: 'bob' }], multi_user_count: 2, user_id: 0 }
 const render = (element: ReactElement) => renderComponent(element, { wrapper: TooltipProvider })

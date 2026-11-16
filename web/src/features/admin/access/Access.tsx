@@ -13,8 +13,8 @@ import {
   Table,
   Typography,
   message,
-} from '../../../ui'
-import type { ColumnsType } from '../../../ui'
+} from '../../../components/kit'
+import type { ColumnsType } from '../../../components/kit'
 import {
   Trash2,
   ChevronDown,
@@ -44,19 +44,19 @@ import {
   updateCustomNodeSubscription,
   updateCustomNode,
   updateUserAccess,
-} from '../../../api'
-import type { CustomNode, CustomNodeSubscription, NameRewriteRule, UserNodeOrderItem } from '../../../api'
-import type { Inbound, Server } from '../../../types'
+} from '../../../lib/api'
+import type { CustomNode, CustomNodeSubscription, NameRewriteRule, UserNodeOrderItem } from '../../../lib/api'
+import type { Inbound, Server } from '../../../lib/types'
 import { RegionFlag, regionCodeFromFlag, removeRegionFlag } from '../../../components/RegionFlag'
-import { inboundConnectionHost } from '../../../nodeAddress'
-import { SHADOWSOCKS_METHODS } from '../../../util'
+import { inboundConnectionHost } from '../../../lib/nodeAddress'
+import { SHADOWSOCKS_METHODS } from '../../../lib/util'
 import { RequestState } from '../../../components/RequestState'
-import { buildCustomNodeParams } from '../../../customNodeForm'
-import { Pills, Status } from '../../../ui/Page'
+import { buildCustomNodeParams } from '../../../lib/customNodeForm'
+import { Pills, Status } from '../../../components/kit/Page'
 import { Field, FieldGroup, FieldLabel, FieldLegend, FieldSet } from '@/components/ui/field'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import '../../../styles/users.css'
-import { MODAL_MD } from '../../../ui/modal'
+import { MODAL_MD } from '../../../components/kit/modal'
 
 // ======================= 节点分配 =======================
 

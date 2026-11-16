@@ -20,8 +20,8 @@ import {
   DropdownMenuSeparator,
 } from '@/components/ui/dropdown-menu'
 import { Button, type ButtonProps } from './controls'
-import { cn } from '@/lib/utils'
-import { errMsg } from '../api'
+import { cn } from '@/lib/util'
+import { errMsg } from '../../lib/api'
 
 type ModalProps = {
   open?: boolean

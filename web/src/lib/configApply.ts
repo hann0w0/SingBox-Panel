@@ -1,4 +1,4 @@
-import { message } from './ui/feedback'
+import { message } from '../components/kit/feedback'
 import { errMsg, type ConfigApplyResult } from './api'
 
 export function isConfigApplyResult(value: unknown): value is ConfigApplyResult {

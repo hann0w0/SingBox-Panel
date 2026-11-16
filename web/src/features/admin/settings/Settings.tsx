@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
-import { Alert, Button, Input, Modal, Popconfirm, Select, Tooltip, Typography, Upload, message } from '../../../ui'
-import type { UploadFile } from '../../../ui'
+import { Alert, Button, Input, Modal, Popconfirm, Select, Tooltip, Typography, Upload, message } from '../../../components/kit'
+import type { UploadFile } from '../../../components/kit'
 import { Trash2, Download, Inbox, Link } from 'lucide-react'
 import {
   listPanelReleases,
@@ -20,13 +20,13 @@ import {
   type MaintenanceInfo,
   type OneDriveAuthStart,
   type OneDriveStatus,
-} from '../../../api'
-import { formatDuration } from '../../../util'
-import { useAuth } from '../../../store'
-import { updateFailureMessage, updateRestartCompleted } from '../../../maintenanceUpdate'
-import { PageHeader, Pills, Status } from '../../../ui/Page'
+} from '../../../lib/api'
+import { formatDuration } from '../../../lib/util'
+import { useAuth } from '../../../lib/store'
+import { updateFailureMessage, updateRestartCompleted } from '../../../lib/maintenanceUpdate'
+import { PageHeader, Pills, Status } from '../../../components/kit/Page'
 import { RequestState } from '../../../components/RequestState'
-import type { PanelRelease } from '../../../api'
+import type { PanelRelease } from '../../../lib/api'
 import '../../../styles/settings-user.css'
 
 // Orders vMAJOR.MINOR.PATCH tags; unparsable tags compare equal.

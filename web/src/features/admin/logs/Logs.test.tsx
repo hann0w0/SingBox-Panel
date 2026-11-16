@@ -1,16 +1,16 @@
 import { act, cleanup, render, screen, waitFor } from '@testing-library/react'
 import { MemoryRouter } from 'react-router-dom'
 import { afterEach, beforeEach, expect, it, vi } from 'vitest'
-import { listServers, serverLogs, streamLogs } from '../../../api'
-import { useSSE } from '../../../useSSE'
-import type { SSEMessage } from '../../../useSSE'
+import { listServers, serverLogs, streamLogs } from '../../../lib/api'
+import { useSSE } from '../../../hooks/useSSE'
+import type { SSEMessage } from '../../../hooks/useSSE'
 import Logs, { splitAddress } from './Logs'
 
-vi.mock('../../../api', async (importOriginal) => ({
-  ...await importOriginal<typeof import('../../../api')>(),
+vi.mock('../../../lib/api', async (importOriginal) => ({
+  ...await importOriginal<typeof import('../../../lib/api')>(),
   listServers: vi.fn(), serverLogs: vi.fn(), streamLogs: vi.fn(),
 }))
-vi.mock('../../../useSSE', () => ({ useSSE: vi.fn(() => ({ connected: true })) }))
+vi.mock('../../../hooks/useSSE', () => ({ useSSE: vi.fn(() => ({ connected: true })) }))
 
 beforeEach(() => {
   vi.resetAllMocks()

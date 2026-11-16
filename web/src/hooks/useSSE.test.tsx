@@ -2,8 +2,8 @@ import { act, renderHook } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { sseAuth, useSSE } from './useSSE'
-import { useAuth } from './store'
-import type { User } from './types'
+import { useAuth } from '../lib/store'
+import type { User } from '../lib/types'
 
 describe('useSSE', () => {
   beforeEach(() => {

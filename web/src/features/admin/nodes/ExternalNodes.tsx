@@ -1,8 +1,8 @@
 import { useEffect, useRef, useState } from 'react'
-import { errMsg, listCustomNodes } from '../../../api'
-import type { CustomNode } from '../../../api'
+import { errMsg, listCustomNodes } from '../../../lib/api'
+import type { CustomNode } from '../../../lib/api'
 import { CustomNodesPanel } from '../access/Access'
-import { PageHeader } from '../../../ui/Page'
+import { PageHeader } from '../../../components/kit/Page'
 import '../../../styles/users.css'
 
 // ExternalNodes manages third-party subscriptions and hand-added nodes that

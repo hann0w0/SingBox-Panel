@@ -8,7 +8,7 @@ const message = vi.hoisted(() => ({
   loading: vi.fn(),
 }))
 
-vi.mock('./ui/feedback', () => ({ message }))
+vi.mock('../components/kit/feedback', () => ({ message }))
 
 import { isConfigApplyResult, showConfigApplyResult } from './configApply'
 

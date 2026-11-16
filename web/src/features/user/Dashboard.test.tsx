@@ -2,23 +2,23 @@ import { StrictMode } from 'react'
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import Dashboard from './Dashboard'
-import { createUserForward, deleteUserForward, getMe, getMyTraffic, getSubscriptionSync, getUserForwards, getUserInbounds, getUserNodes, getUserOutbounds, importUserOutbound, resetSub } from '../../api'
-import type { UserForward, UserInboundOption, UserNode, UserPrivateOutbound } from '../../api'
-import type { RouteRule, User, UserTrafficSeries } from '../../types'
-import { useAuth } from '../../store'
-import { copyToClipboard } from '../../util'
+import { createUserForward, deleteUserForward, getMe, getMyTraffic, getSubscriptionSync, getUserForwards, getUserInbounds, getUserNodes, getUserOutbounds, importUserOutbound, resetSub } from '../../lib/api'
+import type { UserForward, UserInboundOption, UserNode, UserPrivateOutbound } from '../../lib/api'
+import type { RouteRule, User, UserTrafficSeries } from '../../lib/types'
+import { useAuth } from '../../lib/store'
+import { copyToClipboard } from '../../lib/util'
 import { TooltipProvider } from '../../components/ui/tooltip'
-import { DialogHost, Modal } from '../../ui/dialogs'
-import { message } from '../../ui/feedback'
+import { DialogHost, Modal } from '../../components/kit/dialogs'
+import { message } from '../../components/kit/feedback'
 
-vi.mock('../../api', async (importOriginal) => ({
-  ...await importOriginal<typeof import('../../api')>(),
+vi.mock('../../lib/api', async (importOriginal) => ({
+  ...await importOriginal<typeof import('../../lib/api')>(),
   getMe: vi.fn(), getUserNodes: vi.fn(), getUserOutbounds: vi.fn(), getUserInbounds: vi.fn(), getUserForwards: vi.fn(),
   getMyTraffic: vi.fn(), resetSub: vi.fn(), getSubscriptionSync: vi.fn(),
   createUserForward: vi.fn(), deleteUserForward: vi.fn(), importUserOutbound: vi.fn(),
 }))
-vi.mock('../../util', async (importOriginal) => ({
-  ...await importOriginal<typeof import('../../util')>(), copyToClipboard: vi.fn(),
+vi.mock('../../lib/util', async (importOriginal) => ({
+  ...await importOriginal<typeof import('../../lib/util')>(), copyToClipboard: vi.fn(),
 }))
 
 const user = { id: 2, email: 'alice', role: 'user', enabled: true, forwarding_enabled: true, server_ids: [1], inbound_ids: [1] } as User

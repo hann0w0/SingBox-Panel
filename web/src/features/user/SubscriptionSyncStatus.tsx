@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react'
-import { getSubscriptionSync } from '../../api'
-import type { SubscriptionSyncResult } from '../../api'
-import { Alert } from '../../ui'
+import { getSubscriptionSync } from '../../lib/api'
+import type { SubscriptionSyncResult } from '../../lib/api'
+import { Alert } from '../../components/kit'
 
 export function SubscriptionSyncStatus({ initial }: { initial?: SubscriptionSyncResult }) {
   const [status, setStatus] = useState(initial)

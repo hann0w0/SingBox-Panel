@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from 'vitest'
-import type { FormInstance } from '../../../ui'
-import type { Inbound } from '../../../types'
+import type { FormInstance } from '../../../components/kit'
+import type { Inbound } from '../../../lib/types'
 import { assembleSettings, scrollToFirstError, toForm, validateGuardServerNames, validateGuardTimeout } from './InboundForm'
 
 const inbound = {

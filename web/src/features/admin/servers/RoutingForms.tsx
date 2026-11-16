@@ -1,21 +1,21 @@
 import { useEffect, useId, useLayoutEffect, useRef, useState } from 'react'
-import { Alert, Button, Checkbox, Form, Input, InputNumber, Modal, Segmented, Select, Space, Switch } from '../../../ui'
+import { Alert, Button, Checkbox, Form, Input, InputNumber, Modal, Segmented, Select, Space, Switch } from '../../../components/kit'
 import {
   createOutbound,
   createRule,
   listSharedRuleSets,
   updateOutbound,
   updateRule,
-} from '../../../api'
-import { applyWithToast } from '../../../configApply'
-import type { Outbound, OutboundType, RouteRule, RuleMatch, RuleSet } from '../../../types'
-import { randomBase64, randomHex, randomUUID, SHADOWSOCKS_METHODS, ss2022KeyLen } from '../../../util'
-import { buildOutboundBody, TLS_REQUIRED_OUT, TRANSPORT_OUT, transportHost } from '../../../outboundForm'
+} from '../../../lib/api'
+import { applyWithToast } from '../../../lib/configApply'
+import type { Outbound, OutboundType, RouteRule, RuleMatch, RuleSet } from '../../../lib/types'
+import { randomBase64, randomHex, randomUUID, SHADOWSOCKS_METHODS, ss2022KeyLen } from '../../../lib/util'
+import { buildOutboundBody, TLS_REQUIRED_OUT, TRANSPORT_OUT, transportHost } from '../../../lib/outboundForm'
 import { FormGroup, scrollToFirstError } from './InboundForm'
 import '../../../styles/forms.css'
-import { MODAL_MD } from '../../../ui/modal'
+import { MODAL_MD } from '../../../components/kit/modal'
 import { OutboundImport, type NodeImportMode } from './OutboundImport'
-import { Pills } from '../../../ui/Page'
+import { Pills } from '../../../components/kit/Page'
 
 const OUT_TYPES: { value: OutboundType; label: string }[] = [
   { value: 'shadowsocks', label: 'Shadowsocks' },

@@ -1,17 +1,17 @@
 import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { RuleForm } from './RoutingForms'
-import { createRule, updateRule } from '../../../api'
-import type { RouteRule } from '../../../types'
+import { createRule, updateRule } from '../../../lib/api'
+import type { RouteRule } from '../../../lib/types'
 
-vi.mock('../../../api', () => ({
+vi.mock('../../../lib/api', () => ({
   createRule: vi.fn(), updateRule: vi.fn(), createOutbound: vi.fn(), updateOutbound: vi.fn(),
   listSharedRuleSets: vi.fn(async () => [
     { id: 1, tag: 'geoip-cn', type: 'remote', format: 'binary', url: 'https://example.com/cn.srs' },
   ]),
   errMsg: (e: Error) => e.message,
 }))
-vi.mock('../../../configApply', () => ({
+vi.mock('../../../lib/configApply', () => ({
   applyWithToast: async (_key: string, action: () => Promise<unknown>) => { await action(); return true },
   showConfigApplyResult: vi.fn(),
 }))

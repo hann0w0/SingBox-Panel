@@ -8,7 +8,7 @@ import {
   TableHead,
   TableCell,
 } from '@/components/ui/table'
-import { cn } from '@/lib/utils'
+import { cn } from '@/lib/util'
 import { useBreakpoint } from './controls'
 type Column<T> = {
   key?: React.Key

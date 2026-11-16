@@ -1,10 +1,10 @@
 import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import { afterEach, beforeEach, expect, it, vi } from 'vitest'
-import { createUser, updateUser } from '../../../api'
-import type { User } from '../../../types'
+import { createUser, updateUser } from '../../../lib/api'
+import type { User } from '../../../lib/types'
 import { UserAccountDialog } from './UserDialogs'
 
-vi.mock('../../../api', async (original) => ({ ...await original<typeof import('../../../api')>(), updateUser: vi.fn(), createUser: vi.fn() }))
+vi.mock('../../../lib/api', async (original) => ({ ...await original<typeof import('../../../lib/api')>(), updateUser: vi.fn(), createUser: vi.fn() }))
 const user = { id: 2, email: 'alice', forwarding_enabled: true, role: 'user' } as User
 beforeEach(() => {
   vi.resetAllMocks()

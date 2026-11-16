@@ -1,9 +1,9 @@
 import { act, cleanup, render, screen } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { getSubscriptionSync } from '../../api'
+import { getSubscriptionSync } from '../../lib/api'
 import { SubscriptionSyncStatus } from './SubscriptionSyncStatus'
 
-vi.mock('../../api', () => ({ getSubscriptionSync: vi.fn() }))
+vi.mock('../../lib/api', () => ({ getSubscriptionSync: vi.fn() }))
 
 beforeEach(() => { vi.useFakeTimers(); vi.clearAllMocks() })
 afterEach(() => { cleanup(); vi.useRealTimers() })

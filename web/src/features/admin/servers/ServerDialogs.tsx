@@ -1,8 +1,8 @@
 import type { ReactNode } from 'react'
-import { Button, Form, Input, Modal, Select, Table, type FormInstance } from '../../../ui'
-import type { ImportSummary } from '../../../api'
+import { Button, Form, Input, Modal, Select, Table, type FormInstance } from '../../../components/kit'
+import type { ImportSummary } from '../../../lib/api'
 import '../../../styles/forms.css'
-import { MODAL_LG, MODAL_SM } from '../../../ui/modal'
+import { MODAL_LG, MODAL_SM } from '../../../components/kit/modal'
 
 function PreviewGroup({ title, count, children }: { title: string; count: ReactNode; children: ReactNode }) {
   return (

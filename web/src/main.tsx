@@ -6,9 +6,9 @@ import './index.css'
 import './console.css'
 import './styles/app.css'
 import './styles/components.css'
-import Appearance from './Appearance'
-import { ThemePreferenceProvider } from './themePreference'
-import { markStandalone, registerServiceWorker } from './pwa'
+import Appearance from './app/Appearance'
+import { ThemePreferenceProvider } from './lib/themePreference'
+import { markStandalone, registerServiceWorker } from './lib/pwa'
 
 // Makes the panel installable and keeps the shell available offline. No-op in
 // dev and on insecure origins.

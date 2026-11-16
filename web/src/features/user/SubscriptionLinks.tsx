@@ -1,6 +1,6 @@
 import { Copy } from 'lucide-react'
-import { Modal, Typography, message } from '../../ui'
-import { copyToClipboard } from '../../util'
+import { Modal, Typography, message } from '../../components/kit'
+import { copyToClipboard } from '../../lib/util'
 import '../../styles/settings-user.css'
 
 const CLIENTS = [

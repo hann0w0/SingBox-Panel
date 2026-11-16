@@ -1,5 +1,5 @@
 import type { ReactNode } from 'react'
-import { Alert, Button, Spin } from '../ui'
+import { Alert, Button, Spin } from './kit'
 import { RotateCw } from 'lucide-react'
 import '../styles/settings-user.css'
 

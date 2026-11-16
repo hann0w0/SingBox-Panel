@@ -1,10 +1,10 @@
 import { useLayoutEffect } from 'react'
 import { useLocation } from 'react-router-dom'
-import { TooltipProvider } from './components/ui/tooltip'
-import { consoleCssVariables, getConsolePalette } from './theme'
-import { useThemePreference } from './themePreference'
-import { useAuth } from './store'
-import App from './App'
+import { TooltipProvider } from '../components/ui/tooltip'
+import { consoleCssVariables, getConsolePalette } from '../lib/theme'
+import { useThemePreference } from '../lib/themePreference'
+import { useAuth } from '../lib/store'
+import App from '../App'
 
 export default function Appearance() {
   const { pathname } = useLocation()

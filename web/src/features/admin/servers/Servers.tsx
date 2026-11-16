@@ -1,15 +1,15 @@
 import { useEffect, useRef, useState, type DragEvent, type PointerEvent as ReactPointerEvent } from 'react'
-import { Button, Dropdown, Form, Grid, Input, Modal, Segmented, Select, Typography, message } from '../../../ui'
+import { Button, Dropdown, Form, Grid, Input, Modal, Segmented, Select, Typography, message } from '../../../components/kit'
 import { Check, ChevronDown, Copy, Network, Pencil, ChevronsUpDown, Plus, Trash2 } from 'lucide-react'
 import { useNavigate } from 'react-router-dom'
-import { createServer, deleteServer, errMsg, getOverview, getServersMeta, installSingbox, isCanceledRequest, updateAllAgents, updateServer, updateServerOrder } from '../../../api'
-import type { Server } from '../../../types'
-import { copyToClipboard, formatBytes } from '../../../util'
+import { createServer, deleteServer, errMsg, getOverview, getServersMeta, installSingbox, isCanceledRequest, updateAllAgents, updateServer, updateServerOrder } from '../../../lib/api'
+import type { Server } from '../../../lib/types'
+import { copyToClipboard, formatBytes } from '../../../lib/util'
 import { RequestState } from '../../../components/RequestState'
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
-import { PageHeader, Pills, Stats, Status } from '../../../ui/Page'
+import { PageHeader, Pills, Stats, Status } from '../../../components/kit/Page'
 import '../../../styles/servers.css'
-import { MODAL_MD, MODAL_SM } from '../../../ui/modal'
+import { MODAL_MD, MODAL_SM } from '../../../components/kit/modal'
 
 const rate = (n: number) => `${formatBytes(n)}/s`
 type AddressRow = { label: string; value: string; copy: string }

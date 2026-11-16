@@ -1,18 +1,18 @@
 import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { MemoryRouter } from 'react-router-dom'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { createServer, getOverview, getServersMeta, updateServer } from '../../../api'
-import { copyToClipboard } from '../../../util'
-import type { Server } from '../../../types'
+import { createServer, getOverview, getServersMeta, updateServer } from '../../../lib/api'
+import { copyToClipboard } from '../../../lib/util'
+import type { Server } from '../../../lib/types'
 import Servers from './Servers'
 import { ServerOverviewCard } from './ServerOverviewCard'
 
-vi.mock('../../../api', () => ({
+vi.mock('../../../lib/api', () => ({
   createServer: vi.fn(), updateServer: vi.fn(), getServersMeta: vi.fn(), getOverview: vi.fn(),
   errMsg: (error: Error) => error.message, isCanceledRequest: () => false,
 }))
-vi.mock('../../../util', async (original) => ({
-  ...await original<typeof import('../../../util')>(),
+vi.mock('../../../lib/util', async (original) => ({
+  ...await original<typeof import('../../../lib/util')>(),
   copyToClipboard: vi.fn(async () => {}),
 }))
 

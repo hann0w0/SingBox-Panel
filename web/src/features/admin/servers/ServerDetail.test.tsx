@@ -1,13 +1,13 @@
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import { MemoryRouter, Route, Routes, useNavigate } from 'react-router-dom'
 import { afterEach, beforeEach, expect, it, vi } from 'vitest'
-import { getServer, listOutbounds, listRules, listServerAuthUsers } from '../../../api'
-import type { ServerAuthUser } from '../../../api'
-import type { Server } from '../../../types'
+import { getServer, listOutbounds, listRules, listServerAuthUsers } from '../../../lib/api'
+import type { ServerAuthUser } from '../../../lib/api'
+import type { Server } from '../../../lib/types'
 import ServerDetail from './ServerDetail'
 import { TooltipProvider } from '../../../components/ui/tooltip'
 
-vi.mock('../../../api', async (original) => ({ ...await original<typeof import('../../../api')>(), getServer: vi.fn(), listOutbounds: vi.fn(), listRules: vi.fn(), listServerAuthUsers: vi.fn() }))
+vi.mock('../../../lib/api', async (original) => ({ ...await original<typeof import('../../../lib/api')>(), getServer: vi.fn(), listOutbounds: vi.fn(), listRules: vi.fn(), listServerAuthUsers: vi.fn() }))
 vi.mock('./InboundForm', () => ({ default: () => null }))
 vi.mock('./RoutingForms', () => ({
   OutboundForm: () => null,

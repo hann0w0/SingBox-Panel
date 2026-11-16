@@ -1,12 +1,12 @@
 import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { createCustomNode, createCustomNodeSubscription, listCustomNodeSubscriptions, syncCustomNodeSubscription, updateCustomNode } from '../../../api'
-import type { CustomNode, CustomNodeSubscription } from '../../../api'
-import { message } from '../../../ui'
+import { createCustomNode, createCustomNodeSubscription, listCustomNodeSubscriptions, syncCustomNodeSubscription, updateCustomNode } from '../../../lib/api'
+import type { CustomNode, CustomNodeSubscription } from '../../../lib/api'
+import { message } from '../../../components/kit'
 import { CustomNodesPanel } from './Access'
 
-vi.mock('../../../api', async (importOriginal) => ({
-  ...await importOriginal<typeof import('../../../api')>(),
+vi.mock('../../../lib/api', async (importOriginal) => ({
+  ...await importOriginal<typeof import('../../../lib/api')>(),
   createCustomNode: vi.fn(),
   createCustomNodeSubscription: vi.fn(),
   updateCustomNode: vi.fn(),

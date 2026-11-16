@@ -12,7 +12,7 @@ import {
   Table,
   Typography,
   message,
-} from '../../../ui'
+} from '../../../components/kit'
 import {
   Copy,
   Trash2,
@@ -44,11 +44,11 @@ import {
   uninstallAgent,
   uninstallSingbox,
   updateAgent,
-} from '../../../api'
-import type { ImportSummary, OutboundTest } from '../../../api'
-import type { ServerAuthUser } from '../../../api'
-import { applyWithToast, isConfigApplyResult, showConfigApplyResult } from '../../../configApply'
-import type { Inbound, Outbound, RouteRule, Server } from '../../../types'
+} from '../../../lib/api'
+import type { ImportSummary, OutboundTest } from '../../../lib/api'
+import type { ServerAuthUser } from '../../../lib/api'
+import { applyWithToast, isConfigApplyResult, showConfigApplyResult } from '../../../lib/configApply'
+import type { Inbound, Outbound, RouteRule, Server } from '../../../lib/types'
 import InboundForm from './InboundForm'
 import { OutboundForm, RuleForm } from './RoutingForms'
 import { ConfigEditorModal, ImportPreviewModal, InstallSingboxModal } from './ServerDialogs'
@@ -56,11 +56,11 @@ import { NodeFormatsExportModal } from './NodeFormatsModal'
 import { ServerOverviewCard } from './ServerOverviewCard'
 import ServerTraffic from './ServerTraffic'
 import Logs from '../logs/Logs'
-import { copyToClipboard, formatBytes } from '../../../util'
-import { Pills, Stats, Status } from '../../../ui/Page'
+import { copyToClipboard, formatBytes } from '../../../lib/util'
+import { Pills, Stats, Status } from '../../../components/kit/Page'
 import '../../../styles/server-detail.css'
 import { RequestState } from '../../../components/RequestState'
-import { MODAL_MD } from '../../../ui/modal'
+import { MODAL_MD } from '../../../components/kit/modal'
 
 const PROTOCOL_LABELS: Record<string, string> = {
   vless: 'VLESS', vmess: 'VMess', ss: 'Shadowsocks', shadowsocks: 'Shadowsocks', trojan: 'Trojan',

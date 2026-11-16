@@ -1,13 +1,13 @@
 import { act, cleanup, fireEvent, render, screen } from '@testing-library/react'
-import { getConsolePalette } from './theme'
+import { getConsolePalette } from '../lib/theme'
 import { MemoryRouter, useLocation } from 'react-router-dom'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import Appearance from './Appearance'
-import { THEME_STORAGE_KEY, USER_THEME_STORAGE_KEY, ThemePreferenceProvider, useThemePreference } from './themePreference'
+import { THEME_STORAGE_KEY, USER_THEME_STORAGE_KEY, ThemePreferenceProvider, useThemePreference } from '../lib/themePreference'
 
 const auth = vi.hoisted(() => ({ role: 'admin' }))
-vi.mock('./store', () => ({ useAuth: (select: (state: { user: { role: string } }) => unknown) => select({ user: { role: auth.role } }) }))
-vi.mock('./App', () => ({
+vi.mock('../lib/store', () => ({ useAuth: (select: (state: { user: { role: string } }) => unknown) => select({ user: { role: auth.role } }) }))
+vi.mock('../App', () => ({
   default: function ThemeProbe() {
     const { setTheme, resolvedThemeId } = useThemePreference(auth.role === 'admin' ? 'admin' : 'user')
     const { colors: token } = getConsolePalette(useLocation().pathname === '/login' ? 'blue' : resolvedThemeId)

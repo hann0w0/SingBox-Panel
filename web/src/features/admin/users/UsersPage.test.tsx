@@ -2,21 +2,21 @@ import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testi
 import { createMemoryRouter, RouterProvider, useLocation, useNavigate } from 'react-router-dom'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import App from '../../../App'
-import { getMe, getSubscriptionSync, getUser, getUserAccess, getUserNodes, listUsers, listServers, listCustomNodes, resetSub, updateUserAccess, updateUser } from '../../../api'
-import type { CustomNode, UserAccess } from '../../../api'
+import { getMe, getSubscriptionSync, getUser, getUserAccess, getUserNodes, listUsers, listServers, listCustomNodes, resetSub, updateUserAccess, updateUser } from '../../../lib/api'
+import type { CustomNode, UserAccess } from '../../../lib/api'
 import { TooltipProvider } from '../../../components/ui/tooltip'
-import { ThemePreferenceProvider } from '../../../themePreference'
-import { useAuth } from '../../../store'
-import type { Server, User } from '../../../types'
-import { copyToClipboard } from '../../../util'
+import { ThemePreferenceProvider } from '../../../lib/themePreference'
+import { useAuth } from '../../../lib/store'
+import type { Server, User } from '../../../lib/types'
+import { copyToClipboard } from '../../../lib/util'
 
 const NativeRequest = globalThis.Request
-vi.mock('../../../api', async (importOriginal) => ({
-  ...await importOriginal<typeof import('../../../api')>(),
+vi.mock('../../../lib/api', async (importOriginal) => ({
+  ...await importOriginal<typeof import('../../../lib/api')>(),
   listUsers: vi.fn(), listServers: vi.fn(), listCustomNodes: vi.fn(), getMe: vi.fn(), getUserNodes: vi.fn(),
   getUser: vi.fn(), getUserAccess: vi.fn(), resetSub: vi.fn(), updateUserAccess: vi.fn(), updateUser: vi.fn(), getSubscriptionSync: vi.fn(),
 }))
-vi.mock('../../../util', async (importOriginal) => ({ ...await importOriginal<typeof import('../../../util')>(), copyToClipboard: vi.fn() }))
+vi.mock('../../../lib/util', async (importOriginal) => ({ ...await importOriginal<typeof import('../../../lib/util')>(), copyToClipboard: vi.fn() }))
 const admin = { id: 1, email: 'admin', role: 'admin', enabled: true, server_ids: [], inbound_ids: [] } as unknown as User
 const alice = { ...admin, id: 2, email: 'alice', role: 'user' as const }
 const server = { id: 5, name: 'Tokyo', address: 'tokyo.example', inbounds: [

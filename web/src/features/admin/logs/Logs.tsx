@@ -1,24 +1,24 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import type { ReactNode, UIEvent } from 'react'
 import { createPortal } from 'react-dom'
-import { Button, Input, Select, Switch, message } from '../../../ui'
+import { Button, Input, Select, Switch, message } from '../../../components/kit'
 import {
   Copy,
   Download,
   Search,
   ArrowUpToLine,
 } from 'lucide-react'
-import { errMsg, isCanceledRequest, listServers, serverLogs, streamLogs } from '../../../api'
-import type { Server } from '../../../types'
-import { parseServerId } from '../../../serverNavigation'
-import { useSSE } from '../../../useSSE'
+import { errMsg, isCanceledRequest, listServers, serverLogs, streamLogs } from '../../../lib/api'
+import type { Server } from '../../../lib/types'
+import { parseServerId } from '../../../lib/serverNavigation'
+import { useSSE } from '../../../hooks/useSSE'
 import { useSearchParams } from 'react-router-dom'
-import type { SSEMessage } from '../../../useSSE'
-import { copyToClipboard } from '../../../util'
+import type { SSEMessage } from '../../../hooks/useSSE'
+import { copyToClipboard } from '../../../lib/util'
 import { VirtualList } from '../../../components/VirtualList'
-import { PageHeader } from '../../../ui/Page'
+import { PageHeader } from '../../../components/kit/Page'
 import '../../../styles/traffic-logs.css'
-import { LogReplay, mergeLogSnapshot } from '../../../logReplay'
+import { LogReplay, mergeLogSnapshot } from '../../../lib/logReplay'
 
 
 const NOISE_PATTERNS = [

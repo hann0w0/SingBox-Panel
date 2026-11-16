@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState, useCallback } from 'react'
-import { useAuth } from './store'
+import { useAuth } from '../lib/store'
 
 export interface SSEMessage {
   kind: string

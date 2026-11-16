@@ -1,10 +1,10 @@
 import { lazy, Suspense } from 'react'
 import { Navigate, Route, Routes, useLocation } from 'react-router-dom'
-import { useAuth } from './store'
-import { DialogHost } from './ui/dialogs'
-import { ToastHost } from './ui/feedback'
+import { useAuth } from './lib/store'
+import { DialogHost } from './components/kit/dialogs'
+import { ToastHost } from './components/kit/feedback'
 import { RouteErrorBoundary } from './components/RouteErrorBoundary'
-import { parseServerId } from './serverNavigation'
+import { parseServerId } from './lib/serverNavigation'
 
 // Each screen is loaded only when its route is visited. This keeps the login
 // and user pages from downloading the much larger admin forms up front.

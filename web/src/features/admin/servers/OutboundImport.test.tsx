@@ -2,14 +2,14 @@ import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testi
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { OutboundImport } from './OutboundImport'
 import { OutboundForm } from './RoutingForms'
-import { createOutbound, listOutboundSources, previewOutboundImport } from '../../../api'
-import type { OutboundBody, OutboundSource } from '../../../api'
+import { createOutbound, listOutboundSources, previewOutboundImport } from '../../../lib/api'
+import type { OutboundBody, OutboundSource } from '../../../lib/api'
 
-vi.mock('../../../api', () => ({
+vi.mock('../../../lib/api', () => ({
   createOutbound: vi.fn(), previewOutboundImport: vi.fn(), listOutboundSources: vi.fn(),
   errMsg: (e: Error) => e.message,
 }))
-vi.mock('../../../configApply', () => ({ showConfigApplyResult: vi.fn() }))
+vi.mock('../../../lib/configApply', () => ({ showConfigApplyResult: vi.fn() }))
 const draft: OutboundBody = {
   tag: 'landing', type: 'trojan',
   settings: { server: 'node.example.com', server_port: 443, password: 'secret', settings: {

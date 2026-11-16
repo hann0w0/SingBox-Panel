@@ -16,10 +16,10 @@ import {
 } from 'react-hook-form'
 import { Label } from '@/components/ui/label'
 import { Field, FieldDescription, FieldError, FieldLabel } from '@/components/ui/field'
-import { cn } from '@/lib/utils'
+import { cn } from '@/lib/util'
 import { message } from './feedback'
 import { InputNumber } from './controls'
-import { errMsg } from '../api'
+import { errMsg } from '../../lib/api'
 
 type Values = Record<string, any>
 type Name = string | number | (string | number)[]

@@ -1,6 +1,6 @@
-import { Button, Dropdown } from '../../../ui'
+import { Button, Dropdown } from '../../../components/kit'
 import { ChevronDown, Download, FileJson } from 'lucide-react'
-import type { Server } from '../../../types'
+import type { Server } from '../../../lib/types'
 
 /** Compact server actions; identity lives in the breadcrumb and tabs. */
 export function ServerOverviewCard({

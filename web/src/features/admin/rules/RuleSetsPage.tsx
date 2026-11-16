@@ -1,15 +1,15 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { Button, Form, Grid, Input, Modal, Segmented, Table, message } from '../../../ui'
+import { Button, Form, Grid, Input, Modal, Segmented, Table, message } from '../../../components/kit'
 import { Pencil, Plus, Trash2 } from 'lucide-react'
 import {
   createSharedRuleSet, deleteSharedRuleSet, errMsg, isCanceledRequest,
   listServers, listSharedRuleSets, updateSharedRuleSet,
-} from '../../../api'
-import type { RuleSetBody } from '../../../api'
-import type { RuleSet, Server } from '../../../types'
-import { PageHeader } from '../../../ui/Page'
+} from '../../../lib/api'
+import type { RuleSetBody } from '../../../lib/api'
+import type { RuleSet, Server } from '../../../lib/types'
+import { PageHeader } from '../../../components/kit/Page'
 import { RequestState } from '../../../components/RequestState'
-import { MODAL_SM } from '../../../ui/modal'
+import { MODAL_SM } from '../../../components/kit/modal'
 import '../../../styles/users.css'
 import '../../../styles/rules.css'
 

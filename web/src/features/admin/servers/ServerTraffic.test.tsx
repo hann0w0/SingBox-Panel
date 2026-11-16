@@ -1,15 +1,15 @@
 import { act, cleanup, render, screen, within } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { getServerTraffic } from '../../../api'
-import { useSSE, type SSEMessage } from '../../../useSSE'
+import { getServerTraffic } from '../../../lib/api'
+import { useSSE, type SSEMessage } from '../../../hooks/useSSE'
 import ServerTraffic from './ServerTraffic'
 
-vi.mock('../../../api', () => ({
+vi.mock('../../../lib/api', () => ({
   getServerTraffic: vi.fn(),
   errMsg: (error: Error) => error.message,
   isCanceledRequest: () => false,
 }))
-vi.mock('../../../useSSE', () => ({ useSSE: vi.fn() }))
+vi.mock('../../../hooks/useSSE', () => ({ useSSE: vi.fn() }))
 
 const SERVER_TS = Date.UTC(2026, 9, 25, 10, 0, 0)
 const rates = { upload_rate: 512, download_rate: 1024 }

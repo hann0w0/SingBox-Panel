@@ -1,13 +1,13 @@
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import { MemoryRouter } from 'react-router-dom'
 import { afterEach, beforeEach, expect, it, vi } from 'vitest'
-import { createSharedRuleSet, listServers, listSharedRuleSets, updateSharedRuleSet } from '../../../api'
-import type { Server } from '../../../types'
+import { createSharedRuleSet, listServers, listSharedRuleSets, updateSharedRuleSet } from '../../../lib/api'
+import type { Server } from '../../../lib/types'
 import RuleSetsPage from './RuleSetsPage'
-import { message } from '../../../ui/feedback'
+import { message } from '../../../components/kit/feedback'
 
-vi.mock('../../../api', async (importOriginal) => ({
-  ...await importOriginal<typeof import('../../../api')>(),
+vi.mock('../../../lib/api', async (importOriginal) => ({
+  ...await importOriginal<typeof import('../../../lib/api')>(),
   listSharedRuleSets: vi.fn(),
   listServers: vi.fn(),
   updateSharedRuleSet: vi.fn(),

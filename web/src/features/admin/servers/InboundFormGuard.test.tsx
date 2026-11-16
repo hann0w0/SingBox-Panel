@@ -1,15 +1,15 @@
 import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import InboundForm from './InboundForm'
-import { updateInbound } from '../../../api'
-import type { Inbound } from '../../../types'
+import { updateInbound } from '../../../lib/api'
+import type { Inbound } from '../../../lib/types'
 
-vi.mock('../../../api', () => ({
+vi.mock('../../../lib/api', () => ({
   createInbound: vi.fn(),
   updateInbound: vi.fn(),
   errMsg: (error: Error) => error.message,
 }))
-vi.mock('../../../configApply', () => ({
+vi.mock('../../../lib/configApply', () => ({
   applyWithToast: vi.fn(async (_key: string, action: () => Promise<unknown>) => {
     await action()
     return true

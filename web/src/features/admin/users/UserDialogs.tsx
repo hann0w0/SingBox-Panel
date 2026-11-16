@@ -1,11 +1,11 @@
 import { useEffect, useRef, useState } from 'react'
-import { Alert, Form, Input, Modal, Segmented, Switch, Table, message } from '../../../ui'
-import { createUser, errMsg, getUserTraffic, updateUser } from '../../../api'
-import type { User, UserTrafficInbound, UserTrafficRange, UserTrafficSeries } from '../../../types'
-import { formatBytes } from '../../../util'
+import { Alert, Form, Input, Modal, Segmented, Switch, Table, message } from '../../../components/kit'
+import { createUser, errMsg, getUserTraffic, updateUser } from '../../../lib/api'
+import type { User, UserTrafficInbound, UserTrafficRange, UserTrafficSeries } from '../../../lib/types'
+import { formatBytes } from '../../../lib/util'
 import { ProtocolTag } from '../servers/ServerTraffic'
 import { RequestState } from '../../../components/RequestState'
-import { MODAL_SM } from '../../../ui/modal'
+import { MODAL_SM } from '../../../components/kit/modal'
 import { SubscriptionFetchHistory } from './SubscriptionFetchHistory'
 
 export function UserAccountDialog({ user, onClose, onSaved }: {

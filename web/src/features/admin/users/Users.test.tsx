@@ -1,12 +1,12 @@
 import { cleanup, render, screen, within } from '@testing-library/react'
 import { MemoryRouter } from 'react-router-dom'
 import { afterEach, beforeEach, expect, it, vi } from 'vitest'
-import { listCustomNodes, listServers, listUsers } from '../../../api'
-import type { CustomNode } from '../../../api'
-import type { Server, User } from '../../../types'
+import { listCustomNodes, listServers, listUsers } from '../../../lib/api'
+import type { CustomNode } from '../../../lib/api'
+import type { Server, User } from '../../../lib/types'
 import Users from './Users'
 
-vi.mock('../../../api', async (original) => ({ ...await original<typeof import('../../../api')>(), listUsers: vi.fn(), listServers: vi.fn(), listCustomNodes: vi.fn() }))
+vi.mock('../../../lib/api', async (original) => ({ ...await original<typeof import('../../../lib/api')>(), listUsers: vi.fn(), listServers: vi.fn(), listCustomNodes: vi.fn() }))
 beforeEach(() => {
   vi.resetAllMocks()
   vi.stubGlobal('innerWidth', 1280)

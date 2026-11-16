@@ -1,12 +1,12 @@
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { SubscriptionFetchHistory, subscriptionLocationLabel } from './SubscriptionFetchHistory'
-import { getUserSubFetchDetails, getUserSubFetches, getUserSubFetchLocation } from '../../../api'
-import type { SubscriptionHistorySummary } from '../../../api'
+import { getUserSubFetchDetails, getUserSubFetches, getUserSubFetchLocation } from '../../../lib/api'
+import type { SubscriptionHistorySummary } from '../../../lib/api'
 import { TooltipProvider } from '../../../components/ui/tooltip'
 
-vi.mock('../../../api', async (original) => ({
-  ...await original<typeof import('../../../api')>(),
+vi.mock('../../../lib/api', async (original) => ({
+  ...await original<typeof import('../../../lib/api')>(),
   getUserSubFetches: vi.fn(), getUserSubFetchDetails: vi.fn(), getUserSubFetchLocation: vi.fn(),
 }))
 const until = new Date().toISOString()

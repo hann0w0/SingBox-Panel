@@ -2,15 +2,15 @@ import { cleanup, fireEvent, render, screen, within } from '@testing-library/rea
 import { Link, MemoryRouter, Route, Routes, useLocation } from 'react-router-dom'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import AppLayout from './Layout'
-import { listServers } from '../api'
-import { ThemePreferenceProvider } from '../themePreference'
+import { listServers } from '../lib/api'
+import { ThemePreferenceProvider } from '../lib/themePreference'
 import { TooltipProvider } from './ui/tooltip'
-import { useAuth } from '../store'
-import type { Server, User } from '../types'
-import { parseServerId, serverIdFromLocation } from '../serverNavigation'
+import { useAuth } from '../lib/store'
+import type { Server, User } from '../lib/types'
+import { parseServerId, serverIdFromLocation } from '../lib/serverNavigation'
 
-vi.mock('../api', async (importOriginal) => ({
-  ...await importOriginal<typeof import('../api')>(),
+vi.mock('../lib/api', async (importOriginal) => ({
+  ...await importOriginal<typeof import('../lib/api')>(),
   listServers: vi.fn(),
 }))
 

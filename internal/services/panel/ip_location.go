@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"io"
+	"log"
 	"net"
 	"net/http"
 	"net/netip"
@@ -98,7 +99,15 @@ func (s *ipLocationService) lookup(ctx context.Context, address netip.Addr) ipLo
 		go func() {
 			// Shared work outlives an individual closed dialog, but is bounded by
 			// both a deadline and a global concurrency cap. Never run on delivery.
-			value := s.fetch(ip)
+			value := func() (v ipLocation) {
+				v = ipLocation{IP: ip, Status: "error"}
+				defer func() {
+					if r := recover(); r != nil {
+						log.Printf("ip_location: panic fetching %s: %v", ip, r)
+					}
+				}()
+				return s.fetch(ip)
+			}()
 			ttl := 24 * time.Hour
 			if value.Status == "error" {
 				ttl = 30 * time.Second

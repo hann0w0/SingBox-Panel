@@ -134,3 +134,27 @@ func TestIPLocationEndpointOnlyQueriesRetainedUserAddresses(t *testing.T) {
 		t.Fatalf("queries sent for unrecorded IPs: %d", calls.Load())
 	}
 }
+
+func TestIPLocationRecoversFromPanic(t *testing.T) {
+	s := newIPLocationService()
+	var panicking atomic.Bool
+	panicking.Store(true)
+	s.client.Transport = geoTransportFunc(func(*http.Request) (*http.Response, error) {
+		if panicking.Load() {
+			panic("simulated transport explosion")
+		}
+		return geoResponse(`{"ip":"8.8.8.8","country_code":"US","country":"United States"}`), nil
+	})
+
+	got := s.lookup(context.Background(), netip.MustParseAddr("1.1.1.1"))
+	if got.Status != "error" {
+		t.Fatalf("expected status error on panic, got: %+v", got)
+	}
+
+	// Ensure slot was released and subsequent lookups work
+	panicking.Store(false)
+	got2 := s.lookup(context.Background(), netip.MustParseAddr("8.8.8.8"))
+	if got2.Status != "ok" || got2.CountryCode != "US" {
+		t.Fatalf("subsequent lookup failed after panic recovery: %+v", got2)
+	}
+}

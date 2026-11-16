@@ -1,4 +1,7 @@
-<h1 align="center">SingBox Panel</h1>
+<h1 align="center">
+  <img src="web/src/assets/logo.svg" width="48" height="48" alt="">
+  SingBox Panel
+</h1>
 
 <p align="center">面向官方 sing-box 的多节点管理面板，统一管理配置、用户、订阅与流量。</p>
 

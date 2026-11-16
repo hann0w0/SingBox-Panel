@@ -11,14 +11,6 @@ export function PageHeader({ title, meta, actions }: { title: ReactNode; meta?: 
   </header>
 }
 
-/** Metadata and actions for a tab whose parent already owns the page title. */
-export function PageToolbar({ meta, actions }: { meta?: ReactNode; actions?: ReactNode }) {
-  return <div className="ui-page-toolbar">
-    <div className="ui-page-meta">{meta}</div>
-    <div className="ui-page-actions">{actions}</div>
-  </div>
-}
-
 /** Bordered strip of headline numbers. */
 export function Stats({ items }: { items: { label: ReactNode; value: ReactNode; hint?: ReactNode }[] }) {
   return <div className="ui-stats" style={{ ['--ui-stats-cols' as string]: items.length }}>

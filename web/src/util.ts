@@ -50,13 +50,6 @@ export function ss2022KeyLen(method: string): number {
   return 0
 }
 
-export function formatDate(s: string | null): string {
-  if (!s) return '—'
-  const d = new Date(s)
-  if (Number.isNaN(d.getTime())) return '—'
-  return d.toLocaleString()
-}
-
 // copyToClipboard copies text, falling back to execCommand for non-secure
 // (plain http, non-localhost) contexts where navigator.clipboard is unavailable.
 export async function copyToClipboard(text: string): Promise<void> {
@@ -136,15 +129,4 @@ export function toCSV(rows: (string | number)[][]): string {
     return /[",\n\r]/.test(text) ? `"${text.replace(/"/g, '""')}"` : text
   }
   return '\uFEFF' + rows.map((row) => row.map(escape).join(',')).join('\r\n')
-}
-
-export function downloadText(filename: string, text: string, type = 'text/csv;charset=utf-8') {
-  const url = URL.createObjectURL(new Blob([text], { type }))
-  const a = document.createElement('a')
-  a.href = url
-  a.download = filename
-  document.body.appendChild(a)
-  a.click()
-  a.remove()
-  setTimeout(() => URL.revokeObjectURL(url), 1000)
 }

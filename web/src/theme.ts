@@ -12,8 +12,6 @@ const dayColors = {
   download: '#111111', upload: '#9a9a9a',
   shadow: '0 0 0',
 }
-export const FONT = '-apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", sans-serif'
-
 export type ConsoleThemeId = 'blue' | 'dark'
 export type ConsoleThemePreference = ConsoleThemeId | 'auto'
 

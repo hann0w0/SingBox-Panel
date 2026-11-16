@@ -207,8 +207,6 @@ export const setConfigMode = (id: number, mode: 'managed') =>
   http.post<{ ok: boolean; config_mode: string }>(`/api/admin/servers/${id}/config-mode`, { mode }).then((r) => r.data)
 export const serverLogs = (id: number, lines = 200, signal?: AbortSignal) =>
   http.get<{ text: string }>(`/api/admin/servers/${id}/logs`, { params: { lines }, signal }).then((r) => r.data.text)
-export const serverStatus = (id: number, signal?: AbortSignal) =>
-  http.get<{ status: StatusData }>(`/api/admin/servers/${id}/status`, { signal }).then((r) => r.data.status)
 export const getServerTraffic = (id: number, range: TrafficRange = '24h', signal?: AbortSignal) =>
   http.get<TrafficSeries>(`/api/admin/servers/${id}/traffic`, { params: { range }, signal }).then((r) => r.data)
 export const remoteConfig = (id: number, signal?: AbortSignal) =>

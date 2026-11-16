@@ -392,16 +392,6 @@ func (o *Orchestrator) pushConfigUnlocked(ctx context.Context, serverID uint) er
 	return err
 }
 
-// ApplyRawConfig changes the desired source of truth and applies it as one
-// serialized operation. If the Agent rejects the config, the previous database
-// mode/snapshot is restored so reconnects cannot overwrite the running node with
-// a half-saved edit.
-func (o *Orchestrator) ApplyRawConfig(ctx context.Context, serverID uint, raw []byte) (protocol.CommandResultEvt, error) {
-	unlock := o.lockServer(serverID)
-	defer unlock()
-	return o.applyRawConfigUnlocked(ctx, serverID, raw)
-}
-
 // applyRawConfigUnlocked applies and persists raw JSON while the caller owns
 // the server configuration lock. The API uses it to keep the subsequent
 // structured-view synchronization in the same serialized operation.

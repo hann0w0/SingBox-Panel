@@ -65,8 +65,6 @@ a { color: inherit; }
 .ui-page-title h1 { margin: 0; font-size: 28px; line-height: 1.25; font-weight: 600; letter-spacing: -.6px; color: var(--console-ink); overflow-wrap: anywhere; }
 .ui-page-meta { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 16px; margin-top: 8px; color: var(--console-muted); font-size: 13px; }
 .ui-page-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
-.ui-page-toolbar { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 12px; margin: 20px 0 16px; }
-.ui-page-toolbar .ui-page-meta { margin-top: 0; }
 .ui-stats { display: grid; grid-template-columns: repeat(var(--ui-stats-cols, 4), minmax(0, 1fr)); border: 1px solid var(--console-border); border-radius: var(--app-radius); margin-bottom: 32px; overflow: hidden; }
 .ui-stat { padding: 18px 20px; min-width: 0; min-height: 109px; box-sizing: border-box; }
 .ui-stat + .ui-stat { border-left: 1px solid var(--console-border); }

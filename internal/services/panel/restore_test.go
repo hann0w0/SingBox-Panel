@@ -557,24 +557,6 @@ func TestRewriteJWTSecretAppendsWhenMissing(t *testing.T) {
 	}
 }
 
-func panelDBWithMigrationRows(t *testing.T, rows []model.SchemaMigration) string {
-	t.Helper()
-	path := filepath.Join(t.TempDir(), "panel.db")
-	db := testDBAt(t, path)
-	if err := db.AutoMigrate(&model.SchemaMigration{}); err != nil {
-		t.Fatal(err)
-	}
-	for i := range rows {
-		if err := db.Create(&rows[i]).Error; err != nil {
-			t.Fatal(err)
-		}
-	}
-	if sqlDB, err := db.DB(); err == nil {
-		_ = sqlDB.Close()
-	}
-	return path
-}
-
 func archiveWithDeclaredEntry(t *testing.T, name string, size int64) []byte {
 	t.Helper()
 	var buf bytes.Buffer

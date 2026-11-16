@@ -1,6 +1,6 @@
 # Docker 部署
 
-项目默认使用[原生面板安装](../README.md#原生面板安装默认)。本页提供可选的 `docker run` 和 Docker Compose 两种方式，任选其一。
+项目默认使用[原生面板安装](../README.md#binary)。本页提供可选的 `docker run` 和 Docker Compose 两种方式，任选其一。
 
 Docker 只运行管理面板。每个被管理的 VPS 继续使用面板生成的安装命令部署原生 Agent，Agent 通过 WSS 主动连接面板，并由宿主机的 systemd 或 Alpine OpenRC 管理该 VPS 上的 sing-box。即使节点与面板在同一台机器，也在宿主机上安装 Agent。
 

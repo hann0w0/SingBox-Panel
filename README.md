@@ -1,28 +1,20 @@
-# SingBox Panel
+<h1 align="center">SingBox Panel</h1>
 
-集中管理多台服务器上官方 sing-box 的 Web 面板。可在其中管理节点、入站、出站、路由、用户与订阅，并远程执行 sing-box 的安装、更新、启停、配置下发和卸载。
+<p align="center">面向官方 sing-box 的多节点管理面板，统一管理配置、用户、订阅与流量。</p>
 
 ## 安装
 
-### 原生面板安装
+### Binary
 
-需要 Linux x86_64 或 arm64、systemd、已解析到面板服务器的域名，以及支持 WebSocket 的 HTTPS 反向代理。
+支持 Linux amd64 / arm64，主控需要 systemd。准备域名及支持 WebSocket 的 HTTPS 反向代理，然后执行：
 
 ```bash
 curl -fsSL https://github.com/hann0w0/SingBox-Panel/releases/latest/download/install.sh | sudo bash
 ```
 
-安装脚本支持非交互安装（`--base-url`、`--admin`、`--password`、`--non-interactive`），用 `--version vX.Y.Z` 可指定版本。安装完成后在面板中创建服务器，并在目标 VPS 上执行该节点详情页生成的 Agent 安装命令。
+按提示完成配置，默认监听 `127.0.0.1:32334`，数据保存在 `/opt/singbox-panel`。
 
-节点 Agent 支持 Linux amd64/arm64 的 systemd 节点，也支持 Alpine Linux 的 OpenRC。面板生成的安装命令是一行 `curl … | sh -s --`：以普通账号执行时，脚本会自行通过 `sudo` 或 `doas` 提权，并自动补齐 `curl` 依赖，因此 Alpine 最小系统也能直接粘贴执行；脚本会为 Agent、sing-box 服务及面板日志读取配置 OpenRC。
-
-### Docker 部署
-
-Docker 仅运行控制面板，各节点 VPS 上的 Agent 和 sing-box 仍以原生方式运行。提供以下两种部署方式（二选一），直接拉取官方镜像即可使用。
-
-前置要求：Docker Engine、已解析到服务器的域名，以及支持 WebSocket 的 HTTPS 反向代理（Compose 方式另需 Compose 插件）。
-
-#### 方式一：docker run
+### Docker
 
 替换域名、管理员账号和初始密码后执行：
 
@@ -30,6 +22,7 @@ Docker 仅运行控制面板，各节点 VPS 上的 Agent 和 sing-box 仍以原
 docker run -d \
   --name singbox-panel \
   --restart unless-stopped \
+  --stop-timeout 30 \
   -p 127.0.0.1:32334:8080 \
   -v singbox-panel-data:/app/data \
   -e SINGBOX_PANEL_BASE_URL='https://panel.example.com' \
@@ -38,147 +31,72 @@ docker run -d \
   ghcr.io/hann0w0/singbox-panel:latest
 ```
 
-- `SINGBOX_PANEL_BASE_URL`：面板对外公开访问的 HTTPS 根地址（节点 Agent 连接及订阅分发均依赖此地址）。
-- 管理员账号和初始密码仅在首次初始化数据库时使用。
-- 宿主机仅发布 `127.0.0.1:32334`，映射到容器内 `8080`，需由反向代理统一对外提供 HTTPS。
-- 反向代理必须用真实来源地址覆盖 `X-Real-IP`（Nginx：`proxy_set_header X-Real-IP $remote_addr;`），否则登录限流可被伪造的请求头绕过，详见 [Docker 部署说明](docs/docker.md#https-与-websocket-反向代理)。
+镜像支持 amd64 / arm64。通过 HTTPS 反向代理访问，需支持 WebSocket 并覆盖 `X-Real-IP`。Compose、反向代理与更新步骤见 [Docker 部署说明](docs/docker.md)。
 
-#### 方式二：Docker Compose
-
-在新目录创建 `compose.yaml`：
-
-```yaml
-services:
-  panel:
-    image: ghcr.io/hann0w0/singbox-panel:latest
-    restart: unless-stopped
-    ports:
-      - "127.0.0.1:32334:8080"
-    environment:
-      SINGBOX_PANEL_BASE_URL: "https://panel.example.com"
-      SINGBOX_PANEL_ADMIN_EMAIL: "admin"
-      SINGBOX_PANEL_ADMIN_PASSWORD: "请替换为自己的初始密码"
-    volumes:
-      - panel-data:/app/data
-
-volumes:
-  panel-data:
-```
-
-> **提示**：如果初始密码中含有字符 `$`，在 YAML 中需写为 `$$` 转义。
-
-启动服务：
-
-```bash
-docker compose up -d
-```
-
-更多关于镜像更新、数据备份恢复及生产安全加固配置（如只读文件系统、权限收紧等），详见 [Docker 部署说明](docs/docker.md)。
+两种方式安装后，均在面板创建服务器，复制节点详情页生成的 Agent 安装命令，到目标 VPS 执行。节点支持 systemd 和 Alpine OpenRC。
 
 ## 卸载
 
-### 原生面板卸载
+### Binary 主控
 
 ```bash
-# 卸载面板服务，保留配置与数据库
+# 卸载服务，保留配置与数据库
 curl -fsSL https://github.com/hann0w0/SingBox-Panel/releases/latest/download/install.sh | sudo bash -s -- --uninstall --yes
 
-# 完整卸载，连同配置与数据库一并删除
+# 完整卸载，删除配置与数据库
 curl -fsSL https://github.com/hann0w0/SingBox-Panel/releases/latest/download/install.sh | sudo bash -s -- --uninstall --purge --yes
 ```
 
-### Docker 面板卸载
-
-停止并删除容器（数据保存在数据卷中，默认保留）：
+### Docker 主控
 
 ```bash
-# docker run 方式
+# docker run 部署
 docker stop singbox-panel && docker rm singbox-panel
 
-# Docker Compose 方式（在 compose.yaml 目录下）
+# Docker Compose 部署：在配置目录执行
 docker compose down
 ```
 
-> **注意**：请勿添加 `-v` 或删除数据卷，除非确认清空所有数据。各 VPS 上的节点 Agent 与 sing-box 可在面板对应服务器详情页单独卸载。
+默认保留数据卷；`docker compose down -v` 或删除数据卷会清空面板数据。卸载主控不会卸载节点上的 Agent 和 sing-box。
+
+### 节点 Agent
+
+可在面板服务器详情页卸载，也可在目标节点执行以下命令。仅删除 Agent 及其配置，保留 sing-box。
+
+**systemd：**
+
+```bash
+sudo systemctl disable --now singbox-panel-agent.service && \
+sudo rm -f /etc/systemd/system/singbox-panel-agent.service /usr/local/bin/singbox-panel-agent && \
+sudo rm -rf /etc/singbox-panel-agent && \
+sudo systemctl daemon-reload
+```
+
+**Alpine / OpenRC（以 root 执行）：**
+
+```sh
+rc-service singbox-panel-agent stop && \
+rc-update del singbox-panel-agent default && \
+rm -f /etc/init.d/singbox-panel-agent /run/singbox-panel-agent.pid /usr/local/bin/singbox-panel-agent && \
+rm -rf /etc/singbox-panel-agent
+```
+
+如需同时卸载 sing-box，请先在面板执行「卸载 sing-box」，再卸载 Agent。
 
 ## 工作模式
 
-面板通过 HTTPS 提供管理界面，节点上的 Agent 主动以 WSS 连接面板，节点无需开放额外管理端口，也不提供任意 Shell 执行能力。Agent 以官方方式安装 sing-box，下发配置前执行 `sing-box check`，程序与配置更新采用校验、原子替换与失败回滚。systemd 节点从 journal 读取 sing-box 日志；Alpine/OpenRC 节点的服务输出写入 `/var/log/sing-box.log`，Agent 日志写入 `/var/log/singbox-panel-agent.log`，应纳入节点现有的日志轮转策略。
+```mermaid
+flowchart LR
+    Browser["浏览器 / 订阅客户端"] -->|HTTPS| Proxy["反向代理"]
+    Proxy -->|HTTP / WebSocket| Panel["主控面板"]
+    Panel --- Database[("数据库")]
+    Agent["节点 Agent"] -->|主动建立 WSS 连接| Proxy
+    Agent -->|配置下发 · 服务管理 · 数据采集| SingBox["官方 sing-box"]
+    Browser -->|代理连接| SingBox
+```
 
-面板支持两种配置模式：管理模式根据面板中的节点、协议与路由设置生成配置；原始配置模式保存并下发完整 JSON，适合面板暂未结构化支持的 sing-box 配置项。
+主控支持 Binary 或 Docker 部署；Agent 与 sing-box 在节点宿主机运行。Agent 主动连接主控，节点无需额外开放管理端口，代理流量由节点上的 sing-box 直接处理。
 
-### Reality 前置 SNI 过滤
+## 开源许可
 
-在 VLESS 入站选择 REALITY 与 TCP 传输后，可以开启「前置 SNI 过滤」。原入站端口仍是客户端和订阅使用的公网端口；另填一个未占用的内部端口，面板自动生成公网 `direct` 入站与仅监听 `127.0.0.1` 的 VLESS 入站。例如公网 `31735`、内部 `31736`，订阅始终连接 `31735`。
-
-SNI 白名单留空时沿用 Reality 的 SNI／握手域名，可填写多个完整域名；名单必须包含订阅使用的域名。嗅探超时留空为 `300ms`，Reality 时间差限制可填写 `1m` 等时长，留空不启用时间差检查。SNI 过滤后仍由 Reality 和 VLESS 完成认证。
-
-面板将过滤规则放在普通分流规则之前，只允许指定前置入站访问对应的本地端口，其余回环保护继续生效。内部端口不能与公网端口、其他入站或统计服务保留端口 `29091`／`29092` 冲突。关闭开关后自动恢复单入站，公网端口和客户端凭证保留。
-
-导入支持明确的单用户组合：一个公网 `direct` 转发至本地 VLESS Reality，开头依次为 TLS 嗅探、SNI 白名单放行、拒绝三条规则。识别后恢复为一个面板入站并使用公网订阅端口；未知字段、目标歧义或更复杂的组合继续保留原始配置模式。
-
-可选真实连接回归：设置 `SING_BOX_BINARY` 为 sing-box 可执行文件的绝对路径，再运行 `go test ./internal/domain/singbox -run TestRealityGuardLive -v`。测试使用本地 TLS 伪装站点与 HTTP 目标，验证允许和拒绝路径及回环保护。
-
-## 用户与订阅
-
-管理员在「用户」列表点击任意用户行，进入该用户的详情页；自己的订阅也从自己的用户行进入，不再单独切换「我的订阅」页签。
-
-- 「已分配」展示该用户的节点，可拖拽左侧手柄排序（支持鼠标、触屏和触控笔，键盘支持上下方向键），填写节点显示名称或取消分配。手机使用紧凑列表，右侧仅保留铅笔与取消分配按钮；点铅笔才展开重命名输入框，点「完成」或回车收起并保留草稿，Esc 取消当前这次改名，名称留空恢复默认值。分配视图支持整行勾选，保存区吸附在底部并避让安全区域。
-- 「面板节点」「外部节点」支持按节点、按组勾选分配；切换视图保留当前草稿。
-- 点击「保存更改」统一保存分配、顺序和名称，客户端更新订阅后生效；名称仅对当前用户生效，不修改服务器或其他用户的节点名称。离开未保存的页面会提示确认。
-- 页面中的 Surge、ClashMeta、Shadowrocket 复制按钮返回当前所选用户的订阅地址，不会切换管理员身份。订阅地址包含访问凭证，请仅交给对应用户。
-- 编辑用户与使用记录入口移至详情页；普通用户仍使用原订阅首页，无法读取管理员用户详情接口。
-- 「重置链接」同时更换当前用户的订阅 token 和多用户节点连接凭证（UUID/password），不修改登录密码、其他用户或单用户／外部节点的共享凭证。旧订阅地址立即失效，旧节点配置在节点成功同步后失效；离线节点在重连后同步，重置后请更新客户端订阅。
-- 重置后的节点同步状态单独显示；下发失败不会被视为同步完成。待同步状态与凭证一起保存，短时重试耗尽后仍每 30 秒重新尝试，面板重启后继续；旧凭证在对应节点成功同步前仍可能有效。
-
-用户专属出站与转发：管理员开启「允许创建转发」后，用户可以导入自己的出口，选择已授权的多用户入口创建独立转发节点。原节点与转发节点使用不同凭据；转发路由优先于普通分流规则，并在用户控制台管理。关闭转发权限会先要求确认，再删除该用户的转发配置。重置订阅会同时更新转发凭据与身份规则；创建、删除和权限变更的同步任务会持久化并持续重试。
-
-专属出口仅允许公网地址。应用配置时，Agent 在入口服务器上解析出口域名，检查全部解析结果并固定本次使用的公网 IP，保留 TLS 域名；DNS 记录变化需要重新应用配置。旧 Agent 不支持这项检查时，面板会要求先升级 Agent。面板回读配置时保留原始域名，节点磁盘上的实际配置仍使用经过检查的 IP。导入配置会保留用户身份条件和专属出口归属，不允许把专属出口设为公共兜底、代理分组成员或规则集下载出口。
-
-「使用记录」中的订阅拉取按来源 IP 合并计数，支持 24 小时、7 天、30 天范围、筛选和排序，展开后分页查看明细。统计覆盖所选范围的完整记录，不受明细分页条数限制。
-
-管理员查看记录时，面板后端按需向 GeoJS 查询公网 IP 的大致位置和网络归属，仅发送待查询的 IP，不发送用户名、订阅凭证或客户端信息；内网与保留地址不会发送。结果在进程内缓存 24 小时，查询失败不会阻塞订阅下载或隐藏拉取记录。位置不是精确定位，数据保留期为 30 天。
-
-## 外部节点与订阅源
-
-「外部节点」可手动填写连接参数、粘贴单条节点 URI，或添加 HTTP(S) 订阅源定期同步。支持 VLESS、VMess、Trojan、AnyTLS、Shadowsocks、TUIC、Hysteria 1/2、Snell 4/5/6、SOCKS5、HTTP/HTTPS 和 Mixed；Snell 使用结构化配置导入，Mixed 对客户端输出为 SOCKS5。
-
-HTTP 与 HTTPS 代理统一使用 `http` 类型，通过 TLS 开关区分。Clash 中的 `type: http`、`tls: true` 会保留为 HTTPS 代理，用户名和密码各自可选，包括仅填写用户名、密码为空的节点。URI 示例：`https://user:password@proxy.example.com:8443#HTTPS`。节点 URI 不会触发订阅下载，带资源路径的 HTTP(S) 地址应填写到「订阅源」。
-
-订阅内容支持明文/Base64 URI 列表、Clash/Mihomo YAML、Surge/Loon、Quantumult X 的 `server_local`、sing-box JSON、V2Ray/Xray JSON 和 SIP008。各格式按可表达的协议与字段导入；V2Ray/Xray JSON 支持 VLESS、VMess、Trojan、Shadowsocks、SOCKS 和 HTTP，SIP008 仅包含 Shadowsocks。仅提取节点，不导入规则或递归下载配置中的其他订阅引用。
-
-同步会清理源中已删除或更名的旧节点。部分节点解析失败时，只保留能按源名称定位到的对应旧节点，其余节点仍按当前订阅更新；无法定位失败条目或超出节点数量限制时，整轮保留上次结果，避免旧节点持续累积。部分同步以警告提示，列表显示黄色「部分成功」及当前实际节点总数；整轮失败才显示红色「同步失败」。旧版本历史状态会在下次同步后更新。
-
-HTTP 代理的 TLS、SNI、证书验证设置、认证和自定义请求头会保留；自定义 CONNECT 路径可通过 sing-box JSON 保存与输出。URI、Clash、Surge 无法完整表达的 HTTP 参数不会被静默删除后输出，客户端应选用能够保留这些参数的订阅格式。VLESS/VMess/Trojan 传输仍限 TCP、WebSocket 和 HTTPUpgrade。
-
-## 入站监听地址
-
-新增或编辑入站时，「监听」可选择「双栈」「本机」「IPv4」「IPv6」。双栈为默认，使用 `::`（实际双栈支持取决于主机系统）；本机绑定 `127.0.0.1`，IPv4 绑定 `0.0.0.0`。IPv6 在配置生成时解析为 Agent 新近确认、实际分配在本机网卡上的公网 IPv6，绑定具体地址，避免 `::` 在部分系统上同时接收 IPv4。没有有效 IPv6 时拒绝创建或下发，绝不退回双栈监听；导入的具体绑定地址按原值保留。
-
-REALITY 前置 SNI 过滤启用时，监听选项作用于对外入口，内部 VLESS 仍绑定 `127.0.0.1`。IPv6 直接绑定网卡地址，不添加额外的 IPv4 拒绝路由。
-
-服务器编辑里的「域名」只用于节点导出、用户订阅、转发节点和节点导入出站，管理员面板始终显示 Agent 上报的实际公网 IPv4/IPv6。配置域名后，上述对外场景统一使用域名，不再按地址族切换到公网 IP，因此域名只需同时解析到该服务器的 IPv4/IPv6 即可覆盖双栈；未配置域名时才使用对应公网 IPv4/IPv6。导入的具体绑定地址按原值导出。本机入站不导出为公网节点；缺少可用地址时明确报错，订阅返回失败以避免客户端缓存部分节点列表。使用 IP 导出时保留显式 TLS/REALITY/ACME 域名；普通 TLS 未单独指定 SNI 时沿用配置的域名，不自动修改 DNS。
-
-新版 Agent 启动、重连和手动刷新状态时探测地址，运行期间每 30 秒重新探测，下一次心跳上报（默认 10 秒）。IPv4 通过强制 IPv4、绕过环境代理的公网探测获取；IPv6 直接读取已启用网卡上的公网地址，优先系统 IPv6 路由选择的本机源地址，否则按地址排序稳定选择，不依赖外部 IPv6 查 IP 服务。探测失败保留最后一次成功确认的地址，成功确认不存在 IPv6 时才清空，避免节点短暂离线使订阅整体失败。旧 Agent 只支持原有 IPv4 上报，必须升级后才能自动管理 IPv6。地址变更会重新生成本服务器及引用其入站的服务器配置，在线节点异步下发，离线节点重连后重新生成。客户端已导入的地址需要刷新订阅才能更新；手工填写或导入的具体 IP 视为固定配置，不会擅自替换。
-
-服务器详情的「配置文件」在 Agent 在线时读取主机上的实际配置；Agent 离线时展示面板当前待下发配置的只读预览，方便检查生成的 JSON，不代表主机已经应用。
-
-## 导入出站
-
-在「服务器 → 出站 → 新增出站」中，可手动填写，或解析一条节点 URI。解析后确认协议、地址和端口，填写出站标签并保存；出站会按现有配置下发流程应用到服务器。
-
-URI 入口接收单条节点分享链接，解析结果保存为独立的出站配置。订阅地址由外部节点页面管理。
-
-## 流量周期
-
-在服务器新增或编辑中设置每月流量重置日（1–31 日，默认 1 日）。每个周期从该日 **UTC 00:00** 开始，到下次重置时刻结束；不足该日期的月份使用月末，例如 31 日在二月按 28 日或闰年 29 日起算。
-
-流量页保留最近 1 小时、12 小时、24 小时、7 天和 30 天的切换，默认 24 小时，上传、下载、合计及入站明细随所选范围变化。时间统一使用 UTC；各范围只计入最近一次重置之后的流量，重置之前的图表时段显示为零。修改重置日会立即重新划分计量起点，不删除历史记录，也不重启 sing-box；统计范围为面板已采集的 sing-box 流量。
-
-新版 Agent 在控制连接断开期间继续按 UTC 分钟采集；重连后按原时间补报，面板在历史记录与接收序号一并提交后确认，重传不重复计量。此修复需要同步更新节点 Agent；旧 Agent 仍走兼容的累计计数路径。已经错计的历史没有原采集时间，无法自动重建。Agent 进程停止期间无法采集，未确认用量目前保存在 Agent 内存中。
-
-入站重命名后，旧标签的延迟上报仍归属于原入站；历史标签永久保留在该服务器内，不按重命名时间过期。同一入站可以改回自己的旧标签，但其他入站不能复用这些标签（包括删除原入站后新建、导入或编辑原始配置），请为新入站选择新标签，以免离线积压流量串账。删除入站不会把尚未接收的端口或用户用量转移给其他入站；节点总量仍正常接收。升级只能记录当时存在及之后使用的标签，无法恢复升级前已丢失的标签关联。
-
-## 迁移选项
-
-SQLite 数据库升级默认在迁移前生成一致性备份。明确无需备份的部署可临时设置环境变量 `SINGBOX_PANEL_SKIP_MIGRATION_BACKUP=true`，或在配置的 `database` 下设置 `skip_migration_backup: true`。
+本仓库尚未指定开源许可证。

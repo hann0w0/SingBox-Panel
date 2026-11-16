@@ -18,7 +18,7 @@ import (
 )
 
 // version is set via -ldflags "-X main.version=x.y.z".
-var version = "v1.0.11"
+var version = "v1.0.12"
 
 // commit is set via -ldflags "-X main.commit=<40-character SHA>".
 var commit string

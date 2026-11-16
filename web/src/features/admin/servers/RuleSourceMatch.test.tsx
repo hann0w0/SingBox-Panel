@@ -101,4 +101,16 @@ describe('rule-set IP match direction', () => {
     expect(match).not.toHaveProperty('rule_set_ip_cidr_match_source')
     expect(match.inbound).toEqual(['dmit-in'])
   })
+
+  it('keeps the stored remark and enabled state without exposing them as fields', async () => {
+    renderRule({ ...sourceRejectRule, enabled: false, remark: '禁止 CN 客户端' })
+    // 备注与启用已从表单移除，编辑时不得把它们当作可编辑字段渲染。
+    expect(screen.queryByLabelText('备注')).toBeNull()
+    expect(screen.queryByLabelText('启用')).toBeNull()
+    fireEvent.click(screen.getByRole('button', { name: '保存' }))
+    await waitFor(() => expect(updateRule).toHaveBeenCalled())
+    const body = vi.mocked(updateRule).mock.calls[0][2]
+    expect(body.enabled).toBe(false)
+    expect(body.remark).toBe('禁止 CN 客户端')
+  })
 })

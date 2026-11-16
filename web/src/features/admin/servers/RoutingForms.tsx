@@ -656,7 +656,6 @@ export function RuleForm({
         sniffer: m.sniffer || (act === 'sniff' ? m.protocol : null) || [],
         protocol: act === 'hijack-dns' ? (m.protocol?.length ? m.protocol : ['dns']) : (act !== 'sniff' ? (m.protocol || []) : []),
          method: (m.method as string) || 'default',
-         remark: rule.remark || '',
          match_fields: activeMatchFields(m),
          auth_user: m.auth_user || [],
          rule_set: m.rule_set || [],
@@ -669,7 +668,6 @@ export function RuleForm({
          source_ip_cidr: joinLines(m.source_ip_cidr),
          port: joinLines(m.port?.map(String)),
         network: m.network || '',
-        enabled: rule.enabled ?? true,
       })
     } else {
       form.setFieldsValue({
@@ -678,7 +676,6 @@ export function RuleForm({
         sniffer: [],
          protocol: [],
          method: 'default',
-         remark: '',
          match_fields: [],
          auth_user: [],
          rule_set: [],
@@ -691,7 +688,6 @@ export function RuleForm({
          source_ip_cidr: '',
          port: '',
         network: '',
-        enabled: true,
       })
     }
   }, [open, rule])
@@ -759,7 +755,8 @@ export function RuleForm({
         match.protocol = ['dns']
       }
 
-      const body = { match, outbound: targetOutbound, enabled: v.enabled, remark: v.remark || '', sort: rule?.sort }
+      // 备注与启用不再在表单里编辑：保留已有值，新建规则默认启用。
+      const body = { match, outbound: targetOutbound, enabled: rule ? rule.enabled : true, remark: rule?.remark || '', sort: rule?.sort }
       const editing = rule
       const saved = await applyWithToast(`rule-${editing ? editing.id : 'new'}`, () =>
         editing ? updateRule(serverId, editing.id, body) : createRule(serverId, body),
@@ -974,17 +971,6 @@ export function RuleForm({
             )}
           </FormGroup>
         )}
-
-        <FormGroup title="其他">
-          <Form.Item name="remark" label="备注" className="fm-full">
-            <Input maxLength={120} />
-          </Form.Item>
-          <div className="fm-switches">
-            <Form.Item name="enabled" label="启用" valuePropName="checked" className="fm-switch">
-              <Switch />
-            </Form.Item>
-          </div>
-        </FormGroup>
       </Form>
       </fieldset>
     </Modal>

@@ -64,7 +64,7 @@ func (r *Reconciler) tick() {
 		}
 	}
 	var users []model.User
-	if err := r.db.Find(&users).Error; err != nil {
+	if err := r.db.Select("id", "email", "enabled", "expire_at", "server_ids").Find(&users).Error; err != nil {
 		return
 	}
 

@@ -102,4 +102,4 @@ flowchart LR
 
 ## 开源许可
 
-本仓库尚未指定开源许可证。
+本项目采用 [MIT License](LICENSE) 开源。

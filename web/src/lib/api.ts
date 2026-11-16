@@ -169,7 +169,7 @@ export const getServersMeta = (signal?: AbortSignal) =>
 export const createServer = (body: ServerBody) =>
   http.post<{ server: Server; install_command: string; public_url: string }>('/api/admin/servers', body).then((r) => r.data)
 export const getServer = (id: number, signal?: AbortSignal) =>
-  http.get<{ server: Server; install_command: string; public_url: string }>(`/api/admin/servers/${id}`, { signal }).then((r) => r.data)
+  http.get<{ server: Server; install_command: string; public_url: string; pass_through?: string[] }>(`/api/admin/servers/${id}`, { signal }).then((r) => r.data)
 export const updateServer = (id: number, body: ServerBody) =>
   http.put(`/api/admin/servers/${id}`, body).then((r) => r.data)
 export const updateServerOrder = (ids: number[]) =>

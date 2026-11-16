@@ -286,32 +286,6 @@ func (a *App) createServer(c *gin.Context) {
 	})
 }
 
-// residualPassThrough exposes which imported entries the panel cannot edit. An
-// unreadable or absent residual simply means nothing is pass-through.
-func residualPassThrough(blob model.JSONText) []string {
-	if len(blob) == 0 {
-		return []string{}
-	}
-	var residual singbox.Residual
-	if json.Unmarshal(blob, &residual) != nil {
-		return []string{}
-	}
-	labels := make([]string, 0, len(residual.PassThroughInbounds)+len(residual.PassThroughOutbounds))
-	for _, raw := range residual.PassThroughInbounds {
-		var m map[string]any
-		if json.Unmarshal(raw, &m) == nil {
-			labels = append(labels, fmt.Sprintf("入站 %v（%v）", m["tag"], m["type"]))
-		}
-	}
-	for _, raw := range residual.PassThroughOutbounds {
-		var m map[string]any
-		if json.Unmarshal(raw, &m) == nil {
-			labels = append(labels, fmt.Sprintf("出站 %v（%v）", m["tag"], m["type"]))
-		}
-	}
-	return labels
-}
-
 func (a *App) getServer(c *gin.Context) {
 	id, ok := uintParam(c, "id")
 	if !ok {
@@ -334,9 +308,6 @@ func (a *App) getServer(c *gin.Context) {
 		"server":          srv,
 		"install_command": a.newAgentInstallCommand(srv.ID),
 		"public_url":      a.baseURL(),
-		// Entries carried over verbatim because the panel has no editor for
-		// them. The UI lists them read-only instead of locking the whole page.
-		"pass_through": residualPassThrough(srv.ConfigResidual),
 	})
 }
 

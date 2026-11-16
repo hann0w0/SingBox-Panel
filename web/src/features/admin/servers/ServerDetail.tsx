@@ -81,8 +81,6 @@ export default function ServerDetail() {
   const section: DetailSection = (DETAIL_SECTIONS as readonly string[]).includes(sectionParam || '') ? sectionParam as DetailSection : 'inbounds'
   const sid = Number(id)
   const [server, setServer] = useState<Server | null>(null)
-  // Entries carried over verbatim because the panel has no editor for them.
-  const [passThrough, setPassThrough] = useState<string[]>([])
   const [pageLoading, setPageLoading] = useState(true)
   const [loadError, setLoadError] = useState<string | null>(null)
   const [sectionError, setSectionError] = useState<string | null>(null)
@@ -197,7 +195,6 @@ export default function ServerDetail() {
       const d = await getServer(targetSID, controller.signal)
       if (generation !== loadGenerationRef.current || currentSIDRef.current !== targetSID) return
       setServer(d.server)
-      setPassThrough(d.pass_through ?? [])
       setInstall(d.install_command)
       const [outboundRows, ruleRows] = await Promise.allSettled([
         listOutbounds(targetSID, controller.signal),
@@ -989,15 +986,6 @@ export default function ServerDetail() {
           className="sd-raw"
           message="原始配置模式，面板编辑已锁定"
           action={<Button size="small" danger loading={busy === 'mode'} onClick={switchToManaged}>切换到面板管理</Button>}
-        />
-      )}
-      {!rawMode && passThrough.length > 0 && (
-        <Alert
-          type="info"
-          showIcon
-          className="sd-raw"
-          message={`${passThrough.length} 项配置由面板原样保留，未提供编辑入口`}
-          description={`${passThrough.join('、')}。这些条目会随每次下发原样写回，其余配置仍可在面板编辑。`}
         />
       )}
       {views[section]}

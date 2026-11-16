@@ -85,17 +85,16 @@ func proxyUsersForInbound(db *gorm.DB, inbound *model.Inbound, settings singbox.
 			UserID: user.ID, UserKey: identity.Name,
 		})
 	}
-	if err := rememberProxyTrafficIdentities(db, trafficIdentities); err != nil {
-		return nil, fmt.Errorf("register proxy traffic identities: %w", err)
-	}
 	forwards, forwardBindings, err := forwardIdentitiesForInbound(db, inbound)
 	if err != nil {
 		return nil, err
 	}
 	identities = append(identities, forwards...)
 	trafficIdentities = append(trafficIdentities, forwardBindings...)
-	if err := rememberProxyTrafficIdentities(db, forwardBindings); err != nil {
-		return nil, fmt.Errorf("register forwarded traffic identities: %w", err)
+	// One insert covers both the per-user and per-forward identities; the
+	// helper is insert-only and idempotent.
+	if err := rememberProxyTrafficIdentities(db, trafficIdentities); err != nil {
+		return nil, fmt.Errorf("register proxy traffic identities: %w", err)
 	}
 	if len(identities) == 0 {
 		// Several protocols interpret an omitted/empty users list as anonymous or

@@ -1,0 +1,14 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="336" height="72" viewBox="0 0 336 72" role="img" aria-label="SingBox Panel">
+  <g transform="translate(0 4) scale(0.5)">
+<g stroke-linejoin="round">
+  <path d="M64.0 8.0 L112.5 36.0 L64.0 64.0 L15.5 36.0Z" fill="#3a3a3a" stroke="#3a3a3a" stroke-width="6"/>
+  <path d="M15.5 36.0 L64.0 64.0 L64.0 120.0 L15.5 92.0Z" fill="#111111" stroke="#111111" stroke-width="6"/>
+  <path d="M64.0 64.0 L112.5 36.0 L112.5 92.0 L64.0 120.0Z" fill="#222222" stroke="#222222" stroke-width="6"/>
+  <path d="M15.5 36 L64 64 L112.5 36 M64 64 L64 120" fill="none" stroke="#5a5a5a" stroke-width="2.2" stroke-linecap="round"/>
+</g>
+<path d="M94.0 52.7 L64.0 70.0 L38.0 55.0 L38.0 73.0 L64.0 88.0 L90.0 73.0 L90.0 91.0 L64.0 106.0 L36.0 89.8" fill="none" stroke="#ffffff" stroke-width="7.5" stroke-linecap="round" stroke-linejoin="round"/>
+<circle cx="94.0" cy="52.7" r="7.5" fill="#22c55e" stroke="#222222" stroke-width="2.5"/>
+<circle cx="36.0" cy="89.8" r="7.5" fill="#ffffff" stroke="#111111" stroke-width="2.5"/>
+  </g>
+  <text x="76" y="37" fill="#f0f6fc" font-family="Arial, Helvetica, sans-serif" font-size="36" font-weight="700" dominant-baseline="central">SingBox Panel</text>
+</svg>

@@ -1,6 +1,8 @@
 <h1 align="center">
-  <img src="web/src/assets/logo.svg" width="48" height="48" alt="">
-  SingBox Panel
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="docs/assets/readme-header-dark.svg">
+    <img src="docs/assets/readme-header.svg" width="336" height="72" alt="SingBox Panel">
+  </picture>
 </h1>
 
 <p align="center">面向官方 sing-box 的多节点管理面板，统一管理配置、用户、订阅与流量。</p>

@@ -177,16 +177,21 @@ func (a *App) applyImport(srv *model.Server, p *singbox.ParsedConfig, raw []byte
 func (a *App) applyImportUnlocked(srv *model.Server, p *singbox.ParsedConfig, raw []byte) error {
 	a.userAccessMu.Lock()
 	defer a.userAccessMu.Unlock()
-	mode := importedConfigMode(p, raw)
+	mode, residual := importedConfigModeWithResidual(p, raw)
 	preserveManagedUsers := false
 	var current model.Server
 	if err := a.db.First(&current, srv.ID).Error; err != nil {
 		return err
 	}
 	current.ConfigMode = model.ConfigModeManaged
-	if generated, err := a.orch.BuildServerConfig(&current); err == nil && equivalentJSON(raw, generated) {
-		mode = model.ConfigModeManaged
-		preserveManagedUsers = true
+	if generated, err := a.orch.BuildServerConfig(&current); err == nil {
+		if merged, mergeErr := singbox.ApplyResidual(generated, residual); mergeErr == nil {
+			generated = merged
+		}
+		if equivalentJSON(raw, generated) {
+			mode = model.ConfigModeManaged
+			preserveManagedUsers = true
+		}
 	}
 	return a.db.Transaction(func(tx *gorm.DB) error {
 		if err := validateImportedPrivateRouting(tx, srv.ID, p, raw); err != nil {
@@ -223,21 +228,42 @@ func (a *App) applyImportUnlocked(srv *model.Server, p *singbox.ParsedConfig, ra
 		if err := syncImportedRuleSets(tx, srv.ID, p.RuleSets); err != nil {
 			return err
 		}
+		// The residual only has meaning in managed mode; a raw server re-applies
+		// its own JSON verbatim, so keeping a stale patch would be misleading.
+		residualJSON := model.JSONText(nil)
+		if mode == model.ConfigModeManaged && !residual.Empty() {
+			encoded, marshalErr := json.Marshal(residual)
+			if marshalErr != nil {
+				return marshalErr
+			}
+			residualJSON = model.JSONText(encoded)
+		}
 		return tx.Model(&model.Server{}).Where("id = ?", srv.ID).Updates(map[string]any{
 			"final_outbound":     p.Final,
 			"config_mode":        mode,
 			"raw_config":         model.JSONText(append([]byte(nil), raw...)),
+			"config_residual":    residualJSON,
 			"config_initialized": true,
 		}).Error
 	})
 }
 
 func importedConfigMode(p *singbox.ParsedConfig, raw []byte) string {
+	mode, _ := importedConfigModeWithResidual(p, raw)
+	return mode
+}
+
+// importedConfigModeWithResidual decides whether an import can be managed and,
+// when it can, returns the residual fields to preserve on every push. Merging
+// the residual before comparison is what lets a config using fields outside the
+// panel's model stay managed: unknown keys are restored verbatim, so a mismatch
+// now only means the panel itself would render something different.
+func importedConfigModeWithResidual(p *singbox.ParsedConfig, raw []byte) (string, singbox.Residual) {
 	// Subscription parsers can understand more client types than the managed
 	// server editor. Keep those whole-server imports editable as raw JSON.
 	for _, outbound := range p.Outbounds {
 		if !supportedOutboundTypes[outbound.Type] {
-			return model.ConfigModeRaw
+			return model.ConfigModeRaw, singbox.Residual{}
 		}
 	}
 	// The real orchestrator adds panel statistics services even when they were
@@ -249,28 +275,40 @@ func importedConfigMode(p *singbox.ParsedConfig, raw []byte) string {
 		}
 		for _, port := range []int{in.ListenPort, in.Settings.TLS.Reality.Guard.InternalPort} {
 			if port == localTrafficPort() || port == addressPort(protocol.LocalStatsAPIAddress) {
-				return model.ConfigModeRaw
+				return model.ConfigModeRaw, singbox.Residual{}
 			}
 		}
 	}
+	residual, residualErr := singbox.ExtractResidual(raw, p)
+	if residualErr != nil {
+		return model.ConfigModeRaw, singbox.Residual{}
+	}
 	generated, err := buildManagedConfigFromImport(p, raw)
 	if err != nil {
-		return model.ConfigModeRaw
+		return model.ConfigModeRaw, singbox.Residual{}
+	}
+	if merged, mergeErr := singbox.ApplyResidual(generated, residual); mergeErr == nil {
+		generated = merged
 	}
 	// Configs written by an older panel carry the narrower loopback guard; treat
 	// it as the current one so they stay managed and receive it on next push.
 	raw = singbox.UpgradeLegacyLoopbackGuardJSON(raw)
+	// The panel always names a single-credential user "user"; comparing the
+	// hand-written name would otherwise force a needless raw downgrade.
+	if normalized, ok := singbox.NormalizeSingleUserName(raw); ok {
+		raw = normalized
+	}
 	if equivalentJSON(raw, generated) {
-		return model.ConfigModeManaged
+		return model.ConfigModeManaged, residual
 	}
 	// Only an independently recognised, unambiguous REALITY gate may use
 	// these finite normalisations. All other imports retain strict equality.
 	normalizedRaw, rawOK := singbox.NormalizeRealityGuardImportJSON(raw)
 	normalizedGenerated, generatedOK := singbox.NormalizeRealityGuardImportJSON(generated)
 	if rawOK && generatedOK && equivalentJSON(normalizedRaw, normalizedGenerated) {
-		return model.ConfigModeManaged
+		return model.ConfigModeManaged, residual
 	}
-	return model.ConfigModeRaw
+	return model.ConfigModeRaw, singbox.Residual{}
 }
 
 func buildManagedConfigFromImport(p *singbox.ParsedConfig, raw []byte) ([]byte, error) {

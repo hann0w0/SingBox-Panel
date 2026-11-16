@@ -191,7 +191,9 @@ func TestImportAutomaticallySelectsSafeConfigMode(t *testing.T) {
 	}{
 		{name: "lossless managed config", raw: base, want: model.ConfigModeManaged},
 		{name: "supported sniff stays managed", raw: withSupportedSniff(), want: model.ConfigModeManaged},
-		{name: "unmodelled DNS stays raw", raw: withDNS(), want: model.ConfigModeRaw},
+		// A block the panel cannot model is preserved as a residual and pushed
+		// back verbatim, so it no longer forces the whole server into raw mode.
+		{name: "unmodelled DNS is preserved and stays managed", raw: withDNS(), want: model.ConfigModeManaged},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			db := testDB(t)

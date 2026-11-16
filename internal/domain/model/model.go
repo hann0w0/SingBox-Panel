@@ -220,6 +220,11 @@ type Server struct {
 	// panel does not understand.
 	ConfigMode string   `gorm:"size:16;default:managed" json:"config_mode"`
 	RawConfig  JSONText `gorm:"type:text" json:"-"`
+	// ConfigResidual holds the parts of an imported config.json the panel has no
+	// editor for (see singbox.Residual). Managed pushes merge it back so a server
+	// whose config uses fields outside the panel's model stays editable instead
+	// of degrading to raw mode and locking every control.
+	ConfigResidual JSONText `gorm:"type:text" json:"-"`
 	// ConfigInitialized distinguishes a brand-new node (whose existing
 	// sing-box config must not be touched) from a deliberately empty managed
 	// config after the administrator deletes the last structured record.

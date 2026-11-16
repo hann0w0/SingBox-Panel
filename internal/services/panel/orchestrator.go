@@ -247,7 +247,7 @@ func (o *Orchestrator) BuildServerConfig(srv *model.Server) ([]byte, error) {
 		})
 	}
 
-	return singbox.BuildServerConfig(singbox.ServerConfigInput{
+	rendered, err := singbox.BuildServerConfig(singbox.ServerConfigInput{
 		Inbounds:        ins,
 		Outbounds:       obs,
 		Rules:           rules,
@@ -257,6 +257,29 @@ func (o *Orchestrator) BuildServerConfig(srv *model.Server) ([]byte, error) {
 		StatsSecret:     statsSecret(srv.AgentToken),
 		StatsAPI:        statsAPIAddress(srv, inbounds),
 	})
+	if err != nil {
+		return nil, err
+	}
+	// Restore the fields this server's config uses but the panel cannot model,
+	// so a partially understood config stays editable instead of locking the UI.
+	if residual := decodedResidual(srv); !residual.Empty() {
+		return singbox.ApplyResidual(rendered, residual)
+	}
+	return rendered, nil
+}
+
+// decodedResidual returns the preserved fields the panel cannot model. A
+// malformed or absent blob yields an empty residual, so the generated config is
+// pushed as-is rather than failing the push.
+func decodedResidual(srv *model.Server) singbox.Residual {
+	if len(srv.ConfigResidual) == 0 {
+		return singbox.Residual{}
+	}
+	var residual singbox.Residual
+	if json.Unmarshal(srv.ConfigResidual, &residual) != nil {
+		return singbox.Residual{}
+	}
+	return residual
 }
 
 // privateOutboundTagsForRules returns private exit tags referenced by this
@@ -401,20 +424,24 @@ func (o *Orchestrator) applyRawConfigUnlocked(ctx context.Context, serverID uint
 		return protocol.CommandResultEvt{}, err
 	}
 	var old model.Server
-	if err := o.db.Select("id", "config_mode", "raw_config", "config_initialized").First(&old, serverID).Error; err != nil {
+	if err := o.db.Select("id", "config_mode", "raw_config", "config_residual", "config_initialized").First(&old, serverID).Error; err != nil {
 		return protocol.CommandResultEvt{}, err
 	}
 	if err := o.db.Model(&model.Server{}).Where("id = ?", serverID).Updates(map[string]any{
 		"config_mode": model.ConfigModeRaw,
 		"raw_config":  model.JSONText(append([]byte(nil), raw...)),
+		// The residual belongs to the previous managed view; raw mode re-applies
+		// this JSON verbatim, so leaving a stale patch would be misleading.
+		"config_residual": model.JSONText(nil),
 	}).Error; err != nil {
 		return protocol.CommandResultEvt{}, err
 	}
 	res, err := o.hub.SendCommand(ctx, serverID, protocol.CmdApplyConfig, command)
 	if err != nil {
 		if rollbackErr := o.db.Model(&model.Server{}).Where("id = ?", serverID).Updates(map[string]any{
-			"config_mode": old.ConfigMode,
-			"raw_config":  old.RawConfig,
+			"config_mode":     old.ConfigMode,
+			"raw_config":      old.RawConfig,
+			"config_residual": old.ConfigResidual,
 		}).Error; rollbackErr != nil {
 			return res, fmt.Errorf("apply raw config: %v; restore raw snapshot: %w", err, rollbackErr)
 		}

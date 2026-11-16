@@ -438,6 +438,11 @@ var applicationMigrations = []schemaMigration{
 		name:    "agent dual stack public addresses",
 		up:      func(tx *gorm.DB) error { return tx.AutoMigrate(&model.Server{}) },
 	},
+	{
+		version: 41,
+		name:    "config residual for hand-written fields",
+		up:      func(tx *gorm.DB) error { return tx.AutoMigrate(&model.Server{}) },
+	},
 }
 
 // migrationReplaySafe records whether an interrupted attempt of each migration
@@ -496,7 +501,8 @@ var migrationReplaySafe = map[uint]bool{
 	37: true,  // AutoMigrate of user-owned forward definitions
 	38: true,  // AutoMigrate adds the opt-in forwarding permission
 	39: true,  // HasColumn-guarded DROP COLUMN of the retired node switches
-	40: true,
+	40: true,  // AutoMigrate of agent dual stack address columns
+	41: true,  // AutoMigrate adds the config residual column
 }
 
 // dropRetiredCustomNodeSwitches removes the per-node and per-subscription

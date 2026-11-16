@@ -114,8 +114,10 @@ func TestImportRealityGuardUnknownDataAndDifferencesStayRaw(t *testing.T) {
 		name   string
 		mutate func(map[string]any)
 	}{
-		{"unknown root field", func(root map[string]any) { root["future"] = map[string]any{"enabled": true} }},
 		{"unknown direct field", func(root map[string]any) { root["inbounds"].([]any)[0].(map[string]any)["future"] = true }},
+		// An unknown *root* block is preserved as a residual and pushed back
+		// verbatim, so it stays managed; see
+		// TestImportRealityGuardKeepsUnknownRootBlock below.
 		{"unknown reality field", func(root map[string]any) {
 			root["inbounds"].([]any)[1].(map[string]any)["tls"].(map[string]any)["reality"].(map[string]any)["future"] = true
 		}},
@@ -168,6 +170,45 @@ func TestImportRealityGuardUnknownDataAndDifferencesStayRaw(t *testing.T) {
 				t.Fatalf("raw source changed: %s, %v", generated, err)
 			}
 		})
+	}
+}
+
+// A config with a block the panel has no editor for must stay manageable: the
+// block is preserved and restored on every push instead of locking the UI.
+func TestImportKeepsUnknownRootBlockAndStaysManaged(t *testing.T) {
+	raw := mutateRealityGuardImport(t, func(root map[string]any) {
+		root["future"] = map[string]any{"enabled": true}
+	})
+	parsed, err := singbox.ParseServerConfig(raw)
+	if err != nil {
+		t.Fatal(err)
+	}
+	db := testDB(t)
+	srv := model.Server{Name: "unknown root block", AgentToken: "unknown-root"}
+	if err := db.Create(&srv).Error; err != nil {
+		t.Fatal(err)
+	}
+	app := &App{db: db, orch: NewOrchestrator(db, NewHub(db))}
+	if err := app.applyImport(&srv, parsed, raw); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.First(&srv, srv.ID).Error; err != nil {
+		t.Fatal(err)
+	}
+	if srv.EffectiveConfigMode() != model.ConfigModeManaged {
+		t.Fatalf("mode=%s, want managed", srv.EffectiveConfigMode())
+	}
+	generated, err := app.orch.BuildServerConfig(&srv)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var cfg map[string]any
+	if err := json.Unmarshal(generated, &cfg); err != nil {
+		t.Fatal(err)
+	}
+	block, ok := cfg["future"].(map[string]any)
+	if !ok || block["enabled"] != true {
+		t.Fatalf("unknown root block lost on push: %v", cfg["future"])
 	}
 }
 

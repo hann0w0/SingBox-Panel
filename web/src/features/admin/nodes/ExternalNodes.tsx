@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import { errMsg, listCustomNodes } from '../../../lib/api'
 import type { CustomNode } from '../../../lib/api'
-import { CustomNodesPanel } from '../access/Access'
+import { CustomNodesPanel } from '../access/CustomNodesPanel'
 import { PageHeader } from '../../../components/kit/Page'
 import '../../../styles/users.css'
 

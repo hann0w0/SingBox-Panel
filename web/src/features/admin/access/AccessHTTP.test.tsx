@@ -3,7 +3,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { createCustomNode, createCustomNodeSubscription, listCustomNodeSubscriptions, syncCustomNodeSubscription, updateCustomNode } from '../../../lib/api'
 import type { CustomNode, CustomNodeSubscription } from '../../../lib/api'
 import { message } from '../../../components/kit'
-import { CustomNodesPanel } from './Access'
+import { CustomNodesPanel } from './CustomNodesPanel'
 
 vi.mock('../../../lib/api', async (importOriginal) => ({
   ...await importOriginal<typeof import('../../../lib/api')>(),

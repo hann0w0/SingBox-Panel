@@ -380,6 +380,10 @@ func (a *App) mountFrontend(r *gin.Engine) {
 func (a *App) Run(ctx context.Context) error {
 	ResetServersOffline(a.db)
 
+	if a.orch != nil {
+		a.orch.SetShutdownContext(ctx)
+	}
+
 	go a.host.run(ctx)
 	if a.hub != nil && a.hub.traffic != nil {
 		go a.hub.traffic.run(ctx)

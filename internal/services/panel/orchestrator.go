@@ -30,6 +30,7 @@ type Orchestrator struct {
 	// outbounds keep their imported snapshot.
 	app *App
 
+	ctx          context.Context
 	asyncMu      sync.Mutex
 	asyncRunning map[uint]bool
 	asyncPending map[uint]bool
@@ -501,8 +502,30 @@ func (o *Orchestrator) SwitchToManagedConfig(ctx context.Context, serverID uint)
 	return nil
 }
 
+// SetShutdownContext binds the orchestrator to a lifecycle context that cancels
+// ongoing and retried background operations when the panel shuts down.
+func (o *Orchestrator) SetShutdownContext(ctx context.Context) {
+	o.asyncMu.Lock()
+	defer o.asyncMu.Unlock()
+	o.ctx = ctx
+}
+
+func (o *Orchestrator) shutdownCtx() context.Context {
+	o.asyncMu.Lock()
+	defer o.asyncMu.Unlock()
+	if o.ctx != nil {
+		return o.ctx
+	}
+	return context.Background()
+}
+
 // PushConfigAsync pushes in the background, ignoring offline agents.
 func (o *Orchestrator) PushConfigAsync(serverID uint) {
+	ctx := o.shutdownCtx()
+	if ctx.Err() != nil {
+		return
+	}
+
 	o.asyncMu.Lock()
 	if o.asyncRunning[serverID] {
 		o.asyncPending[serverID] = true
@@ -514,22 +537,42 @@ func (o *Orchestrator) PushConfigAsync(serverID uint) {
 
 	go func() {
 		for {
+			if ctx.Err() != nil {
+				o.asyncMu.Lock()
+				delete(o.asyncRunning, serverID)
+				delete(o.asyncPending, serverID)
+				o.asyncMu.Unlock()
+				return
+			}
 			var err error
 			for attempt := 1; attempt <= asyncPushAttempts; attempt++ {
-				err = o.PushConfigWithTimeout(context.Background(), serverID, 60*time.Second)
-				if err == nil || errors.Is(err, ErrAgentOffline) {
+				if ctx.Err() != nil {
+					break
+				}
+				err = o.PushConfigWithTimeout(ctx, serverID, 60*time.Second)
+				if err == nil || errors.Is(err, ErrAgentOffline) || errors.Is(err, context.Canceled) {
 					break
 				}
 				log.Printf("orchestrator: push config to server %d failed (attempt %d/%d): %v", serverID, attempt, asyncPushAttempts, err)
 				if attempt < asyncPushAttempts {
-					time.Sleep(asyncPushRetryDelay)
+					select {
+					case <-ctx.Done():
+						break
+					case <-time.After(asyncPushRetryDelay):
+					}
 				}
 			}
-			if err != nil && !errors.Is(err, ErrAgentOffline) {
+			if err != nil && !errors.Is(err, ErrAgentOffline) && !errors.Is(err, context.Canceled) && ctx.Err() == nil {
 				log.Printf("orchestrator: push config to server %d exhausted retries: %v", serverID, err)
 			}
 
 			o.asyncMu.Lock()
+			if ctx.Err() != nil {
+				delete(o.asyncRunning, serverID)
+				delete(o.asyncPending, serverID)
+				o.asyncMu.Unlock()
+				return
+			}
 			if o.asyncPending[serverID] {
 				delete(o.asyncPending, serverID)
 				o.asyncMu.Unlock()

@@ -1272,3 +1272,21 @@ func TestImportKeepsConfigWithLegacyLoopbackGuardManaged(t *testing.T) {
 		t.Fatalf("legacy-guard config mode = %q, want managed", got)
 	}
 }
+
+func TestOrchestratorShutdownContextCancelsAsyncPush(t *testing.T) {
+	db := testDB(t)
+	orch := NewOrchestrator(db, NewHub(db))
+	ctx, cancel := context.WithCancel(context.Background())
+	orch.SetShutdownContext(ctx)
+
+	// Cancel before push
+	cancel()
+	orch.PushConfigAsync(999)
+
+	orch.asyncMu.Lock()
+	running := orch.asyncRunning[999]
+	orch.asyncMu.Unlock()
+	if running {
+		t.Fatal("async push started despite canceled shutdown context")
+	}
+}

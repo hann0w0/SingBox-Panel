@@ -425,9 +425,6 @@ func (a *App) deleteServer(c *gin.Context) {
 			return
 		}
 	}
-	if a.hub != nil && a.hub.traffic != nil {
-		a.hub.traffic.dropServer(id)
-	}
 	for _, row := range []any{&model.TrafficRecord{}, &model.TrafficHourly{}, &model.TrafficUserHourly{}, &model.TrafficReportCursor{}} {
 		if err := tx.Where("server_id = ?", id).Delete(row).Error; err != nil {
 			tx.Rollback()

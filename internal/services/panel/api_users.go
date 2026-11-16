@@ -917,9 +917,6 @@ func (a *App) deleteUser(c *gin.Context) {
 	}
 	unlockAudience := a.subscriptionManager().lockAudience()
 	defer unlockAudience()
-	if a.hub != nil && a.hub.traffic != nil {
-		a.hub.traffic.dropUser(id)
-	}
 	affectedServerIDs := make([]uint, 0)
 	err := a.db.Transaction(func(tx *gorm.DB) error {
 		var userForwards []model.UserForward

@@ -16,6 +16,7 @@ import '../../../styles/forms.css'
 import { MODAL_MD } from '../../../components/kit/modal'
 import { OutboundImport, type NodeImportMode } from './OutboundImport'
 import { Pills } from '../../../components/kit/Page'
+import { Field, FieldGroup, FieldLabel } from '@/components/ui/field'
 
 const OUT_TYPES: { value: OutboundType; label: string }[] = [
   { value: 'shadowsocks', label: 'Shadowsocks' },
@@ -785,13 +786,16 @@ export function RuleForm({
       width={MODAL_MD}
     >
       <fieldset disabled={submitting} aria-busy={submitting} className="min-w-0 border-0 p-0 m-0">
-      <Form form={form} layout="vertical" className="fm-form">
-        <FormGroup title="动作">
-          <Form.Item name="action" rules={[{ required: true, message: '请选择规则动作' }]} className="fm-full">
-            <Segmented block options={ACTION_OPTIONS} className="fm-actions" aria-label="规则动作" />
-          </Form.Item>
+      <Form form={form} layout="vertical" fieldLayout className="fm-form">
+        <FieldGroup className="gap-5">
+          <Field>
+            <FieldLabel htmlFor="rule-action">动作</FieldLabel>
+            <Form.Item name="action" noStyle rules={[{ required: true, message: '请选择规则动作' }]}>
+              <Segmented block options={ACTION_OPTIONS} className="fm-actions" aria-label="规则动作" />
+            </Form.Item>
+          </Field>
           {action === 'route' && (
-            <Form.Item name="outbound" label="目标出站" rules={[{ required: true, message: '请选择目标出站' }]} className="fm-full">
+            <Form.Item name="outbound" label="目标出站" rules={[{ required: true, message: '请选择目标出站' }]}>
               <Select
                 allowClear
                 placeholder="选择出站"
@@ -847,13 +851,21 @@ export function RuleForm({
               />
             </Form.Item>
           )}
-        </FormGroup>
+        </FieldGroup>
 
         {(action === 'route' || action === 'reject') && (
-          <FormGroup title="匹配条件" extra={matchFields.length ? `已选 ${matchFields.length} 项` : '匹配全部'}>
-            <Form.Item name="match_fields" className="fm-full">
-              <Checkbox.Group className="fm-chips" options={MATCH_FIELD_OPTIONS} />
-            </Form.Item>
+          <FieldGroup className="gap-5 mt-6">
+            <Field>
+              <div className="flex items-baseline justify-between gap-3">
+                <FieldLabel>匹配条件</FieldLabel>
+                <span className="text-sm text-muted-foreground">
+                  {matchFields.length ? `已选 ${matchFields.length} 项` : '匹配全部'}
+                </span>
+              </div>
+              <Form.Item name="match_fields" noStyle>
+                <Checkbox.Group className="fm-chips" options={MATCH_FIELD_OPTIONS} />
+              </Form.Item>
+            </Field>
 
             {showMatchField('auth_user') && (
               <Form.Item name="auth_user" label="用户" rules={[{ required: true, message: '请选择至少一个用户' }]} className="fm-full">
@@ -969,7 +981,7 @@ export function RuleForm({
                 />
               </Form.Item>
             )}
-          </FormGroup>
+          </FieldGroup>
         )}
       </Form>
       </fieldset>

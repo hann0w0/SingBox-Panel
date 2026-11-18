@@ -374,20 +374,45 @@ yaml_clean_value() {
   value="${value#"${value%%[![:space:]]*}"}"
   value="${value%"${value##*[![:space:]]}"}"
   quote="${value:0:1}"
-  if [[ ${#value} -ge 2 && ( "$quote" == '"' || "$quote" == "'" ) && "$value" == *"$quote"* ]]; then
-    # Drop anything after the closing quote (e.g. a trailing comment), then the
-    # quotes themselves.
-    value="${value%"$quote"*}$quote"
-    value="${value:1:${#value}-2}"
-  else
-    # Unquoted: a '#' starts a comment only after whitespace, or at the start.
-    if [[ "$value" == '#'* ]]; then
-      value=""
-    else
-      value="${value%%[[:space:]]#*}"
+  if [[ ${#value} -ge 2 && "$quote" == '"' ]]; then
+    local out="" i=1 ch="" next="" closed=0
+    while (( i < ${#value} )); do
+      ch="${value:i:1}"
+      if [[ "$ch" == '\' && $((i + 1)) -lt ${#value} ]]; then
+        next="${value:i+1:1}"
+        case "$next" in
+          t) out+=$'\t' ;;
+          n) out+=$'\n' ;;
+          r) out+=$'\r' ;;
+          *) out+="$next" ;;
+        esac
+        i=$((i + 2))
+        continue
+      fi
+      if [[ "$ch" == '"' ]]; then
+        closed=1
+        break
+      fi
+      out+="$ch"
+      i=$((i + 1))
+    done
+    if (( closed )); then
+      printf '%s' "$out"
+      return 0
     fi
-    value="${value%"${value##*[![:space:]]}"}"
+  elif [[ ${#value} -ge 2 && "$quote" == "'" && "${value:1}" == *"'"* ]]; then
+    value="${value%"'"*}'"
+    value="${value:1:${#value}-2}"
+    printf '%s' "$value"
+    return 0
   fi
+  # Unquoted: a '#' starts a comment only after whitespace, or at the start.
+  if [[ "$value" == '#'* ]]; then
+    value=""
+  else
+    value="${value%%[[:space:]]#*}"
+  fi
+  value="${value%"${value##*[![:space:]]}"}"
   printf '%s' "$value"
 }
 
@@ -611,10 +636,9 @@ latest_release_tag() {
   local body=""
   body="$(curl "${CURL_DOWNLOAD_ARGS[@]}" "https://api.github.com/repos/${GITHUB_REPO}/releases/latest")" ||
     die "unable to reach the GitHub API (network, or the 60 req/hour anonymous limit). Pass --version vX.Y.Z to skip this lookup"
-  # `q` rather than piping to head: under `set -o pipefail` a head that closes
-  # the pipe early would SIGPIPE sed and fail the whole command substitution.
-  printf '%s' "$body" |
-    sed -n 's/.*"tag_name"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p;/"tag_name"/q'
+  # Feed $body via a here-string so `sed ... q` never closes a pipe early and
+  # triggers SIGPIPE under `set -o pipefail` on large release payloads.
+  sed -n 's/.*"tag_name"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p;/"tag_name"/q' <<<"$body"
 }
 
 sha256_of() {
@@ -677,7 +701,7 @@ validate_release_archive() {
     name="${name#./}"
     [[ -z "$name" ]] && continue
     case "$name" in
-      /*|..|../*|*/../*|*\\*) rm -f -- "$names_file" "$verbose_file"; return 1 ;;
+      /*|..|../*|*/../*|*/..|*\\*) rm -f -- "$names_file" "$verbose_file"; return 1 ;;
     esac
     [[ "$name" != *[[:cntrl:]]* ]] || { rm -f -- "$names_file" "$verbose_file"; return 1; }
   done < "$names_file"

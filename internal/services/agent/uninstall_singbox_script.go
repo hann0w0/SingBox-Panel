@@ -60,7 +60,7 @@ if [ -f /etc/conf.d/sing-box ]; then cp -a /etc/conf.d/sing-box "$backup_root/co
 
 if [ -d /run/systemd/system ] && command -v systemctl >/dev/null 2>&1; then
   service_manager=systemd
-  if systemctl list-unit-files sing-box.service >/dev/null 2>&1; then found=1; fi
+  if systemctl list-unit-files sing-box.service 2>/dev/null | grep -q 'sing-box\.service'; then found=1; fi
   if systemctl is-active --quiet sing-box.service; then was_active=1; fi
   if systemctl is-enabled --quiet sing-box.service; then was_enabled=1; fi
   systemctl disable --now sing-box.service >/dev/null 2>&1 || true

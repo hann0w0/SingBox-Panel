@@ -172,10 +172,12 @@ func (c *Client) SendEventForContext(ctx context.Context, t protocol.MessageType
 // reconnect immediately invalidates the stream's events.
 func (c *Client) SendEventForSession(session uint64, t protocol.MessageType, id string, payload any) {
 	env, err := protocol.NewEnvelope(t, id, payload)
-	if err != nil {
+	if err != nil || session == 0 {
 		return
 	}
-	if session == 0 || c.activeSession.Load() != session {
+	c.eventMu.Lock()
+	defer c.eventMu.Unlock()
+	if c.activeSession.Load() != session {
 		return
 	}
 	select {
@@ -382,6 +384,7 @@ func (c *Client) connectOnce(ctx context.Context) (time.Duration, error) {
 		defer close(writerDone)
 		c.writeLoop(connCtx, conn, session)
 	}()
+	heartbeatDone := make(chan struct{})
 	defer func() {
 		// Stop tracked producers before draining. Join the old writer before a
 		// reconnect can start another one on the shared send channel.
@@ -390,19 +393,23 @@ func (c *Client) connectOnce(ctx context.Context) (time.Duration, error) {
 		c.eventMu.Unlock()
 		cancel()
 		_ = conn.Close()
+		<-heartbeatDone
 		<-writerDone
 		c.discardQueuedEvents()
 	}()
 
 	// Heartbeat loop.
-	go c.periodic(connCtx, c.heartbeatInterval, func() {
-		if c.Heartbeat == nil {
-			return
-		}
-		if env, err := protocol.NewEnvelope(protocol.EvtHeartbeat, "", c.Heartbeat()); err == nil {
-			c.trySend(connCtx, env)
-		}
-	})
+	go func() {
+		defer close(heartbeatDone)
+		c.periodic(connCtx, c.heartbeatInterval, func() {
+			if c.Heartbeat == nil || connCtx.Err() != nil {
+				return
+			}
+			if env, err := protocol.NewEnvelope(protocol.EvtHeartbeat, "", c.Heartbeat()); err == nil {
+				c.trySend(connCtx, env)
+			}
+		})
+	}()
 	err = c.readLoop(connCtx, conn)
 	return time.Since(connectedAt), err
 }

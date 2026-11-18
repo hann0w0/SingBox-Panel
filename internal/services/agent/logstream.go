@@ -99,12 +99,16 @@ func (ls *logStreamer) startFollower(ctx context.Context, lines int) (*logFollow
 	}
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
 	cmd.Cancel = func() error {
+		if cmd.Process == nil {
+			return os.ErrProcessDone
+		}
 		err := syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL)
 		if errors.Is(err, syscall.ESRCH) {
 			return os.ErrProcessDone
 		}
 		return err
 	}
+	cmd.WaitDelay = 2 * time.Second
 	stdout, err := cmd.StdoutPipe()
 	if err != nil {
 		cancel()
@@ -128,7 +132,6 @@ func (ls *logStreamer) follow(ctx context.Context, follower *logFollower, onLine
 		closePipe()
 		follower.cancel()
 		waitErr := follower.cmd.Wait()
-		_ = follower.stdout.Close()
 		if ctx.Err() != nil {
 			return
 		}

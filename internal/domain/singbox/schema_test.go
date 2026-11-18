@@ -112,4 +112,24 @@ func TestValidateJSONAgainstSchemaAcceptsComplexAndUnknownFields(t *testing.T) {
 	if err != nil {
 		t.Fatalf("valid complex outbound rejected: %v", err)
 	}
+
+	// Typed Go slices (such as []string written into s.Raw by syncSecretsToRaw)
+	// must also satisfy array schema fields like tls.reality.short_id.
+	err = ValidateJSONAgainstSchema(bundle.Inbound, map[string]any{
+		"type":        "vless",
+		"tag":         "vless-reality",
+		"listen_port": float64(443),
+		"tls": map[string]any{
+			"enabled": true,
+			"reality": map[string]any{
+				"enabled":     true,
+				"private_key": "example-priv-key",
+				"short_id":    []string{"dff29bbb"},
+				"handshake":   map[string]any{"server": "www.apple.com", "server_port": float64(443)},
+			},
+		},
+	})
+	if err != nil {
+		t.Fatalf("typed string slice short_id rejected: %v", err)
+	}
 }

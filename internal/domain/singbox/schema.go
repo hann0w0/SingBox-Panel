@@ -3,6 +3,7 @@ package singbox
 import (
 	"fmt"
 	"math"
+	"reflect"
 	"strings"
 )
 
@@ -1065,13 +1066,13 @@ func validateValueAgainstSchema(path string, schema *JSONSchema, val any) error 
 			return fmt.Errorf("%s 的值 %v 不在允许范围内", path, num)
 		}
 	case "array":
-		arr, ok := val.([]any)
-		if !ok {
+		rv := reflect.ValueOf(val)
+		if !rv.IsValid() || (rv.Kind() != reflect.Slice && rv.Kind() != reflect.Array) {
 			return fmt.Errorf("%s 必须是数组", path)
 		}
 		if schema.Items != nil {
-			for i, item := range arr {
-				if err := validateValueAgainstSchema(fmt.Sprintf("%s[%d]", path, i), schema.Items, item); err != nil {
+			for i := 0; i < rv.Len(); i++ {
+				if err := validateValueAgainstSchema(fmt.Sprintf("%s[%d]", path, i), schema.Items, rv.Index(i).Interface()); err != nil {
 					return err
 				}
 			}

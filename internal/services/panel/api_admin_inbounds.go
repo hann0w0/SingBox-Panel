@@ -427,7 +427,11 @@ func syncSecretsToRaw(typ string, s *singbox.InboundSettings) {
 					realityMap["private_key"] = s.TLS.Reality.PrivateKey
 				}
 				if len(s.TLS.Reality.ShortID) > 0 {
-					realityMap["short_id"] = s.TLS.Reality.ShortID
+					shortIDs := make([]any, len(s.TLS.Reality.ShortID))
+					for i, id := range s.TLS.Reality.ShortID {
+						shortIDs[i] = id
+					}
+					realityMap["short_id"] = shortIDs
 				}
 			}
 		}

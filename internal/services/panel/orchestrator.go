@@ -42,7 +42,7 @@ func (o *Orchestrator) appOrFallback() *App {
 	if o.app != nil {
 		return o.app
 	}
-	return &App{db: o.db}
+	return &App{db: o.db, orch: o}
 }
 
 type ConfigApplyState string
@@ -543,7 +543,7 @@ func (o *Orchestrator) SwitchToManagedConfig(ctx context.Context, serverID uint)
 		if err != nil {
 			return err
 		}
-		app := &App{db: o.db, orch: o}
+		app := o.appOrFallback()
 		if err := app.applyImportUnlocked(&old, parsed, old.RawConfig); err != nil {
 			return err
 		}

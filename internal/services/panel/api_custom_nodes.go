@@ -462,6 +462,15 @@ func (a *App) batchDeleteCustomNodes(c *gin.Context) {
 		c.JSON(http.StatusConflict, gin.H{"error": "所选节点包含订阅管理的节点，不能单独删除"})
 		return
 	}
+	var referenced int64
+	if err := a.db.Model(&model.Outbound{}).Where("source_kind = ? AND source_id IN ?", model.OutboundSourceCustomNode, ids).Count(&referenced).Error; err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+	if referenced > 0 {
+		c.JSON(http.StatusConflict, gin.H{"error": "所选节点仍被出站引用，请先修改或删除那些出站"})
+		return
+	}
 	var deleted int64
 	if err := a.db.Transaction(func(tx *gorm.DB) error {
 		result := tx.Delete(&model.CustomNode{}, ids)

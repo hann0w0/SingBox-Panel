@@ -835,6 +835,11 @@ func (a *App) updateSharedRuleSet(c *gin.Context) {
 		c.JSON(http.StatusConflict, gin.H{"error": "规则集标签已存在"})
 		return
 	}
+	var assignments []model.ServerRuleSet
+	if err := a.db.Where("rule_set_id = ?", rs.ID).Find(&assignments).Error; err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
 	oldTag := rs.Tag
 	tx := a.db.Begin()
 	if tx.Error != nil {
@@ -858,6 +863,11 @@ func (a *App) updateSharedRuleSet(c *gin.Context) {
 	if err := tx.Commit().Error; err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
+	}
+	if a.orch != nil {
+		for _, assignment := range assignments {
+			a.orch.PushConfigIfManaged(assignment.ServerID)
+		}
 	}
 	c.JSON(http.StatusOK, gin.H{"ruleset": rs})
 }

@@ -50,7 +50,10 @@ func (a *App) availableOutboundTag(serverID uint, name string) (string, error) {
 	if err := a.db.Model(&model.Outbound{}).Where("server_id = ? OR owner_user_id <> 0", serverID).Pluck("tag", &tags).Error; err != nil {
 		return "", err
 	}
-	used := map[string]bool{"direct": true, "block": true, "reject": true, "sniff": true, "hijack-dns": true}
+	used := make(map[string]bool, len(builtinOutboundTags)+len(tags))
+	for k, v := range builtinOutboundTags {
+		used[k] = v
+	}
 	for _, tag := range tags {
 		used[tag] = true
 	}

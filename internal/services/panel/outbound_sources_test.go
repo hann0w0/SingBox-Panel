@@ -269,3 +269,55 @@ func TestCustomNodeImportUsesTheNodeCredential(t *testing.T) {
 		t.Fatalf("hidden custom node accepted: %d %s", w.Code, w.Body.String())
 	}
 }
+
+func TestCustomNodeReferencedByOutboundCannotBeBatchDeletedOrSubscriptionDeleted(t *testing.T) {
+	f := newNodeImportFixture(t)
+	standalone := model.CustomNode{
+		Name: "独立外部节点", Link: "trojan://secret@a.example.net:443?sni=a.example.net#standalone",
+	}
+	if err := f.db.Create(&standalone).Error; err != nil {
+		t.Fatal(err)
+	}
+	sub := model.CustomNodeSubscription{Name: "机场订阅", URL: "https://example.com/sub"}
+	if err := f.db.Create(&sub).Error; err != nil {
+		t.Fatal(err)
+	}
+	subNode := model.CustomNode{
+		Name: "订阅外部节点", Link: "trojan://secret@b.example.net:443?sni=b.example.net#subnode",
+		SubscriptionID: &sub.ID, SubscriptionKey: "sub-key-1",
+	}
+	if err := f.db.Create(&subNode).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := f.db.Create(&model.Outbound{
+		ServerID: f.target.ID, Tag: "via-standalone", Type: "trojan",
+		SourceKind: model.OutboundSourceCustomNode, SourceID: standalone.ID,
+	}).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := f.db.Create(&model.Outbound{
+		ServerID: f.target.ID, Tag: "via-subnode", Type: "trojan",
+		SourceKind: model.OutboundSourceCustomNode, SourceID: subNode.ID,
+	}).Error; err != nil {
+		t.Fatal(err)
+	}
+
+	router := gin.New()
+	router.POST("/custom-nodes/batch-delete", f.app.batchDeleteCustomNodes)
+	router.DELETE("/custom-node-subscriptions/:id", f.app.deleteCustomNodeSubscription)
+
+	batchReq := httptest.NewRequest(http.MethodPost, "/custom-nodes/batch-delete", strings.NewReader(fmt.Sprintf(`{"ids":[%d]}`, standalone.ID)))
+	batchReq.Header.Set("Content-Type", "application/json")
+	batchRec := httptest.NewRecorder()
+	router.ServeHTTP(batchRec, batchReq)
+	if batchRec.Code != http.StatusConflict {
+		t.Fatalf("expected 409 when batch-deleting referenced custom node, got %d: %s", batchRec.Code, batchRec.Body.String())
+	}
+
+	subReq := httptest.NewRequest(http.MethodDelete, fmt.Sprintf("/custom-node-subscriptions/%d", sub.ID), nil)
+	subRec := httptest.NewRecorder()
+	router.ServeHTTP(subRec, subReq)
+	if subRec.Code != http.StatusConflict {
+		t.Fatalf("expected 409 when deleting subscription with referenced custom node, got %d: %s", subRec.Code, subRec.Body.String())
+	}
+}

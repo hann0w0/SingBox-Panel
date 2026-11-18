@@ -711,17 +711,17 @@ func (a *App) createAdminUserOutbound(c *gin.Context) {
 	if !ok {
 		return
 	}
-	var owner model.User
-	if err := a.db.Select("id", "role").First(&owner, uid).Error; err != nil || owner.Role != model.RoleUser {
-		c.JSON(http.StatusNotFound, gin.H{"error": "专属出站所属用户不存在"})
-		return
-	}
 	var req userOutboundReq
 	if !bindJSON(c, &req) {
 		return
 	}
 	a.userAccessMu.Lock()
 	defer a.userAccessMu.Unlock()
+	var owner model.User
+	if err := a.db.Select("id", "role").First(&owner, uid).Error; err != nil || owner.Role != model.RoleUser {
+		c.JSON(http.StatusNotFound, gin.H{"error": "专属出站所属用户不存在"})
+		return
+	}
 	req.Tag = strings.TrimSpace(req.Tag)
 	if req.Tag == "" {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "标签必填"})

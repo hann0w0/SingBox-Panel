@@ -192,6 +192,7 @@ func (a *App) deleteCustomNodeSubscription(c *gin.Context) {
 	defer unlock()
 	unlockAudience := a.subscriptionManager().lockAudience()
 	defer unlockAudience()
+	var referenced int64
 	err := a.db.Transaction(func(tx *gorm.DB) error {
 		var row model.CustomNodeSubscription
 		if err := tx.First(&row, id).Error; err != nil {
@@ -200,6 +201,14 @@ func (a *App) deleteCustomNodeSubscription(c *gin.Context) {
 		var nodeIDs []uint
 		if err := tx.Model(&model.CustomNode{}).Where("subscription_id = ?", id).Pluck("id", &nodeIDs).Error; err != nil {
 			return err
+		}
+		if len(nodeIDs) > 0 {
+			if err := tx.Model(&model.Outbound{}).Where("source_kind = ? AND source_id IN ?", model.OutboundSourceCustomNode, nodeIDs).Count(&referenced).Error; err != nil {
+				return err
+			}
+			if referenced > 0 {
+				return nil
+			}
 		}
 		if err := tx.Where("subscription_id = ?", id).Delete(&model.CustomNode{}).Error; err != nil {
 			return err
@@ -215,6 +224,10 @@ func (a *App) deleteCustomNodeSubscription(c *gin.Context) {
 	}
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+	if referenced > 0 {
+		c.JSON(http.StatusConflict, gin.H{"error": "该订阅下的节点仍被出站引用，请先修改或删除那些出站"})
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"ok": true})

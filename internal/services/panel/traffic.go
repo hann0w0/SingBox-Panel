@@ -139,8 +139,11 @@ func (w *trafficWriter) add(deltas []trafficBucketDelta) {
 }
 
 // dropServer discards buffered rows for a deleted node so a later flush
-// cannot recreate orphan history.
+// cannot recreate orphan history. Acquiring flushMu ensures any in-flight
+// flush finishes before the caller runs its final post-commit cleanup.
 func (w *trafficWriter) dropServer(serverID uint) {
+	w.flushMu.Lock()
+	defer w.flushMu.Unlock()
 	w.mu.Lock()
 	defer w.mu.Unlock()
 	for key := range w.pending {
@@ -391,18 +394,19 @@ var trafficConflictColumns = []clause.Column{{Name: "server_id"}, {Name: "inboun
 
 // writeTrafficBuckets upserts minute buckets and their hourly rollups.
 func writeTrafficBuckets(db *gorm.DB, deltas []trafficBucketDelta) error {
-	minute := make([]model.TrafficRecord, 0, len(deltas))
+	minuteByKey := map[trafficBucketKey]trafficBucketValue{}
 	hourlyByKey := map[trafficBucketKey]trafficBucketValue{}
 	for _, delta := range deltas {
 		if delta.Value.empty() {
 			continue
 		}
 		v := delta.Value
-		minute = append(minute, model.TrafficRecord{
-			ServerID: delta.Key.ServerID, InboundID: delta.Key.InboundID, Bucket: delta.Key.Bucket.UTC(),
-			Upload: v.Upload, Download: v.Download, UploadRate: v.UploadRate, DownloadRate: v.DownloadRate,
-			TCPConnections: v.TCPConnections, UDPConnections: v.UDPConnections,
-		})
+		minuteKey := delta.Key
+		minuteKey.Bucket = delta.Key.Bucket.UTC()
+		mVal := minuteByKey[minuteKey]
+		mVal.merge(v)
+		minuteByKey[minuteKey] = mVal
+
 		hourKey := delta.Key
 		hourKey.Bucket = delta.Key.Bucket.UTC().Truncate(trafficHourlyBucket)
 		hour := hourlyByKey[hourKey]
@@ -418,8 +422,16 @@ func writeTrafficBuckets(db *gorm.DB, deltas []trafficBucketDelta) error {
 		}
 		hourlyByKey[hourKey] = hour
 	}
-	if len(minute) == 0 {
+	if len(minuteByKey) == 0 {
 		return nil
+	}
+	minute := make([]model.TrafficRecord, 0, len(minuteByKey))
+	for key, v := range minuteByKey {
+		minute = append(minute, model.TrafficRecord{
+			ServerID: key.ServerID, InboundID: key.InboundID, Bucket: key.Bucket,
+			Upload: v.Upload, Download: v.Download, UploadRate: v.UploadRate, DownloadRate: v.DownloadRate,
+			TCPConnections: v.TCPConnections, UDPConnections: v.UDPConnections,
+		})
 	}
 	hourly := make([]model.TrafficHourly, 0, len(hourlyByKey))
 	for key, v := range hourlyByKey {

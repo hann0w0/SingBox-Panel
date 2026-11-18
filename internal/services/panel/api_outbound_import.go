@@ -112,6 +112,10 @@ func (a *App) previewOutboundImport(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "链接解析失败：" + err.Error()})
 		return
 	}
+	if cn.Type == "http" && cn.User.Username == "" && cn.Settings.Username == "" && cn.User.Password == "" && cn.Settings.Password == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "暂不支持无认证的 HTTP(S) 链接作为出站 URI，请使用标准代理协议或手动创建 HTTP 出站"})
+		return
+	}
 	body, err := outboundFromClientNode(cn)
 	if err == nil {
 		body.Tag, err = a.availableOutboundTag(sid, body.Tag)

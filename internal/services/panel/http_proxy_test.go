@@ -184,11 +184,17 @@ func TestHTTPProxyExportsRetainOneSidedAuthentication(t *testing.T) {
 }
 
 func TestSubscriptionOnlyOutboundTypesKeepServerImportRaw(t *testing.T) {
-	for _, typ := range []string{"http", "hysteria"} {
-		t.Run(typ, func(t *testing.T) {
+	for _, tc := range []struct {
+		typ      string
+		wantMode string
+	}{
+		{typ: "hysteria", wantMode: model.ConfigModeRaw},
+		{typ: "http", wantMode: model.ConfigModeManaged},
+	} {
+		t.Run(tc.typ, func(t *testing.T) {
 			settings := singbox.InboundSettings{TLS: singbox.TLSSettings{Enabled: true}, UpMbps: 30, DownMbps: 80}
 			raw, err := singbox.BuildServerConfig(singbox.ServerConfigInput{
-				Outbounds: []singbox.OutboundInput{{Type: typ, Tag: "external", Server: "proxy.example.com", ServerPort: 443, Password: "secret", Settings: settings}},
+				Outbounds: []singbox.OutboundInput{{Type: tc.typ, Tag: "external", Server: "proxy.example.com", ServerPort: 443, Password: "secret", Settings: settings}},
 				Final:     "external",
 			})
 			if err != nil {
@@ -202,8 +208,8 @@ func TestSubscriptionOnlyOutboundTypesKeepServerImportRaw(t *testing.T) {
 			if err != nil || !equivalentJSON(raw, rebuilt) {
 				t.Fatalf("fixture must otherwise be a lossless managed candidate: %v", err)
 			}
-			if mode := importedConfigMode(parsed, raw); mode != model.ConfigModeRaw {
-				t.Fatalf("subscription-only protocol must keep raw server editing: %s", mode)
+			if mode := importedConfigMode(parsed, raw); mode != tc.wantMode {
+				t.Fatalf("importedConfigMode(%q) = %s, want %s", tc.typ, mode, tc.wantMode)
 			}
 		})
 	}

@@ -118,7 +118,10 @@ func buildOutbound(o OutboundInput) (json.RawMessage, error) {
 	if o.Type == "" || o.Type == "direct" {
 		return json.Marshal(map[string]any{"type": "direct", "tag": o.Tag})
 	}
-	if o.Type == "shadowsocks" {
+	var renderedRaw json.RawMessage
+	var err error
+	switch o.Type {
+	case "shadowsocks":
 		pw := o.Password
 		if pw == "" {
 			pw = o.Settings.SSServerPSK
@@ -134,9 +137,8 @@ func buildOutbound(o OutboundInput) (json.RawMessage, error) {
 				m["plugin_opts"] = opts
 			}
 		}
-		return json.Marshal(m)
-	}
-	if o.Type == "socks" {
+		renderedRaw, err = json.Marshal(m)
+	case "socks":
 		m := map[string]any{
 			"type": "socks", "tag": o.Tag,
 			"server": o.Server, "server_port": o.ServerPort,
@@ -155,16 +157,40 @@ func buildOutbound(o OutboundInput) (json.RawMessage, error) {
 		if pw != "" {
 			m["password"] = pw
 		}
-		return json.Marshal(m)
+		renderedRaw, err = json.Marshal(m)
+	default:
+		settings := o.Settings
+		if settings.Username == "" && o.Username != "" {
+			settings.Username = o.Username
+		}
+		renderedRaw, err = BuildClientOutbound(ClientNode{
+			Name:       o.Tag,
+			Server:     o.Server,
+			ServerPort: o.ServerPort,
+			Type:       o.Type,
+			Settings:   settings,
+			User:       ProxyUser{UUID: o.UUID, Password: o.Password},
+		})
 	}
-	return BuildClientOutbound(ClientNode{
-		Name:       o.Tag,
-		Server:     o.Server,
-		ServerPort: o.ServerPort,
-		Type:       o.Type,
-		Settings:   o.Settings,
-		User:       ProxyUser{UUID: o.UUID, Password: o.Password},
-	})
+	if err != nil || len(o.Settings.Raw) == 0 {
+		return renderedRaw, err
+	}
+	var rendered map[string]any
+	if err := json.Unmarshal(renderedRaw, &rendered); err != nil {
+		return nil, err
+	}
+	base := deepCloneMap(o.Settings.Raw)
+	merged := deepMergeMaps(base, rendered)
+	if _, hasPE := o.Settings.Raw["packet_encoding"]; !hasPE && o.Settings.PacketEncoding == "" {
+		delete(merged, "packet_encoding")
+	}
+	if !o.Settings.TLS.Enabled && !o.Settings.TLS.Reality.Enabled && o.Settings.TLS.ACMEDomain == "" && !o.Settings.TLS.SelfSigned {
+		delete(merged, "tls")
+	}
+	if o.Settings.Transport.normalized() == nil {
+		delete(merged, "transport")
+	}
+	return json.Marshal(merged)
 }
 
 // ruleNeedsSniff reports whether a rule matches on a sniffed domain or protocol.

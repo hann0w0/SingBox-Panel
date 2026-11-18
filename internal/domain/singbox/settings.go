@@ -478,8 +478,18 @@ func JoinShadowsocksPluginFields(plugin, opts string) string {
 // outbound. Snell inbound versions are 5/6, but its outbound schema accepts
 // only 4/6; a Snell v5 server is dialed with outbound version 4.
 func (s InboundSettings) ValidateClientOutbound(typ string) error {
+	return s.validateOutbound(typ, false)
+}
+
+// ValidateServerOutbound validates settings used by a panel server outbound,
+// allowing extended sing-box stream transports (grpc, http, quic).
+func (s InboundSettings) ValidateServerOutbound(typ string) error {
+	return s.validateOutbound(typ, true)
+}
+
+func (s InboundSettings) validateOutbound(typ string, allowExtendedTransport bool) error {
 	if typ != "snell" {
-		if err := s.validateProtocol(typ, false); err != nil {
+		if err := s.validateProtocol(typ, allowExtendedTransport); err != nil {
 			return err
 		}
 		if s.TLS.Reality.Enabled && strings.TrimSpace(s.TLS.Reality.PublicKey) == "" {

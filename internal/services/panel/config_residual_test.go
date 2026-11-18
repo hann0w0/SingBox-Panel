@@ -164,7 +164,21 @@ func TestComplexNestedInboundAndRouteStayManaged(t *testing.T) {
 	      "type": "tun", "tag": "tun-in", "interface_name": "tun0", "auto_route": true, "mtu": 9000
 	    }
 	  ],
-	  "outbounds": [{"type": "direct", "tag": "direct"}],
+	  "outbounds": [
+	    {"type": "direct", "tag": "direct"},
+	    {
+	      "type": "vless", "tag": "relay-grpc", "server": "relay.example.com", "server_port": 443,
+	      "uuid": "22222222-3333-4444-5555-666666666666",
+	      "connect_timeout": "5s", "tcp_fast_open": true,
+	      "transport": {"type": "grpc", "service_name": "RelayGun"},
+	      "multiplex": {"enabled": true, "protocol": "h2mux", "max_connections": 4},
+	      "tls": {"enabled": true, "server_name": "relay.example.com", "min_version": "1.3", "utls": {"enabled": true, "fingerprint": "chrome"}}
+	    },
+	    {
+	      "type": "http", "tag": "http-relay", "server": "http.example.com", "server_port": 8080,
+	      "path": "/connect"
+	    }
+	  ],
 	  "route": {
 	    "final": "direct",
 	    "rules": [
@@ -228,5 +242,25 @@ func TestComplexNestedInboundAndRouteStayManaged(t *testing.T) {
 	rule1 := rules[1].(map[string]any)
 	if rule1["clash_mode"] != "rule" || rule1["invert"] != true || rule1["ip_is_private"] != true || rule1["domain_regex"] == nil {
 		t.Errorf("complex route rule fields lost: %v", rule1)
+	}
+	outbounds := cfg["outbounds"].([]any)
+	var relayOut, httpOut map[string]any
+	for _, entry := range outbounds {
+		if m, ok := entry.(map[string]any); ok {
+			if m["tag"] == "relay-grpc" {
+				relayOut = m
+			} else if m["tag"] == "http-relay" {
+				httpOut = m
+			}
+		}
+	}
+	if relayOut == nil || relayOut["connect_timeout"] != "5s" || relayOut["tcp_fast_open"] != true || relayOut["multiplex"] == nil {
+		t.Errorf("complex vless outbound fields lost: %v", relayOut)
+	}
+	if tr, _ := relayOut["transport"].(map[string]any); tr["type"] != "grpc" || tr["service_name"] != "RelayGun" {
+		t.Errorf("outbound grpc transport lost: %v", tr)
+	}
+	if httpOut == nil || httpOut["type"] != "http" || httpOut["path"] != "/connect" {
+		t.Errorf("http outbound lost: %v", httpOut)
 	}
 }

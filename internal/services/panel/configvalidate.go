@@ -239,13 +239,18 @@ func (a *App) validateOutbound(db *gorm.DB, serverID, excludeID uint, tag, typ s
 		if st.Settings.Method == "" || (st.Password == "" && st.Settings.SSServerPSK == "") {
 			return fmt.Errorf("shadowsocks 加密方式和密码必填")
 		}
-	case "socks":
+	case "socks", "http":
 		if (strings.TrimSpace(st.Username) == "") != (st.Password == "") {
-			return fmt.Errorf("socks 用户名和密码必须同时填写或同时留空")
+			return fmt.Errorf("%s 用户名和密码必须同时填写或同时留空", typ)
 		}
 	}
-	if err := st.Settings.ValidateClientOutbound(typ); err != nil {
+	if err := st.Settings.ValidateServerOutbound(typ); err != nil {
 		return err
+	}
+	if len(st.Settings.Raw) > 0 {
+		if err := singbox.ValidateJSONAgainstSchema(singbox.OutboundSchema(), st.Settings.Raw); err != nil {
+			return fmt.Errorf("出站参数不符合 Schema 规范: %w", err)
+		}
 	}
 	return nil
 }

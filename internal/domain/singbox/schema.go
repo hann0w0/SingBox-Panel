@@ -50,6 +50,7 @@ type JSONSchema struct {
 type SchemaBundle struct {
 	Version   string      `json:"version"`
 	Inbound   *JSONSchema `json:"inbound"`
+	Outbound  *JSONSchema `json:"outbound"`
 	RouteRule *JSONSchema `json:"route_rule"`
 }
 
@@ -92,7 +93,8 @@ func intArraySchema(minV, maxV float64, ui *UIMeta) *JSONSchema {
 	}
 }
 
-func tlsSubSchema(includeReality bool) *JSONSchema {
+// tlsInboundSubSchema defines official server-side sing-box Inbound TLS fields.
+func tlsInboundSubSchema(includeReality bool) *JSONSchema {
 	props := map[string]*JSONSchema{
 		"enabled": {
 			Type: "boolean",
@@ -113,12 +115,12 @@ func tlsSubSchema(includeReality bool) *JSONSchema {
 			Enum: strEnum("", "1.0", "1.1", "1.2", "1.3"),
 			UI:   &UIMeta{Label: "最高 TLS 版本", Group: "TLS", Order: 5, Widget: "select", Advanced: true},
 		},
-		"cipher_suites":     stringArraySchema(&UIMeta{Label: "密码套件", Group: "TLS", Order: 6, Widget: "tags", Advanced: true}),
-		"curve_preferences": stringArraySchema(&UIMeta{Label: "椭圆曲线偏好", Group: "TLS", Order: 7, Widget: "tags", Advanced: true}),
+		"cipher_suites":     stringArraySchema(&UIMeta{Label: "密码套件 (仅 TLS 1.2)", Group: "TLS", Order: 6, Widget: "tags", Advanced: true}),
+		"curve_preferences": stringArraySchema(&UIMeta{Label: "密钥交换曲线偏好", Group: "TLS", Order: 7, Widget: "tags", Placeholder: "X25519, X25519MLKEM768", Advanced: true}),
 		"client_authentication": {
 			Type: "string",
 			Enum: strEnum("", "no", "request", "require-any", "verify-if-given", "require-and-verify"),
-			UI:   &UIMeta{Label: "客户端证书验证", Group: "TLS", Order: 8, Widget: "select", Advanced: true},
+			UI:   &UIMeta{Label: "客户端证书验证 (mTLS)", Group: "TLS", Order: 8, Widget: "select", Advanced: true},
 		},
 		"certificate_path": {
 			Type: "string",
@@ -142,32 +144,13 @@ func tlsSubSchema(includeReality bool) *JSONSchema {
 			},
 			UI: &UIMeta{Label: "内联私钥 PEM", Group: "TLS", Order: 13, Widget: "lines", FullWidth: true, Advanced: true},
 		},
-		"insecure": {
-			Type: "boolean",
-			UI:   &UIMeta{Label: "客户端跳过证书验证", Group: "TLS", Order: 14, Widget: "switch"},
-		},
-		"utls": {
-			Type:                 "object",
-			AdditionalProperties: ptrBool(true),
-			Properties: map[string]*JSONSchema{
-				"enabled": {Type: "boolean", UI: &UIMeta{Label: "启用 uTLS", Widget: "switch"}},
-				"fingerprint": {
-					Type: "string",
-					Enum: strEnum("", "chrome", "firefox", "safari", "ios", "android", "edge", "360", "qq", "random", "randomized"),
-					UI:   &UIMeta{Label: "uTLS 指纹", Widget: "select"},
-				},
-			},
-			UI: &UIMeta{Label: "uTLS", Group: "TLS", Order: 15},
-		},
 		"ech": {
 			Type:                 "object",
 			AdditionalProperties: ptrBool(true),
 			Properties: map[string]*JSONSchema{
-				"enabled":                    {Type: "boolean", UI: &UIMeta{Label: "启用 ECH", Widget: "switch"}},
-				"pq_signature_schemes_enabled": {Type: "boolean", UI: &UIMeta{Label: "启用后量子签名", Widget: "switch"}},
-				"dynamic_record_sizing_disabled": {Type: "boolean", UI: &UIMeta{Label: "禁用动态记录大小", Widget: "switch"}},
-				"key":                        stringArraySchema(&UIMeta{Label: "ECH 密钥", Widget: "lines"}),
-				"key_path":                   {Type: "string", UI: &UIMeta{Label: "ECH 密钥路径"}},
+				"enabled":  {Type: "boolean", UI: &UIMeta{Label: "启用服务端 ECH", Widget: "switch"}},
+				"key":      stringArraySchema(&UIMeta{Label: "ECH 私钥 PEM", Widget: "lines", FullWidth: true}),
+				"key_path": {Type: "string", UI: &UIMeta{Label: "ECH 密钥路径"}},
 			},
 			UI: &UIMeta{Label: "ECH", Group: "TLS", Order: 16, Advanced: true},
 		},
@@ -204,6 +187,72 @@ func tlsSubSchema(includeReality bool) *JSONSchema {
 				"private_key":         {Type: "string", UI: &UIMeta{Label: "私钥", Generator: "reality-keypair"}},
 				"short_id":            stringArraySchema(&UIMeta{Label: "Short ID", Generator: "short-id", Widget: "tags"}),
 				"max_time_difference": {Type: "string", UI: &UIMeta{Label: "时间差限制", Placeholder: "1m"}},
+			},
+			UI: &UIMeta{Label: "REALITY", Group: "TLS", Order: 18},
+		}
+	}
+	return &JSONSchema{
+		Type:                 "object",
+		AdditionalProperties: ptrBool(true),
+		Properties:           props,
+		UI:                   &UIMeta{Label: "TLS", Group: "TLS"},
+	}
+}
+
+// tlsOutboundSubSchema defines official sing-box Outbound (client-side) TLS fields.
+func tlsOutboundSubSchema(includeReality bool) *JSONSchema {
+	props := map[string]*JSONSchema{
+		"enabled":     {Type: "boolean", UI: &UIMeta{Label: "启用 TLS", Group: "TLS", Order: 1, Widget: "switch"}},
+		"server_name": {Type: "string", UI: &UIMeta{Label: "SNI", Group: "TLS", Order: 2, Placeholder: "example.com"}},
+		"insecure":    {Type: "boolean", UI: &UIMeta{Label: "跳过证书验证", Group: "TLS", Order: 3, Widget: "switch"}},
+		"alpn":        stringArraySchema(&UIMeta{Label: "ALPN", Group: "TLS", Order: 4, Widget: "tags", Placeholder: "h2, http/1.1"}),
+		"min_version": {
+			Type: "string",
+			Enum: strEnum("", "1.0", "1.1", "1.2", "1.3"),
+			UI:   &UIMeta{Label: "最低 TLS 版本", Group: "TLS", Order: 5, Widget: "select", Advanced: true},
+		},
+		"max_version": {
+			Type: "string",
+			Enum: strEnum("", "1.0", "1.1", "1.2", "1.3"),
+			UI:   &UIMeta{Label: "最高 TLS 版本", Group: "TLS", Order: 6, Widget: "select", Advanced: true},
+		},
+		"cipher_suites":     stringArraySchema(&UIMeta{Label: "密码套件", Group: "TLS", Order: 7, Widget: "tags", Advanced: true}),
+		"curve_preferences": stringArraySchema(&UIMeta{Label: "密钥交换曲线偏好", Group: "TLS", Order: 8, Widget: "tags", Advanced: true}),
+		"utls": {
+			Type:                 "object",
+			AdditionalProperties: ptrBool(true),
+			Properties: map[string]*JSONSchema{
+				"enabled": {Type: "boolean", UI: &UIMeta{Label: "启用 uTLS", Widget: "switch"}},
+				"fingerprint": {
+					Type: "string",
+					Enum: strEnum("", "chrome", "firefox", "safari", "ios", "android", "edge", "360", "qq", "random", "randomized"),
+					UI:   &UIMeta{Label: "uTLS 指纹", Widget: "select"},
+				},
+			},
+			UI: &UIMeta{Label: "uTLS", Group: "TLS", Order: 12},
+		},
+		"ech": {
+			Type:                 "object",
+			AdditionalProperties: ptrBool(true),
+			Properties: map[string]*JSONSchema{
+				"enabled":                        {Type: "boolean", UI: &UIMeta{Label: "启用 ECH", Widget: "switch"}},
+				"config":                         stringArraySchema(&UIMeta{Label: "ECH 配置", Widget: "lines", FullWidth: true}),
+				"config_path":                    {Type: "string", UI: &UIMeta{Label: "ECH 配置路径"}},
+				"query_server_name":              {Type: "string", UI: &UIMeta{Label: "ECH 查询域名"}},
+				"pq_signature_schemes_enabled":   {Type: "boolean", UI: &UIMeta{Label: "启用后量子签名", Widget: "switch"}},
+				"dynamic_record_sizing_disabled": {Type: "boolean", UI: &UIMeta{Label: "禁用动态记录大小", Widget: "switch"}},
+			},
+			UI: &UIMeta{Label: "ECH", Group: "TLS", Order: 15, Advanced: true},
+		},
+	}
+	if includeReality {
+		props["reality"] = &JSONSchema{
+			Type:                 "object",
+			AdditionalProperties: ptrBool(true),
+			Properties: map[string]*JSONSchema{
+				"enabled":    {Type: "boolean", UI: &UIMeta{Label: "启用 REALITY", Widget: "switch"}},
+				"public_key": {Type: "string", UI: &UIMeta{Label: "公钥"}},
+				"short_id":   {Type: "string", UI: &UIMeta{Label: "Short ID"}},
 			},
 			UI: &UIMeta{Label: "REALITY", Group: "TLS", Order: 18},
 		}
@@ -274,24 +323,120 @@ func transportSubSchema() *JSONSchema {
 	}
 }
 
-func multiplexSubSchema() *JSONSchema {
+func inboundMultiplexSubSchema() *JSONSchema {
 	return &JSONSchema{
 		Type:                 "object",
 		AdditionalProperties: ptrBool(true),
 		Properties: map[string]*JSONSchema{
-			"enabled": {Type: "boolean", UI: &UIMeta{Label: "启用多路复用 (Multiplex)", Widget: "switch"}},
-			"padding": {Type: "boolean", UI: &UIMeta{Label: "启用 Padding", Widget: "switch"}},
+			"enabled": {Type: "boolean", UI: &UIMeta{Label: "启用多路复用 (Multiplex)", Order: 1, Widget: "switch"}},
+			"padding": {Type: "boolean", UI: &UIMeta{Label: "启用 Padding", Order: 2, Widget: "switch"}},
 			"brutal": {
 				Type:                 "object",
 				AdditionalProperties: ptrBool(true),
 				Properties: map[string]*JSONSchema{
-					"enabled":   {Type: "boolean", UI: &UIMeta{Label: "启用 Brutal 拥塞控制", Widget: "switch"}},
-					"up_mbps":   {Type: "integer", Minimum: ptrFloat(0), UI: &UIMeta{Label: "上行 Mbps"}},
-					"down_mbps": {Type: "integer", Minimum: ptrFloat(0), UI: &UIMeta{Label: "下行 Mbps"}},
+					"enabled":   {Type: "boolean", UI: &UIMeta{Label: "启用 Brutal 拥塞控制", Order: 1, Widget: "switch"}},
+					"up_mbps":   {Type: "integer", Minimum: ptrFloat(0), UI: &UIMeta{Label: "上行 Mbps", Order: 2}},
+					"down_mbps": {Type: "integer", Minimum: ptrFloat(0), UI: &UIMeta{Label: "下行 Mbps", Order: 3}},
 				},
+				UI: &UIMeta{Label: "TCP Brutal", Order: 3},
 			},
 		},
 		UI: &UIMeta{Label: "多路复用", Group: "高级网络", Advanced: true},
+	}
+}
+
+func outboundMultiplexSubSchema() *JSONSchema {
+	return &JSONSchema{
+		Type:                 "object",
+		AdditionalProperties: ptrBool(true),
+		Properties: map[string]*JSONSchema{
+			"enabled": {Type: "boolean", UI: &UIMeta{Label: "启用多路复用 (Multiplex)", Order: 1, Widget: "switch"}},
+			"protocol": {
+				Type:    "string",
+				Default: "h2mux",
+				Enum:    strEnum("", "h2mux", "smux", "yamux"),
+				UI:      &UIMeta{Label: "复用协议", Order: 2, Widget: "select"},
+			},
+			"max_connections": {Type: "integer", Minimum: ptrFloat(0), UI: &UIMeta{Label: "最大物理连接数", Order: 3}},
+			"min_streams":     {Type: "integer", Minimum: ptrFloat(0), UI: &UIMeta{Label: "最小并发流数", Order: 4}},
+			"max_streams":     {Type: "integer", Minimum: ptrFloat(0), UI: &UIMeta{Label: "单连接最大流数", Order: 5}},
+			"padding":         {Type: "boolean", UI: &UIMeta{Label: "启用 Padding", Order: 6, Widget: "switch"}},
+			"brutal": {
+				Type:                 "object",
+				AdditionalProperties: ptrBool(true),
+				Properties: map[string]*JSONSchema{
+					"enabled":   {Type: "boolean", UI: &UIMeta{Label: "启用 Brutal 拥塞控制", Order: 1, Widget: "switch"}},
+					"up_mbps":   {Type: "integer", Minimum: ptrFloat(0), UI: &UIMeta{Label: "上行 Mbps", Order: 2}},
+					"down_mbps": {Type: "integer", Minimum: ptrFloat(0), UI: &UIMeta{Label: "下行 Mbps", Order: 3}},
+				},
+				UI: &UIMeta{Label: "TCP Brutal", Order: 7},
+			},
+		},
+		UI: &UIMeta{Label: "多路复用", Group: "高级网络", Advanced: true},
+	}
+}
+
+func inboundVariantWithListen(tcp, udp bool, props map[string]*JSONSchema) *JSONSchema {
+	merged := map[string]*JSONSchema{
+		"listen": {
+			Type:    "string",
+			Default: "::",
+			UI:      &UIMeta{Label: "监听地址", Group: "基本", Order: 2, Placeholder: "::"},
+		},
+		"listen_port": {
+			Type:    "integer",
+			Minimum: ptrFloat(1),
+			Maximum: ptrFloat(65535),
+			UI:      &UIMeta{Label: "端口", Group: "基本", Order: 3},
+		},
+		"detour": {
+			Type: "string",
+			UI:   &UIMeta{Label: "前置入站 (detour)", Group: "高级网络", Order: 24, Placeholder: "转交到另一个入站 tag", Advanced: true},
+		},
+	}
+	if tcp {
+		merged["tcp_fast_open"] = &JSONSchema{
+			Type: "boolean",
+			UI:   &UIMeta{Label: "TCP Fast Open", Group: "高级网络", Order: 20, Widget: "switch", Advanced: true},
+		}
+		merged["tcp_multi_path"] = &JSONSchema{
+			Type: "boolean",
+			UI:   &UIMeta{Label: "TCP Multi Path", Group: "高级网络", Order: 21, Widget: "switch", Advanced: true},
+		}
+		merged["proxy_protocol"] = &JSONSchema{
+			Type: "boolean",
+			UI:   &UIMeta{Label: "Proxy Protocol", Group: "高级网络", Order: 25, Widget: "switch", Advanced: true},
+		}
+		merged["proxy_protocol_accept_no_header"] = &JSONSchema{
+			Type: "boolean",
+			UI:   &UIMeta{Label: "允许无 Proxy Protocol 头连接", Group: "高级网络", Order: 26, Widget: "switch", Advanced: true},
+		}
+	}
+	if udp {
+		merged["udp_fragment"] = &JSONSchema{
+			Type: "boolean",
+			UI:   &UIMeta{Label: "UDP Fragment", Group: "高级网络", Order: 22, Widget: "switch", Advanced: true},
+		}
+		merged["udp_timeout"] = &JSONSchema{
+			Type: "string",
+			UI:   &UIMeta{Label: "UDP 超时", Group: "高级网络", Order: 23, Placeholder: "5m", Advanced: true},
+		}
+	}
+	for k, v := range props {
+		merged[k] = v
+	}
+	return &JSONSchema{
+		Type:                 "object",
+		AdditionalProperties: ptrBool(true),
+		Properties:           merged,
+	}
+}
+
+func outboundVariant(props map[string]*JSONSchema) *JSONSchema {
+	return &JSONSchema{
+		Type:                 "object",
+		AdditionalProperties: ptrBool(true),
+		Properties:           props,
 	}
 }
 
@@ -303,15 +448,15 @@ func inboundVariant(props map[string]*JSONSchema) *JSONSchema {
 	}
 }
 
-// InboundSchema returns the JSON Schema for sing-box inbound configurations.
+// InboundSchema returns the JSON Schema for server-side sing-box inbound configurations.
 func InboundSchema() *JSONSchema {
 	baseProps := map[string]*JSONSchema{
 		"type": {
 			Type: "string",
 			Enum: strEnum(
-				"vless", "vmess", "trojan", "shadowsocks", "hysteria2", "tuic",
-				"anytls", "snell", "socks", "mixed", "http", "tun",
-				"direct", "redirect", "tproxy",
+				"shadowsocks", "snell", "socks", "mixed", "http", "tun",
+				"direct", "redirect", "tproxy", "tuic", "trojan", "anytls",
+				"vless", "vmess", "hysteria2",
 			),
 			UI: &UIMeta{Label: "协议", Group: "基本", Order: 1, Widget: "select"},
 		},
@@ -319,89 +464,10 @@ func InboundSchema() *JSONSchema {
 			Type: "string",
 			UI:   &UIMeta{Label: "标签", Group: "基本", Order: 2, Placeholder: "留空自动生成"},
 		},
-		"listen": {
-			Type:    "string",
-			Default: "::",
-			UI:      &UIMeta{Label: "监听地址", Group: "高级网络", Order: 10, Placeholder: "::", Advanced: true},
-		},
-		"listen_port": {
-			Type:    "integer",
-			Minimum: ptrFloat(1),
-			Maximum: ptrFloat(65535),
-			UI:      &UIMeta{Label: "端口", Group: "基本", Order: 3},
-		},
-		"tcp_fast_open": {
-			Type: "boolean",
-			UI:   &UIMeta{Label: "TCP Fast Open", Group: "高级网络", Order: 20, Widget: "switch", Advanced: true},
-		},
-		"tcp_multi_path": {
-			Type: "boolean",
-			UI:   &UIMeta{Label: "TCP Multi Path", Group: "高级网络", Order: 21, Widget: "switch", Advanced: true},
-		},
-		"udp_fragment": {
-			Type: "boolean",
-			UI:   &UIMeta{Label: "UDP Fragment", Group: "高级网络", Order: 22, Widget: "switch", Advanced: true},
-		},
-		"udp_timeout": {
-			Type: "string",
-			UI:   &UIMeta{Label: "UDP 超时", Group: "高级网络", Order: 23, Placeholder: "5m", Advanced: true},
-		},
-		"detour": {
-			Type: "string",
-			UI:   &UIMeta{Label: "前置入站 (detour)", Group: "高级网络", Order: 24, Advanced: true},
-		},
-		"sniff": {
-			Type: "boolean",
-			UI:   &UIMeta{Label: "入站嗅探 (legacy)", Group: "高级网络", Order: 25, Widget: "switch", Advanced: true},
-		},
-		"sniff_override_destination": {
-			Type: "boolean",
-			UI:   &UIMeta{Label: "嗅探覆盖目标 (legacy)", Group: "高级网络", Order: 26, Widget: "switch", Advanced: true},
-		},
-		"domain_strategy": {
-			Type: "string",
-			Enum: strEnum("", "prefer_ipv4", "prefer_ipv6", "ipv4_only", "ipv6_only"),
-			UI:   &UIMeta{Label: "域名解析策略 (legacy)", Group: "高级网络", Order: 27, Widget: "select", Advanced: true},
-		},
 	}
 
 	variants := map[string]*JSONSchema{
-		"vless": inboundVariant(map[string]*JSONSchema{
-			"flow": {
-				Type: "string",
-				Enum: strEnum("", "xtls-rprx-vision"),
-				UI:   &UIMeta{Label: "流控", Group: "协议参数", Order: 1, Widget: "select"},
-			},
-			"packet_encoding": {
-				Type:    "string",
-				Default: "xudp",
-				Enum:    strEnum("", "none", "xudp", "packetaddr"),
-				UI:      &UIMeta{Label: "UDP 封包编码", Group: "协议参数", Order: 2, Widget: "select"},
-			},
-			"multiplex": multiplexSubSchema(),
-			"transport": transportSubSchema(),
-			"tls":       tlsSubSchema(true),
-		}),
-		"vmess": inboundVariant(map[string]*JSONSchema{
-			"multiplex": multiplexSubSchema(),
-			"transport": transportSubSchema(),
-			"tls":       tlsSubSchema(true),
-		}),
-		"trojan": inboundVariant(map[string]*JSONSchema{
-			"fallback": {
-				Type:                 "object",
-				AdditionalProperties: ptrBool(true),
-				Properties: map[string]*JSONSchema{
-					"server":      {Type: "string", UI: &UIMeta{Label: "回落服务器"}},
-					"server_port": {Type: "integer", Minimum: ptrFloat(1), Maximum: ptrFloat(65535), UI: &UIMeta{Label: "回落端口"}},
-				},
-				UI: &UIMeta{Label: "回落", Group: "回落"},
-			},
-			"multiplex": multiplexSubSchema(),
-			"transport": transportSubSchema(),
-			"tls":       tlsSubSchema(false),
-		}),
-		"shadowsocks": inboundVariant(map[string]*JSONSchema{
+		"shadowsocks": inboundVariantWithListen(true, true, map[string]*JSONSchema{
 			"method": {
 				Type: "string",
 				Enum: strEnum(
@@ -425,9 +491,120 @@ func InboundSchema() *JSONSchema {
 				Enum: strEnum("", "tcp", "udp"),
 				UI:   &UIMeta{Label: "网络限制", Group: "协议参数", Order: 3, Widget: "select", Advanced: true},
 			},
-			"multiplex": multiplexSubSchema(),
+			"multiplex": inboundMultiplexSubSchema(),
 		}),
-		"hysteria2": inboundVariant(map[string]*JSONSchema{
+		"snell": inboundVariantWithListen(true, false, map[string]*JSONSchema{
+			"version": {
+				Type:    "integer",
+				Default: 5,
+				Enum:    intEnum(5, 6),
+				UI:      &UIMeta{Label: "版本", Group: "协议参数", Order: 1, Widget: "select"},
+			},
+			"psk": {
+				Type: "string",
+				UI:   &UIMeta{Label: "PSK", Group: "协议参数", Order: 2, Widget: "password", Generator: "psk"},
+			},
+			"obfs_mode": {
+				Type: "string",
+				Enum: strEnum("none", "http", "tls"),
+				UI:   &UIMeta{Label: "v5 混淆", Group: "协议参数", Order: 3, Widget: "select"},
+			},
+			"mode": {
+				Type: "string",
+				Enum: strEnum("", "unshaped", "unsafe-raw"),
+				UI:   &UIMeta{Label: "v6 模式", Group: "协议参数", Order: 4, Widget: "select"},
+			},
+		}),
+		"socks":  inboundVariantWithListen(true, true, map[string]*JSONSchema{}),
+		"mixed":  inboundVariantWithListen(true, true, map[string]*JSONSchema{}),
+		"http": inboundVariantWithListen(true, false, map[string]*JSONSchema{
+			"realm": {Type: "string", UI: &UIMeta{Label: "认证域 (Realm)", Group: "协议参数", Order: 1, Advanced: true}},
+			"tls":   tlsInboundSubSchema(false),
+		}),
+		"tun": inboundVariant(map[string]*JSONSchema{
+			"interface_name":           {Type: "string", UI: &UIMeta{Label: "网卡名称", Group: "协议参数", Order: 1, Placeholder: "tun0"}},
+			"address":                  stringArraySchema(&UIMeta{Label: "TUN 地址 CIDR", Group: "协议参数", Order: 2, Widget: "tags", Placeholder: "172.19.0.1/30"}),
+			"mtu":                      {Type: "integer", Default: 9000, Minimum: ptrFloat(576), Maximum: ptrFloat(65535), UI: &UIMeta{Label: "MTU", Group: "协议参数", Order: 3}},
+			"stack":                    {Type: "string", Enum: strEnum("", "system", "gvisor", "mixed"), UI: &UIMeta{Label: "网络栈", Group: "协议参数", Order: 4, Widget: "select"}},
+			"auto_route":               {Type: "boolean", Default: true, UI: &UIMeta{Label: "自动路由", Group: "协议参数", Order: 5, Widget: "switch"}},
+			"strict_route":             {Type: "boolean", UI: &UIMeta{Label: "严格路由", Group: "协议参数", Order: 6, Widget: "switch"}},
+			"auto_redirect":            {Type: "boolean", UI: &UIMeta{Label: "Auto Redirect (Linux)", Group: "协议参数", Order: 7, Widget: "switch", Advanced: true}},
+			"endpoint_independent_nat": {Type: "boolean", UI: &UIMeta{Label: "独立端点 NAT", Group: "协议参数", Order: 8, Widget: "switch", Advanced: true}},
+			"route_address":            stringArraySchema(&UIMeta{Label: "路由网段 (route_address)", Group: "协议参数", Order: 9, Widget: "tags", Advanced: true}),
+			"route_exclude_address":    stringArraySchema(&UIMeta{Label: "排除网段 (route_exclude_address)", Group: "协议参数", Order: 10, Widget: "tags", Advanced: true}),
+			"udp_timeout":              {Type: "string", UI: &UIMeta{Label: "UDP 超时", Group: "协议参数", Order: 11, Placeholder: "5m"}},
+		}),
+		"direct": inboundVariantWithListen(true, true, map[string]*JSONSchema{
+			"network":          {Type: "string", Enum: strEnum("", "tcp", "udp"), UI: &UIMeta{Label: "网络", Group: "协议参数", Order: 1, Widget: "select"}},
+			"override_address": {Type: "string", UI: &UIMeta{Label: "覆盖目标地址", Group: "协议参数", Order: 2}},
+			"override_port":    {Type: "integer", Minimum: ptrFloat(1), Maximum: ptrFloat(65535), UI: &UIMeta{Label: "覆盖目标端口", Group: "协议参数", Order: 3}},
+		}),
+		"redirect": inboundVariantWithListen(true, false, map[string]*JSONSchema{}),
+		"tproxy": inboundVariantWithListen(true, true, map[string]*JSONSchema{
+			"network": {Type: "string", Enum: strEnum("", "tcp", "udp"), UI: &UIMeta{Label: "网络", Group: "协议参数", Widget: "select"}},
+		}),
+		"tuic": inboundVariantWithListen(false, true, map[string]*JSONSchema{
+			"congestion_control": {
+				Type:    "string",
+				Default: "cubic",
+				Enum:    strEnum("cubic", "new_reno", "bbr"),
+				UI:      &UIMeta{Label: "拥塞控制", Group: "协议参数", Order: 1, Widget: "select"},
+			},
+			"auth_timeout": {
+				Type:    "string",
+				Default: "3s",
+				UI:      &UIMeta{Label: "认证超时", Group: "协议参数", Order: 2},
+			},
+			"heartbeat": {
+				Type:    "string",
+				Default: "10s",
+				UI:      &UIMeta{Label: "心跳间隔", Group: "协议参数", Order: 3},
+			},
+			"zero_rtt_handshake": {
+				Type: "boolean",
+				UI:   &UIMeta{Label: "0-RTT 握手", Group: "协议参数", Order: 4, Widget: "switch"},
+			},
+			"tls": tlsInboundSubSchema(false),
+		}),
+		"trojan": inboundVariantWithListen(true, true, map[string]*JSONSchema{
+			"fallback": {
+				Type:                 "object",
+				AdditionalProperties: ptrBool(true),
+				Properties: map[string]*JSONSchema{
+					"server":      {Type: "string", UI: &UIMeta{Label: "回落服务器"}},
+					"server_port": {Type: "integer", Minimum: ptrFloat(1), Maximum: ptrFloat(65535), UI: &UIMeta{Label: "回落端口"}},
+				},
+				UI: &UIMeta{Label: "回落", Group: "回落"},
+			},
+			"fallback_for_alpn": {
+				Type:                 "object",
+				AdditionalProperties: ptrBool(true),
+				UI:                   &UIMeta{Label: "按 ALPN 回落映射", Group: "回落", Widget: "json", FullWidth: true, Advanced: true},
+			},
+			"multiplex": inboundMultiplexSubSchema(),
+			"transport": transportSubSchema(),
+			"tls":       tlsInboundSubSchema(false),
+		}),
+		"anytls": inboundVariantWithListen(true, false, map[string]*JSONSchema{
+			"padding_scheme": stringArraySchema(&UIMeta{Label: "Padding 方案", Group: "协议参数", Widget: "lines", FullWidth: true, Advanced: true}),
+			"tls":            tlsInboundSubSchema(false),
+		}),
+		"vless": inboundVariantWithListen(true, true, map[string]*JSONSchema{
+			"flow": {
+				Type: "string",
+				Enum: strEnum("", "xtls-rprx-vision"),
+				UI:   &UIMeta{Label: "流控", Group: "协议参数", Order: 1, Widget: "select"},
+			},
+			"multiplex": inboundMultiplexSubSchema(),
+			"transport": transportSubSchema(),
+			"tls":       tlsInboundSubSchema(true),
+		}),
+		"vmess": inboundVariantWithListen(true, true, map[string]*JSONSchema{
+			"multiplex": inboundMultiplexSubSchema(),
+			"transport": transportSubSchema(),
+			"tls":       tlsInboundSubSchema(true),
+		}),
+		"hysteria2": inboundVariantWithListen(false, true, map[string]*JSONSchema{
 			"up_mbps":                 {Type: "integer", Minimum: ptrFloat(0), UI: &UIMeta{Label: "上行 Mbps", Group: "协议参数", Order: 1}},
 			"down_mbps":               {Type: "integer", Minimum: ptrFloat(0), UI: &UIMeta{Label: "下行 Mbps", Group: "协议参数", Order: 2}},
 			"ignore_client_bandwidth": {Type: "boolean", UI: &UIMeta{Label: "忽略客户端带宽", Group: "协议参数", Order: 3, Widget: "switch"}},
@@ -451,113 +628,184 @@ func InboundSchema() *JSONSchema {
 				Enum: strEnum("", "conservative", "standard", "aggressive"),
 				UI:   &UIMeta{Label: "BBR 配置", Group: "协议参数", Order: 11, Widget: "select", Advanced: true},
 			},
-			"tls": tlsSubSchema(false),
-		}),
-		"tuic": inboundVariant(map[string]*JSONSchema{
-			"congestion_control": {
-				Type:    "string",
-				Default: "cubic",
-				Enum:    strEnum("cubic", "new_reno", "bbr"),
-				UI:      &UIMeta{Label: "拥塞控制", Group: "协议参数", Order: 1, Widget: "select"},
-			},
-			"auth_timeout": {
-				Type:    "string",
-				Default: "3s",
-				UI:      &UIMeta{Label: "认证超时", Group: "协议参数", Order: 2},
-			},
-			"heartbeat": {
-				Type:    "string",
-				Default: "10s",
-				UI:      &UIMeta{Label: "心跳间隔", Group: "协议参数", Order: 3},
-			},
-			"zero_rtt_handshake": {
+			"brutal_debug": {
 				Type: "boolean",
-				UI:   &UIMeta{Label: "0-RTT 握手", Group: "协议参数", Order: 4, Widget: "switch"},
+				UI:   &UIMeta{Label: "Brutal 调试日志", Group: "协议参数", Order: 12, Widget: "switch", Advanced: true},
 			},
-			"tls": tlsSubSchema(false),
-		}),
-		"anytls": inboundVariant(map[string]*JSONSchema{
-			"padding_scheme": stringArraySchema(&UIMeta{Label: "Padding 方案", Group: "协议参数", Widget: "lines", Advanced: true}),
-			"tls":            tlsSubSchema(false),
-		}),
-		"snell": inboundVariant(map[string]*JSONSchema{
-			"version": {
-				Type:    "integer",
-				Default: 5,
-				Enum:    intEnum(5, 6),
-				UI:      &UIMeta{Label: "版本", Group: "协议参数", Order: 1, Widget: "select"},
-			},
-			"psk": {
-				Type: "string",
-				UI:   &UIMeta{Label: "PSK", Group: "协议参数", Order: 2, Widget: "password", Generator: "psk"},
-			},
-			"obfs_mode": {
-				Type: "string",
-				Enum: strEnum("none", "http", "tls"),
-				UI:   &UIMeta{Label: "v5 混淆", Group: "协议参数", Order: 3, Widget: "select"},
-			},
-			"mode": {
-				Type: "string",
-				Enum: strEnum("", "unshaped", "unsafe-raw"),
-				UI:   &UIMeta{Label: "v6 模式", Group: "协议参数", Order: 4, Widget: "select"},
-			},
-		}),
-		"socks": inboundVariant(map[string]*JSONSchema{
-			"set_system_proxy": {Type: "boolean", UI: &UIMeta{Label: "设置系统代理", Group: "协议参数", Widget: "switch", Advanced: true}},
-		}),
-		"mixed": inboundVariant(map[string]*JSONSchema{
-			"set_system_proxy": {Type: "boolean", UI: &UIMeta{Label: "设置系统代理", Group: "协议参数", Widget: "switch", Advanced: true}},
-		}),
-		"http": inboundVariant(map[string]*JSONSchema{
-			"set_system_proxy": {Type: "boolean", UI: &UIMeta{Label: "设置系统代理", Group: "协议参数", Widget: "switch", Advanced: true}},
-			"tls":              tlsSubSchema(false),
-		}),
-		"tun": inboundVariant(map[string]*JSONSchema{
-			"interface_name":              {Type: "string", UI: &UIMeta{Label: "网卡名称", Group: "协议参数", Order: 1, Placeholder: "tun0"}},
-			"address":                     stringArraySchema(&UIMeta{Label: "TUN 地址 CIDR", Group: "协议参数", Order: 2, Widget: "tags", Placeholder: "172.19.0.1/30"}),
-			"mtu":                         {Type: "integer", Default: 9000, Minimum: ptrFloat(576), Maximum: ptrFloat(65535), UI: &UIMeta{Label: "MTU", Group: "协议参数", Order: 3}},
-			"auto_route":                  {Type: "boolean", Default: true, UI: &UIMeta{Label: "自动路由", Group: "协议参数", Order: 4, Widget: "switch"}},
-			"strict_route":                {Type: "boolean", UI: &UIMeta{Label: "严格路由", Group: "协议参数", Order: 5, Widget: "switch"}},
-			"stack":                       {Type: "string", Enum: strEnum("", "system", "gvisor", "mixed"), UI: &UIMeta{Label: "网络栈", Group: "协议参数", Order: 6, Widget: "select"}},
-			"auto_redirect":               {Type: "boolean", UI: &UIMeta{Label: "Auto Redirect", Group: "协议参数", Order: 7, Widget: "switch", Advanced: true}},
-			"endpoint_independent_nat":    {Type: "boolean", UI: &UIMeta{Label: "独立端点 NAT", Group: "协议参数", Order: 8, Widget: "switch", Advanced: true}},
-			"udp_timeout":                 {Type: "string", UI: &UIMeta{Label: "UDP 超时", Group: "协议参数", Order: 9, Placeholder: "5m"}},
-		}),
-		"direct": inboundVariant(map[string]*JSONSchema{
-			"network":          {Type: "string", Enum: strEnum("", "tcp", "udp"), UI: &UIMeta{Label: "网络", Group: "协议参数", Order: 1, Widget: "select"}},
-			"override_address": {Type: "string", UI: &UIMeta{Label: "覆盖目标地址", Group: "协议参数", Order: 2}},
-			"override_port":    {Type: "integer", Minimum: ptrFloat(1), Maximum: ptrFloat(65535), UI: &UIMeta{Label: "覆盖目标端口", Group: "协议参数", Order: 3}},
-		}),
-		"redirect": inboundVariant(map[string]*JSONSchema{}),
-		"tproxy": inboundVariant(map[string]*JSONSchema{
-			"network": {Type: "string", Enum: strEnum("", "tcp", "udp"), UI: &UIMeta{Label: "网络", Group: "协议参数", Widget: "select"}},
-		}),
-		"naive": inboundVariant(map[string]*JSONSchema{
-			"network": {Type: "string", Enum: strEnum("", "tcp", "udp"), UI: &UIMeta{Label: "网络", Group: "协议参数", Widget: "select"}},
-			"tls":     tlsSubSchema(false),
-		}),
-		"hysteria": inboundVariant(map[string]*JSONSchema{
-			"up_mbps":   {Type: "integer", Minimum: ptrFloat(1), UI: &UIMeta{Label: "上行 Mbps", Group: "协议参数"}},
-			"down_mbps": {Type: "integer", Minimum: ptrFloat(1), UI: &UIMeta{Label: "下行 Mbps", Group: "协议参数"}},
-			"obfs":      {Type: "string", UI: &UIMeta{Label: "混淆密钥", Group: "协议参数", Widget: "password"}},
-			"tls":       tlsSubSchema(false),
-		}),
-		"shadowtls": inboundVariant(map[string]*JSONSchema{
-			"version": {Type: "integer", Default: 3, Enum: intEnum(1, 2, 3), UI: &UIMeta{Label: "ShadowTLS 版本", Group: "协议参数", Widget: "select"}},
-			"handshake": {
-				Type: "object",
-				Properties: map[string]*JSONSchema{
-					"server":      {Type: "string", UI: &UIMeta{Label: "握手服务器"}},
-					"server_port": {Type: "integer", Default: 443, Minimum: ptrFloat(1), Maximum: ptrFloat(65535), UI: &UIMeta{Label: "握手端口"}},
-				},
-			},
-			"strict_mode": {Type: "boolean", UI: &UIMeta{Label: "严格模式", Group: "协议参数", Widget: "switch"}},
+			"tls": tlsInboundSubSchema(false),
 		}),
 	}
 
 	return &JSONSchema{
 		Schema:               "https://json-schema.org/draft/2020-12/schema",
 		Title:                "sing-box Inbound",
+		Type:                 "object",
+		AdditionalProperties: ptrBool(true),
+		Required:             []string{"type"},
+		Properties:           baseProps,
+		Discriminator:        "type",
+		Variants:             variants,
+	}
+}
+
+// OutboundSchema returns the JSON Schema for sing-box outbound configurations
+// synchronized with official proxy protocols and Dial Fields.
+func OutboundSchema() *JSONSchema {
+	baseProps := map[string]*JSONSchema{
+		"type": {
+			Type: "string",
+			Enum: strEnum(
+				"shadowsocks", "snell", "socks", "http",
+				"tuic", "trojan", "anytls", "vless", "vmess", "hysteria2",
+			),
+			UI: &UIMeta{Label: "类型", Group: "基本", Order: 1, Widget: "select"},
+		},
+		"tag": {
+			Type: "string",
+			UI:   &UIMeta{Label: "标签", Group: "基本", Order: 2},
+		},
+		"server": {
+			Type: "string",
+			UI:   &UIMeta{Label: "服务器地址", Group: "基本", Order: 3},
+		},
+		"server_port": {
+			Type:    "integer",
+			Minimum: ptrFloat(1),
+			Maximum: ptrFloat(65535),
+			UI:      &UIMeta{Label: "端口", Group: "基本", Order: 4},
+		},
+		// Shared sing-box Dial Fields
+		"detour":             {Type: "string", UI: &UIMeta{Label: "前置出站 (detour)", Group: "拨号参数", Order: 20, Placeholder: "上游出站 tag", Advanced: true}},
+		"connect_timeout":    {Type: "string", UI: &UIMeta{Label: "连接超时", Group: "拨号参数", Order: 21, Placeholder: "5s", Advanced: true}},
+		"domain_resolver":    {Type: "string", UI: &UIMeta{Label: "域名解析器 (domain_resolver)", Group: "拨号参数", Order: 22, Advanced: true}},
+		"bind_interface":     {Type: "string", UI: &UIMeta{Label: "绑定网卡", Group: "拨号参数", Order: 23, Advanced: true}},
+		"inet4_bind_address": {Type: "string", UI: &UIMeta{Label: "绑定 IPv4 地址", Group: "拨号参数", Order: 24, Advanced: true}},
+		"inet6_bind_address": {Type: "string", UI: &UIMeta{Label: "绑定 IPv6 地址", Group: "拨号参数", Order: 25, Advanced: true}},
+		"routing_mark":       {Type: "integer", Minimum: ptrFloat(0), UI: &UIMeta{Label: "路由标记 (fwmark)", Group: "拨号参数", Order: 26, Advanced: true}},
+		"tcp_fast_open":      {Type: "boolean", UI: &UIMeta{Label: "TCP Fast Open", Group: "拨号参数", Order: 27, Widget: "switch", Advanced: true}},
+		"tcp_multi_path":     {Type: "boolean", UI: &UIMeta{Label: "TCP Multi Path", Group: "拨号参数", Order: 28, Widget: "switch", Advanced: true}},
+		"udp_fragment":       {Type: "boolean", UI: &UIMeta{Label: "UDP Fragment", Group: "拨号参数", Order: 29, Widget: "switch", Advanced: true}},
+	}
+
+	variants := map[string]*JSONSchema{
+		"shadowsocks": outboundVariant(map[string]*JSONSchema{
+			"method": {
+				Type: "string",
+				Enum: strEnum(
+					"2022-blake3-aes-128-gcm",
+					"2022-blake3-aes-256-gcm",
+					"2022-blake3-chacha20-poly1305",
+					"aes-128-gcm",
+					"aes-256-gcm",
+					"chacha20-ietf-poly1305",
+					"xchacha20-ietf-poly1305",
+					"none",
+				),
+				UI: &UIMeta{Label: "加密方式", Group: "协议参数", Order: 1, Widget: "select"},
+			},
+			"password":    {Type: "string", UI: &UIMeta{Label: "密码 / PSK", Group: "协议参数", Order: 2, Widget: "password"}},
+			"plugin":      {Type: "string", Enum: strEnum("", "obfs-local", "v2ray-plugin"), UI: &UIMeta{Label: "SIP003 插件", Group: "协议参数", Order: 3, Widget: "select", Advanced: true}},
+			"plugin_opts": {Type: "string", UI: &UIMeta{Label: "插件参数 (plugin_opts)", Group: "协议参数", Order: 4, Advanced: true}},
+			"network":     {Type: "string", Enum: strEnum("", "tcp", "udp"), UI: &UIMeta{Label: "网络限制", Group: "协议参数", Order: 5, Widget: "select", Advanced: true}},
+			"udp_over_tcp": {
+				Type: "boolean",
+				UI:   &UIMeta{Label: "UDP over TCP", Group: "协议参数", Order: 6, Widget: "switch", Advanced: true},
+			},
+			"multiplex": outboundMultiplexSubSchema(),
+		}),
+		"snell": outboundVariant(map[string]*JSONSchema{
+			"version":   {Type: "integer", Default: 4, Enum: intEnum(4, 6), UI: &UIMeta{Label: "版本", Group: "协议参数", Order: 1, Widget: "select"}},
+			"psk":       {Type: "string", UI: &UIMeta{Label: "PSK", Group: "协议参数", Order: 2, Widget: "password"}},
+			"network":   {Type: "string", Default: "tcp", Enum: strEnum("tcp", "udp"), UI: &UIMeta{Label: "网络", Group: "协议参数", Order: 3, Widget: "select"}},
+			"reuse":     {Type: "boolean", UI: &UIMeta{Label: "连接复用", Group: "协议参数", Order: 4, Widget: "switch"}},
+			"obfs_mode": {Type: "string", Enum: strEnum("none", "http", "tls"), UI: &UIMeta{Label: "v4 混淆", Group: "协议参数", Order: 5, Widget: "select"}},
+			"obfs_host": {Type: "string", UI: &UIMeta{Label: "v4 混淆 Host", Group: "协议参数", Order: 6}},
+			"mode":      {Type: "string", Enum: strEnum("", "unshaped", "unsafe-raw"), UI: &UIMeta{Label: "v6 模式", Group: "协议参数", Order: 7, Widget: "select"}},
+		}),
+		"socks": outboundVariant(map[string]*JSONSchema{
+			"version":      {Type: "string", Default: "5", Enum: strEnum("", "4", "4a", "5"), UI: &UIMeta{Label: "SOCKS 版本", Group: "协议参数", Order: 1, Widget: "select"}},
+			"username":     {Type: "string", UI: &UIMeta{Label: "用户名", Group: "认证", Order: 1}},
+			"password":     {Type: "string", UI: &UIMeta{Label: "密码", Group: "认证", Order: 2, Widget: "password"}},
+			"network":      {Type: "string", Enum: strEnum("", "tcp", "udp"), UI: &UIMeta{Label: "网络限制", Group: "协议参数", Order: 2, Widget: "select", Advanced: true}},
+			"udp_over_tcp": {Type: "boolean", UI: &UIMeta{Label: "UDP over TCP", Group: "协议参数", Order: 3, Widget: "switch", Advanced: true}},
+		}),
+		"http": outboundVariant(map[string]*JSONSchema{
+			"username": {Type: "string", UI: &UIMeta{Label: "用户名", Group: "认证", Order: 1}},
+			"password": {Type: "string", UI: &UIMeta{Label: "密码", Group: "认证", Order: 2, Widget: "password"}},
+			"path":     {Type: "string", UI: &UIMeta{Label: "请求路径 (path)", Group: "协议参数", Order: 1, Placeholder: "/", Advanced: true}},
+			"headers":  {Type: "object", AdditionalProperties: ptrBool(true), UI: &UIMeta{Label: "自定义请求头", Group: "协议参数", Order: 2, Widget: "json", FullWidth: true, Advanced: true}},
+			"tls":      tlsOutboundSubSchema(false),
+		}),
+		"tuic": outboundVariant(map[string]*JSONSchema{
+			"uuid":               {Type: "string", UI: &UIMeta{Label: "UUID", Group: "认证", Order: 1}},
+			"password":           {Type: "string", UI: &UIMeta{Label: "密码", Group: "认证", Order: 2, Widget: "password"}},
+			"congestion_control": {Type: "string", Default: "cubic", Enum: strEnum("cubic", "new_reno", "bbr"), UI: &UIMeta{Label: "拥塞控制", Group: "协议参数", Order: 1, Widget: "select"}},
+			"udp_relay_mode":     {Type: "string", Enum: strEnum("", "native", "quic"), UI: &UIMeta{Label: "UDP 中继模式", Group: "协议参数", Order: 2, Widget: "select"}},
+			"udp_over_stream":    {Type: "boolean", UI: &UIMeta{Label: "UDP over Stream", Group: "协议参数", Order: 3, Widget: "switch", Advanced: true}},
+			"zero_rtt_handshake": {Type: "boolean", UI: &UIMeta{Label: "0-RTT 握手", Group: "协议参数", Order: 4, Widget: "switch"}},
+			"heartbeat":          {Type: "string", Default: "10s", UI: &UIMeta{Label: "心跳间隔", Group: "协议参数", Order: 5}},
+			"network":            {Type: "string", Enum: strEnum("", "tcp", "udp"), UI: &UIMeta{Label: "网络限制", Group: "协议参数", Order: 6, Widget: "select", Advanced: true}},
+			"tls":                tlsOutboundSubSchema(false),
+		}),
+		"trojan": outboundVariant(map[string]*JSONSchema{
+			"password":  {Type: "string", UI: &UIMeta{Label: "密码", Group: "认证", Order: 1, Widget: "password"}},
+			"network":   {Type: "string", Enum: strEnum("", "tcp", "udp"), UI: &UIMeta{Label: "网络限制", Group: "协议参数", Order: 1, Widget: "select", Advanced: true}},
+			"multiplex": outboundMultiplexSubSchema(),
+			"transport": transportSubSchema(),
+			"tls":       tlsOutboundSubSchema(false),
+		}),
+		"anytls": outboundVariant(map[string]*JSONSchema{
+			"password":                    {Type: "string", UI: &UIMeta{Label: "密码", Group: "认证", Order: 1, Widget: "password"}},
+			"idle_session_check_interval": {Type: "string", UI: &UIMeta{Label: "空闲检查间隔", Group: "协议参数", Order: 1, Placeholder: "30s", Advanced: true}},
+			"idle_session_timeout":        {Type: "string", UI: &UIMeta{Label: "空闲会话超时", Group: "协议参数", Order: 2, Placeholder: "30s", Advanced: true}},
+			"min_idle_session":            {Type: "integer", Minimum: ptrFloat(0), UI: &UIMeta{Label: "最小空闲会话数", Group: "协议参数", Order: 3, Advanced: true}},
+			"tls":                         tlsOutboundSubSchema(false),
+		}),
+		"vless": outboundVariant(map[string]*JSONSchema{
+			"uuid":            {Type: "string", UI: &UIMeta{Label: "UUID", Group: "认证", Order: 1}},
+			"flow":            {Type: "string", Enum: strEnum("", "xtls-rprx-vision"), UI: &UIMeta{Label: "Flow", Group: "协议参数", Order: 1, Widget: "select"}},
+			"packet_encoding": {Type: "string", Default: "xudp", Enum: strEnum("", "xudp", "packetaddr"), UI: &UIMeta{Label: "UDP 封包编码", Group: "协议参数", Order: 2, Widget: "select"}},
+			"network":         {Type: "string", Enum: strEnum("", "tcp", "udp"), UI: &UIMeta{Label: "网络限制", Group: "协议参数", Order: 3, Widget: "select", Advanced: true}},
+			"multiplex":       outboundMultiplexSubSchema(),
+			"transport":       transportSubSchema(),
+			"tls":             tlsOutboundSubSchema(true),
+		}),
+		"vmess": outboundVariant(map[string]*JSONSchema{
+			"uuid":                 {Type: "string", UI: &UIMeta{Label: "UUID", Group: "认证", Order: 1}},
+			"security":             {Type: "string", Default: "auto", Enum: strEnum("auto", "none", "zero", "aes-128-gcm", "chacha20-poly1305", "aes-128-cfb"), UI: &UIMeta{Label: "客户端加密", Group: "协议参数", Order: 1, Widget: "select"}},
+			"alter_id":             {Type: "integer", Default: 0, Minimum: ptrFloat(0), UI: &UIMeta{Label: "Alter ID", Group: "协议参数", Order: 2}},
+			"global_padding":       {Type: "boolean", UI: &UIMeta{Label: "全局随机填充", Group: "协议参数", Order: 3, Widget: "switch", Advanced: true}},
+			"authenticated_length": {Type: "boolean", UI: &UIMeta{Label: "长度块认证", Group: "协议参数", Order: 4, Widget: "switch", Advanced: true}},
+			"network":              {Type: "string", Enum: strEnum("", "tcp", "udp"), UI: &UIMeta{Label: "网络限制", Group: "协议参数", Order: 5, Widget: "select", Advanced: true}},
+			"multiplex":            outboundMultiplexSubSchema(),
+			"transport":            transportSubSchema(),
+			"tls":                  tlsOutboundSubSchema(false),
+		}),
+		"hysteria2": outboundVariant(map[string]*JSONSchema{
+			"password":     {Type: "string", UI: &UIMeta{Label: "密码", Group: "认证", Order: 1, Widget: "password"}},
+			"up_mbps":      {Type: "integer", Minimum: ptrFloat(0), UI: &UIMeta{Label: "上行 Mbps", Group: "协议参数", Order: 1}},
+			"down_mbps":    {Type: "integer", Minimum: ptrFloat(0), UI: &UIMeta{Label: "下行 Mbps", Group: "协议参数", Order: 2}},
+			"server_ports": stringArraySchema(&UIMeta{Label: "端口跳跃 (server_ports)", Group: "协议参数", Order: 3, Widget: "tags", Placeholder: "20000:50000", Advanced: true}),
+			"hop_interval": {Type: "string", UI: &UIMeta{Label: "跳跃间隔 (hop_interval)", Group: "协议参数", Order: 4, Placeholder: "30s", Advanced: true}},
+			"network":      {Type: "string", Enum: strEnum("", "tcp", "udp"), UI: &UIMeta{Label: "网络限制", Group: "协议参数", Order: 5, Widget: "select", Advanced: true}},
+			"obfs": {
+				Type:                 "object",
+				AdditionalProperties: ptrBool(true),
+				Properties: map[string]*JSONSchema{
+					"type":            {Type: "string", Enum: strEnum("", "salamander", "gecko"), UI: &UIMeta{Label: "混淆类型", Widget: "select"}},
+					"password":        {Type: "string", UI: &UIMeta{Label: "混淆密码", Widget: "password"}},
+					"min_packet_size": {Type: "integer", Minimum: ptrFloat(512), UI: &UIMeta{Label: "最小包大小"}},
+					"max_packet_size": {Type: "integer", Minimum: ptrFloat(512), UI: &UIMeta{Label: "最大包大小"}},
+				},
+				UI: &UIMeta{Label: "混淆", Group: "协议参数"},
+			},
+			"tls": tlsOutboundSubSchema(false),
+		}),
+	}
+
+	return &JSONSchema{
+		Schema:               "https://json-schema.org/draft/2020-12/schema",
+		Title:                "sing-box Outbound",
 		Type:                 "object",
 		AdditionalProperties: ptrBool(true),
 		Required:             []string{"type"},
@@ -728,6 +976,7 @@ func GetSchemaBundle() SchemaBundle {
 	return SchemaBundle{
 		Version:   SchemaVersion,
 		Inbound:   InboundSchema(),
+		Outbound:  OutboundSchema(),
 		RouteRule: RouteRuleSchema(),
 	}
 }

@@ -433,6 +433,7 @@ func parseOutbound(m map[string]any) (ParsedOutbound, bool) {
 		s.Username = out.Username
 		s.Password = out.Password
 	}
+	s.Raw = deepCloneMap(m)
 	out.Settings = s
 	return out, true
 }

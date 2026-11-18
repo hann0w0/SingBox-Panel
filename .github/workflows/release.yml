@@ -42,7 +42,7 @@ jobs:
       - name: Setup Go
         uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7
         with:
-          go-version: '1.26.6'
+          go-version: '1.26.11'
           cache: true
 
       # 发版前先跑测试：标签一旦推上去就无法收回，构建失败好过发出坏包。

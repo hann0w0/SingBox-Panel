@@ -195,7 +195,10 @@ func buildOutbound(o OutboundInput) (json.RawMessage, error) {
 
 // ruleNeedsSniff reports whether a rule matches on a sniffed domain or protocol.
 func ruleNeedsSniff(r RuleInput) bool {
-	return len(r.Domain) > 0 || len(r.DomainSuffix) > 0 || len(r.DomainKeyword) > 0 || len(r.Protocol) > 0
+	if len(r.Domain) > 0 || len(r.DomainSuffix) > 0 || len(r.DomainKeyword) > 0 || len(r.Protocol) > 0 {
+		return true
+	}
+	return len(mStrSlice(r.Extra, "domain_regex")) > 0 || len(mStrSlice(r.Extra, "client")) > 0
 }
 
 func routeRuleAction(r RuleInput) string {

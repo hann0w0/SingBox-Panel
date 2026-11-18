@@ -1,6 +1,9 @@
 package singbox
 
-import "testing"
+import (
+	"encoding/json"
+	"testing"
+)
 
 func TestSchemaBundleCoversProtocolsAndComplexFields(t *testing.T) {
 	bundle := GetSchemaBundle()
@@ -131,5 +134,101 @@ func TestValidateJSONAgainstSchemaAcceptsComplexAndUnknownFields(t *testing.T) {
 	})
 	if err != nil {
 		t.Fatalf("typed string slice short_id rejected: %v", err)
+	}
+}
+
+func TestBuildInboundStripsRawVLESSFlowAndSnellUsers(t *testing.T) {
+	vlessBytes, err := BuildInbound(InboundInput{
+		Tag:        "vless-raw",
+		Type:       "vless",
+		ListenPort: 443,
+		Settings: InboundSettings{
+			Flow: "xtls-rprx-vision",
+			TLS: TLSSettings{
+				Enabled:    true,
+				ServerName: "www.apple.com",
+				Reality: RealitySettings{
+					Enabled:             true,
+					HandshakeServer:     "www.apple.com",
+					HandshakeServerPort: 443,
+					PrivateKey:          "priv",
+					ShortID:             []string{"abcd"},
+				},
+			},
+			Raw: map[string]any{
+				"type":          "vless",
+				"tag":           "vless-raw",
+				"flow":          "xtls-rprx-vision",
+				"tcp_fast_open": true,
+			},
+		},
+		Users: []ProxyUser{{Name: "u1", UUID: "11111111-1111-1111-1111-111111111111"}},
+	})
+	if err != nil {
+		t.Fatalf("BuildInbound vless: %v", err)
+	}
+	var vlessMap map[string]any
+	if err := json.Unmarshal(vlessBytes, &vlessMap); err != nil {
+		t.Fatalf("unmarshal vless: %v", err)
+	}
+	if _, leaked := vlessMap["flow"]; leaked {
+		t.Fatalf("top-level flow must not leak onto vless inbound: %v", vlessMap)
+	}
+
+	snellBytes, err := BuildInbound(InboundInput{
+		Tag:        "snell-raw",
+		Type:       "snell",
+		ListenPort: 10021,
+		Settings: InboundSettings{
+			SingleUser:   true,
+			SnellVersion: 6,
+			SnellPSK:     "8aV2P5T/MQuv8MJ077rHzKA5CvZwOq9+xnk/Y726PNo=",
+			Raw: map[string]any{
+				"type":  "snell",
+				"users": []any{map[string]any{"name": "legacy"}},
+			},
+		},
+	})
+	if err != nil {
+		t.Fatalf("BuildInbound snell: %v", err)
+	}
+	var snellMap map[string]any
+	if err := json.Unmarshal(snellBytes, &snellMap); err != nil {
+		t.Fatalf("unmarshal snell: %v", err)
+	}
+	if _, leaked := snellMap["users"]; leaked {
+		t.Fatalf("users must not leak onto snell inbound: %v", snellMap)
+	}
+}
+
+func TestSyncFromRawUpdatesIPv6OnlyAndTLSMode(t *testing.T) {
+	s := InboundSettings{
+		Listen:   "2001:db8::1",
+		IPv6Only: true,
+		TLS:      TLSSettings{Enabled: true, SelfSigned: true},
+		Raw: map[string]any{
+			"listen": "::",
+			"tls": map[string]any{
+				"enabled":     true,
+				"server_name": "www.apple.com",
+				"reality": map[string]any{
+					"enabled":     true,
+					"private_key": "priv",
+					"short_id":    []any{"abcd"},
+					"handshake":   map[string]any{"server": "www.apple.com", "server_port": 443},
+				},
+			},
+			"packet_encoding": "",
+		},
+	}
+	s.SyncFromRaw("vless")
+	if s.IPv6Only {
+		t.Fatal("expected IPv6Only to be cleared when listen changes to ::\n")
+	}
+	if s.TLS.SelfSigned {
+		t.Fatal("expected SelfSigned to be cleared when switching to reality")
+	}
+	if s.PacketEncoding != "none" {
+		t.Fatalf("expected empty packet_encoding in raw to set PacketEncoding=none, got %q", s.PacketEncoding)
 	}
 }

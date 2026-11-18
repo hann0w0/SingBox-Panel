@@ -1215,12 +1215,12 @@ func parseSurgeSubscription(raw []byte) (SubscriptionParseResult, error) {
 				continue
 			}
 			if k, v, ok := strings.Cut(field, "="); ok {
-				m[strings.TrimSpace(k)] = strings.Trim(strings.TrimSpace(v), "\"")
+				m[strings.ToLower(strings.TrimSpace(k))] = strings.Trim(strings.TrimSpace(v), "\"")
 			} else if isSurgeBareOption(field) {
 				// Positional credentials are parsed below; inserting arbitrary
 				// tokens as map keys confuses usernames such as "user" with a
 				// named credential and passwords such as "password" with a flag.
-				m[field] = true
+				m[strings.ToLower(strings.TrimSpace(strings.Trim(field, "\"")))] = true
 			}
 		}
 		if normalizeSurgePositionalFields(m, fields[extraStart:]) {
@@ -1648,13 +1648,16 @@ func getString(m map[string]any, keys ...string) string {
 
 func getStringList(m map[string]any, keys ...string) []string {
 	v, ok := lookupMapValue(m, keys...)
-	if !ok {
+	if !ok || v == nil {
 		return nil
 	}
 	switch x := v.(type) {
 	case []any:
 		out := make([]string, 0, len(x))
 		for _, item := range x {
+			if item == nil {
+				continue
+			}
 			if s := strings.TrimSpace(fmt.Sprint(item)); s != "" {
 				out = append(out, s)
 			}
@@ -1782,9 +1785,15 @@ func stringValuesMap(m map[string]any) map[string][]string {
 	}
 	out := make(map[string][]string, len(m))
 	for k, v := range m {
+		if v == nil {
+			continue
+		}
 		switch values := v.(type) {
 		case []any:
 			for _, value := range values {
+				if value == nil {
+					continue
+				}
 				out[k] = append(out[k], strings.TrimSpace(fmt.Sprint(value)))
 			}
 		case []string:

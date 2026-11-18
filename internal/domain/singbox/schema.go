@@ -507,7 +507,7 @@ func InboundSchema() *JSONSchema {
 			},
 			"obfs_mode": {
 				Type: "string",
-				Enum: strEnum("none", "http", "tls"),
+				Enum: strEnum("", "none", "http", "tls"),
 				UI:   &UIMeta{Label: "v5 混淆", Group: "协议参数", Order: 3, Widget: "select"},
 			},
 			"mode": {
@@ -548,7 +548,7 @@ func InboundSchema() *JSONSchema {
 			"congestion_control": {
 				Type:    "string",
 				Default: "cubic",
-				Enum:    strEnum("cubic", "new_reno", "bbr"),
+				Enum:    strEnum("", "cubic", "new_reno", "bbr"),
 				UI:      &UIMeta{Label: "拥塞控制", Group: "协议参数", Order: 1, Widget: "select"},
 			},
 			"auth_timeout": {
@@ -717,9 +717,9 @@ func OutboundSchema() *JSONSchema {
 		"snell": outboundVariant(map[string]*JSONSchema{
 			"version":   {Type: "integer", Default: 4, Enum: intEnum(4, 6), UI: &UIMeta{Label: "版本", Group: "协议参数", Order: 1, Widget: "select"}},
 			"psk":       {Type: "string", UI: &UIMeta{Label: "PSK", Group: "协议参数", Order: 2, Widget: "password"}},
-			"network":   {Type: "string", Default: "tcp", Enum: strEnum("tcp", "udp"), UI: &UIMeta{Label: "网络", Group: "协议参数", Order: 3, Widget: "select"}},
+			"network":   {Type: "string", Default: "tcp", Enum: strEnum("", "tcp", "udp"), UI: &UIMeta{Label: "网络", Group: "协议参数", Order: 3, Widget: "select"}},
 			"reuse":     {Type: "boolean", UI: &UIMeta{Label: "连接复用", Group: "协议参数", Order: 4, Widget: "switch"}},
-			"obfs_mode": {Type: "string", Enum: strEnum("none", "http", "tls"), UI: &UIMeta{Label: "v4 混淆", Group: "协议参数", Order: 5, Widget: "select"}},
+			"obfs_mode": {Type: "string", Enum: strEnum("", "none", "http", "tls"), UI: &UIMeta{Label: "v4 混淆", Group: "协议参数", Order: 5, Widget: "select"}},
 			"obfs_host": {Type: "string", UI: &UIMeta{Label: "v4 混淆 Host", Group: "协议参数", Order: 6}},
 			"mode":      {Type: "string", Enum: strEnum("", "unshaped", "unsafe-raw"), UI: &UIMeta{Label: "v6 模式", Group: "协议参数", Order: 7, Widget: "select"}},
 		}),
@@ -740,7 +740,7 @@ func OutboundSchema() *JSONSchema {
 		"tuic": outboundVariant(map[string]*JSONSchema{
 			"uuid":               {Type: "string", UI: &UIMeta{Label: "UUID", Group: "认证", Order: 1}},
 			"password":           {Type: "string", UI: &UIMeta{Label: "密码", Group: "认证", Order: 2, Widget: "password"}},
-			"congestion_control": {Type: "string", Default: "cubic", Enum: strEnum("cubic", "new_reno", "bbr"), UI: &UIMeta{Label: "拥塞控制", Group: "协议参数", Order: 1, Widget: "select"}},
+			"congestion_control": {Type: "string", Default: "cubic", Enum: strEnum("", "cubic", "new_reno", "bbr"), UI: &UIMeta{Label: "拥塞控制", Group: "协议参数", Order: 1, Widget: "select"}},
 			"udp_relay_mode":     {Type: "string", Enum: strEnum("", "native", "quic"), UI: &UIMeta{Label: "UDP 中继模式", Group: "协议参数", Order: 2, Widget: "select"}},
 			"udp_over_stream":    {Type: "boolean", UI: &UIMeta{Label: "UDP over Stream", Group: "协议参数", Order: 3, Widget: "switch", Advanced: true}},
 			"zero_rtt_handshake": {Type: "boolean", UI: &UIMeta{Label: "0-RTT 握手", Group: "协议参数", Order: 4, Widget: "switch"}},
@@ -773,7 +773,7 @@ func OutboundSchema() *JSONSchema {
 		}),
 		"vmess": outboundVariant(map[string]*JSONSchema{
 			"uuid":                 {Type: "string", UI: &UIMeta{Label: "UUID", Group: "认证", Order: 1}},
-			"security":             {Type: "string", Default: "auto", Enum: strEnum("auto", "none", "zero", "aes-128-gcm", "chacha20-poly1305", "aes-128-cfb"), UI: &UIMeta{Label: "客户端加密", Group: "协议参数", Order: 1, Widget: "select"}},
+			"security":             {Type: "string", Default: "auto", Enum: strEnum("", "auto", "none", "zero", "aes-128-gcm", "chacha20-poly1305", "aes-128-cfb"), UI: &UIMeta{Label: "客户端加密", Group: "协议参数", Order: 1, Widget: "select"}},
 			"alter_id":             {Type: "integer", Default: 0, Minimum: ptrFloat(0), UI: &UIMeta{Label: "Alter ID", Group: "协议参数", Order: 2}},
 			"packet_encoding":      {Type: "string", Enum: strEnum("", "xudp", "packetaddr"), UI: &UIMeta{Label: "UDP 封包编码", Group: "协议参数", Order: 3, Widget: "select", Advanced: true}},
 			"global_padding":       {Type: "boolean", UI: &UIMeta{Label: "全局随机填充", Group: "协议参数", Order: 4, Widget: "switch", Advanced: true}},
@@ -819,18 +819,18 @@ func OutboundSchema() *JSONSchema {
 
 // RouteRuleSchema returns the JSON Schema for sing-box route rule match objects.
 func RouteRuleSchema() *JSONSchema {
-	routeActions := []string{"route", "reject"}
+	routeActions := []string{"route", "reject", "resolve", "route-options"}
 	props := map[string]*JSONSchema{
 		"action": {
 			Type:    "string",
 			Default: "route",
-			Enum:    strEnum("route", "reject", "sniff", "hijack-dns", "resolve", "route-options"),
+			Enum:    strEnum("", "route", "reject", "sniff", "hijack-dns", "resolve", "route-options"),
 			UI:      &UIMeta{Label: "动作", Group: "动作", Order: 1, Widget: "select"},
 		},
 		"method": {
 			Type:    "string",
 			Default: "default",
-			Enum:    strEnum("default", "drop", "reply"),
+			Enum:    strEnum("", "default", "drop", "reply"),
 			UI:      &UIMeta{Label: "拒绝方式", Group: "动作", Order: 2, Widget: "select", Actions: []string{"reject"}},
 		},
 		"sniffer": stringArraySchema(&UIMeta{
@@ -960,7 +960,7 @@ func RouteRuleSchema() *JSONSchema {
 		"strategy": {
 			Type: "string",
 			Enum: strEnum("", "prefer_ipv4", "prefer_ipv6", "ipv4_only", "ipv6_only"),
-			UI:   &UIMeta{Label: "解析策略", Group: "动作", Order: 6, Widget: "select", Actions: []string{"resolve"}, Advanced: true},
+			UI:   &UIMeta{Label: "解析策略", Group: "动作", Order: 6, Widget: "select", Actions: []string{"resolve", "route-options"}, Advanced: true},
 		},
 	}
 

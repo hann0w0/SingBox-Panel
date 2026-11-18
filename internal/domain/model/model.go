@@ -2,6 +2,7 @@
 package model
 
 import (
+	"bytes"
 	"database/sql/driver"
 	"errors"
 	"fmt"
@@ -251,7 +252,8 @@ type Server struct {
 
 // EffectiveConfigMode treats rows created before ConfigMode existed as managed.
 func (s *Server) EffectiveConfigMode() string {
-	if s.ConfigMode == ConfigModeRaw && len(s.RawConfig) > 0 {
+	trimmed := bytes.TrimSpace(s.RawConfig)
+	if s.ConfigMode == ConfigModeRaw && len(trimmed) > 0 && !bytes.Equal(trimmed, []byte("null")) {
 		return ConfigModeRaw
 	}
 	return ConfigModeManaged

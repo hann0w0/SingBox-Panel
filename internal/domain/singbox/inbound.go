@@ -451,8 +451,11 @@ func mergeInboundWithRaw(in InboundInput, overlay map[string]any) (map[string]an
 		return nil, err
 	}
 	base := deepCloneMap(in.Settings.Raw)
-	if !in.Settings.SingleUser {
+	if !in.Settings.SingleUser || in.Type == "snell" {
 		delete(base, "users")
+	}
+	if in.Type == "vless" {
+		delete(base, "flow")
 	}
 	if !in.Settings.TLS.tlsEnabled() {
 		delete(base, "tls")

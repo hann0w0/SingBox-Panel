@@ -117,7 +117,7 @@ func parseWSQuery(q url.Values, t *TransportSettings) error {
 // (see insecureFromQuery), so every spelling is honored by the caller.
 func parseTLSSecurity(security, sni, pbk, sid string, insecure bool, fingerprint string, t *TLSSettings) error {
 	t.Fingerprint = fingerprint
-	switch security {
+	switch strings.ToLower(strings.TrimSpace(security)) {
 	case "reality":
 		if pbk == "" {
 			return fmt.Errorf("reality link missing public key")
@@ -239,12 +239,16 @@ func parseVMess(uri string) (ClientNode, error) {
 	default:
 		return ClientNode{}, fmt.Errorf("unsupported transport %q", network)
 	}
-	switch strOf(obj, "tls") {
+	switch strings.ToLower(strings.TrimSpace(strOf(obj, "tls"))) {
 	case "reality":
+		pbk := strOf(obj, "pbk")
+		if pbk == "" {
+			return ClientNode{}, fmt.Errorf("vmess reality link missing public key")
+		}
 		cn.Settings.TLS.Enabled = true
 		cn.Settings.TLS.ServerName = strOf(obj, "sni")
 		cn.Settings.TLS.Fingerprint = strOf(obj, "fp")
-		cn.Settings.TLS.Reality = RealitySettings{Enabled: true, PublicKey: strOf(obj, "pbk"), ShortID: splitOrNil(strOf(obj, "sid"))}
+		cn.Settings.TLS.Reality = RealitySettings{Enabled: true, PublicKey: pbk, ShortID: splitOrNil(strOf(obj, "sid"))}
 	case "tls":
 		cn.Settings.TLS.Enabled = true
 		cn.Settings.TLS.ServerName = strOf(obj, "sni")
@@ -349,7 +353,7 @@ func decodeSSBase64(s string) (string, bool) {
 
 func splitHostPort(s string) (string, int, error) {
 	host, portStr, err := net.SplitHostPort(s)
-	if err != nil {
+	if err != nil || strings.TrimSpace(host) == "" {
 		return "", 0, fmt.Errorf("invalid host:port %q", s)
 	}
 	port, err := strconv.Atoi(portStr)
@@ -374,6 +378,9 @@ func parseTrojan(uri string) (ClientNode, error) {
 	q := u.Query()
 	cn := ClientNode{Name: shareName(u), Server: host, ServerPort: port, Type: "trojan"}
 	cn.User.Password = u.User.Username()
+	if password, ok := u.User.Password(); ok {
+		cn.User.Password += ":" + password
+	}
 	if err := parseWSQuery(q, &cn.Settings.Transport); err != nil {
 		return ClientNode{}, err
 	}
@@ -524,6 +531,9 @@ func parseAnyTLS(uri string) (ClientNode, error) {
 	q := u.Query()
 	cn := ClientNode{Name: shareName(u), Server: host, ServerPort: port, Type: "anytls"}
 	cn.User.Password = u.User.Username()
+	if password, ok := u.User.Password(); ok {
+		cn.User.Password += ":" + password
+	}
 	cn.Settings.TLS.Enabled = true
 	cn.Settings.TLS.ServerName = q.Get("sni")
 	if insecureFromQuery(q) {

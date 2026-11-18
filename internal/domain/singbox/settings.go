@@ -805,6 +805,7 @@ func (s *InboundSettings) SyncFromRaw(typ string) {
 	m := s.Raw
 	if listen := mStr(m, "listen"); listen != "" {
 		s.Listen = listen
+		s.IPv6Only = specificIPv6(s.Listen)
 	}
 	if tlsMap := mMap(m, "tls"); tlsMap != nil {
 		parsedTLS := parseTLS(tlsMap)
@@ -814,7 +815,9 @@ func (s *InboundSettings) SyncFromRaw(typ string) {
 		if !parsedTLS.Insecure {
 			parsedTLS.Insecure = s.TLS.Insecure
 		}
-		parsedTLS.SelfSigned = s.TLS.SelfSigned
+		if !parsedTLS.Reality.Enabled && parsedTLS.ACMEDomain == "" && parsedTLS.CertificatePath == "" {
+			parsedTLS.SelfSigned = s.TLS.SelfSigned
+		}
 		if parsedTLS.Reality.PublicKey == "" {
 			parsedTLS.Reality.PublicKey = s.TLS.Reality.PublicKey
 		}
@@ -832,7 +835,11 @@ func (s *InboundSettings) SyncFromRaw(typ string) {
 			s.Flow = flow
 		}
 		if pe := mStr(m, "packet_encoding"); pe != "" || hasMapKey(m, "packet_encoding") {
-			s.PacketEncoding = pe
+			if pe == "" {
+				s.PacketEncoding = "none"
+			} else {
+				s.PacketEncoding = pe
+			}
 		}
 	case "shadowsocks":
 		if method := mStr(m, "method"); method != "" {

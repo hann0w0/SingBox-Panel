@@ -843,6 +843,7 @@ export default function ServerDetail() {
       ['进程名', m.process_name], ['进程路径', m.process_path], ['包名', m.package_name],
       ['Clash', m.clash_mode ? [m.clash_mode] : undefined],
       ['DNS', m.server ? [String(m.server)] : undefined],
+      ['解析策略', m.strategy ? [String(m.strategy)] : undefined],
       ['覆盖目标', m.override_address ? [`${m.override_address}${m.override_port ? `:${m.override_port}` : ''}`] : (m.override_port ? [`:${m.override_port}`] : undefined)],
     ]
     const chips = groups.flatMap(([label, values]) => {
@@ -858,7 +859,7 @@ export default function ServerDetail() {
       'action', 'method', 'sniffer', 'rule_set', 'rule_set_ip_cidr_match_source', 'inbound', 'domain', 'domain_suffix',
       'auth_user', 'domain_keyword', 'domain_regex', 'ip_cidr', 'source_ip_cidr', 'port', 'port_range',
       'source_port', 'source_port_range', 'protocol', 'client', 'network', 'process_name', 'process_path',
-      'package_name', 'clash_mode', 'server', 'override_address', 'override_port', 'ip_is_private', 'source_ip_is_private', 'invert',
+      'package_name', 'clash_mode', 'server', 'strategy', 'override_address', 'override_port', 'ip_is_private', 'source_ip_is_private', 'invert',
     ])
     for (const [k, v] of Object.entries(m)) {
       if (handledKeys.has(k) || v === undefined || v === null || v === false || v === '') continue

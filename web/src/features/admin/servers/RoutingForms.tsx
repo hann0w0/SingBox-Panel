@@ -792,7 +792,7 @@ function matchToConditionRows(match: RuleMatch, act: string, nextId: () => strin
   if (match.port?.length) rows.push({ ...emptyConditionRow('port', nextId()), text: joinLines(match.port.map(String)) })
   if (match.port_range?.length) rows.push({ ...emptyConditionRow('port_range', nextId()), text: joinLines(match.port_range) })
   if (match.ip_is_private) rows.push(emptyConditionRow('ip_is_private', nextId()))
-  if ((act === 'route' || act === 'reject' || act === 'route-options') && match.inbound?.length) {
+  if ((act === 'route' || act === 'reject' || act === 'resolve' || act === 'route-options') && match.inbound?.length) {
     rows.push({ ...emptyConditionRow('inbound', nextId()), list: [...match.inbound] })
   }
   if (match.auth_user?.length) rows.push({ ...emptyConditionRow('auth_user', nextId()), list: [...match.auth_user] })
@@ -843,7 +843,7 @@ function buildRulePayload(
 ): { match: RuleMatch; outbound: string } {
   const act = String(v.action || 'route') as NonNullable<RuleMatch['action']>
   const match: RuleMatch = { action: act }
-  if ((act === 'sniff' || act === 'hijack-dns' || act === 'resolve') && v.inbound?.length) {
+  if ((act === 'sniff' || act === 'hijack-dns') && v.inbound?.length) {
     match.inbound = v.inbound
   }
   if (act === 'resolve' && typeof v.server === 'string' && v.server.trim()) {
@@ -852,7 +852,7 @@ function buildRulePayload(
   if ((act === 'resolve' || act === 'route-options') && typeof v.strategy === 'string' && v.strategy) {
     match.strategy = v.strategy
   }
-  if (act === 'route' || act === 'reject' || act === 'route-options') {
+  if (act === 'route' || act === 'reject' || act === 'resolve' || act === 'route-options') {
     for (const row of rows) {
       if (row.field === 'auth_user' && row.list.length) match.auth_user = row.list
       else if (row.field === 'inbound' && row.list.length) match.inbound = row.list
@@ -987,7 +987,7 @@ export function RuleForm({
   const rowSeqRef = useRef(0)
   const nextRowId = () => `cond-${++rowSeqRef.current}`
   const action = Form.useWatch('action', form) || 'route'
-  const showConditions = action === 'route' || action === 'reject' || action === 'route-options'
+  const showConditions = action === 'route' || action === 'reject' || action === 'resolve' || action === 'route-options'
 
   const schemaProps = useMemo(() => schemas.route_rule.properties ?? {}, [schemas.route_rule])
   const advancedSchemaProps = useMemo(() => {
@@ -1368,7 +1368,7 @@ export function RuleForm({
               <Input aria-label="DNS 服务器" className="mono" />
             </Form.Item>
           )}
-          {(action === 'sniff' || action === 'hijack-dns' || action === 'resolve') && (
+          {(action === 'sniff' || action === 'hijack-dns') && (
             <Form.Item name="inbound" label="限定入站" className="fm-full">
               <Select
                 mode="multiple"

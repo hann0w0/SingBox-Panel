@@ -665,7 +665,11 @@ export default function InboundForm({
           return
         }
         const nextType = (typeof parsed.type === 'string' && TYPES.some((t) => t.value === parsed.type) ? parsed.type : type) as InboundType
-        const nextSettings = nativeJsonToInboundSettings(inbound?.settings || {}, parsed)
+        const prevSettings: InboundSettings = {
+          ...(inbound?.settings || {}),
+          ...(form.getFieldValue('multi_user') !== undefined ? { multi_user: !!form.getFieldValue('multi_user') } : {}),
+        }
+        const nextSettings = nativeJsonToInboundSettings(prevSettings, parsed)
         body = {
           type: nextType,
           tag: typeof parsed.tag === 'string' ? parsed.tag : '',

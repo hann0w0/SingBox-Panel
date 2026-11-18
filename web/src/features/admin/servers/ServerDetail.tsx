@@ -832,12 +832,32 @@ export default function ServerDetail() {
     const m = r.match || {}
     const groups: [string, (string | number)[] | undefined][] = [
       [m.rule_set_ip_cidr_match_source ? '来源 IP 规则集' : '规则集', m.rule_set], ['入站', m.inbound], ['域名', m.domain], ['后缀', m.domain_suffix],
-      ['用户', m.auth_user], ['关键词', m.domain_keyword], ['目标 IP', m.ip_cidr], ['来源 IP', m.source_ip_cidr],
-      ['端口', m.port], ['协议', m.protocol], ['网络', m.network ? [m.network.toUpperCase()] : undefined],
+      ['用户', m.auth_user], ['关键词', m.domain_keyword], ['正则', m.domain_regex], ['目标 IP', m.ip_cidr], ['来源 IP', m.source_ip_cidr],
+      ['端口', m.port], ['端口范围', m.port_range], ['源端口', m.source_port], ['源端口范围', m.source_port_range],
+      ['协议', m.protocol], ['客户端', m.client], ['网络', m.network ? [String(m.network).toUpperCase()] : undefined],
+      ['进程名', m.process_name], ['进程路径', m.process_path], ['包名', m.package_name],
+      ['Clash', m.clash_mode ? [m.clash_mode] : undefined],
+      ['DNS', m.server ? [String(m.server)] : undefined],
+      ['覆盖目标', m.override_address ? [`${m.override_address}${m.override_port ? `:${m.override_port}` : ''}`] : (m.override_port ? [`:${m.override_port}`] : undefined)],
     ]
     const chips = groups.flatMap(([label, values]) => (values || []).map((value) => (
       <span key={`${label}-${value}`} className="sd-chip"><span>{label}</span>{String(value)}</span>
     )))
+    if (m.ip_is_private) chips.push(<span key="ip_is_private" className="sd-chip"><span>目标</span>私有 IP</span>)
+    if (m.source_ip_is_private) chips.push(<span key="source_ip_is_private" className="sd-chip"><span>来源</span>私有 IP</span>)
+    if (m.invert) chips.push(<span key="invert" className="sd-chip"><span>逻辑</span>取反</span>)
+    const handledKeys = new Set([
+      'action', 'method', 'sniffer', 'rule_set', 'rule_set_ip_cidr_match_source', 'inbound', 'domain', 'domain_suffix',
+      'auth_user', 'domain_keyword', 'domain_regex', 'ip_cidr', 'source_ip_cidr', 'port', 'port_range',
+      'source_port', 'source_port_range', 'protocol', 'client', 'network', 'process_name', 'process_path',
+      'package_name', 'clash_mode', 'server', 'override_address', 'override_port', 'ip_is_private', 'source_ip_is_private', 'invert',
+    ])
+    for (const [k, v] of Object.entries(m)) {
+      if (handledKeys.has(k) || v === undefined || v === null || v === false || v === '') continue
+      if (Array.isArray(v) && v.length === 0) continue
+      const formatted = Array.isArray(v) ? v.map(String).join(', ') : (typeof v === 'object' ? JSON.stringify(v) : String(v))
+      chips.push(<span key={`extra-${k}`} className="sd-chip"><span>{k}</span>{formatted}</span>)
+    }
     return chips.length ? chips : [<span key="all" className="faint">全部流量</span>]
   }
   const ruleTarget = (r: RouteRule) => {
@@ -846,6 +866,8 @@ export default function ServerDetail() {
     if (act === 'reject' || v === 'block' || v === 'reject') return r.match?.method === 'drop' ? '静默丢弃' : '快速拒绝'
     if (act === 'sniff' || v === 'sniff') return 'sniff'
     if (act === 'hijack-dns' || v === 'hijack-dns') return 'hijack-dns'
+    if (act === 'resolve' || v === 'resolve') return 'resolve'
+    if (act === 'route-options' || v === 'route-options') return 'route-options'
     return v
   }
 

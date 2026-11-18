@@ -1,4 +1,4 @@
-import { useEffect, useId, useLayoutEffect, useRef, useState } from 'react'
+import { useEffect, useId, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { Alert, Button, Checkbox, Form, Input, InputNumber, Modal, Segmented, Select, Space, Switch } from '../../../components/kit'
 import {
   createOutbound,
@@ -17,6 +17,9 @@ import { MODAL_MD } from '../../../components/kit/modal'
 import { OutboundImport, type NodeImportMode } from './OutboundImport'
 import { Pills } from '../../../components/kit/Page'
 import { Field, FieldGroup, FieldLabel } from '@/components/ui/field'
+import { JsonCodeEditor } from '../../../components/JsonCodeEditor'
+import { SchemaFieldList } from '../../../components/SchemaFormFields'
+import { useSingboxSchemas, validateObjectBySchema, type JSONSchema } from '../../../lib/singboxSchema'
 
 const OUT_TYPES: { value: OutboundType; label: string }[] = [
   { value: 'shadowsocks', label: 'Shadowsocks' },
@@ -542,7 +545,178 @@ const ACTION_OPTIONS = [
   { value: 'reject', label: '拒绝' },
   { value: 'sniff', label: '嗅探' },
   { value: 'hijack-dns', label: 'DNS 劫持' },
+  { value: 'resolve', label: 'DNS 解析' },
+  { value: 'route-options', label: '路由选项' },
 ]
+
+const STANDARD_RULE_MATCH_KEYS = new Set([
+  'action',
+  'outbound',
+  'auth_user',
+  'inbound',
+  'rule_set',
+  'rule_set_ip_cidr_match_source',
+  'domain',
+  'domain_suffix',
+  'domain_keyword',
+  'ip_cidr',
+  'source_ip_cidr',
+  'port',
+  'protocol',
+  'network',
+  'sniffer',
+  'method',
+])
+
+function cloneMatchExtra(m: Record<string, unknown> | undefined): Record<string, unknown> {
+  if (!m) return {}
+  const out: Record<string, unknown> = {}
+  for (const [k, v] of Object.entries(m)) {
+    if (STANDARD_RULE_MATCH_KEYS.has(k) || v === undefined || v === null) continue
+    out[k] = structuredClone(v)
+  }
+  return out
+}
+
+function inferRuleAction(m: Record<string, unknown>, outbound?: string): string {
+  const act = typeof m.action === 'string' ? m.action : ''
+  if (act) return act
+  if (outbound === 'block' || outbound === 'reject') return 'reject'
+  if (outbound === 'sniff') return 'sniff'
+  if (outbound === 'hijack-dns') return 'hijack-dns'
+  if (outbound === 'resolve') return 'resolve'
+  if (outbound === 'route-options') return 'route-options'
+  return 'route'
+}
+
+function ruleToFormValues(m: Record<string, unknown>, outbound?: string) {
+  const act = inferRuleAction(m, outbound)
+  const match = m as RuleMatch
+  return {
+    action: act,
+    outbound: act === 'route' ? (outbound || undefined) : undefined,
+    sniffer: match.sniffer || (act === 'sniff' ? match.protocol : undefined) || [],
+    protocol: act === 'hijack-dns' ? (match.protocol?.length ? match.protocol : ['dns']) : (act !== 'sniff' ? (match.protocol || []) : []),
+    method: (match.method as string) || 'default',
+    match_fields: activeMatchFields(match),
+    auth_user: match.auth_user || [],
+    rule_set: match.rule_set || [],
+    rule_set_ip_direction: match.rule_set_ip_cidr_match_source ? 'source' : 'target',
+    inbound: match.inbound || [],
+    domain: joinLines(match.domain),
+    domain_suffix: joinLines(match.domain_suffix),
+    domain_keyword: joinLines(match.domain_keyword),
+    ip_cidr: joinLines(match.ip_cidr),
+    source_ip_cidr: joinLines(match.source_ip_cidr),
+    port: joinLines(match.port?.map(String)),
+    network: match.network || '',
+  }
+}
+
+function buildRulePayload(
+  v: Record<string, any>,
+  extraMatch: Record<string, unknown>,
+  schemaProps: Record<string, JSONSchema>,
+): { match: RuleMatch; outbound: string } {
+  const act = String(v.action || 'route') as NonNullable<RuleMatch['action']>
+  const match: RuleMatch = { action: act }
+  const selectedFields = new Set<MatchField>(v.match_fields || [])
+  if (selectedFields.has('auth_user') && v.auth_user?.length) match.auth_user = v.auth_user
+  if ((act === 'sniff' || act === 'hijack-dns' || act === 'resolve' || act === 'route-options' || selectedFields.has('inbound')) && v.inbound?.length) {
+    match.inbound = v.inbound
+  }
+  if (act === 'route' || act === 'reject' || act === 'route-options') {
+    if (selectedFields.has('rule_set') && v.rule_set?.length) {
+      match.rule_set = v.rule_set
+      if (v.rule_set_ip_direction === 'source') match.rule_set_ip_cidr_match_source = true
+    }
+    if (selectedFields.has('protocol') && v.protocol?.length) match.protocol = v.protocol
+    if (selectedFields.has('domain')) {
+      const domains = splitLines(v.domain)
+      if (domains.length) match.domain = domains
+    }
+    if (selectedFields.has('domain_suffix')) {
+      const domains = splitLines(v.domain_suffix)
+      if (domains.length) match.domain_suffix = domains
+    }
+    if (selectedFields.has('domain_keyword')) {
+      const keywords = splitLines(v.domain_keyword)
+      if (keywords.length) match.domain_keyword = keywords
+    }
+    if (selectedFields.has('ip_cidr')) {
+      const cidrs = splitLines(v.ip_cidr)
+      if (cidrs.length) match.ip_cidr = cidrs
+    }
+    if (selectedFields.has('source_ip_cidr')) {
+      const cidrs = splitLines(v.source_ip_cidr)
+      if (cidrs.length) match.source_ip_cidr = cidrs
+    }
+    if (selectedFields.has('port')) {
+      const ports = splitLines(v.port).map((x) => Number(x))
+      if (ports.length) match.port = ports
+    }
+    if (selectedFields.has('network') && v.network) match.network = v.network
+  }
+
+  for (const [k, val] of Object.entries(extraMatch)) {
+    if (STANDARD_RULE_MATCH_KEYS.has(k) || val === undefined || val === null || val === '') continue
+    if (Array.isArray(val) && val.length === 0) continue
+    const prop = schemaProps[k]
+    const allowedActions = prop?.['x-ui']?.actions
+    if (allowedActions && !allowedActions.includes(act)) continue
+    match[k] = structuredClone(val)
+  }
+
+  let targetOutbound = String(v.outbound || 'direct')
+  if (act === 'sniff') {
+    targetOutbound = 'sniff'
+    if (v.sniffer?.length) match.sniffer = v.sniffer
+  } else if (act === 'reject') {
+    targetOutbound = 'block'
+    match.method = v.method || 'default'
+  } else if (act === 'hijack-dns') {
+    targetOutbound = 'hijack-dns'
+    match.protocol = ['dns']
+  } else if (act === 'resolve') {
+    targetOutbound = 'resolve'
+  } else if (act === 'route-options') {
+    targetOutbound = 'route-options'
+  }
+  return { match, outbound: targetOutbound }
+}
+
+function ruleToNativeJson(match: RuleMatch, outbound: string): Record<string, unknown> {
+  const out: Record<string, unknown> = {}
+  for (const [k, v] of Object.entries(match)) {
+    if (v === undefined || v === null) continue
+    out[k] = structuredClone(v)
+  }
+  const act = String(match.action || 'route')
+  if (act === 'route' && outbound) {
+    out.outbound = outbound
+  } else {
+    delete out.outbound
+  }
+  if (!out.action) out.action = act
+  return out
+}
+
+function nativeJsonToRulePayload(parsed: Record<string, unknown>): { match: RuleMatch; outbound: string } {
+  const outboundRaw = typeof parsed.outbound === 'string' ? parsed.outbound : ''
+  const act = inferRuleAction(parsed, outboundRaw) as NonNullable<RuleMatch['action']>
+  const match: RuleMatch = { action: act }
+  for (const [k, v] of Object.entries(parsed)) {
+    if (k === 'outbound' || v === undefined || v === null) continue
+    match[k] = structuredClone(v)
+  }
+  let targetOutbound = outboundRaw || 'direct'
+  if (act === 'sniff') targetOutbound = 'sniff'
+  else if (act === 'reject') targetOutbound = 'block'
+  else if (act === 'hijack-dns') targetOutbound = 'hijack-dns'
+  else if (act === 'resolve') targetOutbound = 'resolve'
+  else if (act === 'route-options') targetOutbound = 'route-options'
+  return { match, outbound: targetOutbound }
+}
 
 type MatchField =
   | 'auth_user'
@@ -611,11 +785,29 @@ export function RuleForm({
   const [form] = Form.useForm()
   const [submitting, setSubmitting] = useState(false)
   const [ruleSets, setRuleSets] = useState<RuleSet[]>(assignedRuleSets ?? [])
+  const [editorMode, setEditorMode] = useState<'form' | 'json'>('form')
+  const [extraMatch, setExtraMatch] = useState<Record<string, unknown>>({})
+  const [jsonText, setJsonText] = useState('')
+  const [jsonError, setJsonError] = useState('')
+  const schemas = useSingboxSchemas(open)
   const submitLock = useRef(false)
   const submitSessionRef = useRef(0)
   const action = Form.useWatch('action', form) || 'route'
   const matchFields = (Form.useWatch('match_fields', form) || []) as MatchField[]
   const showMatchField = (field: MatchField) => matchFields.includes(field)
+
+  const schemaProps = useMemo(() => schemas.route_rule.properties ?? {}, [schemas.route_rule])
+  const advancedSchemaProps = useMemo(() => {
+    const out: Record<string, JSONSchema> = {}
+    for (const [k, v] of Object.entries(schemaProps)) {
+      if (STANDARD_RULE_MATCH_KEYS.has(k)) continue
+      const actions = v['x-ui']?.actions
+      if (actions && !actions.includes(action)) continue
+      out[k] = v
+    }
+    return out
+  }, [schemaProps, action])
+  const hasAdvancedSchemaProps = Object.keys(advancedSchemaProps).length > 0
 
   useLayoutEffect(() => {
     submitSessionRef.current += 1
@@ -636,62 +828,50 @@ export function RuleForm({
   useEffect(() => {
     if (!open) return
     form.resetFields()
+    setEditorMode('form')
+    setJsonError('')
     if (rule) {
-      const m = rule.match || {}
-      // 根据 outbound 值推导 action 类型
-      let act = (m.action as string) || ''
-      if (!act) {
-        if (rule.outbound === 'block' || rule.outbound === 'reject') {
-          act = 'reject'
-        } else if (rule.outbound === 'sniff') {
-          act = 'sniff'
-        } else if (rule.outbound === 'hijack-dns') {
-          act = 'hijack-dns'
-        } else {
-          act = 'route'
-        }
-      }
-      form.setFieldsValue({
-        action: act,
-        outbound: rule.outbound || undefined,
-        sniffer: m.sniffer || (act === 'sniff' ? m.protocol : null) || [],
-        protocol: act === 'hijack-dns' ? (m.protocol?.length ? m.protocol : ['dns']) : (act !== 'sniff' ? (m.protocol || []) : []),
-         method: (m.method as string) || 'default',
-         match_fields: activeMatchFields(m),
-         auth_user: m.auth_user || [],
-         rule_set: m.rule_set || [],
-         rule_set_ip_direction: m.rule_set_ip_cidr_match_source ? 'source' : 'target',
-         inbound: m.inbound || [],
-         domain: joinLines(m.domain),
-         domain_suffix: joinLines(m.domain_suffix),
-         domain_keyword: joinLines(m.domain_keyword),
-         ip_cidr: joinLines(m.ip_cidr),
-         source_ip_cidr: joinLines(m.source_ip_cidr),
-         port: joinLines(m.port?.map(String)),
-        network: m.network || '',
-      })
+      const m = (rule.match || {}) as Record<string, unknown>
+      form.setFieldsValue(ruleToFormValues(m, rule.outbound))
+      setExtraMatch(cloneMatchExtra(m))
+      setJsonText(JSON.stringify(ruleToNativeJson(rule.match || {}, rule.outbound), null, 2))
     } else {
-      form.setFieldsValue({
-        action: 'route',
-        outbound: undefined,
-        sniffer: [],
-         protocol: [],
-         method: 'default',
-         match_fields: [],
-         auth_user: [],
-         rule_set: [],
-         rule_set_ip_direction: 'target',
-         inbound: [],
-         domain: '',
-         domain_suffix: '',
-         domain_keyword: '',
-         ip_cidr: '',
-         source_ip_cidr: '',
-         port: '',
-        network: '',
-      })
+      form.setFieldsValue(ruleToFormValues({}, undefined))
+      setExtraMatch({})
+      setJsonText('')
     }
-  }, [open, rule])
+  }, [open, rule, form])
+
+  const switchEditorMode = (nextMode: string) => {
+    if (nextMode !== 'form' && nextMode !== 'json') return
+    if (nextMode === editorMode) return
+    setJsonError('')
+    if (nextMode === 'json') {
+      const v = form.getFieldsValue()
+      const { match, outbound } = buildRulePayload(v, extraMatch, schemaProps)
+      setJsonText(JSON.stringify(ruleToNativeJson(match, outbound), null, 2))
+      setEditorMode('json')
+      return
+    }
+    try {
+      const parsed = JSON.parse(jsonText || '{}') as Record<string, unknown>
+      if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
+        setJsonError('配置必须是 JSON 对象')
+        return
+      }
+      const schemaErr = validateObjectBySchema(schemas.route_rule, parsed)
+      if (schemaErr) {
+        setJsonError(schemaErr)
+        return
+      }
+      const outboundStr = typeof parsed.outbound === 'string' ? parsed.outbound : rule?.outbound
+      form.setFieldsValue(ruleToFormValues(parsed, outboundStr))
+      setExtraMatch(cloneMatchExtra(parsed))
+      setEditorMode('form')
+    } catch (err) {
+      setJsonError(err instanceof Error ? `JSON 解析失败: ${err.message}` : 'JSON 格式错误')
+    }
+  }
 
   const submit = async () => {
     if (!open || submitLock.current) return
@@ -699,61 +879,38 @@ export function RuleForm({
     const session = submitSessionRef.current
     setSubmitting(true)
     try {
-      const v = await form.validateFields().catch((err) => {
-        scrollToFirstError(form, err)
-        throw err
-      })
-      if (session !== submitSessionRef.current) return
-      const match: RuleMatch = { action: v.action }
-      const selectedFields = new Set<MatchField>(v.match_fields || [])
-      if (selectedFields.has('auth_user') && v.auth_user?.length) match.auth_user = v.auth_user
-      if ((v.action === 'sniff' || v.action === 'hijack-dns' || selectedFields.has('inbound')) && v.inbound?.length) {
-        match.inbound = v.inbound
-      }
-      if (v.action === 'route' || v.action === 'reject') {
-        if (selectedFields.has('rule_set') && v.rule_set?.length) {
-          match.rule_set = v.rule_set
-          if (v.rule_set_ip_direction === 'source') match.rule_set_ip_cidr_match_source = true
+      let match: RuleMatch
+      let targetOutbound: string
+      if (editorMode === 'json') {
+        setJsonError('')
+        let parsed: Record<string, unknown>
+        try {
+          parsed = JSON.parse(jsonText || '{}') as Record<string, unknown>
+        } catch (err) {
+          setJsonError(err instanceof Error ? `JSON 解析失败: ${err.message}` : 'JSON 格式错误')
+          return
         }
-        if (selectedFields.has('protocol') && v.protocol?.length) match.protocol = v.protocol
-        if (selectedFields.has('domain')) {
-          const domains = splitLines(v.domain)
-          if (domains.length) match.domain = domains
+        if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
+          setJsonError('配置必须是 JSON 对象')
+          return
         }
-        if (selectedFields.has('domain_suffix')) {
-          const domains = splitLines(v.domain_suffix)
-          if (domains.length) match.domain_suffix = domains
+        const schemaErr = validateObjectBySchema(schemas.route_rule, parsed)
+        if (schemaErr) {
+          setJsonError(schemaErr)
+          return
         }
-        if (selectedFields.has('domain_keyword')) {
-          const keywords = splitLines(v.domain_keyword)
-          if (keywords.length) match.domain_keyword = keywords
-        }
-        if (selectedFields.has('ip_cidr')) {
-          const cidrs = splitLines(v.ip_cidr)
-          if (cidrs.length) match.ip_cidr = cidrs
-        }
-        if (selectedFields.has('source_ip_cidr')) {
-          const cidrs = splitLines(v.source_ip_cidr)
-          if (cidrs.length) match.source_ip_cidr = cidrs
-        }
-        if (selectedFields.has('port')) {
-          const ports = splitLines(v.port).map((x) => Number(x))
-          if (ports.length) match.port = ports
-        }
-        if (selectedFields.has('network') && v.network) match.network = v.network
-      }
-
-      // 根据动作类型设置目标出站
-      let targetOutbound = v.outbound
-      if (v.action === 'sniff') {
-        targetOutbound = 'sniff'
-        if (v.sniffer?.length) match.sniffer = v.sniffer
-      } else if (v.action === 'reject') {
-        targetOutbound = 'block'
-        match.method = v.method || 'default'
-      } else if (v.action === 'hijack-dns') {
-        targetOutbound = 'hijack-dns'
-        match.protocol = ['dns']
+        const built = nativeJsonToRulePayload(parsed)
+        match = built.match
+        targetOutbound = built.outbound
+      } else {
+        const v = await form.validateFields().catch((err) => {
+          scrollToFirstError(form, err)
+          throw err
+        })
+        if (session !== submitSessionRef.current) return
+        const built = buildRulePayload(v, extraMatch, schemaProps)
+        match = built.match
+        targetOutbound = built.outbound
       }
 
       // 备注与启用不再在表单里编辑：保留已有值，新建规则默认启用。
@@ -786,6 +943,31 @@ export function RuleForm({
       width={MODAL_MD}
     >
       <fieldset disabled={submitting} aria-busy={submitting} className="min-w-0 border-0 p-0 m-0">
+      <div className="mb-4 flex items-center justify-between gap-3">
+        <Segmented
+          aria-label="规则编辑模式"
+          value={editorMode}
+          onChange={switchEditorMode}
+          options={[
+            { value: 'form', label: 'Schema 表单' },
+            { value: 'json', label: 'JSON 编辑' },
+          ]}
+        />
+      </div>
+      {editorMode === 'json' ? (
+        <div className="space-y-3">
+          {jsonError && <Alert type="error" showIcon message={jsonError} />}
+          <JsonCodeEditor
+            ariaLabel="rule.json"
+            value={jsonText}
+            disabled={submitting}
+            onChange={(val) => {
+              setJsonText(val)
+              if (jsonError) setJsonError('')
+            }}
+          />
+        </div>
+      ) : (
       <Form form={form} layout="vertical" fieldLayout className="fm-form">
         <FieldGroup className="gap-5">
           <Field>
@@ -841,7 +1023,7 @@ export function RuleForm({
               </Form.Item>
             </>
           )}
-          {action === 'hijack-dns' && (
+          {(action === 'hijack-dns' || action === 'resolve' || action === 'route-options') && (
             <Form.Item name="inbound" label="限定入站" className="fm-full">
               <Select
                 mode="multiple"
@@ -853,7 +1035,7 @@ export function RuleForm({
           )}
         </FieldGroup>
 
-        {(action === 'route' || action === 'reject') && (
+        {(action === 'route' || action === 'reject' || action === 'route-options') && (
           <FieldGroup className="gap-5 mt-6">
             <Field>
               <div className="flex items-baseline justify-between gap-3">
@@ -983,7 +1165,18 @@ export function RuleForm({
             )}
           </FieldGroup>
         )}
+        {hasAdvancedSchemaProps && (
+          <FormGroup title="高级匹配与路由参数">
+            <SchemaFieldList
+              properties={advancedSchemaProps}
+              value={extraMatch}
+              onChange={setExtraMatch}
+              idPrefix="rule-adv"
+            />
+          </FormGroup>
+        )}
       </Form>
+      )}
       </fieldset>
     </Modal>
   )

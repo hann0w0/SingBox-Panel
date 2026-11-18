@@ -165,6 +165,17 @@ func (a *App) updateInbound(c *gin.Context) {
 		return
 	}
 	oldTag := ib.Tag
+	if oldTag != nextTag {
+		refs, err := preservedConfigReferences(a.db, sid, "inbound")
+		if err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+			return
+		}
+		if refs[oldTag] {
+			c.JSON(http.StatusConflict, gin.H{"error": "该入站仍被自定义配置引用，请先在配置文件中修改引用"})
+			return
+		}
+	}
 	ib.Tag = nextTag
 	ib.ListenPort = nextPort
 	if req.Remark != nil {
@@ -220,8 +231,16 @@ func (a *App) updateInbound(c *gin.Context) {
 			return
 		}
 		if err := st.Validate(string(ib.Type)); err != nil {
-			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
-			return
+			// An imported unknown TLS provider or protocol option may satisfy a
+			// requirement this validator cannot see. Keep an existing limitation
+			// editable; the complete merged file is validated on the Agent.
+			previousErr := oldSettings.Validate(string(ib.Type))
+			var server model.Server
+			loadErr := a.db.Select("id", "config_overlay").First(&server, sid).Error
+			if loadErr != nil || !singbox.HasConfigOverlay(server.ConfigOverlay) || previousErr == nil || previousErr.Error() != err.Error() {
+				c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+				return
+			}
 		}
 		raw, _ := json.Marshal(st)
 		ib.Settings = model.JSONText(raw)

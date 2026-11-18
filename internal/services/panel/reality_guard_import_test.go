@@ -49,7 +49,7 @@ func TestImportRealityGuardManagedAndPublicSubscription(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if mode := importedConfigMode(parsed, raw); mode != model.ConfigModeManaged {
+	if mode := importedConfigMode(t, parsed, raw); mode != model.ConfigModeManaged {
 		t.Fatalf("mode=%s, want managed", mode)
 	}
 	db := testDB(t)
@@ -104,12 +104,12 @@ func TestImportRealityGuardManagedAndPublicSubscription(t *testing.T) {
 	if err != nil || len(reparsed.Inbounds) != 1 || reparsed.Inbounds[0].ListenPort != 31735 || !reparsed.Inbounds[0].Settings.RealityGuardEnabled() {
 		t.Fatalf("orchestrator lost gate: %+v, %v", reparsed, err)
 	}
-	if mode := importedConfigMode(reparsed, generated); mode != model.ConfigModeManaged {
+	if mode := importedConfigMode(t, reparsed, generated); mode != model.ConfigModeManaged {
 		t.Fatalf("generated mode=%s", mode)
 	}
 }
 
-func TestImportRealityGuardUnknownDataAndDifferencesStayRaw(t *testing.T) {
+func TestImportRealityGuardUnknownDataAndDifferencesStayEditable(t *testing.T) {
 	for _, test := range []struct {
 		name   string
 		mutate func(map[string]any)
@@ -147,8 +147,8 @@ func TestImportRealityGuardUnknownDataAndDifferencesStayRaw(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			if mode := importedConfigMode(parsed, raw); mode != model.ConfigModeRaw {
-				t.Fatalf("mode=%s, want raw", mode)
+			if mode := importedConfigMode(t, parsed, raw); mode != model.ConfigModeManaged {
+				t.Fatalf("mode=%s, want managed", mode)
 			}
 			db := testDB(t)
 			srv := model.Server{Name: test.name, AgentToken: test.name}
@@ -162,11 +162,11 @@ func TestImportRealityGuardUnknownDataAndDifferencesStayRaw(t *testing.T) {
 			if err := db.First(&srv, srv.ID).Error; err != nil {
 				t.Fatal(err)
 			}
-			if srv.EffectiveConfigMode() != model.ConfigModeRaw || !bytes.Equal(srv.RawConfig, raw) {
-				t.Fatal("raw mode/source did not survive import")
+			if srv.EffectiveConfigMode() != model.ConfigModeManaged || !bytes.Equal(srv.RawConfig, raw) {
+				t.Fatal("imported configuration was locked or source changed")
 			}
 			generated, err := app.orch.BuildServerConfig(&srv)
-			if err != nil || !bytes.Equal(generated, raw) {
+			if err != nil || !equivalentJSON(generated, raw) {
 				t.Fatalf("raw source changed: %s, %v", generated, err)
 			}
 		})
@@ -224,22 +224,22 @@ func TestImportRealityGuardAcceptsOnlyFiniteDefaults(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		if mode := importedConfigMode(parsed, raw); mode != model.ConfigModeManaged {
+		if mode := importedConfigMode(t, parsed, raw); mode != model.ConfigModeManaged {
 			t.Fatalf("name=%v mode=%s", name, mode)
 		}
 	}
-	// The finite guard defaults never make an ordinary import more permissive.
+	// Missing renderer defaults are also preserved on ordinary imports.
 	raw := []byte(`{"log":{"level":"info"},"inbounds":[{"type":"socks","tag":"socks","listen":"::","listen_port":1080}],"outbounds":[{"type":"direct","tag":"direct"}],"route":{"final":"direct"}}`)
 	parsed, err := singbox.ParseServerConfig(raw)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if mode := importedConfigMode(parsed, raw); mode != model.ConfigModeRaw {
-		t.Fatalf("unguarded import unexpectedly accepted missing timestamp: %s", mode)
+	if mode := importedConfigMode(t, parsed, raw); mode != model.ConfigModeManaged {
+		t.Fatalf("missing timestamp locked editing: %s", mode)
 	}
 }
 
-func TestImportRealityGuardReservedStatsPortsStayRaw(t *testing.T) {
+func TestImportRealityGuardReservedStatsPortsKeepExistingServices(t *testing.T) {
 	for _, port := range []int{29091, 29092} {
 		for _, internal := range []bool{true, false} {
 			raw := mutateRealityGuardImport(t, func(root map[string]any) {
@@ -255,8 +255,8 @@ func TestImportRealityGuardReservedStatsPortsStayRaw(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			if mode := importedConfigMode(parsed, raw); mode != model.ConfigModeRaw {
-				t.Fatalf("reserved port %d internal=%v promoted to %s", port, internal, mode)
+			if mode := importedConfigMode(t, parsed, raw); mode != model.ConfigModeManaged {
+				t.Fatalf("reserved port %d internal=%v locked editing: %s", port, internal, mode)
 			}
 			db := testDB(t)
 			srv := model.Server{Name: "reserved guard", AgentToken: "reserved-guard-token", SingboxVersion: "1.14.4"}
@@ -303,7 +303,7 @@ func TestImportRealityGuardPreservesInternalInboundRouting(t *testing.T) {
 	if len(rule.Match.Inbound) != 1 || rule.Match.Inbound[0] != "reality-in" || len(rule.Match.DomainSuffix) != 1 || rule.Match.DomainSuffix[0] != "example.com" {
 		t.Fatalf("internal inbound routing changed: %+v", rule)
 	}
-	if mode := importedConfigMode(reparsed, generated); mode != model.ConfigModeManaged {
+	if mode := importedConfigMode(t, reparsed, generated); mode != model.ConfigModeManaged {
 		t.Fatalf("generated gate with internal routing became %s", mode)
 	}
 }

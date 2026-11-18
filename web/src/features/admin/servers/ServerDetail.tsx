@@ -1,7 +1,6 @@
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react'
 import type { PointerEvent as ReactPointerEvent, ReactNode } from 'react'
 import {
-  Alert,
   Button,
   Form,
   Input,
@@ -38,7 +37,6 @@ import {
   remoteConfig,
   reorderRules,
   serviceAction,
-  setConfigMode,
   setFinalOutbound,
   testOutbound,
   uninstallAgent,
@@ -296,7 +294,6 @@ export default function ServerDetail() {
   }
 
   const startRulePointerDrag = (event: ReactPointerEvent<HTMLButtonElement>, sourceIndex: number) => {
-    if (server?.config_mode === 'raw') return
     if (event.pointerType !== 'touch' && event.pointerType !== 'pen') return
     event.preventDefault()
     event.stopPropagation()
@@ -384,15 +381,6 @@ export default function ServerDetail() {
   const inboundTags = (server?.inbounds || []).map((i) => i.tag)
 
   const onSetFinal = (v: string) => run('final', () => setFinalOutbound(sid, v), 'final 出站已更新')
-
-  const switchToManaged = () =>
-    Modal.confirm({
-      title: '切换到面板管理配置?',
-      content: '面板无法识别的字段将被舍弃。',
-      okText: '确认切换并下发',
-      okType: 'danger',
-      onOk: () => run('mode', () => setConfigMode(sid, 'managed'), '已切换到面板管理'),
-    })
 
   // Import: preview what the server's own config.json contains, then adopt it.
   const openImport = async () => {
@@ -721,12 +709,10 @@ export default function ServerDetail() {
     try {
       const result = await applyRawConfig(targetSID, cfgText)
       if (!isCurrentSession()) return
-      if (result.config_mode === 'managed') {
-        message.success('已校验、下发并自动进入面板管理')
-      } else if (result.summary.skipped?.length) {
+      if (result.summary.skipped?.length) {
         message.warning(`已下发并同步；${result.summary.skipped.length} 项无法转换为面板表单，已在原始配置中完整保留`)
       } else {
-        message.info('已下发并同步；配置无法无损转换，继续保留完整原始配置')
+        message.success('已校验、下发并自动进入面板管理')
       }
       for (const warning of result.warnings ?? []) {
         message.warning({ content: `安全提醒：${warning}`, duration: 10 })
@@ -755,19 +741,18 @@ export default function ServerDetail() {
   if (!server) {
     return <RequestState loading={pageLoading} error={loadError} hasData={false} onRetry={loadCurrentServer}><span /></RequestState>
   }
-  const rawMode = server.config_mode === 'raw'
   const finalOutbound = server.final_outbound || 'direct'
   const memPct = server.mem_total ? Math.round((server.mem_used / server.mem_total) * 100) : null
   const goSection = (key: string) => navigate(key === 'inbounds' ? `/admin/servers/${sid}` : `/admin/servers/${sid}/${key}`, { replace: true })
   const addButton: Partial<Record<DetailSection, ReactNode>> = {
-    inbounds: <Button type="primary" size="small" icon={<Plus />} disabled={rawMode} onClick={() => { setEditing(null); setFormOpen(true) }}>新增入站</Button>,
-    outbounds: <Button type="primary" size="small" icon={<Plus />} disabled={rawMode} onClick={() => { setObEditing(null); setObOpen(true) }}>新增出站</Button>,
-    rules: <Button type="primary" size="small" icon={<Plus />} disabled={rawMode} onClick={() => { setRuleEditing(null); setRuleOpen(true) }}>新增规则</Button>,
+    inbounds: <Button type="primary" size="small" icon={<Plus />} onClick={() => { setEditing(null); setFormOpen(true) }}>新增入站</Button>,
+    outbounds: <Button type="primary" size="small" icon={<Plus />} onClick={() => { setObEditing(null); setObOpen(true) }}>新增出站</Button>,
+    rules: <Button type="primary" size="small" icon={<Plus />} onClick={() => { setRuleEditing(null); setRuleOpen(true) }}>新增规则</Button>,
   }
   const rowActions = (onEdit: () => void, onDelete: () => void, label: string) => (
     <span className="ui-row-actions">
-      <Button size="small" type="text" icon={<Pencil />} aria-label={`编辑 ${label}`} disabled={rawMode} onClick={onEdit} />
-      <Button size="small" type="text" icon={<Trash2 />} aria-label={`删除 ${label}`} disabled={rawMode} onClick={onDelete} />
+      <Button size="small" type="text" icon={<Pencil />} aria-label={`编辑 ${label}`} onClick={onEdit} />
+      <Button size="small" type="text" icon={<Trash2 />} aria-label={`删除 ${label}`} onClick={onDelete} />
     </span>
   )
 
@@ -858,7 +843,7 @@ export default function ServerDetail() {
         locale={{ emptyText: '暂无规则' }}
         rowClassName={(r: RouteRule) => (r.enabled ? '' : 'is-disabled')}
         onRow={(_, index) => ({
-          draggable: !rawMode,
+          draggable: true,
           onDragStart: (e) => {
             draggedRuleIndexRef.current = index!
             setDraggedRuleIndex(index!)
@@ -887,7 +872,6 @@ export default function ServerDetail() {
                 className="rule-drag-handle sd-drag"
                 aria-label={`调整第 ${index + 1} 条规则顺序`}
                 aria-describedby="rule-sort-help"
-                disabled={rawMode}
                 onKeyDown={(event) => {
                   if (event.key === 'ArrowUp' || event.key === 'ArrowDown') {
                     event.preventDefault()
@@ -915,7 +899,7 @@ export default function ServerDetail() {
           size="small"
           aria-label="兜底出站"
           value={finalOutbound}
-          disabled={rawMode || busy === 'final'}
+          disabled={busy === 'final'}
           loading={busy === 'final'}
           popupMatchSelectWidth={false}
           onChange={(v) => { if (v !== finalOutbound) void onSetFinal(v) }}
@@ -979,15 +963,6 @@ export default function ServerDetail() {
         ]} />
       )}
 
-      {rawMode && (
-        <Alert
-          type="warning"
-          showIcon
-          className="sd-raw"
-          message="原始配置模式，面板编辑已锁定"
-          action={<Button size="small" danger loading={busy === 'mode'} onClick={switchToManaged}>切换到面板管理</Button>}
-        />
-      )}
       {views[section]}
 
       <InboundForm

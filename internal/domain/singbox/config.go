@@ -9,6 +9,9 @@ import (
 
 // ServerConfigInput is everything needed to render a server's full config.json.
 type ServerConfigInput struct {
+	// ProjectionOnly renders partially modelled inputs for a raw-config overlay.
+	// The complete merged file is still checked by sing-box before activation.
+	ProjectionOnly bool
 	// LogLevel defaults to "warn".
 	LogLevel string
 	Inbounds []InboundInput
@@ -67,13 +70,14 @@ type experimentalOut struct {
 // project's sing-box 1.14 baseline (also accepted by 1.15). The output is validated on the VPS by `sing-box check`
 // before being applied.
 func BuildServerConfig(in ServerConfigInput) ([]byte, error) {
-	if err := ValidateRealityGuardLayout(in.Inbounds); err != nil {
+	if err := ValidateRealityGuardLayout(in.Inbounds); err != nil && !in.ProjectionOnly {
 		return nil, err
 	}
 	inbounds := make([]json.RawMessage, 0, len(in.Inbounds))
 	var guardRules []map[string]any
 	for _, ib := range in.Inbounds {
-		if ib.Settings.RealityGuardEnabled() {
+		ib.ProjectionOnly = in.ProjectionOnly
+		if ib.Settings.RealityGuardEnabled() && !in.ProjectionOnly {
 			for _, address := range []string{in.StatsController, in.StatsAPI} {
 				_, portText, _ := net.SplitHostPort(address)
 				port, _ := strconv.Atoi(portText)

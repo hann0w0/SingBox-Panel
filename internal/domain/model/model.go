@@ -225,6 +225,9 @@ type Server struct {
 	// whose config uses fields outside the panel's model stays editable instead
 	// of degrading to raw mode and locking every control.
 	ConfigResidual JSONText `gorm:"type:text" json:"-"`
+	// ConfigOverlay stores the original JSON, panel input baseline and stable
+	// array identities. Both projections use the current renderer on every push.
+	ConfigOverlay JSONText `gorm:"type:text" json:"-"`
 	// ConfigInitialized distinguishes a brand-new node (whose existing
 	// sing-box config must not be touched) from a deliberately empty managed
 	// config after the administrator deletes the last structured record.

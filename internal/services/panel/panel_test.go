@@ -41,6 +41,7 @@ func testDB(t *testing.T) *gorm.DB {
 	}
 	pool.SetMaxOpenConns(1)
 	pool.SetMaxIdleConns(1)
+	t.Cleanup(func() { _ = pool.Close() })
 	return db
 }
 
@@ -124,7 +125,7 @@ func TestImportSyncPreservesInboundGrantsByTag(t *testing.T) {
 	if err := db.First(&srv, srv.ID).Error; err != nil {
 		t.Fatal(err)
 	}
-	if srv.EffectiveConfigMode() != model.ConfigModeRaw || string(srv.RawConfig) != string(raw) || !srv.ConfigInitialized {
+	if srv.EffectiveConfigMode() != model.ConfigModeManaged || string(srv.RawConfig) != string(raw) || !srv.ConfigInitialized {
 		t.Fatalf("raw source not persisted: mode=%q initialized=%v raw=%s", srv.ConfigMode, srv.ConfigInitialized, srv.RawConfig)
 	}
 	if err := db.First(&user, user.ID).Error; err != nil {
@@ -1268,7 +1269,7 @@ func TestImportKeepsConfigWithLegacyLoopbackGuardManaged(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got := importedConfigMode(parsed, legacy); got != model.ConfigModeManaged {
+	if got := importedConfigMode(t, parsed, legacy); got != model.ConfigModeManaged {
 		t.Fatalf("legacy-guard config mode = %q, want managed", got)
 	}
 }

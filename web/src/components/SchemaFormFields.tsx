@@ -1,4 +1,4 @@
-import { useId } from 'react'
+import { useEffect, useId, useState } from 'react'
 import { Input, InputNumber, Select, Switch } from './kit'
 import { Field, FieldLabel } from '@/components/ui/field'
 import type { JSONSchema } from '../lib/singboxSchema'
@@ -21,6 +21,121 @@ function splitLines(text: string): string[] {
 
 function joinLines(arr: unknown): string {
   return Array.isArray(arr) ? arr.map(String).join('\n') : ''
+}
+
+function SchemaJsonObjectField({
+  fieldId,
+  label,
+  current,
+  onUpdate,
+}: {
+  fieldId: string
+  label: string
+  current: unknown
+  onUpdate: (nextVal: unknown) => void
+}) {
+  const externalText =
+    current && typeof current === 'object' ? JSON.stringify(current, null, 2) : ''
+  const [draft, setDraft] = useState(externalText)
+
+  useEffect(() => {
+    const trimmed = draft.trim()
+    if (!trimmed) {
+      if (externalText) setDraft(externalText)
+      return
+    }
+    try {
+      const parsed = JSON.parse(trimmed)
+      if (JSON.stringify(parsed, null, 2) !== externalText) {
+        setDraft(externalText)
+      }
+    } catch {
+      // Preserve in-progress user draft while JSON is incomplete
+    }
+  }, [externalText])
+
+  return (
+    <Field className="fm-full">
+      <FieldLabel htmlFor={fieldId}>{label}</FieldLabel>
+      <JsonCodeEditor
+        ariaLabel={label}
+        value={draft}
+        onChange={(raw) => {
+          setDraft(raw)
+          const trimmed = raw.trim()
+          if (!trimmed) {
+            onUpdate(undefined)
+            return
+          }
+          try {
+            const parsed = JSON.parse(trimmed)
+            if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
+              onUpdate(parsed)
+            }
+          } catch {
+            // Keep editing until JSON becomes valid
+          }
+        }}
+      />
+    </Field>
+  )
+}
+
+function SchemaLinesArrayField({
+  fieldId,
+  label,
+  placeholder,
+  fullWidth,
+  isIntArray,
+  current,
+  onUpdate,
+}: {
+  fieldId: string
+  label: string
+  placeholder?: string
+  fullWidth?: boolean
+  isIntArray: boolean
+  current: unknown
+  onUpdate: (nextVal: unknown) => void
+}) {
+  const externalText = joinLines(current)
+  const [draft, setDraft] = useState(externalText)
+  const [focused, setFocused] = useState(false)
+
+  useEffect(() => {
+    if (!focused) {
+      setDraft(externalText)
+    }
+  }, [externalText, focused])
+
+  return (
+    <Field className={fullWidth ? 'fm-full' : undefined}>
+      <FieldLabel htmlFor={fieldId}>{label}</FieldLabel>
+      <Input.TextArea
+        id={fieldId}
+        autoSize={{ minRows: 1, maxRows: 4 }}
+        className="mono"
+        placeholder={placeholder}
+        value={draft}
+        onFocus={() => setFocused(true)}
+        onBlur={() => {
+          setFocused(false)
+          setDraft(externalText)
+        }}
+        onChange={(e) => {
+          const raw = e.target.value
+          setDraft(raw)
+          const items = splitLines(raw)
+          if (isIntArray) {
+            const nums = items.map(Number).filter((n) => !Number.isNaN(n) && Number.isInteger(n))
+            onUpdate(nums)
+          } else {
+            onUpdate(items)
+          }
+        }}
+      />
+    </Field>
+  )
 }
 
 export function SchemaFieldList({
@@ -80,33 +195,14 @@ export function SchemaFieldList({
         const current = value[key]
 
         if (schema.type === 'object' || ui?.widget === 'json') {
-          const textVal =
-            current && typeof current === 'object'
-              ? JSON.stringify(current, null, 2)
-              : ''
           return (
-            <Field key={key} className="fm-full">
-              <FieldLabel htmlFor={fieldId}>{label}</FieldLabel>
-              <JsonCodeEditor
-                ariaLabel={label}
-                value={textVal}
-                onChange={(raw) => {
-                  const trimmed = raw.trim()
-                  if (!trimmed) {
-                    updateKey(key, undefined)
-                    return
-                  }
-                  try {
-                    const parsed = JSON.parse(trimmed)
-                    if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
-                      updateKey(key, parsed)
-                    }
-                  } catch {
-                    // Keep editing until JSON becomes valid
-                  }
-                }}
-              />
-            </Field>
+            <SchemaJsonObjectField
+              key={key}
+              fieldId={fieldId}
+              label={label}
+              current={current}
+              onUpdate={(nextVal) => updateKey(key, nextVal)}
+            />
           )
         }
 
@@ -137,25 +233,16 @@ export function SchemaFieldList({
           }
 
           return (
-            <Field key={key} className={ui?.full_width ? 'fm-full' : undefined}>
-              <FieldLabel htmlFor={fieldId}>{label}</FieldLabel>
-              <Input.TextArea
-                id={fieldId}
-                autoSize={{ minRows: 1, maxRows: 4 }}
-                className="mono"
-                placeholder={ui?.placeholder}
-                value={joinLines(current)}
-                onChange={(e) => {
-                  const items = splitLines(e.target.value)
-                  if (isIntArray) {
-                    const nums = items.map(Number).filter((n) => !Number.isNaN(n) && Number.isInteger(n))
-                    updateKey(key, nums)
-                  } else {
-                    updateKey(key, items)
-                  }
-                }}
-              />
-            </Field>
+            <SchemaLinesArrayField
+              key={key}
+              fieldId={fieldId}
+              label={label}
+              placeholder={ui?.placeholder}
+              fullWidth={ui?.full_width}
+              isIntArray={isIntArray}
+              current={current}
+              onUpdate={(nextVal) => updateKey(key, nextVal)}
+            />
           )
         }
 

@@ -269,6 +269,7 @@ export function CustomNodesPanel({ nodes, loading, error, onNodesChange }: {
       loadSubscriptions()
       onNodesChange()
     } catch (e) {
+      if (e && typeof e === 'object' && 'errorFields' in e) return
       message.error(errMsg(e))
     } finally {
       subscriptionSubmitLock.current = false
@@ -396,6 +397,7 @@ export function CustomNodesPanel({ nodes, loading, error, onNodesChange }: {
       setNodeOpen(false)
       onNodesChange()
     } catch (e) {
+      if (e && typeof e === 'object' && 'errorFields' in e) return
       message.error(errMsg(e))
     } finally {
       nodeSubmitLock.current = false
@@ -896,8 +898,13 @@ export function CustomNodesPanel({ nodes, loading, error, onNodesChange }: {
                   <Select
                     placeholder="选择协议"
                     onChange={(protocol) => {
-                      if (protocol === 'http') nodeForm.setFieldValue('tls_mode', 'none')
-                      else if (nodeProtocol === 'http' && !['vless', 'vmess'].includes(protocol)) nodeForm.setFieldValue('tls_mode', 'tls')
+                      if (protocol === 'http') {
+                        nodeForm.setFieldValue('tls_mode', 'none')
+                      } else if (TLS_REALITY.includes(protocol)) {
+                        if (nodeProtocol === 'http' && !['vless', 'vmess'].includes(protocol)) nodeForm.setFieldValue('tls_mode', 'tls')
+                      } else if (HAS_TLS.includes(protocol)) {
+                        nodeForm.setFieldValue('tls_mode', 'tls')
+                      }
                     }}
                     options={toProtocolOptions(EXTERNAL_NODE_PROTOCOL_TYPES)}
                   />

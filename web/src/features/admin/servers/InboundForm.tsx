@@ -593,10 +593,7 @@ export default function InboundForm({
         return
       }
       const nextType = (typeof parsed.type === 'string' && TYPES.some((t) => t.value === parsed.type) ? parsed.type : type) as InboundType
-      const prevSettings: InboundSettings = {
-        ...(inbound?.settings || {}),
-        ...(form.getFieldValue('multi_user') !== undefined ? { multi_user: !!form.getFieldValue('multi_user') } : {}),
-      }
+      const prevSettings = assembleSettings(inbound?.settings || {}, form.getFieldsValue() as FormVals, nextType, rawExtra)
       const nextSettings = nativeJsonToInboundSettings(prevSettings, parsed)
       const nextTag = typeof parsed.tag === 'string' ? parsed.tag : ''
       const nextPort = typeof parsed.listen_port === 'number' ? parsed.listen_port : (form.getFieldValue('listen_port') || 0)
@@ -665,10 +662,7 @@ export default function InboundForm({
           return
         }
         const nextType = (typeof parsed.type === 'string' && TYPES.some((t) => t.value === parsed.type) ? parsed.type : type) as InboundType
-        const prevSettings: InboundSettings = {
-          ...(inbound?.settings || {}),
-          ...(form.getFieldValue('multi_user') !== undefined ? { multi_user: !!form.getFieldValue('multi_user') } : {}),
-        }
+        const prevSettings = assembleSettings(inbound?.settings || {}, form.getFieldsValue() as FormVals, nextType, rawExtra)
         const nextSettings = nativeJsonToInboundSettings(prevSettings, parsed)
         body = {
           type: nextType,

@@ -578,13 +578,18 @@ export function inboundSettingsToNativeJson(
   const base = cloneJson((settings.raw ?? {}) as Record<string, unknown>)
   base.type = type
   if (tag) base.tag = tag
+  else delete base.tag
   if (type !== 'tun') {
     if (settings.listen || !base.listen) base.listen = settings.listen || '::'
     if (listenPort) base.listen_port = listenPort
+  } else {
+    delete base.listen
+    delete base.listen_port
   }
 
   if (type === 'vless') {
     if (settings.flow) base.flow = settings.flow
+    else delete base.flow
     // packet_encoding belongs to client subscriptions, not server-side VLESS inbound JSON.
     delete base.packet_encoding
   } else if (type === 'shadowsocks') {
@@ -592,8 +597,11 @@ export function inboundSettingsToNativeJson(
     if (settings.ss_server_psk) base.password = settings.ss_server_psk
   } else if (type === 'hysteria2') {
     if (settings.up_mbps) base.up_mbps = settings.up_mbps
+    else delete base.up_mbps
     if (settings.down_mbps) base.down_mbps = settings.down_mbps
+    else delete base.down_mbps
     if (settings.ignore_client_bandwidth) base.ignore_client_bandwidth = true
+    else delete base.ignore_client_bandwidth
     if (settings.obfs_type || settings.obfs_password) {
       base.obfs = {
         ...(typeof base.obfs === 'object' && base.obfs ? (base.obfs as Record<string, unknown>) : {}),
@@ -602,6 +610,8 @@ export function inboundSettingsToNativeJson(
         ...(settings.obfs_type === 'gecko' && settings.gecko_min_packet_size ? { min_packet_size: settings.gecko_min_packet_size } : {}),
         ...(settings.obfs_type === 'gecko' && settings.gecko_max_packet_size ? { max_packet_size: settings.gecko_max_packet_size } : {}),
       }
+    } else {
+      delete base.obfs
     }
   } else if (type === 'tuic') {
     if (settings.congestion_control) base.congestion_control = settings.congestion_control
@@ -612,21 +622,36 @@ export function inboundSettingsToNativeJson(
     if (settings.snell_version) base.version = settings.snell_version
     if (settings.snell_psk) base.psk = settings.snell_psk
     if (settings.snell_obfs_mode && settings.snell_obfs_mode !== 'none') base.obfs_mode = settings.snell_obfs_mode
+    else delete base.obfs_mode
     if (settings.snell_mode) base.mode = settings.snell_mode
-  } else if (type === 'trojan' && settings.trojan_fallback) {
-    base.fallback = { ...settings.trojan_fallback }
+    else delete base.mode
+  } else if (type === 'trojan') {
+    if (settings.trojan_fallback) base.fallback = { ...settings.trojan_fallback }
+    else delete base.fallback
   }
 
   if (settings.transport?.type && settings.transport.type !== 'tcp') {
     const prevTr = (base.transport && typeof base.transport === 'object' ? base.transport : {}) as Record<string, unknown>
-    base.transport = {
+    const nextTr: Record<string, unknown> = {
       ...prevTr,
       type: settings.transport.type,
-      ...(settings.transport.path ? { path: settings.transport.path } : {}),
-      ...(settings.transport.headers ? { headers: settings.transport.headers } : {}),
-      ...(settings.transport.max_early_data ? { max_early_data: settings.transport.max_early_data } : {}),
-      ...(settings.transport.early_data_header ? { early_data_header_name: settings.transport.early_data_header } : {}),
     }
+    if (settings.transport.type === 'ws' || settings.transport.type === 'httpupgrade') {
+      if (settings.transport.path) nextTr.path = settings.transport.path
+      else delete nextTr.path
+      if (settings.transport.headers && Object.keys(settings.transport.headers).length > 0) nextTr.headers = settings.transport.headers
+      else delete nextTr.headers
+      if (settings.transport.max_early_data) nextTr.max_early_data = settings.transport.max_early_data
+      else delete nextTr.max_early_data
+      if (settings.transport.early_data_header) nextTr.early_data_header_name = settings.transport.early_data_header
+      else delete nextTr.early_data_header_name
+    } else {
+      if (settings.transport.path) nextTr.path = settings.transport.path
+      if (settings.transport.headers) nextTr.headers = settings.transport.headers
+    }
+    base.transport = nextTr
+  } else {
+    delete base.transport
   }
 
   if (settings.tls?.enabled || settings.tls?.reality?.enabled || settings.tls?.acme_domain) {
@@ -689,6 +714,7 @@ export function nativeJsonToInboundSettings(prev: InboundSettings, rawObj: Recor
 
   if (typeof rawObj.listen === 'string') {
     next.listen = rawObj.listen
+    next.ipv6_only = rawObj.listen.includes(':') && rawObj.listen !== '::'
   }
   if (typeof rawObj.flow === 'string') next.flow = rawObj.flow
   if (typeof rawObj.packet_encoding === 'string') next.packet_encoding = rawObj.packet_encoding
@@ -705,6 +731,31 @@ export function nativeJsonToInboundSettings(prev: InboundSettings, rawObj: Recor
   if (typeof rawObj.psk === 'string') next.snell_psk = rawObj.psk
   if (typeof rawObj.obfs_mode === 'string') next.snell_obfs_mode = rawObj.obfs_mode
   if (typeof rawObj.mode === 'string') next.snell_mode = rawObj.mode
+  if (rawObj.obfs && typeof rawObj.obfs === 'object' && !Array.isArray(rawObj.obfs)) {
+    const obfs = rawObj.obfs as Record<string, unknown>
+    if (typeof obfs.type === 'string') next.obfs_type = obfs.type
+    if (typeof obfs.password === 'string') next.obfs_password = obfs.password
+    if (typeof obfs.min_packet_size === 'number') next.gecko_min_packet_size = obfs.min_packet_size
+    if (typeof obfs.max_packet_size === 'number') next.gecko_max_packet_size = obfs.max_packet_size
+  } else if (rawObj.type === 'hysteria2') {
+    delete next.obfs_type
+    delete next.obfs_password
+    delete next.gecko_min_packet_size
+    delete next.gecko_max_packet_size
+  }
+  if (rawObj.fallback && typeof rawObj.fallback === 'object' && !Array.isArray(rawObj.fallback)) {
+    const fb = rawObj.fallback as Record<string, unknown>
+    if (typeof fb.server === 'string' && fb.server) {
+      next.trojan_fallback = {
+        server: fb.server,
+        server_port: typeof fb.server_port === 'number' ? fb.server_port : 80,
+      }
+    } else {
+      delete next.trojan_fallback
+    }
+  } else if (rawObj.type === 'trojan') {
+    delete next.trojan_fallback
+  }
 
   if (rawObj.transport && typeof rawObj.transport === 'object' && !Array.isArray(rawObj.transport)) {
     const tr = rawObj.transport as Record<string, unknown>
@@ -757,6 +808,9 @@ export function nativeJsonToInboundSettings(prev: InboundSettings, rawObj: Recor
         }
       }
     }
+    if (nextTls.reality?.enabled || nextTls.acme_domain || nextTls.certificate_path) {
+      delete nextTls.self_signed
+    }
     next.tls = nextTls
   } else {
     delete next.tls
@@ -781,7 +835,9 @@ export function outboundSettingsToNativeJson(
   if (type === 'vless') {
     if (settings.uuid) base.uuid = settings.uuid
     if (inner.flow) base.flow = inner.flow
-    if (inner.packet_encoding) base.packet_encoding = inner.packet_encoding
+    else delete base.flow
+    if (inner.packet_encoding && inner.packet_encoding !== 'none') base.packet_encoding = inner.packet_encoding
+    else if (inner.packet_encoding === 'none') base.packet_encoding = ''
   } else if (type === 'vmess') {
     if (settings.uuid) base.uuid = settings.uuid
     if (inner.vmess_security) base.security = inner.vmess_security
@@ -795,7 +851,9 @@ export function outboundSettingsToNativeJson(
   } else if (type === 'hysteria2') {
     if (settings.password) base.password = settings.password
     if (inner.up_mbps) base.up_mbps = inner.up_mbps
+    else delete base.up_mbps
     if (inner.down_mbps) base.down_mbps = inner.down_mbps
+    else delete base.down_mbps
     if (inner.obfs_type || inner.obfs_password) {
       base.obfs = {
         ...(typeof base.obfs === 'object' && base.obfs ? (base.obfs as Record<string, unknown>) : {}),
@@ -804,6 +862,8 @@ export function outboundSettingsToNativeJson(
         ...(inner.obfs_type === 'gecko' && inner.gecko_min_packet_size ? { min_packet_size: inner.gecko_min_packet_size } : {}),
         ...(inner.obfs_type === 'gecko' && inner.gecko_max_packet_size ? { max_packet_size: inner.gecko_max_packet_size } : {}),
       }
+    } else {
+      delete base.obfs
     }
   } else if (type === 'tuic') {
     if (settings.uuid) base.uuid = settings.uuid
@@ -811,6 +871,7 @@ export function outboundSettingsToNativeJson(
     if (inner.congestion_control) base.congestion_control = inner.congestion_control
     if (inner.zero_rtt_handshake !== undefined) base.zero_rtt_handshake = inner.zero_rtt_handshake
     if (inner.heartbeat) base.heartbeat = inner.heartbeat
+    else delete base.heartbeat
   } else if (type === 'anytls') {
     if (settings.password) base.password = settings.password
   } else if (type === 'snell') {
@@ -819,14 +880,20 @@ export function outboundSettingsToNativeJson(
     if (inner.snell_version) base.version = inner.snell_version
     if (inner.snell_network) base.network = inner.snell_network
     if (inner.snell_reuse) base.reuse = true
+    else delete base.reuse
     if (inner.snell_version === 4 && inner.snell_obfs_mode && inner.snell_obfs_mode !== 'none') base.obfs_mode = inner.snell_obfs_mode
+    else delete base.obfs_mode
     if (inner.snell_version === 4 && inner.snell_obfs_host) base.obfs_host = inner.snell_obfs_host
+    else delete base.obfs_host
     if (inner.snell_version === 6 && inner.snell_mode) base.mode = inner.snell_mode
+    else delete base.mode
   } else if (type === 'socks' || type === 'http') {
     const user = settings.username ?? inner.username
     const pw = settings.password ?? inner.password
     if (user) base.username = user
+    else delete base.username
     if (pw) base.password = pw
+    else delete base.password
     if (type === 'http') {
       if (inner.http_path) base.path = inner.http_path
       if (inner.http_headers && Object.keys(inner.http_headers).length > 0) base.headers = inner.http_headers

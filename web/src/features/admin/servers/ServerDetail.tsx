@@ -977,7 +977,7 @@ export default function ServerDetail() {
     outbounds: outboundTable,
     rules: rulesTable,
     traffic: <ServerTraffic key={`traffic-${sid}`} serverId={sid} toolbar={tabToolbar} />,
-    logs: <Logs key={`logs-${sid}`} serverId={sid} embedded toolbar={tabToolbar} />,
+    logs: <Logs key={`logs-${sid}`} serverId={sid} serverOnline={server?.online} embedded toolbar={tabToolbar} />,
   }
 
   return (

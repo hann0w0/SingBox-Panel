@@ -236,7 +236,15 @@ export function OutboundForm({
     setImportReady(false)
     form.resetFields()
     form.setFieldsValue(outboundToForm(outbound))
-    setRawExtra(cloneJson((outbound?.settings?.settings?.raw ?? {}) as Record<string, unknown>))
+    const inner = outbound?.settings?.settings
+    const seededRaw = cloneJson((inner?.raw ?? {}) as Record<string, unknown>)
+    if (inner?.up_mbps && seededRaw.up_mbps === undefined) seededRaw.up_mbps = inner.up_mbps
+    if (inner?.down_mbps && seededRaw.down_mbps === undefined) seededRaw.down_mbps = inner.down_mbps
+    if (inner?.heartbeat && seededRaw.heartbeat === undefined) seededRaw.heartbeat = inner.heartbeat
+    if (inner?.zero_rtt_handshake !== undefined && seededRaw.zero_rtt_handshake === undefined) seededRaw.zero_rtt_handshake = inner.zero_rtt_handshake
+    if (inner?.http_path && seededRaw.path === undefined) seededRaw.path = inner.http_path
+    if (inner?.http_headers && Object.keys(inner.http_headers).length > 0 && seededRaw.headers === undefined) seededRaw.headers = cloneJson(inner.http_headers)
+    setRawExtra(seededRaw)
   }, [open, outbound, form])
 
   const submit = async () => {

@@ -282,6 +282,7 @@ export default function Servers() {
         ),
       })
     } catch (e) {
+      if (e && typeof e === 'object' && 'errorFields' in e) return
       message.error(errMsg(e))
     } finally {
       submitLock.current = false

@@ -156,7 +156,7 @@ export function SubscriptionFetchHistory({ userID }: { userID: number }) {
         <div className="sh-ip-table-head" aria-hidden="true"><span>来源 IP</span><span>IP 位置 / 网络</span><span>最近客户端</span><span>最近拉取</span><span>拉取次数</span><span /></div>
         {groups.length ? groups.slice(0, visible).map(group => <IPEntry key={`${data.until}:${group.ip}`} group={group} geo={geos[group.ip] || (group.ip ? undefined : { ip: '', status: 'unknown' })} userID={userID} range={range} until={data.until} onRetry={() => void retry(group.ip)} />) : <div className="sh-empty-state"><History size={20} /><strong>{filter ? '没有匹配的拉取记录' : '暂无拉取记录'}</strong>{filter && <Button type="text" onClick={() => setFilter('')}>清除筛选</Button>}</div>}
       </div>}
-      {data && visible < data.ips.length && <Button type="text" className="sh-more-records" onClick={() => setVisible(value => value + 50)}>加载更多 IP</Button>}
+      {data && visible < groups.length && <Button type="text" className="sh-more-records" onClick={() => setVisible(value => value + 50)}>加载更多 IP</Button>}
     </RequestState>
   </section>
 }

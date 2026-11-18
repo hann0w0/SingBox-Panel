@@ -38,7 +38,7 @@ export function buildCustomNodeParams(node: CustomNode | null, values: FormValue
   for (const field of fields) {
     if (!Object.prototype.hasOwnProperty.call(values, field)) continue
     const key = PARAM_NAMES[field] ?? field
-    if (values[field] === undefined) delete params[key]
+    if (values[field] === undefined || values[field] === null) delete params[key]
     else params[key] = values[field]
   }
 

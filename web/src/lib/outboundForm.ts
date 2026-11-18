@@ -83,12 +83,35 @@ export function buildOutboundBody(
     inner.vmess_security = values.vmess_security || 'auto'
     inner.vmess_alter_id = values.vmess_alter_id ?? 0
   }
-  if (type === 'tuic') inner.congestion_control = values.congestion_control || 'cubic'
+  if (type === 'tuic') {
+    inner.congestion_control = values.congestion_control || 'cubic'
+    if (extraRaw) {
+      if (typeof extraRaw.heartbeat === 'string' && extraRaw.heartbeat) inner.heartbeat = extraRaw.heartbeat
+      else delete inner.heartbeat
+      if (typeof extraRaw.zero_rtt_handshake === 'boolean') inner.zero_rtt_handshake = extraRaw.zero_rtt_handshake
+      else delete inner.zero_rtt_handshake
+    }
+  }
   if (type === 'hysteria2') {
     inner.obfs_type = values.obfs_type === 'salamander' || values.obfs_type === 'gecko' ? values.obfs_type : ''
     inner.obfs_password = inner.obfs_type ? (values.obfs_password || '') : ''
     inner.gecko_min_packet_size = inner.obfs_type === 'gecko' ? (values.gecko_min_packet_size || 0) : 0
     inner.gecko_max_packet_size = inner.obfs_type === 'gecko' ? (values.gecko_max_packet_size || 0) : 0
+    if (extraRaw) {
+      if (typeof extraRaw.up_mbps === 'number' && extraRaw.up_mbps > 0) inner.up_mbps = extraRaw.up_mbps
+      else delete inner.up_mbps
+      if (typeof extraRaw.down_mbps === 'number' && extraRaw.down_mbps > 0) inner.down_mbps = extraRaw.down_mbps
+      else delete inner.down_mbps
+    }
+  }
+  if (type === 'http' && extraRaw) {
+    if (typeof extraRaw.path === 'string' && extraRaw.path) inner.http_path = extraRaw.path
+    else delete inner.http_path
+    if (extraRaw.headers && typeof extraRaw.headers === 'object' && !Array.isArray(extraRaw.headers)) {
+      inner.http_headers = extraRaw.headers as Record<string, string>
+    } else {
+      delete inner.http_headers
+    }
   }
   if (type === 'snell') {
     // Imported configs duplicated the PSK here. The editable outer password

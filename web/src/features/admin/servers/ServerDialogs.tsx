@@ -1,4 +1,5 @@
 import type { ReactNode } from 'react'
+import { JsonCodeEditor } from '../../../components/JsonCodeEditor'
 import { Button, Form, Input, Modal, Select, Table, type FormInstance } from '../../../components/kit'
 import type { ImportSummary } from '../../../lib/api'
 import '../../../styles/forms.css'
@@ -107,16 +108,12 @@ export function ConfigEditorModal({
       {loading ? (
         <div className="fm-loading">读取中…</div>
       ) : (
-        <Input.TextArea
-          className="fm-code"
-          aria-label="config.json"
-          spellCheck={false}
+        <JsonCodeEditor
+          ariaLabel="config.json"
           value={text}
           readOnly={preview}
           disabled={saving}
-          onChange={(event) => onText(event.target.value)}
-          autoSize={false} rows={18}
-         
+          onChange={onText}
         />
       )}
     </Modal>

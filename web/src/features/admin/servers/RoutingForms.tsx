@@ -710,6 +710,7 @@ const STANDARD_RULE_MATCH_KEYS = new Set([
   'sniffer',
   'method',
   'server',
+  'strategy',
 ])
 
 function cloneMatchExtra(m: Record<string, unknown> | undefined): Record<string, unknown> {
@@ -830,6 +831,7 @@ function ruleToFormValues(m: Record<string, unknown>, outbound?: string) {
     method: (match.method as string) || 'default',
     inbound: match.inbound || [],
     server: match.server || '',
+    strategy: typeof m.strategy === 'string' ? m.strategy : undefined,
   }
 }
 
@@ -846,6 +848,9 @@ function buildRulePayload(
   }
   if (act === 'resolve' && typeof v.server === 'string' && v.server.trim()) {
     match.server = v.server.trim()
+  }
+  if ((act === 'resolve' || act === 'route-options') && typeof v.strategy === 'string' && v.strategy) {
+    match.strategy = v.strategy
   }
   if (act === 'route' || act === 'reject' || act === 'route-options') {
     for (const row of rows) {
@@ -993,8 +998,7 @@ export function RuleForm({
       if (actions && !actions.includes(action)) continue
       candidates[k] = v
     }
-    const alwaysInclude = action === 'resolve' ? new Set(['strategy']) : undefined
-    return pickPopulatedSchemaProps(candidates, extraMatch, alwaysInclude)
+    return pickPopulatedSchemaProps(candidates, extraMatch)
   }, [schemaProps, action, extraMatch])
   const hasAdvancedSchemaProps = Object.keys(advancedSchemaProps).length > 0
 
@@ -1345,8 +1349,22 @@ export function RuleForm({
               />
             </Form.Item>
           )}
+          {(action === 'resolve' || action === 'route-options') && (
+            <Form.Item name="strategy" label="strategy · 解析策略">
+              <Select
+                allowClear
+                aria-label="解析策略"
+                options={[
+                  { value: 'prefer_ipv4', label: 'prefer_ipv4 · 优先 IPv4' },
+                  { value: 'prefer_ipv6', label: 'prefer_ipv6 · 优先 IPv6' },
+                  { value: 'ipv4_only', label: 'ipv4_only · 仅 IPv4' },
+                  { value: 'ipv6_only', label: 'ipv6_only · 仅 IPv6' },
+                ]}
+              />
+            </Form.Item>
+          )}
           {action === 'resolve' && (
-            <Form.Item name="server" label="DNS 服务器">
+            <Form.Item name="server" label="server · DNS 服务器">
               <Input aria-label="DNS 服务器" className="mono" />
             </Form.Item>
           )}
@@ -1418,14 +1436,12 @@ export function RuleForm({
 
         {hasAdvancedSchemaProps && (
           <FormGroup title="其他参数" panel="inbound">
-            <div className="fm-full">
-              <SchemaFieldList
-                properties={advancedSchemaProps}
-                value={extraMatch}
-                onChange={setExtraMatch}
-                idPrefix="rule-adv"
-              />
-            </div>
+            <SchemaFieldList
+              properties={advancedSchemaProps}
+              value={extraMatch}
+              onChange={setExtraMatch}
+              idPrefix="rule-adv"
+            />
           </FormGroup>
         )}
       </Form>

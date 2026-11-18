@@ -274,7 +274,7 @@ describe('editing a selected user subscription', () => {
     fireEvent.click(screen.getByRole('checkbox', { name: '选择 External 全部节点' }))
     selectTab(/已分配/)
     expect(screen.queryByRole('textbox', { name: /Singapore/ })).toBeNull()
-    expect(orderedNames()).toEqual(['Tokyo - vless-main', 'Tokyo - Trojan'])
+    expect(orderedNames()).toEqual(['Tokyo - vless-main', 'Tokyo - trojan'])
     fireEvent.click(screen.getByRole('button', { name: '撤销' }))
     expect(orderedNames()).toEqual(['Tokyo', 'Singapore'])
     fireEvent.click(screen.getByRole('button', { name: '移除 Singapore' }))

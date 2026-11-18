@@ -76,36 +76,7 @@ interface AccessNodeItem {
 }
 
 function formatProtocolDisplayName(typ: string): string {
-  switch (typ) {
-    case 'shadowsocks':
-      return 'Shadowsocks'
-    case 'socks':
-      return 'SOCKS5'
-    case 'http':
-      return 'HTTP'
-    case 'https':
-      return 'HTTPS'
-    case 'vless':
-      return 'VLESS'
-    case 'vmess':
-      return 'VMess'
-    case 'trojan':
-      return 'Trojan'
-    case 'hysteria2':
-      return 'Hysteria2'
-    case 'hysteria':
-      return 'Hysteria'
-    case 'mixed':
-      return 'Mixed'
-    case 'tuic':
-      return 'TUIC'
-    case 'anytls':
-      return 'AnyTLS'
-    case 'snell':
-      return 'Snell'
-    default:
-      return typ.toUpperCase()
-  }
+  return nodeTypeLabel[typ.trim().toLowerCase()] || typ.trim().toLowerCase()
 }
 
 function formatManagedNodeDisplayName(serverName: string, tag: string, typ: string, countOnServer: number): string {

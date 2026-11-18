@@ -898,11 +898,11 @@ export function CustomNodesPanel({ nodes, loading, error, onNodesChange }: {
                     { value: 'shadowsocks', label: 'Shadowsocks' },
                     { value: 'tuic', label: 'TUIC' },
                     { value: 'hysteria2', label: 'Hysteria2' },
-                    { value: 'hysteria', label: 'Hysteria' },
-                    { value: 'http', label: 'HTTP / HTTPS' },
-                    { value: 'socks', label: 'SOCKS5' },
                     { value: 'snell', label: 'Snell' },
+                    { value: 'socks', label: 'SOCKS5' },
+                    { value: 'http', label: 'HTTP / HTTPS' },
                     { value: 'mixed', label: 'Mixed (HTTP+SOCKS5)' },
+                    { value: 'hysteria', label: 'Hysteria' },
                   ]}
                 />
               </Form.Item>

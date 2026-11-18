@@ -46,31 +46,16 @@ function axisBytes(n: number): string {
   return `${value < 10 ? value.toFixed(1) : Math.round(value)} ${units[unit]}`
 }
 
+import { formatProtocolLabel } from '../../../lib/protocols'
+
 const TRAFFIC_SERIES = [
   { key: 'download' as const, className: 'tr-line-download', legendClass: 'tr-legend-download', label: '下载' },
   { key: 'upload' as const, className: 'tr-line-upload', legendClass: 'tr-legend-upload', label: '上传' },
 ]
 
-const PROTOCOL_LABELS: Record<string, string> = {
-  vless: 'VLESS',
-  vmess: 'VMess',
-  ss: 'SS',
-  shadowsocks: 'SS',
-  trojan: 'Trojan',
-  hysteria2: 'Hysteria2',
-  hysteria: 'Hysteria',
-  tuic: 'TUIC',
-  anytls: 'AnyTLS',
-  socks: 'SOCKS',
-  socks5: 'SOCKS5',
-  snell: 'Snell',
-  mixed: 'Mixed',
-}
-
 // Neutral protocol pill (design A has no coloured tags).
 export function ProtocolTag({ type }: { type: string }) {
-  const protocol = type.trim().toLowerCase()
-  return <span className="ui-tag">{PROTOCOL_LABELS[protocol] || type}</span>
+  return <span className="ui-tag">{formatProtocolLabel(type) || type}</span>
 }
 
 function TrafficLegend() {

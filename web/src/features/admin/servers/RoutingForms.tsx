@@ -27,19 +27,9 @@ import {
   validateObjectBySchema,
   type JSONSchema,
 } from '../../../lib/singboxSchema'
+import { OUTBOUND_PROTOCOL_TYPES, toProtocolOptions } from '../../../lib/protocols'
 
-const OUT_TYPES: { value: OutboundType; label: string }[] = [
-  { value: 'shadowsocks', label: 'ss' },
-  { value: 'snell', label: 'snell' },
-  { value: 'socks', label: 'socks' },
-  { value: 'http', label: 'http' },
-  { value: 'tuic', label: 'tuic' },
-  { value: 'trojan', label: 'trojan' },
-  { value: 'anytls', label: 'anytls' },
-  { value: 'vless', label: 'vless' },
-  { value: 'vmess', label: 'vmess' },
-  { value: 'hysteria2', label: 'hysteria2' },
-]
+const OUT_TYPES: { value: OutboundType; label: string }[] = toProtocolOptions(OUTBOUND_PROTOCOL_TYPES)
 
 type OutboundSourceMode = 'manual' | NodeImportMode
 

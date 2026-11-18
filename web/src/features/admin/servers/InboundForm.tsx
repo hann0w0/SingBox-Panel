@@ -16,27 +16,12 @@ import {
   type JSONSchema,
 } from '../../../lib/singboxSchema'
 import type { Inbound, InboundSettings, InboundType, RealityGuardSettings, RealitySettings } from '../../../lib/types'
+import { INBOUND_PROTOCOL_TYPES, toProtocolOptions } from '../../../lib/protocols'
 import { randomBase64, randomHex, randomUUID, SHADOWSOCKS_METHODS, ss2022KeyLen } from '../../../lib/util'
 import '../../../styles/forms.css'
 import '../../../styles/inbound-editor.css'
 
-export const TYPES: { value: InboundType; label: string }[] = [
-  { value: 'shadowsocks', label: 'ss' },
-  { value: 'snell', label: 'snell' },
-  { value: 'socks', label: 'socks' },
-  { value: 'mixed', label: 'mixed' },
-  { value: 'http', label: 'http' },
-  { value: 'tun', label: 'tun' },
-  { value: 'direct', label: 'direct' },
-  { value: 'redirect', label: 'redirect' },
-  { value: 'tproxy', label: 'tproxy' },
-  { value: 'tuic', label: 'tuic' },
-  { value: 'trojan', label: 'trojan' },
-  { value: 'anytls', label: 'anytls' },
-  { value: 'vless', label: 'vless' },
-  { value: 'vmess', label: 'vmess' },
-  { value: 'hysteria2', label: 'hysteria2' },
-]
+export const TYPES: { value: InboundType; label: string }[] = toProtocolOptions(INBOUND_PROTOCOL_TYPES)
 
 const WS_TYPES = new Set<InboundType>(['vless', 'vmess', 'trojan'])
 const REALITY_TYPES = new Set<InboundType>(['vless', 'vmess'])

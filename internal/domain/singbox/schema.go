@@ -454,9 +454,9 @@ func InboundSchema() *JSONSchema {
 		"type": {
 			Type: "string",
 			Enum: strEnum(
-				"shadowsocks", "snell", "socks", "mixed", "http", "tun",
-				"direct", "redirect", "tproxy", "tuic", "trojan", "anytls",
-				"vless", "vmess", "hysteria2",
+				"vless", "vmess", "trojan", "anytls", "shadowsocks",
+				"tuic", "hysteria2", "snell", "socks", "http",
+				"mixed", "tun", "direct", "redirect", "tproxy",
 			),
 			UI: &UIMeta{Label: "协议", Group: "基本", Order: 1, Widget: "select"},
 		},
@@ -655,8 +655,8 @@ func OutboundSchema() *JSONSchema {
 		"type": {
 			Type: "string",
 			Enum: strEnum(
-				"shadowsocks", "snell", "socks", "http",
-				"tuic", "trojan", "anytls", "vless", "vmess", "hysteria2",
+				"vless", "vmess", "trojan", "anytls", "shadowsocks",
+				"tuic", "hysteria2", "snell", "socks", "http",
 			),
 			UI: &UIMeta{Label: "类型", Group: "基本", Order: 1, Widget: "select"},
 		},

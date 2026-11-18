@@ -1,27 +1,11 @@
+import { PROTOCOL_LABELS } from '../../../lib/protocols'
+
 export function protocolOf(link: string): string {
   const m = /^([a-z0-9+.-]+):\/\//i.exec(link.trim())
   return m ? m[1].toLowerCase() : '-'
 }
 
-export const nodeTypeLabel: Record<string, string> = {
-  vless: 'VLESS',
-  vmess: 'VMess',
-  ss: 'SS',
-  shadowsocks: 'SS',
-  trojan: 'Trojan',
-  hysteria2: 'Hysteria2',
-  hy2: 'Hysteria2',
-  hysteria: 'Hysteria',
-  hy1: 'Hysteria',
-  tuic: 'TUIC',
-  anytls: 'AnyTLS',
-  http: 'HTTP',
-  https: 'HTTPS',
-  socks: 'SOCKS',
-  socks5: 'SOCKS5',
-  snell: 'Snell',
-  mixed: 'Mixed',
-}
+export const nodeTypeLabel: Record<string, string> = PROTOCOL_LABELS
 
 export const MAX_VISIBLE_SUBSCRIPTIONS = 6
 const MANAGEMENT_TABLE_ROW_HEIGHT = 53

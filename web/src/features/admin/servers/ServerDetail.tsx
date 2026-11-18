@@ -61,15 +61,10 @@ import { Pills, Stats, Status } from '../../../components/kit/Page'
 import '../../../styles/server-detail.css'
 import { RequestState } from '../../../components/RequestState'
 import { MODAL_MD } from '../../../components/kit/modal'
-
-const PROTOCOL_LABELS: Record<string, string> = {
-  vless: 'VLESS', vmess: 'VMess', ss: 'Shadowsocks', shadowsocks: 'Shadowsocks', trojan: 'Trojan',
-  hysteria2: 'Hysteria2', hysteria: 'Hysteria', tuic: 'TUIC', anytls: 'AnyTLS', socks: 'SOCKS',
-  socks5: 'SOCKS5', snell: 'Snell', mixed: 'Mixed', direct: 'Direct',
-}
+import { formatProtocolLabel } from '../../../lib/protocols'
 
 function ProtocolTag({ type }: { type: string }) {
-  return <span className="ui-tag">{PROTOCOL_LABELS[type.trim().toLowerCase()] || type}</span>
+  return <span className="ui-tag">{formatProtocolLabel(type) || type}</span>
 }
 
 const DETAIL_SECTIONS = ['inbounds', 'outbounds', 'rules', 'traffic', 'logs'] as const

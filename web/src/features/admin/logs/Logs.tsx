@@ -215,11 +215,7 @@ function renderSemanticText(value: string, keyword: string): ReactNode {
   return parts.length ? parts : highlightText(value, keyword)
 }
 
-const PROTOCOL_LABELS: Record<string, string> = {
-  anytls: 'AnyTLS', snell: 'Snell', shadowsocks: 'SS', ss: 'SS', vless: 'VLESS', vmess: 'VMess', trojan: 'Trojan',
-  hysteria2: 'Hy2', hysteria: 'Hysteria', tuic: 'TUIC', socks: 'SOCKS', http: 'HTTP', mixed: 'Mixed',
-  direct: 'direct', block: 'block', dns: 'dns', selector: 'select', urltest: 'urltest', wireguard: 'WG',
-}
+import { formatProtocolLabel } from '../../../lib/protocols'
 
 /**
  * Splits "inbound/snell[Hawaii]" into the protocol and the user-defined tag.
@@ -236,7 +232,7 @@ export function compactComponent(value: string, direction: LogDirection): { prot
   if (!match) return { proto: result, tag: '' }
   const type = match[1].trim().toLowerCase()
   const tag = match[2].trim()
-  const proto = PROTOCOL_LABELS[type] ?? match[1].trim()
+  const proto = formatProtocolLabel(type) || match[1].trim()
   if (tag.toLowerCase() === type || tag === proto) return { proto, tag: '' }
   return { proto, tag }
 }

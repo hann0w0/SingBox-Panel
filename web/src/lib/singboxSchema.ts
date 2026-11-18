@@ -217,7 +217,7 @@ export const DEFAULT_INBOUND_SCHEMA: JSONSchema = {
   properties: {
     type: {
       type: 'string',
-      enum: ['shadowsocks', 'snell', 'socks', 'mixed', 'http', 'tun', 'direct', 'redirect', 'tproxy', 'tuic', 'trojan', 'anytls', 'vless', 'vmess', 'hysteria2'],
+      enum: ['vless', 'vmess', 'trojan', 'anytls', 'shadowsocks', 'tuic', 'hysteria2', 'snell', 'socks', 'http', 'mixed', 'tun', 'direct', 'redirect', 'tproxy'],
       'x-ui': { label: '协议', group: '基本', order: 1, widget: 'select' },
     },
     tag: { type: 'string', 'x-ui': { label: '标签', group: '基本', order: 2 } },
@@ -274,7 +274,7 @@ export const DEFAULT_OUTBOUND_SCHEMA: JSONSchema = {
   properties: {
     type: {
       type: 'string',
-      enum: ['shadowsocks', 'snell', 'socks', 'http', 'tuic', 'trojan', 'anytls', 'vless', 'vmess', 'hysteria2'],
+      enum: ['vless', 'vmess', 'trojan', 'anytls', 'shadowsocks', 'tuic', 'hysteria2', 'snell', 'socks', 'http'],
       'x-ui': { label: '类型', group: '基本', order: 1, widget: 'select' },
     },
     tag: { type: 'string', 'x-ui': { label: '标签', group: '基本', order: 2 } },

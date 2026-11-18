@@ -28,7 +28,7 @@ export function EditorModeToggle({
         className={`fm-mode-toggle-btn ${value === 'form' ? 'is-active' : ''}`}
       >
         <List className="size-3.5 shrink-0" aria-hidden="true" />
-        <span>表单</span>
+        <span>Form</span>
       </button>
       <button
         type="button"

@@ -722,7 +722,6 @@ export default function InboundForm({
 
   const showTransport = WS_TYPES.has(type)
   const canMultiUser = supportsMultiUser(type, method)
-  const hasCredentials = canMultiUser || UUID_TYPES.has(type) || PW_TYPES.has(type) || type === 'shadowsocks' || type === 'socks' || type === 'mixed' || type === 'http' || type === 'snell'
   const hasProtocolSchemaExtras = Object.keys(protocolExtraSchemaProps).length > 0
   const hasParams = type === 'vless' || type === 'tuic' || type === 'snell' || HAS_BANDWIDTH.has(type) || hasProtocolSchemaExtras
   const hasOtherParams = Object.keys(otherParamsSchemaProps).length > 0 || Object.keys(tlsAdvSchemaProps).length > 0 || type === 'vless' || type === 'vmess' || type === 'anytls' || type === 'tuic' || type === 'trojan' || (showTLS && tlsMode === 'tls')
@@ -834,114 +833,109 @@ export default function InboundForm({
               />
             </Form.Item>
           )}
+          {(canMultiUser || invalidSSMultiUser) && (
+            <div className="fm-switches">
+              <Form.Item
+                name="multi_user"
+                label="单端口多用户"
+                valuePropName="checked"
+                className="fm-switch"
+                dependencies={['method']}
+                rules={[{
+                  validator: (_, value) => !value || canMultiUser
+                    ? Promise.resolve()
+                    : Promise.reject(new Error(SS_MULTI_USER_ERROR)),
+                }]}
+              >
+                <Switch />
+              </Form.Item>
+              {multiUser && inbound && !inbound.settings?.multi_user && (
+                <div className="fm-warn">将更换该入站凭证，已分享的订阅需重新更新</div>
+              )}
+            </div>
+          )}
+
+          {!multiUser && UUID_TYPES.has(type) && (
+            <Form.Item label="UUID" className="fm-full">
+              <Space.Compact>
+                <Form.Item name="uuid" noStyle>
+                  <Input className="mono" />
+                </Form.Item>
+                <Button onClick={() => form.setFieldValue('uuid', randomUUID())}>随机</Button>
+              </Space.Compact>
+            </Form.Item>
+          )}
+          {!multiUser && PW_TYPES.has(type) && (
+            <Form.Item label="密码" className="fm-full">
+              <Space.Compact>
+                <Form.Item name="password" noStyle>
+                  <Input className="mono" />
+                </Form.Item>
+                <Button onClick={() => form.setFieldValue('password', randomHex(16))}>随机</Button>
+              </Space.Compact>
+            </Form.Item>
+          )}
+          {type === 'shadowsocks' && (
+            <Form.Item label="密码 / PSK" className="fm-full">
+              <Space.Compact>
+                <Form.Item name="ss_psk" noStyle>
+                  <Input className="mono" />
+                </Form.Item>
+                <Button
+                  onClick={() =>
+                    form.setFieldValue('ss_psk', randomBase64(ss2022KeyLen(form.getFieldValue('method')) || 16))
+                  }
+                >
+                  随机
+                </Button>
+              </Space.Compact>
+            </Form.Item>
+          )}
+          {type === 'snell' && (
+            <Form.Item label="PSK" className="fm-full">
+              <Space.Compact>
+                <Form.Item name="snell_psk" noStyle>
+                  <Input className="mono" />
+                </Form.Item>
+                <Button onClick={() => form.setFieldValue('snell_psk', randomHex(16))}>生成</Button>
+              </Space.Compact>
+            </Form.Item>
+          )}
+          {(type === 'socks' || type === 'mixed' || type === 'http') && !multiUser && (
+            <>
+              <Form.Item
+                name="username"
+                label="用户名"
+                dependencies={['password']}
+                rules={[
+                  ({ getFieldValue }) => ({
+                    validator(_, value) {
+                      if (!getFieldValue('password') || value?.trim()) return Promise.resolve()
+                      return Promise.reject(new Error('填写密码时必须同时填写用户名'))
+                    },
+                  }),
+                ]}
+              >
+                <Input autoComplete="off" />
+              </Form.Item>
+              <Form.Item
+                name="password"
+                label="密码"
+                dependencies={['username']}
+                rules={[
+                  ({ getFieldValue }) => ({
+                    validator(_, value) {
+                      if (!getFieldValue('username')?.trim() || value) return Promise.resolve()
+                      return Promise.reject(new Error('填写用户名时必须同时填写密码'))
+                    },
+                  }),
+                ]}
+              >
+                <Input.Password autoComplete="new-password" />
+              </Form.Item>
+            </>
+          )}
         </FormGroup>
-
-        {hasCredentials && (
-          <FormGroup title="认证" panel="inbound">
-            {(canMultiUser || invalidSSMultiUser) && (
-              <div className="fm-switches">
-                <Form.Item
-                  name="multi_user"
-                  label="单端口多用户"
-                  valuePropName="checked"
-                  className="fm-switch"
-                  dependencies={['method']}
-                  rules={[{
-                    validator: (_, value) => !value || canMultiUser
-                      ? Promise.resolve()
-                      : Promise.reject(new Error(SS_MULTI_USER_ERROR)),
-                  }]}
-                >
-                  <Switch />
-                </Form.Item>
-                {multiUser && inbound && !inbound.settings?.multi_user && (
-                  <div className="fm-warn">将更换该入站凭证，已分享的订阅需重新更新</div>
-                )}
-              </div>
-            )}
-
-            {!multiUser && UUID_TYPES.has(type) && (
-              <Form.Item label="UUID" className="fm-full">
-                <Space.Compact>
-                  <Form.Item name="uuid" noStyle>
-                    <Input className="mono" />
-                  </Form.Item>
-                  <Button onClick={() => form.setFieldValue('uuid', randomUUID())}>随机</Button>
-                </Space.Compact>
-              </Form.Item>
-            )}
-            {!multiUser && PW_TYPES.has(type) && (
-              <Form.Item label="密码" className="fm-full">
-                <Space.Compact>
-                  <Form.Item name="password" noStyle>
-                    <Input className="mono" />
-                  </Form.Item>
-                  <Button onClick={() => form.setFieldValue('password', randomHex(16))}>随机</Button>
-                </Space.Compact>
-              </Form.Item>
-            )}
-            {type === 'shadowsocks' && (
-              <Form.Item label="密码 / PSK" className="fm-full">
-                <Space.Compact>
-                  <Form.Item name="ss_psk" noStyle>
-                    <Input className="mono" />
-                  </Form.Item>
-                  <Button
-                    onClick={() =>
-                      form.setFieldValue('ss_psk', randomBase64(ss2022KeyLen(form.getFieldValue('method')) || 16))
-                    }
-                  >
-                    随机
-                  </Button>
-                </Space.Compact>
-              </Form.Item>
-            )}
-            {type === 'snell' && (
-              <Form.Item label="PSK" className="fm-full">
-                <Space.Compact>
-                  <Form.Item name="snell_psk" noStyle>
-                    <Input className="mono" />
-                  </Form.Item>
-                  <Button onClick={() => form.setFieldValue('snell_psk', randomHex(16))}>生成</Button>
-                </Space.Compact>
-              </Form.Item>
-            )}
-            {(type === 'socks' || type === 'mixed' || type === 'http') && !multiUser && (
-              <>
-                <Form.Item
-                  name="username"
-                  label="用户名"
-                  dependencies={['password']}
-                  rules={[
-                    ({ getFieldValue }) => ({
-                      validator(_, value) {
-                        if (!getFieldValue('password') || value?.trim()) return Promise.resolve()
-                        return Promise.reject(new Error('填写密码时必须同时填写用户名'))
-                      },
-                    }),
-                  ]}
-                >
-                  <Input autoComplete="off" />
-                </Form.Item>
-                <Form.Item
-                  name="password"
-                  label="密码"
-                  dependencies={['username']}
-                  rules={[
-                    ({ getFieldValue }) => ({
-                      validator(_, value) {
-                        if (!getFieldValue('username')?.trim() || value) return Promise.resolve()
-                        return Promise.reject(new Error('填写用户名时必须同时填写密码'))
-                      },
-                    }),
-                  ]}
-                >
-                  <Input.Password autoComplete="new-password" />
-                </Form.Item>
-              </>
-            )}
-          </FormGroup>
-        )}
 
         {hasParams && (
           <FormGroup title="协议参数" panel="inbound">

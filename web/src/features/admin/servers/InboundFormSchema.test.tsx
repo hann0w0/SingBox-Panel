@@ -134,7 +134,8 @@ describe('InboundForm JSON Schema integration', () => {
   it('omits unpopulated advanced fields from new inbounds and keeps Snell flat', async () => {
     const { rerender } = render(<InboundForm serverId={1} inbound={null} open onClose={vi.fn()} onSaved={vi.fn()} />)
 
-    // Fresh shadowsocks creation exposes only core fields without 其他参数 bloat
+    // Fresh shadowsocks creation exposes only core fields without 其他参数 or 认证 header bloat
+    expect(screen.queryByText('认证')).toBeNull()
     expect(screen.queryByText('其他参数')).toBeNull()
     expect(screen.queryByText('监听地址')).toBeNull()
     expect(screen.queryByText(/legacy/i)).toBeNull()

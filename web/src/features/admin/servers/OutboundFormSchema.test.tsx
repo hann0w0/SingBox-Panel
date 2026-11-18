@@ -94,30 +94,23 @@ describe('OutboundForm JSON Schema integration', () => {
     })
   })
 
-  it('supports creating an http outbound via JSON 编辑 mode while keeping source tabs intact', async () => {
+  it('omits JSON mode toggle and 认证 heading while keeping source tabs and saving manual http outbound', async () => {
     render(<OutboundForm serverId={1} outbound={null} open onClose={vi.fn()} onSaved={vi.fn()} />)
 
+    expect(screen.getByRole('tab', { name: '手动配置' })).toBeTruthy()
     expect(screen.getByRole('tab', { name: '面板节点' })).toBeTruthy()
     expect(screen.getByRole('tab', { name: '外部节点' })).toBeTruthy()
     expect(screen.getByRole('tab', { name: 'URI 导入' })).toBeTruthy()
+    expect(screen.queryByRole('radiogroup', { name: '出站编辑模式' })).toBeNull()
+    expect(screen.queryByText('认证')).toBeNull()
 
-    fireEvent.click(screen.getByRole('radio', { name: 'JSON' }))
-    const editor = await screen.findByLabelText('outbound.json')
-
-    fireEvent.change(editor, {
-      target: {
-        value: JSON.stringify({
-          type: 'http',
-          tag: 'corp-http',
-          server: 'proxy.example.com',
-          server_port: 8443,
-          username: 'alice',
-          password: 'secret',
-          path: '/connect',
-          tls: { enabled: true, server_name: 'proxy.example.com' },
-        }),
-      },
-    })
+    fireEvent.change(screen.getByLabelText(/^标签/), { target: { value: 'corp-http' } })
+    fireEvent.click(screen.getByRole('combobox', { name: /^类型/ }))
+    fireEvent.click(await screen.findByText('http'))
+    fireEvent.change(screen.getByLabelText(/^服务器地址/), { target: { value: 'proxy.example.com' } })
+    fireEvent.change(screen.getByLabelText(/^端口/), { target: { value: '8443' } })
+    fireEvent.change(screen.getByLabelText('用户名'), { target: { value: 'alice' } })
+    fireEvent.change(screen.getByLabelText('密码'), { target: { value: 'secret' } })
     fireEvent.click(screen.getByRole('button', { name: '确定' }))
 
     await waitFor(() => expect(createOutbound).toHaveBeenCalledOnce())
@@ -129,11 +122,6 @@ describe('OutboundForm JSON Schema integration', () => {
       server_port: 8443,
       username: 'alice',
       password: 'secret',
-    })
-    expect(body.settings?.settings?.raw).toMatchObject({
-      type: 'http',
-      path: '/connect',
-      tls: { enabled: true, server_name: 'proxy.example.com' },
     })
   })
 

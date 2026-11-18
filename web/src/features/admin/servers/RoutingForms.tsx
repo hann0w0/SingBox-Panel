@@ -22,8 +22,6 @@ import { JsonCodeEditor } from '../../../components/JsonCodeEditor'
 import { SchemaFieldList } from '../../../components/SchemaFormFields'
 import {
   cloneJson,
-  nativeJsonToOutboundSettings,
-  outboundSettingsToNativeJson,
   pickPopulatedSchemaProps,
   resolveVariantProperties,
   useSingboxSchemas,
@@ -168,10 +166,7 @@ export function OutboundForm({
   const [importReady, setImportReady] = useState(false)
   const [source, setSource] = useState<OutboundSourceMode>('manual')
   const [submitting, setSubmitting] = useState(false)
-  const [editorMode, setEditorMode] = useState<'form' | 'json'>('form')
   const [rawExtra, setRawExtra] = useState<Record<string, unknown>>({})
-  const [jsonText, setJsonText] = useState('')
-  const [jsonError, setJsonError] = useState('')
   const schemas = useSingboxSchemas(open)
   const submitLock = useRef(false)
   const submitSessionRef = useRef(0)
@@ -250,58 +245,10 @@ export function OutboundForm({
     if (!open) return
     setSource('manual')
     setImportReady(false)
-    setEditorMode('form')
-    setJsonError('')
     form.resetFields()
     form.setFieldsValue(outboundToForm(outbound))
     setRawExtra(cloneJson((outbound?.settings?.settings?.raw ?? {}) as Record<string, unknown>))
-    setJsonText(
-      outbound
-        ? JSON.stringify(outboundSettingsToNativeJson(outbound.type, outbound.tag, outbound.settings || {}), null, 2)
-        : '',
-    )
   }, [open, outbound, form])
-
-  const switchEditorMode = (nextMode: string) => {
-    if (nextMode !== 'form' && nextMode !== 'json') return
-    if (nextMode === editorMode) return
-    setJsonError('')
-    if (nextMode === 'json') {
-      const v = form.getFieldsValue()
-      const activeType = (v.type || type) as OutboundType
-      const built = buildOutboundBody(outbound, { ...v, type: activeType }, rawExtra)
-      setJsonText(JSON.stringify(outboundSettingsToNativeJson(activeType, String(built.tag || ''), built.settings), null, 2))
-      setEditorMode('json')
-      return
-    }
-    try {
-      const parsed = JSON.parse(jsonText || '{}') as Record<string, unknown>
-      if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
-        setJsonError('配置必须是 JSON 对象')
-        return
-      }
-      const schemaErr = validateObjectBySchema(schemas.outbound, parsed)
-      if (schemaErr) {
-        setJsonError(schemaErr)
-        return
-      }
-      const nextType = (typeof parsed.type === 'string' && OUT_TYPES.some((t) => t.value === parsed.type) ? parsed.type : type) as OutboundType
-      const nextSettings = nativeJsonToOutboundSettings(outbound?.settings || {}, parsed)
-      const nextTag = typeof parsed.tag === 'string' ? parsed.tag : ''
-      setRawExtra(cloneJson((nextSettings.settings?.raw ?? {}) as Record<string, unknown>))
-      form.setFieldsValue(
-        outboundToForm({
-          ...(outbound ?? { id: 0, server_id: serverId, remark: '', sort: 0 }),
-          tag: nextTag,
-          type: nextType,
-          settings: nextSettings,
-        }),
-      )
-      setEditorMode('form')
-    } catch (err) {
-      setJsonError(err instanceof Error ? `JSON 解析失败: ${err.message}` : 'JSON 格式错误')
-    }
-  }
 
   const submit = async () => {
     if (!open || submitLock.current) return
@@ -309,39 +256,12 @@ export function OutboundForm({
     const session = submitSessionRef.current
     setSubmitting(true)
     try {
-      let body: { tag: string; type: OutboundType; settings: Outbound['settings'] }
-      if (editorMode === 'json') {
-        setJsonError('')
-        let parsed: Record<string, unknown>
-        try {
-          parsed = JSON.parse(jsonText || '{}') as Record<string, unknown>
-        } catch (err) {
-          setJsonError(err instanceof Error ? `JSON 解析失败: ${err.message}` : 'JSON 格式错误')
-          return
-        }
-        if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
-          setJsonError('配置必须是 JSON 对象')
-          return
-        }
-        const schemaErr = validateObjectBySchema(schemas.outbound, parsed)
-        if (schemaErr) {
-          setJsonError(schemaErr)
-          return
-        }
-        const nextType = (typeof parsed.type === 'string' && OUT_TYPES.some((t) => t.value === parsed.type) ? parsed.type : type) as OutboundType
-        body = {
-          tag: typeof parsed.tag === 'string' ? parsed.tag.trim() : '',
-          type: nextType,
-          settings: nativeJsonToOutboundSettings(outbound?.settings || {}, parsed),
-        }
-      } else {
-        const v = await form.validateFields().catch((err) => {
-          scrollToFirstError(form, err)
-          throw err
-        })
-        if (session !== submitSessionRef.current) return
-        body = buildOutboundBody(outbound, v as Record<string, any> & { type: OutboundType }, rawExtra)
-      }
+      const v = await form.validateFields().catch((err) => {
+        scrollToFirstError(form, err)
+        throw err
+      })
+      if (session !== submitSessionRef.current) return
+      const body = buildOutboundBody(outbound, v as Record<string, any> & { type: OutboundType }, rawExtra)
       const editing = outbound
       const saved = await applyWithToast(`outbound-${editing ? editing.id : 'new'}`, () =>
         editing ? updateOutbound(serverId, editing.id, body) : createOutbound(serverId, body),
@@ -402,28 +322,6 @@ export function OutboundForm({
       {!outbound && source !== 'manual' ? (
         <OutboundImport key={`${serverId}-${source}`} serverId={serverId} mode={source} onClose={onClose} onSaved={onSaved} onSavingChange={setSubmitting} formId={importFormId} onReadyChange={setImportReady} />
       ) : <fieldset disabled={submitting} aria-busy={submitting} className="min-w-0 border-0 p-0 m-0">
-      <div className="mb-4 flex items-center justify-between gap-3">
-        <EditorModeToggle
-          ariaLabel="出站编辑模式"
-          value={editorMode}
-          onChange={switchEditorMode}
-          disabled={submitting}
-        />
-      </div>
-      {editorMode === 'json' ? (
-        <div className="space-y-3">
-          {jsonError && <Alert type="error" showIcon message={jsonError} />}
-          <JsonCodeEditor
-            ariaLabel="outbound.json"
-            value={jsonText}
-            disabled={submitting}
-            onChange={(val) => {
-              setJsonText(val)
-              if (jsonError) setJsonError('')
-            }}
-          />
-        </div>
-      ) : (
       <Form form={form} layout="vertical" className="fm-form">
         <FormGroup title="基本">
           <Form.Item name="tag" label="标签" rules={[{ required: true }]}>
@@ -443,9 +341,6 @@ export function OutboundForm({
           <Form.Item name="server_port" label="端口" rules={[{ required: true, message: '请填写落地服务器的端口' }]}>
             <InputNumber precision={0} min={1} max={65535} className="mono" />
           </Form.Item>
-        </FormGroup>
-
-        <FormGroup title="认证">
           {type === 'shadowsocks' && (
             <>
               <Form.Item name="method" label="加密方式" rules={[{ required: true }]} className="fm-full">
@@ -781,7 +676,6 @@ export function OutboundForm({
           </FormGroup>
         )}
       </Form>
-      )}
       </fieldset>}
     </Modal>
   )

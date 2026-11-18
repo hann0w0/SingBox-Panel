@@ -102,14 +102,18 @@ info() {
 cleanup() {
   local temp_file=""
   local temp_dir=""
-  for temp_file in "${TEMP_FILES[@]}"; do
-    [[ -n "$temp_file" ]] && rm -f -- "$temp_file"
-  done
-  for temp_dir in "${TEMP_DIRS[@]}"; do
-    if [[ -n "$temp_dir" && "$temp_dir" != "$PRESERVED_ROLLBACK_DIR" ]]; then
-      rm -rf -- "$temp_dir"
-    fi
-  done
+  if (( ${#TEMP_FILES[@]} > 0 )); then
+    for temp_file in "${TEMP_FILES[@]}"; do
+      [[ -n "$temp_file" ]] && rm -f -- "$temp_file"
+    done
+  fi
+  if (( ${#TEMP_DIRS[@]} > 0 )); then
+    for temp_dir in "${TEMP_DIRS[@]}"; do
+      if [[ -n "$temp_dir" && "$temp_dir" != "$PRESERVED_ROLLBACK_DIR" ]]; then
+        rm -rf -- "$temp_dir"
+      fi
+    done
+  fi
 }
 trap cleanup EXIT
 
@@ -673,7 +677,9 @@ download_release_asset() {
   actual="$(sha256_of "$destination")"
   [[ -n "$actual" ]] || die "neither sha256sum nor shasum is available; cannot verify downloads"
   [[ "$actual" =~ ^[[:xdigit:]]{64}$ ]] || die "failed to calculate a valid SHA256 for $asset_name"
-  [[ "${expected,,}" == "${actual,,}" ]] ||
+  expected="$(printf '%s' "$expected" | tr '[:upper:]' '[:lower:]')"
+  actual="$(printf '%s' "$actual" | tr '[:upper:]' '[:lower:]')"
+  [[ "$expected" == "$actual" ]] ||
     die "SHA256 mismatch for $asset_name (expected $expected, got $actual)"
   info "Verified $asset_name"
 }

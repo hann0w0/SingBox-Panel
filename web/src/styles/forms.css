@@ -4,8 +4,52 @@
 .fm-group { padding: 18px 0 4px; }
 .fm-group:first-child { padding-top: 6px; }
 .fm-group + .fm-group { margin-top: 8px; }
+.fm-group-open { padding: 14px 0 2px; border-top: 1px solid var(--console-border); }
 .fm-group-title { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; margin: 0 0 14px; font-size: 13px; font-weight: 600; line-height: 1.4; letter-spacing: -.1px; color: var(--console-ink); }
 .fm-group-title small { font-size: 12px; font-weight: 400; color: var(--console-faint); font-variant-numeric: tabular-nums; }
+
+/* ---------- Form / JSON pill toggle ---------- */
+.fm-mode-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  padding: 3px;
+  border-radius: 10px;
+  border: 1px solid var(--console-border);
+  background: var(--console-surface);
+}
+.fm-mode-toggle-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 28px;
+  padding: 0 11px;
+  border: 0;
+  border-radius: 7px;
+  background: transparent;
+  color: var(--console-muted);
+  font-size: 12.5px;
+  font-weight: 500;
+  line-height: 1;
+  cursor: pointer;
+  transition: background-color .15s, color .15s, box-shadow .15s;
+}
+.fm-mode-toggle-btn:hover:not(:disabled) {
+  color: var(--console-ink);
+}
+.fm-mode-toggle-btn.is-active {
+  background: var(--console-container);
+  color: var(--console-ink);
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.08);
+}
+:root[data-console-theme='dark'] .fm-mode-toggle-btn.is-active {
+  background: var(--console-hover);
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.35);
+}
+.fm-mode-toggle-btn:focus-visible {
+  outline: 2px solid var(--console-focus);
+  outline-offset: 1px;
+}
 
 .fm-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); column-gap: 16px; }
 .fm-grid > * { min-width: 0; }

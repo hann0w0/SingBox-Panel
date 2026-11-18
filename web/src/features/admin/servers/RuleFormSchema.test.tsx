@@ -95,7 +95,7 @@ describe('RuleForm JSON Schema integration', () => {
       />,
     )
 
-    fireEvent.click(screen.getByRole('radio', { name: 'JSON 编辑' }))
+    fireEvent.click(screen.getByRole('radio', { name: 'JSON' }))
     const editor = await screen.findByLabelText('rule.json')
 
     // Invalid schema value: ip_version must be 4 or 6

@@ -17,6 +17,7 @@ import { MODAL_MD } from '../../../components/kit/modal'
 import { OutboundImport, type NodeImportMode } from './OutboundImport'
 import { Pills } from '../../../components/kit/Page'
 import { Field, FieldGroup, FieldLabel } from '@/components/ui/field'
+import { EditorModeToggle } from '../../../components/EditorModeToggle'
 import { JsonCodeEditor } from '../../../components/JsonCodeEditor'
 import { SchemaFieldList } from '../../../components/SchemaFormFields'
 import {
@@ -48,20 +49,35 @@ const UUID_OUT = new Set<OutboundType>(['vless', 'vmess', 'tuic'])
 const PW_OUT = new Set<OutboundType>(['trojan', 'hysteria2', 'tuic', 'anytls'])
 const TUIC_CC = ['cubic', 'new_reno', 'bbr']
 const EXTENDED_OUT_TRANSPORTS = new Set(['ws', 'httpupgrade', 'grpc', 'http', 'quic'])
-const SCHEMA_OUT_DIAL_KEYS = new Set([
-  'detour', 'connect_timeout', 'domain_resolver', 'bind_interface',
-  'inet4_bind_address', 'inet6_bind_address', 'routing_mark',
-  'tcp_fast_open', 'tcp_multi_path', 'udp_fragment', 'multiplex',
+const SCHEMA_OUT_OTHER_KEYS = new Set([
+  'detour', 'connect_timeout', 'domain_resolver', 'tcp_fast_open', 'bind_interface',
+  'multiplex', 'plugin', 'plugin_opts', 'network', 'udp_over_tcp',
+  'path', 'idle_session_check_interval', 'idle_session_timeout', 'min_idle_session',
+  'server_ports', 'hop_interval', 'heartbeat', 'udp_over_stream',
 ])
-const SCHEMA_OUT_TLS_ADV_KEYS = new Set([
-  'min_version', 'max_version', 'cipher_suites', 'curve_preferences', 'ech',
-])
+const SCHEMA_OUT_TLS_ADV_KEYS = new Set(['min_version', 'max_version'])
 const SCHEMA_OUT_PROTO_EXCLUDES = new Set([
   'type', 'tag', 'server', 'server_port', 'uuid', 'username', 'password', 'psk',
-  'method', 'flow', 'security', 'alter_id', 'congestion_control', 'zero_rtt_handshake',
-  'heartbeat', 'up_mbps', 'down_mbps', 'obfs', 'version', 'network', 'reuse',
-  'obfs_mode', 'obfs_host', 'mode', 'tls', 'transport', ...SCHEMA_OUT_DIAL_KEYS,
+  'method', 'flow', 'packet_encoding', 'security', 'alter_id', 'congestion_control',
+  'udp_relay_mode', 'zero_rtt_handshake', 'up_mbps', 'down_mbps', 'obfs',
+  'version', 'reuse', 'obfs_mode', 'obfs_host', 'mode', 'tls', 'transport',
+  'headers', 'global_padding', 'authenticated_length',
+  'routing_mark', 'inet4_bind_address', 'inet6_bind_address', 'tcp_multi_path', 'udp_fragment',
+  ...SCHEMA_OUT_OTHER_KEYS,
 ])
+
+function compactOutboundMultiplexSchema(schema: JSONSchema): JSONSchema {
+  if (!schema.properties) return schema
+  const { enabled, protocol, padding } = schema.properties
+  return {
+    ...schema,
+    properties: {
+      ...(enabled ? { enabled } : {}),
+      ...(protocol ? { protocol } : {}),
+      ...(padding ? { padding } : {}),
+    },
+  }
+}
 
 function outboundToForm(outbound: Outbound | null) {
   if (!outbound) {
@@ -76,9 +92,13 @@ function outboundToForm(outbound: Outbound | null) {
       reality_server_name: '',
       reality_public_key: '',
       reality_short_id: '',
+      flow: '',
+      packet_encoding: 'xudp',
       vmess_security: 'auto',
       vmess_alter_id: 0,
       congestion_control: 'cubic',
+      tuic_udp_relay_mode: 'native',
+      zero_rtt_handshake: false,
       snell_version: 4,
       obfs_type: '',
       gecko_min_packet_size: undefined,
@@ -106,7 +126,8 @@ function outboundToForm(outbound: Outbound | null) {
     tls: TLS_REQUIRED_OUT.has(outbound.type) || !!inner.tls?.enabled,
     sni: inner.tls?.server_name,
     insecure: inner.tls?.insecure,
-    flow: inner.flow,
+    flow: inner.flow ?? '',
+    packet_encoding: inner.packet_encoding ?? 'xudp',
     tls_mode: inner.tls?.reality?.enabled ? 'reality' : (inner.tls?.enabled ? 'tls' : 'none'),
     tls_alpn: inner.tls?.alpn?.join(', '),
     tls_fingerprint: inner.tls?.fingerprint ?? 'chrome',
@@ -116,6 +137,8 @@ function outboundToForm(outbound: Outbound | null) {
     vmess_security: inner.vmess_security ?? 'auto',
     vmess_alter_id: inner.vmess_alter_id ?? 0,
     congestion_control: inner.congestion_control ?? 'cubic',
+    tuic_udp_relay_mode: (inner.raw?.udp_relay_mode as string) ?? inner.tuic_udp_relay_mode ?? 'native',
+    zero_rtt_handshake: !!inner.zero_rtt_handshake,
     obfs_type: inner.obfs_type ?? (inner.obfs_password ? 'salamander' : ''),
     obfs_password: inner.obfs_password,
     gecko_min_packet_size: inner.gecko_min_packet_size,
@@ -171,20 +194,24 @@ export function OutboundForm({
     () => resolveVariantProperties(schemas.outbound, type),
     [schemas.outbound, type],
   )
-  const dialSchemaProps = useMemo(() => {
+  const otherParamsSchemaProps = useMemo(() => {
+    if (type === 'snell') return {}
     const out: Record<string, JSONSchema> = {}
     for (const [k, v] of Object.entries(variantProps)) {
-      if (SCHEMA_OUT_DIAL_KEYS.has(k)) out[k] = v
+      if (SCHEMA_OUT_OTHER_KEYS.has(k)) {
+        out[k] = k === 'multiplex' ? compactOutboundMultiplexSchema(v) : v
+      }
     }
     return out
-  }, [variantProps])
+  }, [variantProps, type])
   const protocolExtraSchemaProps = useMemo(() => {
     const out: Record<string, JSONSchema> = {}
     for (const [k, v] of Object.entries(variantProps)) {
       if (!SCHEMA_OUT_PROTO_EXCLUDES.has(k)) out[k] = v
     }
+    if (type === 'socks' && variantProps.version) out.version = variantProps.version
     return out
-  }, [variantProps])
+  }, [variantProps, type])
   const transportSchemaProps = useMemo(() => {
     const trProps = variantProps.transport?.properties ?? {}
     if (transportType === 'grpc') {
@@ -340,7 +367,7 @@ export function OutboundForm({
 
   return (
     <Modal
-      className="fm-modal"
+      className="fm-modal inbound-compact"
       title={outbound ? '编辑出站' : '新增出站'}
       open={open}
       onOk={submit}
@@ -353,7 +380,7 @@ export function OutboundForm({
         <Button type="primary" htmlType="submit" form={importFormId} disabled={!importReady} loading={submitting}>保存出站</Button>
       </> : undefined}
       confirmLoading={submitting}
-      width={MODAL_MD}
+      width={680}
     >
       {outbound?.source_kind && (
         <Alert
@@ -384,14 +411,11 @@ export function OutboundForm({
         <OutboundImport key={`${serverId}-${source}`} serverId={serverId} mode={source} onClose={onClose} onSaved={onSaved} onSavingChange={setSubmitting} formId={importFormId} onReadyChange={setImportReady} />
       ) : <fieldset disabled={submitting} aria-busy={submitting} className="min-w-0 border-0 p-0 m-0">
       <div className="mb-4 flex items-center justify-between gap-3">
-        <Segmented
-          aria-label="出站编辑模式"
+        <EditorModeToggle
+          ariaLabel="出站编辑模式"
           value={editorMode}
           onChange={switchEditorMode}
-          options={[
-            { value: 'form', label: 'Schema 表单' },
-            { value: 'json', label: 'JSON 编辑' },
-          ]}
+          disabled={submitting}
         />
       </div>
       {editorMode === 'json' ? (
@@ -528,9 +552,25 @@ export function OutboundForm({
         {hasParams && (
           <FormGroup title="协议参数">
             {type === 'vless' && (
-              <Form.Item name="flow" label="Flow" className="fm-full">
-                <Input className="mono" />
-              </Form.Item>
+              <>
+                <Form.Item name="flow" label="Flow">
+                  <Select
+                    options={[
+                      { value: '', label: '无' },
+                      { value: 'xtls-rprx-vision', label: 'xtls-rprx-vision' },
+                    ]}
+                  />
+                </Form.Item>
+                <Form.Item name="packet_encoding" label="UDP 封包编码">
+                  <Select
+                    options={[
+                      { value: 'xudp', label: 'xudp' },
+                      { value: 'packetaddr', label: 'packetaddr' },
+                      { value: 'none', label: '不启用' },
+                    ]}
+                  />
+                </Form.Item>
+              </>
             )}
 
             {type === 'vmess' && (
@@ -744,14 +784,14 @@ export function OutboundForm({
             )}
           </FormGroup>
         )}
-        {Object.keys(dialSchemaProps).length > 0 && (
-          <FormGroup title="拨号参数与高级网络">
+        {Object.keys(otherParamsSchemaProps).length > 0 && (
+          <FormGroup title="其他参数">
             <div className="fm-full">
               <SchemaFieldList
-                properties={dialSchemaProps}
+                properties={otherParamsSchemaProps}
                 value={rawExtra}
                 onChange={setRawExtra}
-                idPrefix="outbound-dial"
+                idPrefix="outbound-other"
               />
             </div>
           </FormGroup>
@@ -1181,14 +1221,11 @@ export function RuleForm({
     >
       <fieldset disabled={submitting} aria-busy={submitting} className="min-w-0 border-0 p-0 m-0">
       <div className="mb-4 flex items-center justify-between gap-3">
-        <Segmented
-          aria-label="规则编辑模式"
+        <EditorModeToggle
+          ariaLabel="规则编辑模式"
           value={editorMode}
           onChange={switchEditorMode}
-          options={[
-            { value: 'form', label: 'Schema 表单' },
-            { value: 'json', label: 'JSON 编辑' },
-          ]}
+          disabled={submitting}
         />
       </div>
       {editorMode === 'json' ? (

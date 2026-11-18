@@ -70,8 +70,8 @@ describe('InboundForm JSON Schema integration', () => {
 
     render(<InboundForm serverId={1} inbound={complexInbound} open onClose={vi.fn()} onSaved={vi.fn()} />)
 
-    // gRPC schema field and advanced network group render for complex inbound
-    expect(await screen.findByText('高级网络')).toBeTruthy()
+    // gRPC schema field and collapsed 其他参数 group render for complex inbound
+    expect(await screen.findByText('其他参数')).toBeTruthy()
     expect(screen.getByDisplayValue('GunService')).toBeTruthy()
 
     fireEvent.click(screen.getByRole('button', { name: '应用' }))
@@ -89,7 +89,7 @@ describe('InboundForm JSON Schema integration', () => {
   it('supports switching to JSON 编辑 mode to create a tun inbound and rejects schema violations', async () => {
     render(<InboundForm serverId={1} inbound={null} open onClose={vi.fn()} onSaved={vi.fn()} />)
 
-    fireEvent.click(screen.getByRole('radio', { name: 'JSON 编辑' }))
+    fireEvent.click(screen.getByRole('radio', { name: 'JSON' }))
     const editor = await screen.findByLabelText('inbound.json')
 
     // Invalid schema: wrong mtu type on tun
@@ -131,13 +131,25 @@ describe('InboundForm JSON Schema integration', () => {
     })
   })
 
-  it('omits duplicate listen address and legacy fields from inbound 高级网络 UI, and hides 高级网络 on tun', async () => {
-    render(<InboundForm serverId={1} inbound={null} open onClose={vi.fn()} onSaved={vi.fn()} />)
+  it('omits duplicate listen address and legacy fields from inbound 其他参数 UI, and keeps Snell flat without extra drawer', async () => {
+    const { rerender } = render(<InboundForm serverId={1} inbound={null} open onClose={vi.fn()} onSaved={vi.fn()} />)
 
-    // Default shadowsocks should show 高级网络 with TCP Fast Open / Multiplex, without duplicate 监听地址 or legacy sniff
-    expect(await screen.findByText('高级网络')).toBeTruthy()
+    // Default shadowsocks should show 其他参数 with concise TCP Fast Open / Multiplex, without duplicate 监听地址 or legacy sniff
+    expect(await screen.findByText('其他参数')).toBeTruthy()
     expect(screen.queryByText('监听地址')).toBeNull()
     expect(screen.queryByText(/legacy/i)).toBeNull()
+
+    // Snell renders PSK, 版本, 混淆 directly without folding into 其他参数
+    const snellInbound: Inbound = {
+      id: 3, server_id: 1, type: 'snell', tag: 'snell-direct', listen_port: 10923, enabled: true, remark: '',
+      created_at: '2026-11-18T00:00:00Z', updated_at: '2026-11-18T00:00:00Z',
+      settings: { snell_version: 5, snell_psk: 'secret-psk', snell_obfs_mode: 'http' },
+    }
+    rerender(<InboundForm serverId={1} inbound={snellInbound} open onClose={vi.fn()} onSaved={vi.fn()} />)
+    expect(screen.getByDisplayValue('secret-psk')).toBeTruthy()
+    expect(screen.getByLabelText('版本')).toBeTruthy()
+    expect(screen.getByLabelText('混淆')).toBeTruthy()
+    expect(screen.queryByText('其他参数')).toBeNull()
   })
 
   it('validates inbound schema constraints locally', () => {

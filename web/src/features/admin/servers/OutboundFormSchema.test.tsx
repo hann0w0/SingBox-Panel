@@ -76,7 +76,7 @@ describe('OutboundForm JSON Schema integration', () => {
 
     render(<OutboundForm serverId={1} outbound={complexOutbound} open onClose={vi.fn()} onSaved={vi.fn()} />)
 
-    expect(await screen.findByText('拨号参数与高级网络')).toBeTruthy()
+    expect(await screen.findByText('其他参数')).toBeTruthy()
     expect(screen.getByDisplayValue('RelayGun')).toBeTruthy()
     expect(screen.getByDisplayValue('5s')).toBeTruthy()
 
@@ -101,7 +101,7 @@ describe('OutboundForm JSON Schema integration', () => {
     expect(screen.getByRole('tab', { name: '外部节点' })).toBeTruthy()
     expect(screen.getByRole('tab', { name: 'URI 导入' })).toBeTruthy()
 
-    fireEvent.click(screen.getByRole('radio', { name: 'JSON 编辑' }))
+    fireEvent.click(screen.getByRole('radio', { name: 'JSON' }))
     const editor = await screen.findByLabelText('outbound.json')
 
     fireEvent.change(editor, {

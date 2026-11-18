@@ -82,9 +82,17 @@
   padding: 0;
 }
 
+.inbound-compact .fm-group.fm-group-open {
+  padding-top: 12px;
+  border-top: 1px solid var(--inbound-line);
+}
+
+.inbound-compact .fm-group.fm-group-open > .fm-group-title {
+  margin-bottom: 10px;
+}
+
 .inbound-compact .fm-group + .fm-group {
   margin-top: 10px;
-  border-top: 0;
 }
 
 .inbound-compact .fm-group-basic > .fm-group-title {

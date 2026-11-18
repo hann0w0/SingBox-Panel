@@ -75,7 +75,10 @@ export function buildOutboundBody(
     // a password edited in this form cannot be shadowed by stale data.
     delete outer.password
   }
-  if (type === 'vless') inner.flow = values.flow || ''
+  if (type === 'vless') {
+    inner.flow = values.flow || ''
+    if (values.packet_encoding) inner.packet_encoding = values.packet_encoding
+  }
   if (type === 'vmess') {
     inner.vmess_security = values.vmess_security || 'auto'
     inner.vmess_alter_id = values.vmess_alter_id ?? 0

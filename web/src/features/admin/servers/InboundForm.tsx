@@ -1,7 +1,8 @@
 import { useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from 'react'
+import { EditorModeToggle } from '../../../components/EditorModeToggle'
 import { JsonCodeEditor } from '../../../components/JsonCodeEditor'
 import { SchemaFieldList } from '../../../components/SchemaFormFields'
-import { Alert, Button, Form, Input, InputNumber, Modal, Segmented, Select, Space, Switch, type FormInstance } from '../../../components/kit'
+import { Alert, Button, Form, Input, InputNumber, Modal, Select, Space, Switch, type FormInstance } from '../../../components/kit'
 import { createInbound, updateInbound } from '../../../lib/api'
 import { applyWithToast } from '../../../lib/configApply'
 import {
@@ -42,20 +43,33 @@ const TLS_REQUIRED = new Set<InboundType>(['trojan', 'hysteria2', 'tuic', 'anytl
 const NO_TLS = new Set<InboundType>(['shadowsocks', 'snell', 'socks', 'mixed', 'tun', 'direct', 'redirect', 'tproxy'])
 const HAS_BANDWIDTH = new Set<InboundType>(['hysteria2'])
 const EXTENDED_TRANSPORTS = new Set(['ws', 'httpupgrade', 'grpc', 'http', 'quic'])
-const SCHEMA_NETWORK_KEYS = new Set([
-  'tcp_fast_open', 'tcp_multi_path', 'udp_fragment', 'udp_timeout',
-  'proxy_protocol', 'proxy_protocol_accept_no_header', 'detour', 'multiplex',
+const SCHEMA_OTHER_KEYS = new Set([
+  'tcp_fast_open', 'proxy_protocol', 'udp_timeout', 'detour', 'multiplex',
+  'masquerade', 'bbr_profile', 'padding_scheme',
+  'route_address', 'route_exclude_address', 'auto_redirect', 'endpoint_independent_nat',
 ])
-const SCHEMA_TLS_ADV_KEYS = new Set([
-  'min_version', 'max_version', 'cipher_suites', 'curve_preferences', 'client_authentication', 'ech',
-])
+const SCHEMA_TLS_ADV_KEYS = new Set(['min_version', 'max_version'])
 const SCHEMA_PROTOCOL_EXTRA_EXCLUDES = new Set([
   'type', 'tag', 'listen', 'listen_port', 'flow', 'packet_encoding', 'method', 'password',
   'up_mbps', 'down_mbps', 'ignore_client_bandwidth', 'obfs', 'congestion_control',
   'auth_timeout', 'zero_rtt_handshake', 'heartbeat', 'version', 'psk', 'obfs_mode', 'mode',
-  'fallback', 'tls', 'transport', 'sniff', 'sniff_override_destination', 'domain_strategy',
-  ...SCHEMA_NETWORK_KEYS,
+  'fallback', 'fallback_for_alpn', 'tls', 'transport', 'realm',
+  'tcp_multi_path', 'udp_fragment', 'proxy_protocol_accept_no_header',
+  'sniff', 'sniff_override_destination', 'domain_strategy', 'brutal_debug',
+  ...SCHEMA_OTHER_KEYS,
 ])
+
+function compactMultiplexSchema(schema: JSONSchema): JSONSchema {
+  if (!schema.properties) return schema
+  const { enabled, padding } = schema.properties
+  return {
+    ...schema,
+    properties: {
+      ...(enabled ? { enabled } : {}),
+      ...(padding ? { padding } : {}),
+    },
+  }
+}
 // Which credential a single-user inbound presents.
 const UUID_TYPES = new Set<InboundType>(['vless', 'vmess', 'tuic'])
 const PW_TYPES = new Set<InboundType>(['trojan', 'hysteria2', 'anytls', 'tuic'])
@@ -481,20 +495,25 @@ export default function InboundForm({
     () => resolveVariantProperties(schemas.inbound, type),
     [schemas.inbound, type],
   )
-  const networkSchemaProps = useMemo(() => {
+  const otherParamsSchemaProps = useMemo(() => {
+    // Snell server only exposes PSK, version, and obfuscation/mode directly.
+    if (type === 'snell') return {}
     const out: Record<string, JSONSchema> = {}
     for (const [k, v] of Object.entries(variantProps)) {
-      if (SCHEMA_NETWORK_KEYS.has(k)) out[k] = v
+      if (SCHEMA_OTHER_KEYS.has(k) || (type === 'shadowsocks' && k === 'network')) {
+        out[k] = k === 'multiplex' ? compactMultiplexSchema(v) : v
+      }
     }
     return out
-  }, [variantProps])
+  }, [variantProps, type])
   const protocolExtraSchemaProps = useMemo(() => {
     const out: Record<string, JSONSchema> = {}
     for (const [k, v] of Object.entries(variantProps)) {
+      if (type === 'shadowsocks' && k === 'network') continue
       if (!SCHEMA_PROTOCOL_EXTRA_EXCLUDES.has(k)) out[k] = v
     }
     return out
-  }, [variantProps])
+  }, [variantProps, type])
   const transportSchemaProps = useMemo(() => {
     const trProps = variantProps.transport?.properties ?? {}
     if (transportType === 'grpc') {
@@ -712,14 +731,11 @@ export default function InboundForm({
     >
       <fieldset disabled={submitting} aria-busy={submitting} className="inbound-compact-fieldset">
       <div className="mb-4 flex items-center justify-between gap-3">
-        <Segmented
-          aria-label="入站编辑模式"
+        <EditorModeToggle
+          ariaLabel="入站编辑模式"
           value={editorMode}
           onChange={switchEditorMode}
-          options={[
-            { value: 'form', label: 'Schema 表单' },
-            { value: 'json', label: 'JSON 编辑' },
-          ]}
+          disabled={submitting}
         />
       </div>
       {editorMode === 'json' ? (
@@ -1313,14 +1329,14 @@ export default function InboundForm({
             )}
           </FormGroup>
         )}
-        {type !== 'tun' && Object.keys(networkSchemaProps).length > 0 && (
-          <FormGroup title="高级网络" panel="inbound">
+        {Object.keys(otherParamsSchemaProps).length > 0 && (
+          <FormGroup title="其他参数" panel="inbound">
             <div className="fm-full">
               <SchemaFieldList
-                properties={networkSchemaProps}
+                properties={otherParamsSchemaProps}
                 value={rawExtra}
                 onChange={setRawExtra}
-                idPrefix="inbound-net"
+                idPrefix="inbound-other"
               />
             </div>
           </FormGroup>
@@ -1344,10 +1360,16 @@ export function FormGroup({ title, extra, panel, children }: {
       <div className="fm-grid" data-panel={panel}>{children}</div>
     </section>
   }
-  return <details className="fm-group fm-group-fold">
-    <summary className="fm-group-title">{title}{extra && <small>{extra}</small>}</summary>
+  if (title === '其他参数' || title === '高级匹配与路由参数') {
+    return <details className="fm-group fm-group-fold">
+      <summary className="fm-group-title">{title}{extra && <small>{extra}</small>}</summary>
+      <div className="fm-grid" data-panel={panel}>{children}</div>
+    </details>
+  }
+  return <section className="fm-group fm-group-open">
+    <h3 className="fm-group-title">{title}{extra && <small>{extra}</small>}</h3>
     <div className="fm-grid" data-panel={panel}>{children}</div>
-  </details>
+  </section>
 }
 
 // Validation failed: bring the first invalid field into view inside the

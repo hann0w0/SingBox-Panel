@@ -884,6 +884,12 @@ func TestSupportedInboundTypesMatchManagedUI(t *testing.T) {
 		"trojan":      true,
 		"hysteria2":   true,
 		"socks":       true,
+		"mixed":       true,
+		"http":        true,
+		"tun":         true,
+		"direct":      true,
+		"redirect":    true,
+		"tproxy":      true,
 	}
 	if len(supportedInboundTypes) != len(want) {
 		t.Fatalf("supported inbound count = %d, want %d: %v", len(supportedInboundTypes), len(want), supportedInboundTypes)

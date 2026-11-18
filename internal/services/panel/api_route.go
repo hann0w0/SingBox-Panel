@@ -382,7 +382,8 @@ type ruleReq struct {
 func ruleHasMatch(r singbox.RuleInput) bool {
 	return len(r.Inbound) > 0 || len(r.Domain) > 0 || len(r.DomainSuffix) > 0 ||
 		len(r.DomainKeyword) > 0 || len(r.IPCIDR) > 0 || len(r.SourceIPCIDR) > 0 ||
-		len(r.Port) > 0 || len(r.Protocol) > 0 || r.Network != "" || len(r.RuleSet) > 0
+		len(r.Port) > 0 || len(r.Protocol) > 0 || r.Network != "" || len(r.RuleSet) > 0 ||
+		len(r.Extra) > 0
 }
 
 func (a *App) createRule(c *gin.Context) {

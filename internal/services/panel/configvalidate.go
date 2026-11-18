@@ -81,13 +81,20 @@ func addressPort(address string) int {
 }
 
 func (a *App) validateInboundIdentity(db *gorm.DB, serverID, excludeID uint, tag string, port int) error {
+	return a.validateInboundIdentityForType(db, serverID, excludeID, tag, "", port)
+}
+
+func (a *App) validateInboundIdentityForType(db *gorm.DB, serverID, excludeID uint, tag, typ string, port int) error {
 	if err := validateTag(tag); err != nil {
 		return err
 	}
-	if port < 1 || port > 65535 {
+	if typ != "tun" && (port < 1 || port > 65535) {
 		return fmt.Errorf("监听端口必须在 1-65535 之间")
 	}
-	if port == localTrafficPort() || port == addressPort(protocol.LocalStatsAPIAddress) {
+	if typ == "tun" && (port < 0 || port > 65535) {
+		return fmt.Errorf("监听端口必须在 0-65535 之间")
+	}
+	if port != 0 && (port == localTrafficPort() || port == addressPort(protocol.LocalStatsAPIAddress)) {
 		return fmt.Errorf("监听端口 %d 已保留给节点流量统计服务", port)
 	}
 	var n int64
@@ -104,15 +111,17 @@ func (a *App) validateInboundIdentity(db *gorm.DB, serverID, excludeID uint, tag
 	if err := checkInboundTrafficTag(db, serverID, excludeID, tag); err != nil {
 		return err
 	}
-	q = db.Model(&model.Inbound{}).Where("server_id = ? AND listen_port = ?", serverID, port)
-	if excludeID != 0 {
-		q = q.Where("id <> ?", excludeID)
-	}
-	if err := q.Count(&n).Error; err != nil {
-		return err
-	}
-	if n > 0 {
-		return fmt.Errorf("监听端口 %d 已被该节点的其它入站使用", port)
+	if port > 0 {
+		q = db.Model(&model.Inbound{}).Where("server_id = ? AND listen_port = ?", serverID, port)
+		if excludeID != 0 {
+			q = q.Where("id <> ?", excludeID)
+		}
+		if err := q.Count(&n).Error; err != nil {
+			return err
+		}
+		if n > 0 {
+			return fmt.Errorf("监听端口 %d 已被该节点的其它入站使用", port)
+		}
 	}
 	return nil
 }
@@ -129,7 +138,7 @@ func (a *App) validateInboundConfiguration(db *gorm.DB, serverID, excludeID uint
 			return err
 		}
 	}
-	if err := a.validateInboundIdentity(db, serverID, excludeID, tag, port); err != nil {
+	if err := a.validateInboundIdentityForType(db, serverID, excludeID, tag, typ, port); err != nil {
 		return err
 	}
 	if settings.RealityGuardEnabled() {
@@ -249,7 +258,7 @@ var builtinOutboundTags = map[string]bool{
 // resolved separately in validateRule because their owner identity scopes them.
 func (a *App) outboundExists(db *gorm.DB, serverID uint, tag string) (bool, error) {
 	switch tag {
-	case "direct", "block", "reject", "sniff", "hijack-dns":
+	case "direct", "block", "reject", "sniff", "hijack-dns", "resolve", "route-options":
 		return true, nil
 	}
 	var n int64
@@ -278,6 +287,12 @@ func (a *App) validateRule(db *gorm.DB, serverID uint, raw json.RawMessage, outb
 	if len(raw) > 0 {
 		if err := json.Unmarshal(raw, &rule); err != nil {
 			return fmt.Errorf("规则匹配条件不是合法 JSON: %w", err)
+		}
+		var ruleMap map[string]any
+		if json.Unmarshal(raw, &ruleMap) == nil {
+			if err := singbox.ValidateJSONAgainstSchema(singbox.RouteRuleSchema(), ruleMap); err != nil {
+				return err
+			}
 		}
 	}
 	for _, name := range rule.AuthUser {
@@ -323,17 +338,17 @@ func (a *App) validateRule(db *gorm.DB, serverID uint, raw json.RawMessage, outb
 	}
 	switch action {
 	case "route":
-		if outbound == "block" || outbound == "reject" || outbound == "sniff" || outbound == "hijack-dns" {
+		if outbound == "block" || outbound == "reject" || outbound == "sniff" || outbound == "hijack-dns" || outbound == "resolve" || outbound == "route-options" {
 			return fmt.Errorf("路由动作必须选择可用出站")
 		}
 	case "reject":
 		if outbound != "block" && outbound != "reject" {
 			return fmt.Errorf("拒绝动作的目标出站必须为 block")
 		}
-		if rule.Method != "" && rule.Method != "default" && rule.Method != "drop" {
-			return fmt.Errorf("拒绝方式只能是 default 或 drop")
+		if rule.Method != "" && rule.Method != "default" && rule.Method != "drop" && rule.Method != "reply" {
+			return fmt.Errorf("拒绝方式只能是 default、drop 或 reply")
 		}
-	case "sniff", "hijack-dns":
+	case "sniff", "hijack-dns", "resolve", "route-options":
 		if outbound != action {
 			return fmt.Errorf("%s 动作与目标出站不一致", action)
 		}

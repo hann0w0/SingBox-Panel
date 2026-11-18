@@ -316,6 +316,11 @@ type InboundSettings struct {
 
 	Transport TransportSettings `json:"transport,omitempty"`
 	TLS       TLSSettings       `json:"tls,omitempty"`
+
+	// Raw holds the canonical sing-box JSON fields for this inbound (preserving
+	// complex/nested options such as tls.ech, tls.min_version, transport.service_name,
+	// multiplex, tcp_fast_open, or protocol types outside the legacy compact form).
+	Raw map[string]any `json:"raw,omitempty"`
 }
 
 // SupportsMultiUser reports whether the official inbound wire format used by
@@ -474,7 +479,7 @@ func JoinShadowsocksPluginFields(plugin, opts string) string {
 // only 4/6; a Snell v5 server is dialed with outbound version 4.
 func (s InboundSettings) ValidateClientOutbound(typ string) error {
 	if typ != "snell" {
-		if err := s.validateProtocol(typ); err != nil {
+		if err := s.validateProtocol(typ, false); err != nil {
 			return err
 		}
 		if s.TLS.Reality.Enabled && strings.TrimSpace(s.TLS.Reality.PublicKey) == "" {
@@ -571,7 +576,7 @@ func (t TransportSettings) normalized() *TransportSettings {
 	return &t
 }
 
-func (s InboundSettings) validateProtocol(typ string) error {
+func (s InboundSettings) validateProtocol(typ string, allowExtendedTransport bool) error {
 	switch typ {
 	case "shadowsocks":
 		if s.Method == "" {
@@ -663,13 +668,15 @@ func (s InboundSettings) validateProtocol(typ string) error {
 			return fmt.Errorf("trojan: fallback server_port must be between 1 and 65535")
 		}
 	}
-	if tr := s.Transport.Type; tr != "" && !strings.EqualFold(tr, "tcp") && !strings.EqualFold(tr, "ws") && !strings.EqualFold(tr, "httpupgrade") {
-		return fmt.Errorf("unsupported transport %q (official builds support tcp/ws/httpupgrade only)", tr)
+	if tr := strings.ToLower(s.Transport.Type); tr != "" && tr != "tcp" && tr != "ws" && tr != "httpupgrade" {
+		if !allowExtendedTransport || (tr != "grpc" && tr != "http" && tr != "quic") {
+			return fmt.Errorf("unsupported transport %q", s.Transport.Type)
+		}
 	}
-	// A v2ray (ws/httpupgrade) transport only exists on vless/vmess/trojan.
+	// A v2ray transport only exists on vless/vmess/trojan.
 	// Attaching it to any other type makes `sing-box check` reject the config
 	// with an unknown-field error, so guard it here rather than only in the UI.
-	if strings.EqualFold(s.Transport.Type, "ws") || strings.EqualFold(s.Transport.Type, "httpupgrade") {
+	if tr := strings.ToLower(s.Transport.Type); tr != "" && tr != "tcp" {
 		switch typ {
 		case "vless", "vmess", "trojan":
 		default:
@@ -745,7 +752,7 @@ func (s InboundSettings) Validate(typ string) error {
 	if err := s.ValidateMultiUser(typ); err != nil {
 		return err
 	}
-	if err := s.validateProtocol(typ); err != nil {
+	if err := s.validateProtocol(typ, true); err != nil {
 		return err
 	}
 	// The panel requires paired credentials for its own SOCKS listeners.
@@ -767,5 +774,157 @@ func (s InboundSettings) Validate(typ string) error {
 			return fmt.Errorf("REALITY 时间差限制必须为非负时长，例如 1m")
 		}
 	}
+	if len(s.Raw) > 0 {
+		rawDoc := deepCloneMap(s.Raw)
+		if _, hasType := rawDoc["type"]; !hasType {
+			rawDoc["type"] = typ
+		}
+		if err := ValidateJSONAgainstSchema(InboundSchema(), rawDoc); err != nil {
+			return err
+		}
+	}
 	return s.TLS.validateInbound()
+}
+
+// SyncFromRaw refreshes typed InboundSettings fields from s.Raw while
+// preserving panel-only metadata (SelfSigned, Insecure, PublicKey, Guard, MultiUser).
+func (s *InboundSettings) SyncFromRaw(typ string) {
+	if len(s.Raw) == 0 {
+		return
+	}
+	m := s.Raw
+	if listen := mStr(m, "listen"); listen != "" {
+		s.Listen = listen
+	}
+	if tlsMap := mMap(m, "tls"); tlsMap != nil {
+		parsedTLS := parseTLS(tlsMap)
+		if parsedTLS.Fingerprint == "" {
+			parsedTLS.Fingerprint = s.TLS.Fingerprint
+		}
+		if !parsedTLS.Insecure {
+			parsedTLS.Insecure = s.TLS.Insecure
+		}
+		parsedTLS.SelfSigned = s.TLS.SelfSigned
+		if parsedTLS.Reality.PublicKey == "" {
+			parsedTLS.Reality.PublicKey = s.TLS.Reality.PublicKey
+		}
+		parsedTLS.Reality.Guard = s.TLS.Reality.Guard
+		s.TLS = parsedTLS
+	} else if _, explicitNoTLS := m["tls"]; explicitNoTLS {
+		s.TLS = TLSSettings{Fingerprint: s.TLS.Fingerprint}
+	}
+	if trMap := mMap(m, "transport"); trMap != nil {
+		s.Transport = parseTransport(trMap)
+	}
+	switch typ {
+	case "vless":
+		if flow := mStr(m, "flow"); flow != "" || hasMapKey(m, "flow") {
+			s.Flow = flow
+		}
+		if pe := mStr(m, "packet_encoding"); pe != "" || hasMapKey(m, "packet_encoding") {
+			s.PacketEncoding = pe
+		}
+	case "shadowsocks":
+		if method := mStr(m, "method"); method != "" {
+			s.Method = method
+		}
+		if pw := mStr(m, "password"); pw != "" {
+			s.SSServerPSK = pw
+		}
+	case "hysteria2":
+		if hasMapKey(m, "up_mbps") {
+			s.UpMbps = mInt(m, "up_mbps")
+		}
+		if hasMapKey(m, "down_mbps") {
+			s.DownMbps = mInt(m, "down_mbps")
+		}
+		if hasMapKey(m, "ignore_client_bandwidth") {
+			s.IgnoreClientBandwidth = mBool(m, "ignore_client_bandwidth")
+		}
+		if obfs := mMap(m, "obfs"); obfs != nil {
+			s.ObfsType = mStr(obfs, "type")
+			s.ObfsPassword = mStr(obfs, "password")
+			s.GeckoMinPacketSize = mInt(obfs, "min_packet_size")
+			s.GeckoMaxPacketSize = mInt(obfs, "max_packet_size")
+		}
+	case "tuic":
+		if cc := mStr(m, "congestion_control"); cc != "" {
+			s.CongestionControl = cc
+		}
+		if at := mStr(m, "auth_timeout"); at != "" {
+			s.AuthTimeout = at
+		}
+		if hasMapKey(m, "zero_rtt_handshake") {
+			s.ZeroRTTHandshake = mBool(m, "zero_rtt_handshake")
+		}
+		if hb := mStr(m, "heartbeat"); hb != "" {
+			s.Heartbeat = hb
+		}
+	case "snell":
+		if hasMapKey(m, "version") {
+			s.SnellVersion = mInt(m, "version")
+		}
+		if psk := mStr(m, "psk"); psk != "" {
+			s.SnellPSK = psk
+		}
+		if hasMapKey(m, "obfs_mode") {
+			s.SnellObfsMode = mStr(m, "obfs_mode")
+		}
+		if hasMapKey(m, "mode") {
+			s.SnellMode = mStr(m, "mode")
+		}
+	case "trojan":
+		if fb := mMap(m, "fallback"); fb != nil {
+			s.TrojanFallback = &FallbackSettings{Server: mStr(fb, "server"), ServerPort: mInt(fb, "server_port")}
+		}
+	}
+}
+
+func hasMapKey(m map[string]any, key string) bool {
+	_, ok := m[key]
+	return ok
+}
+
+func deepCloneValue(val any) any {
+	switch v := val.(type) {
+	case map[string]any:
+		return deepCloneMap(v)
+	case []any:
+		out := make([]any, len(v))
+		for i, item := range v {
+			out[i] = deepCloneValue(item)
+		}
+		return out
+	default:
+		return v
+	}
+}
+
+func deepCloneMap(src map[string]any) map[string]any {
+	if src == nil {
+		return nil
+	}
+	out := make(map[string]any, len(src))
+	for k, v := range src {
+		out[k] = deepCloneValue(v)
+	}
+	return out
+}
+
+// deepMergeMaps overlays src onto dst recursively. Nested maps merge key-by-key
+// so extra/complex fields in dst survive while src values remain authoritative.
+func deepMergeMaps(dst, src map[string]any) map[string]any {
+	if dst == nil {
+		dst = make(map[string]any, len(src))
+	}
+	for k, sv := range src {
+		if sm, ok := sv.(map[string]any); ok {
+			if dm, ok := dst[k].(map[string]any); ok {
+				dst[k] = deepMergeMaps(dm, sm)
+				continue
+			}
+		}
+		dst[k] = deepCloneValue(sv)
+	}
+	return dst
 }

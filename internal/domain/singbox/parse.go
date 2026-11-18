@@ -316,16 +316,27 @@ func parseInbound(m map[string]any) (ParsedInbound, bool) {
 		// The panel manages Snell as one shared PSK, regardless of legacy
 		// users[].userkey entries in an imported config.
 		s.SingleUser = true
-	case "socks":
+	case "socks", "mixed", "http":
 		if u != nil {
 			s.Username = mStr(u, "username")
 			s.Password = mStr(u, "password")
 		}
+	case "tun", "direct", "redirect", "tproxy":
+		// Schema-driven inbounds carry their full parameters in s.Raw.
 	default:
 		return ParsedInbound{}, false
 	}
+	s.Raw = extractInboundRaw(m, s.SingleUser)
 	in.Settings = s
 	return in, true
+}
+
+func extractInboundRaw(m map[string]any, singleUser bool) map[string]any {
+	raw := deepCloneMap(m)
+	if !singleUser {
+		delete(raw, "users")
+	}
+	return raw
 }
 
 // builtinOutbounds are outbound types/tags the panel manages itself and never
@@ -431,6 +442,16 @@ func parseRule(m map[string]any) (ParsedRule, bool) {
 	if action == "" {
 		action = "route"
 	}
+	var extra map[string]any
+	for key, val := range m {
+		if knownRuleJSONKeys[key] {
+			continue
+		}
+		if extra == nil {
+			extra = make(map[string]any)
+		}
+		extra[key] = deepCloneValue(val)
+	}
 	r := ParsedRule{
 		Match: RuleInput{
 			Action:                   action,
@@ -448,6 +469,7 @@ func parseRule(m map[string]any) (ParsedRule, bool) {
 			Network:                  mStr(m, "network"),
 			RuleSet:                  mStrSlice(m, "rule_set"),
 			RuleSetIPCIDRMatchSource: mBool(m, "rule_set_ip_cidr_match_source"),
+			Extra:                    extra,
 		},
 		Outbound: mStr(m, "outbound"),
 	}
@@ -466,6 +488,8 @@ func parseRule(m map[string]any) (ParsedRule, bool) {
 		r.Outbound = "sniff"
 	case "hijack-dns":
 		r.Outbound = "hijack-dns"
+	case "resolve", "route-options":
+		r.Outbound = action
 	default:
 		return ParsedRule{}, false
 	}
@@ -511,7 +535,7 @@ func ParseServerConfig(raw []byte) (*ParsedConfig, error) {
 			out.Skipped = append(out.Skipped, fmt.Sprintf("入站 %s: 面板不支持的类型 %s", mStr(m, "tag"), mStr(m, "type")))
 			continue
 		}
-		if in.ListenPort == 0 {
+		if in.ListenPort == 0 && in.Type != "tun" {
 			out.Skipped = append(out.Skipped, fmt.Sprintf("入站 %s: 缺少 listen_port", in.Tag))
 			continue
 		}
@@ -524,6 +548,7 @@ func ParseServerConfig(raw []byte) (*ParsedConfig, error) {
 				Enabled: true, InternalPort: guard.internalPort,
 				SniffTimeout: guard.timeout, ServerNames: guard.serverNames, Tag: guard.tag,
 			}
+			in.Settings.Raw = nil
 		}
 		out.Inbounds = append(out.Inbounds, in)
 	}
@@ -592,7 +617,7 @@ func ParseServerConfig(raw []byte) (*ParsedConfig, error) {
 	// panel later pushes would fail `sing-box check` and roll back.
 	known := map[string]bool{
 		"direct": true, "block": true, "reject": true,
-		"sniff": true, "hijack-dns": true,
+		"sniff": true, "hijack-dns": true, "resolve": true, "route-options": true,
 	}
 	finalKnown := out.Final == "direct"
 	for _, ob := range out.Outbounds {

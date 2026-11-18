@@ -97,6 +97,12 @@ var supportedInboundTypes = map[string]bool{
 	string(model.InboundAnyTLS):      true,
 	string(model.InboundSnell):       true,
 	string(model.InboundSocks):       true,
+	"mixed":                          true,
+	"http":                           true,
+	"tun":                            true,
+	"direct":                         true,
+	"redirect":                       true,
+	"tproxy":                         true,
 }
 
 // unixToTime converts a unix-seconds pointer to a *time.Time (0/nil => nil).

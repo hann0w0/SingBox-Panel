@@ -63,7 +63,11 @@ func (a *App) createInbound(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "unsupported inbound type: " + req.Type})
 		return
 	}
-	if req.ListenPort <= 0 || req.ListenPort > 65535 {
+	if req.Type != "tun" && (req.ListenPort <= 0 || req.ListenPort > 65535) {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid listen_port"})
+		return
+	}
+	if req.Type == "tun" && (req.ListenPort < 0 || req.ListenPort > 65535) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid listen_port"})
 		return
 	}
@@ -75,6 +79,7 @@ func (a *App) createInbound(c *gin.Context) {
 			return
 		}
 	}
+	st.SyncFromRaw(req.Type)
 	if err := st.ValidateMultiUser(req.Type); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
@@ -83,6 +88,7 @@ func (a *App) createInbound(c *gin.Context) {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
+	syncSecretsToRaw(req.Type, &st)
 	// Reject bad settings here: an unusable inbound row would otherwise make
 	// EVERY later config push for this server fail, silently.
 	if err := st.Validate(req.Type); err != nil {
@@ -160,7 +166,7 @@ func (a *App) updateInbound(c *gin.Context) {
 	if req.ListenPort != 0 {
 		nextPort = req.ListenPort
 	}
-	if err := a.validateInboundIdentity(a.db, sid, ib.ID, nextTag, nextPort); err != nil {
+	if err := a.validateInboundIdentityForType(a.db, sid, ib.ID, nextTag, string(ib.Type), nextPort); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
@@ -194,6 +200,7 @@ func (a *App) updateInbound(c *gin.Context) {
 			c.JSON(http.StatusBadRequest, gin.H{"error": "invalid settings: " + err.Error()})
 			return
 		}
+		st.SyncFromRaw(string(ib.Type))
 		preserveInboundSecrets(&oldSettings, &st)
 		if ib.Type == model.InboundSocks {
 			// Omitted credentials mean keep; explicitly clearing both fields means
@@ -219,6 +226,7 @@ func (a *App) updateInbound(c *gin.Context) {
 			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 			return
 		}
+		syncSecretsToRaw(string(ib.Type), &st)
 		if err := st.Validate(string(ib.Type)); err != nil {
 			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 			return
@@ -379,4 +387,30 @@ func containsID(ids []uint, id uint) bool {
 		}
 	}
 	return false
+}
+
+// syncSecretsToRaw keeps s.Raw aligned with auto-generated/preserved credentials
+// when the inbound carries a schema-edited raw JSON object.
+func syncSecretsToRaw(typ string, s *singbox.InboundSettings) {
+	if len(s.Raw) == 0 {
+		return
+	}
+	if typ == "shadowsocks" && s.SSServerPSK != "" {
+		s.Raw["password"] = s.SSServerPSK
+	}
+	if typ == "snell" && s.SnellPSK != "" {
+		s.Raw["psk"] = s.SnellPSK
+	}
+	if s.TLS.Reality.Enabled {
+		if tlsMap, ok := s.Raw["tls"].(map[string]any); ok {
+			if realityMap, ok := tlsMap["reality"].(map[string]any); ok {
+				if s.TLS.Reality.PrivateKey != "" {
+					realityMap["private_key"] = s.TLS.Reality.PrivateKey
+				}
+				if len(s.TLS.Reality.ShortID) > 0 {
+					realityMap["short_id"] = s.TLS.Reality.ShortID
+				}
+			}
+		}
+	}
 }

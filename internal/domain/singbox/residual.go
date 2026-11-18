@@ -279,17 +279,39 @@ func NormalizeSingleUserName(raw []byte) ([]byte, bool) {
 }
 
 // mergeInto adds residual keys to a rendered object, leaving the panel's own
-// keys untouched: unknown fields are restored, known fields keep the panel's
-// value so the model stays authoritative.
+// keys untouched: unknown fields are restored recursively, while known fields
+// keep the panel's value so the model stays authoritative.
 func mergeInto(target map[string]any, extra map[string]json.RawMessage) {
 	for key, raw := range extra {
+		var value any
+		if json.Unmarshal(raw, &value) != nil {
+			continue
+		}
+		if existingMap, ok := target[key].(map[string]any); ok {
+			if extraMap, ok := value.(map[string]any); ok {
+				mergeMissingMap(existingMap, extraMap)
+				continue
+			}
+		}
 		if _, taken := target[key]; taken {
 			continue
 		}
-		var value any
-		if json.Unmarshal(raw, &value) == nil {
-			target[key] = value
+		target[key] = value
+	}
+}
+
+func mergeMissingMap(target, extra map[string]any) {
+	for key, val := range extra {
+		if existingMap, ok := target[key].(map[string]any); ok {
+			if extraMap, ok := val.(map[string]any); ok {
+				mergeMissingMap(existingMap, extraMap)
+				continue
+			}
 		}
+		if _, taken := target[key]; taken {
+			continue
+		}
+		target[key] = val
 	}
 }
 

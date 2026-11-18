@@ -33,9 +33,73 @@ type RuleInput struct {
 	Protocol                 []string `json:"protocol,omitempty"`
 	Sniffer                  []string `json:"sniffer,omitempty"`
 	Network                  string   `json:"network,omitempty"`  // "" | tcp | udp
-	RuleSet                  []string `json:"rule_set,omitempty"` // referenced rule-set tags
-	RuleSetIPCIDRMatchSource bool     `json:"rule_set_ip_cidr_match_source,omitempty"`
-	Outbound                 string   `json:"-"` // target tag; "block"/"reject" => reject
+	RuleSet                  []string       `json:"rule_set,omitempty"` // referenced rule-set tags
+	RuleSetIPCIDRMatchSource bool           `json:"rule_set_ip_cidr_match_source,omitempty"`
+	Outbound                 string         `json:"-"` // target tag; "block"/"reject" => reject
+	Extra                    map[string]any `json:"-"` // arbitrary sing-box rule fields preserved losslessly
+}
+
+var knownRuleJSONKeys = map[string]bool{
+	"action": true, "method": true, "auth_user": true, "inbound": true,
+	"domain": true, "domain_suffix": true, "domain_keyword": true,
+	"ip_cidr": true, "source_ip_cidr": true, "port": true, "protocol": true,
+	"sniffer": true, "network": true, "rule_set": true,
+	"rule_set_ip_cidr_match_source": true, "outbound": true,
+}
+
+type ruleInputAlias RuleInput
+
+// UnmarshalJSON decodes known typed fields while preserving any additional
+// sing-box route rule fields (such as domain_regex, process_name, invert) in Extra.
+func (r *RuleInput) UnmarshalJSON(data []byte) error {
+	var alias ruleInputAlias
+	if err := json.Unmarshal(data, &alias); err != nil {
+		return err
+	}
+	*r = RuleInput(alias)
+	var raw map[string]any
+	if err := json.Unmarshal(data, &raw); err != nil {
+		return err
+	}
+	var extra map[string]any
+	for key, val := range raw {
+		if knownRuleJSONKeys[key] {
+			continue
+		}
+		if extra == nil {
+			extra = make(map[string]any)
+		}
+		extra[key] = val
+	}
+	r.Extra = extra
+	return nil
+}
+
+// MarshalJSON encodes typed fields together with any preserved Extra keys.
+func (r RuleInput) MarshalJSON() ([]byte, error) {
+	encoded, err := json.Marshal(ruleInputAlias(r))
+	if err != nil {
+		return nil, err
+	}
+	if len(r.Extra) == 0 {
+		return encoded, nil
+	}
+	var obj map[string]any
+	if err := json.Unmarshal(encoded, &obj); err != nil {
+		return nil, err
+	}
+	if obj == nil {
+		obj = make(map[string]any, len(r.Extra))
+	}
+	for key, val := range r.Extra {
+		if knownRuleJSONKeys[key] {
+			continue
+		}
+		if _, taken := obj[key]; !taken {
+			obj[key] = val
+		}
+	}
+	return json.Marshal(obj)
 }
 
 // RuleSetInput describes a local or remote rule-set used by route rules.
@@ -119,6 +183,10 @@ func routeRuleAction(r RuleInput) string {
 		return "sniff"
 	case "hijack-dns":
 		return "hijack-dns"
+	case "resolve":
+		return "resolve"
+	case "route-options":
+		return "route-options"
 	default:
 		return "route"
 	}
@@ -126,7 +194,10 @@ func routeRuleAction(r RuleInput) string {
 
 // buildRouteRule renders one route rule object.
 func buildRouteRule(r RuleInput) map[string]any {
-	m := map[string]any{}
+	m := deepCloneMap(r.Extra)
+	if m == nil {
+		m = map[string]any{}
+	}
 	if len(r.AuthUser) > 0 {
 		m["auth_user"] = r.AuthUser
 	}
@@ -170,13 +241,13 @@ func buildRouteRule(r RuleInput) map[string]any {
 	// from carrying domain/IP/port conditions after it is changed to sniff/DNS.
 	if act == "sniff" {
 		for key := range m {
-			if key != "inbound" && key != "auth_user" {
+			if key != "inbound" && key != "auth_user" && key != "timeout" && key != "invert" {
 				delete(m, key)
 			}
 		}
 	} else if act == "hijack-dns" {
 		for key := range m {
-			if key != "inbound" && key != "protocol" && key != "auth_user" {
+			if key != "inbound" && key != "protocol" && key != "auth_user" && key != "invert" {
 				delete(m, key)
 			}
 		}
@@ -197,6 +268,8 @@ func buildRouteRule(r RuleInput) map[string]any {
 	} else if act == "hijack-dns" {
 		m["action"] = "hijack-dns"
 		m["protocol"] = []string{"dns"}
+	} else if act == "resolve" || act == "route-options" {
+		m["action"] = act
 	} else {
 		m["action"] = "route"
 		m["outbound"] = r.Outbound

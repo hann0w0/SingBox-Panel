@@ -271,7 +271,7 @@ func TestInboundTrafficUnmodeledRawTagsCannotReuseHistory(t *testing.T) {
 	_, router := inboundTrafficRouter(f)
 	base := fmt.Sprintf("/servers/%d", f.server.ID)
 	inboundTrafficRequest(t, router, http.MethodPut, fmt.Sprintf("%s/inbounds/%d", base, f.multi.ID), gin.H{"tag": "renamed"}, http.StatusOK)
-	raw := fmt.Sprintf(`{"inbounds":[{"type":"http","tag":%q,"listen_port":1080}]}`, f.multi.Tag)
+	raw := fmt.Sprintf(`{"inbounds":[{"type":"wireguard","tag":%q,"listen_port":1080}]}`, f.multi.Tag)
 	parsed, err := singbox.ParseServerConfig([]byte(raw))
 	if err != nil || len(parsed.Inbounds) != 0 {
 		t.Fatalf("fixture must use an unmodeled inbound: %+v, %v", parsed, err)

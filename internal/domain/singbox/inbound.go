@@ -171,10 +171,14 @@ func BuildInbound(in InboundInput) (json.RawMessage, error) {
 		}
 	}
 	m := map[string]any{
-		"type":        in.Type,
-		"tag":         in.Tag,
-		"listen":      in.Settings.ListenAddress(),
-		"listen_port": in.ListenPort,
+		"type": in.Type,
+		"tag":  in.Tag,
+	}
+	if in.Type != "tun" {
+		m["listen"] = in.Settings.ListenAddress()
+		if in.ListenPort > 0 {
+			m["listen_port"] = in.ListenPort
+		}
 	}
 	if in.Settings.RealityGuardEnabled() {
 		if in.ListenPort == in.Settings.TLS.Reality.Guard.InternalPort {
@@ -409,9 +413,60 @@ func BuildInbound(in InboundInput) (json.RawMessage, error) {
 			}
 		}
 
+	case "http":
+		if in.Settings.Username != "" || in.Settings.Password != "" {
+			m["users"] = []map[string]any{
+				{"username": in.Settings.Username, "password": in.Settings.Password},
+			}
+		}
+		if tls != nil {
+			m["tls"] = tls
+		}
+
+	case "tun", "direct", "redirect", "tproxy":
+		// Schema-driven inbounds rely on Settings.Raw for protocol-specific fields.
+
 	default:
 		return nil, fmt.Errorf("unsupported inbound type %q", in.Type)
 	}
 
+	if len(in.Settings.Raw) > 0 {
+		merged, err := mergeInboundWithRaw(in, m)
+		if err != nil {
+			return nil, err
+		}
+		return json.Marshal(merged)
+	}
 	return json.Marshal(m)
+}
+
+func mergeInboundWithRaw(in InboundInput, overlay map[string]any) (map[string]any, error) {
+	encoded, err := json.Marshal(overlay)
+	if err != nil {
+		return nil, err
+	}
+	var normalizedOverlay map[string]any
+	if err := json.Unmarshal(encoded, &normalizedOverlay); err != nil {
+		return nil, err
+	}
+	base := deepCloneMap(in.Settings.Raw)
+	if !in.Settings.SingleUser {
+		delete(base, "users")
+	}
+	if !in.Settings.TLS.tlsEnabled() {
+		delete(base, "tls")
+	} else if tlsMap, ok := base["tls"].(map[string]any); ok {
+		if !in.Settings.TLS.Reality.Enabled {
+			delete(tlsMap, "reality")
+		}
+		if in.Settings.TLS.ACMEDomain == "" {
+			if cp, ok := tlsMap["certificate_provider"].(map[string]any); ok && mStr(cp, "type") == "acme" {
+				delete(tlsMap, "certificate_provider")
+			}
+		}
+	}
+	if tr := strings.ToLower(in.Settings.Transport.Type); tr == "" || tr == "tcp" {
+		delete(base, "transport")
+	}
+	return deepMergeMaps(base, normalizedOverlay), nil
 }

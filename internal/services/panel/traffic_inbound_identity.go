@@ -19,9 +19,23 @@ func checkInboundTrafficTag(db *gorm.DB, serverID, inboundID uint, tag string) e
 		return err
 	}
 	if binding.ID != 0 && binding.InboundID != inboundID {
-		return fmt.Errorf("%w: %q", errInboundTrafficTagReserved, tag)
+		var ownerCount int64
+		if err := db.Model(&model.Inbound{}).Where("id = ? AND server_id = ?", binding.InboundID, serverID).Count(&ownerCount).Error; err != nil {
+			return err
+		}
+		if ownerCount > 0 {
+			return fmt.Errorf("%w: %q", errInboundTrafficTagReserved, tag)
+		}
 	}
 	return nil
+}
+
+// releaseInboundTrafficTags frees historical tag reservations owned by deleted inbounds.
+func releaseInboundTrafficTags(tx *gorm.DB, serverID uint, inboundIDs ...uint) error {
+	if len(inboundIDs) == 0 {
+		return nil
+	}
+	return tx.Where("server_id = ? AND inbound_id IN ?", serverID, inboundIDs).Delete(&model.InboundTrafficIdentity{}).Error
 }
 
 // Call inside the same transaction as the inbound change. The unique key and
@@ -41,13 +55,25 @@ func rememberInboundTrafficTag(tx *gorm.DB, inbound *model.Inbound) error {
 		return err
 	}
 	if saved.InboundID != inbound.ID {
-		return fmt.Errorf("%w: %q", errInboundTrafficTagReserved, inbound.Tag)
+		var ownerCount int64
+		if err := tx.Model(&model.Inbound{}).Where("id = ? AND server_id = ?", saved.InboundID, inbound.ServerID).Count(&ownerCount).Error; err != nil {
+			return err
+		}
+		if ownerCount > 0 {
+			return fmt.Errorf("%w: %q", errInboundTrafficTagReserved, inbound.Tag)
+		}
+		if err := tx.Model(&saved).Updates(map[string]any{"inbound_id": inbound.ID, "tag": inbound.Tag}).Error; err != nil {
+			return err
+		}
 	}
 	return nil
 }
 
 func migrateInboundTrafficIdentities(tx *gorm.DB) error {
 	if err := tx.AutoMigrate(&model.InboundTrafficIdentity{}); err != nil {
+		return err
+	}
+	if err := tx.Where("inbound_id NOT IN (?)", tx.Model(&model.Inbound{}).Select("id")).Delete(&model.InboundTrafficIdentity{}).Error; err != nil {
 		return err
 	}
 	var inbounds []model.Inbound

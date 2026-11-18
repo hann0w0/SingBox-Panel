@@ -432,6 +432,9 @@ func syncImportedInbounds(tx *gorm.DB, serverID uint, parsed []singbox.ParsedInb
 		}
 	}
 	if len(removedIDs) > 0 {
+		if err := releaseInboundTrafficTags(tx, serverID, removedIDs...); err != nil {
+			return err
+		}
 		var forwards []model.UserForward
 		if err := tx.Where("server_id = ? AND inbound_id IN ?", serverID, removedIDs).Find(&forwards).Error; err != nil {
 			return err

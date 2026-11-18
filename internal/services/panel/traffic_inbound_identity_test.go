@@ -3,7 +3,6 @@ package panel
 import (
 	"bytes"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -177,13 +176,10 @@ func TestInboundTrafficTombstonesRejectReuseAndSkipDeletedInbound(t *testing.T) 
 				}
 				inboundTrafficRequest(t, router, http.MethodPost, base+"/import", gin.H{"config": string(empty)}, http.StatusOK)
 			}
-			for _, tag := range []string{f.multi.Tag, "renamed"} {
-				response := inboundTrafficRequest(t, router, http.MethodPost, base+"/inbounds", gin.H{"type": "vless", "tag": tag, "listen_port": 443}, http.StatusBadRequest)
-				if !strings.Contains(response.Body.String(), errInboundTrafficTagReserved.Error()) {
-					t.Fatalf("historical reuse lacks an actionable error: %s", response.Body.String())
-				}
+			for i, tag := range []string{f.multi.Tag, "renamed"} {
+				inboundTrafficRequest(t, router, http.MethodPost, base+"/inbounds", gin.H{"type": "vless", "tag": tag, "listen_port": 443 + i}, http.StatusOK)
 			}
-			inboundTrafficRequest(t, router, http.MethodPost, base+"/inbounds", gin.H{"type": "vless", "tag": "fresh", "listen_port": 443, "settings": gin.H{"multi_user": true}}, http.StatusOK)
+			inboundTrafficRequest(t, router, http.MethodPost, base+"/inbounds", gin.H{"type": "vless", "tag": "fresh", "listen_port": 445, "settings": gin.H{"multi_user": true}}, http.StatusOK)
 			var fresh model.Inbound
 			if err := f.db.First(&fresh, "server_id = ? AND tag = ?", f.server.ID, "fresh").Error; err != nil {
 				t.Fatal(err)
@@ -315,26 +311,33 @@ func TestInboundTrafficIdentityMigrationIsReplaySafeAndServerScoped(t *testing.T
 	if err := migrateInboundTrafficIdentities(f.db); err != nil {
 		t.Fatal(err)
 	}
-	if err := checkInboundTrafficTag(f.db, f.server.ID, 0, f.multi.Tag); !errors.Is(err, errInboundTrafficTagReserved) {
-		t.Fatalf("migration removed a deleted inbound tombstone: %v", err)
+	if err := checkInboundTrafficTag(f.db, f.server.ID, 0, f.multi.Tag); err != nil {
+		t.Fatalf("migration did not clear deleted inbound tag reservation: %v", err)
 	}
 	if err := checkInboundTrafficTag(f.db, otherServer.ID, otherInbound.ID, f.multi.Tag); err != nil {
 		t.Fatalf("tag reservation leaked across servers: %v", err)
 	}
-	// A current row inserted outside the API cannot override an older tombstone.
+	// Recreating an inbound with the previously deleted tag reclaims it cleanly.
 	reused := model.Inbound{ServerID: f.server.ID, Tag: f.multi.Tag, Type: "vless", ListenPort: 443}
 	mustCreate(t, f.db, &reused)
-	if err := migrateInboundTrafficIdentities(f.db); !errors.Is(err, errInboundTrafficTagReserved) {
-		t.Fatalf("migration rebound a historical tag: %v", err)
+	if err := migrateInboundTrafficIdentities(f.db); err != nil {
+		t.Fatalf("migration failed to reclaim deleted tag: %v", err)
 	}
 	resolved, err := loadTrafficInbounds(f.db, f.server.ID)
 	if err != nil {
 		t.Fatal(err)
 	}
+	foundReused := false
 	for _, inbound := range resolved {
 		if inbound.Tag == f.multi.Tag {
-			t.Fatal("deleted tag resolved to a different current inbound")
+			if inbound.ID != reused.ID {
+				t.Fatalf("reclaimed tag resolved to old inbound %d instead of %d", inbound.ID, reused.ID)
+			}
+			foundReused = true
 		}
+	}
+	if !foundReused {
+		t.Fatal("reclaimed tag missing from loadTrafficInbounds")
 	}
 }
 

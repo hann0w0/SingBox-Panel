@@ -353,6 +353,9 @@ func (a *App) deleteInbound(c *gin.Context) {
 		if err := tx.Delete(&ib).Error; err != nil {
 			return err
 		}
+		if err := releaseInboundTrafficTags(tx, sid, ib.ID); err != nil {
+			return err
+		}
 		if err := deleteUserNodeOrderRefs(tx, userNodeTypeManaged, []uint{ib.ID}); err != nil {
 			return err
 		}

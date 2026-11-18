@@ -22,17 +22,12 @@ func validateTrafficReport(report *protocol.TrafficReport, now time.Time) error 
 	if len(report.Buckets) == 0 || len(report.Buckets) > 128 {
 		return fmt.Errorf("invalid traffic batch size")
 	}
-	seen := make(map[int64]struct{}, len(report.Buckets))
 	for _, bucket := range report.Buckets {
 		// Old samples are expected after an outage. Never clamp them to receive
 		// time: doing so would move pre-reset usage into the new billing cycle.
 		if bucket.Time <= 0 || bucket.Time%60 != 0 || bucket.Time > now.Add(maxAgentClockSkew).Unix() {
 			return fmt.Errorf("invalid traffic bucket timestamp")
 		}
-		if _, duplicate := seen[bucket.Time]; duplicate {
-			return fmt.Errorf("duplicate traffic bucket timestamp")
-		}
-		seen[bucket.Time] = struct{}{}
 	}
 	return nil
 }

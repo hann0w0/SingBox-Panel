@@ -955,3 +955,25 @@ export function nativeJsonToOutboundSettings(prev: OutboundSettings, rawObj: Rec
   outer.settings = inner
   return outer
 }
+
+export function hasPopulatedValue(v: unknown): boolean {
+  if (v === undefined || v === null || v === '' || v === false) return false
+  if (Array.isArray(v)) return v.length > 0
+  if (typeof v === 'object') return Object.values(v as Record<string, unknown>).some(hasPopulatedValue)
+  return true
+}
+
+export function pickPopulatedSchemaProps(
+  props: Record<string, JSONSchema>,
+  values: Record<string, unknown> | undefined,
+  alwaysIncludeKeys?: ReadonlySet<string>,
+): Record<string, JSONSchema> {
+  const out: Record<string, JSONSchema> = {}
+  const data = values && typeof values === 'object' ? values : {}
+  for (const [k, v] of Object.entries(props)) {
+    if (alwaysIncludeKeys?.has(k) || hasPopulatedValue(data[k])) {
+      out[k] = v
+    }
+  }
+  return out
+}

@@ -9,6 +9,7 @@ import {
   cloneJson,
   inboundSettingsToNativeJson,
   nativeJsonToInboundSettings,
+  pickPopulatedSchemaProps,
   resolveVariantProperties,
   useSingboxSchemas,
   validateObjectBySchema,
@@ -43,20 +44,19 @@ const TLS_REQUIRED = new Set<InboundType>(['trojan', 'hysteria2', 'tuic', 'anytl
 const NO_TLS = new Set<InboundType>(['shadowsocks', 'snell', 'socks', 'mixed', 'tun', 'direct', 'redirect', 'tproxy'])
 const HAS_BANDWIDTH = new Set<InboundType>(['hysteria2'])
 const EXTENDED_TRANSPORTS = new Set(['ws', 'httpupgrade', 'grpc', 'http', 'quic'])
-const SCHEMA_OTHER_KEYS = new Set([
-  'tcp_fast_open', 'proxy_protocol', 'udp_timeout', 'detour', 'multiplex',
-  'masquerade', 'bbr_profile', 'padding_scheme',
-  'route_address', 'route_exclude_address', 'auto_redirect', 'endpoint_independent_nat',
+const SCHEMA_INBOUND_PRIMARY_PROTO_KEYS = new Set([
+  'interface_name', 'address', 'mtu', 'stack', 'auto_route', 'strict_route',
+  'network', 'override_address', 'override_port',
 ])
-const SCHEMA_TLS_ADV_KEYS = new Set(['min_version', 'max_version'])
-const SCHEMA_PROTOCOL_EXTRA_EXCLUDES = new Set([
+const SCHEMA_TLS_STANDARD_KEYS = new Set([
+  'enabled', 'server_name', 'alpn', 'certificate_path', 'key_path', 'reality', 'acme',
+])
+const SCHEMA_INBOUND_TOP_EXCLUDES = new Set([
   'type', 'tag', 'listen', 'listen_port', 'flow', 'packet_encoding', 'method', 'password',
   'up_mbps', 'down_mbps', 'ignore_client_bandwidth', 'obfs', 'congestion_control',
   'auth_timeout', 'zero_rtt_handshake', 'heartbeat', 'version', 'psk', 'obfs_mode', 'mode',
-  'fallback', 'fallback_for_alpn', 'tls', 'transport', 'realm',
-  'tcp_multi_path', 'udp_fragment', 'proxy_protocol_accept_no_header',
-  'sniff', 'sniff_override_destination', 'domain_strategy', 'brutal_debug',
-  ...SCHEMA_OTHER_KEYS,
+  'fallback', 'tls', 'transport',
+  'sniff', 'sniff_override_destination', 'domain_strategy',
 ])
 
 function compactMultiplexSchema(schema: JSONSchema): JSONSchema {
@@ -479,7 +479,9 @@ export default function InboundForm({
   const submitLock = useRef(false)
   const submitSessionRef = useRef(0)
   const type: InboundType = Form.useWatch('type', form) ?? 'shadowsocks'
-  const tlsMode = Form.useWatch('tls_mode', form)
+  const showTLS = !NO_TLS.has(type)
+  const watchedTlsMode = Form.useWatch('tls_mode', form)
+  const tlsMode = watchedTlsMode || (showTLS ? (!inbound && type === 'vless' ? 'reality' : (TLS_REQUIRED.has(type) ? 'self' : 'none')) : 'none')
   const transportType = Form.useWatch('transport_type', form)
   const snellVersion = Form.useWatch('snell_version', form)
   const obfsType = Form.useWatch('obfs_type', form)
@@ -489,60 +491,65 @@ export default function InboundForm({
   const invalidSSMultiUser = type === 'shadowsocks' && method === SS2022_CHACHA_METHOD && requestedMultiUser
   const guardEnabled = !!Form.useWatch('guard_enabled', form)
   const listenMode = Form.useWatch('listen_mode', form)
+  const maxEarlyData = Form.useWatch('max_early_data', form)
+  const earlyDataHeader = Form.useWatch('early_data_header', form)
 
   const variantProps = useMemo(
     () => resolveVariantProperties(schemas.inbound, type),
     [schemas.inbound, type],
   )
-  const otherParamsSchemaProps = useMemo(() => {
-    // Snell server only exposes PSK, version, and obfuscation/mode directly.
-    if (type === 'snell') return {}
-    const out: Record<string, JSONSchema> = {}
-    for (const [k, v] of Object.entries(variantProps)) {
-      if (SCHEMA_OTHER_KEYS.has(k) || (type === 'shadowsocks' && k === 'network')) {
-        out[k] = k === 'multiplex' ? compactMultiplexSchema(v) : v
-      }
-    }
-    return out
-  }, [variantProps, type])
   const protocolExtraSchemaProps = useMemo(() => {
     const out: Record<string, JSONSchema> = {}
     for (const [k, v] of Object.entries(variantProps)) {
+      if (SCHEMA_INBOUND_TOP_EXCLUDES.has(k)) continue
       if (type === 'shadowsocks' && k === 'network') continue
-      if (!SCHEMA_PROTOCOL_EXTRA_EXCLUDES.has(k)) out[k] = v
+      if (SCHEMA_INBOUND_PRIMARY_PROTO_KEYS.has(k)) out[k] = v
     }
     return out
   }, [variantProps, type])
+  const otherParamsSchemaProps = useMemo(() => {
+    const candidates: Record<string, JSONSchema> = {}
+    for (const [k, v] of Object.entries(variantProps)) {
+      if (SCHEMA_INBOUND_TOP_EXCLUDES.has(k)) continue
+      if (type !== 'shadowsocks' && SCHEMA_INBOUND_PRIMARY_PROTO_KEYS.has(k)) continue
+      candidates[k] = k === 'multiplex' ? compactMultiplexSchema(v) : v
+    }
+    const alwaysInclude = type === 'hysteria2' ? new Set(['masquerade']) : undefined
+    return pickPopulatedSchemaProps(candidates, rawExtra, alwaysInclude)
+  }, [variantProps, type, rawExtra])
   const transportSchemaProps = useMemo(() => {
     const trProps = variantProps.transport?.properties ?? {}
+    const trRaw = (rawExtra.transport && typeof rawExtra.transport === 'object' ? rawExtra.transport : {}) as Record<string, unknown>
     if (transportType === 'grpc') {
-      return {
+      const candidates = {
         ...(trProps.service_name ? { service_name: trProps.service_name } : {}),
         ...(trProps.idle_timeout ? { idle_timeout: trProps.idle_timeout } : {}),
         ...(trProps.ping_timeout ? { ping_timeout: trProps.ping_timeout } : {}),
         ...(trProps.permit_without_stream ? { permit_without_stream: trProps.permit_without_stream } : {}),
       }
+      return pickPopulatedSchemaProps(candidates, trRaw, new Set(['service_name']))
     }
     if (transportType === 'http') {
-      return {
-        ...(trProps.method ? { method: trProps.method } : {}),
+      const candidates = {
         ...(trProps.host ? { host: trProps.host } : {}),
         ...(trProps.path ? { path: trProps.path } : {}),
+        ...(trProps.method ? { method: trProps.method } : {}),
         ...(trProps.headers ? { headers: trProps.headers } : {}),
         ...(trProps.idle_timeout ? { idle_timeout: trProps.idle_timeout } : {}),
         ...(trProps.ping_timeout ? { ping_timeout: trProps.ping_timeout } : {}),
       }
+      return pickPopulatedSchemaProps(candidates, trRaw, new Set(['host', 'path']))
     }
     return {}
-  }, [variantProps, transportType])
+  }, [variantProps, transportType, rawExtra.transport])
   const tlsAdvSchemaProps = useMemo(() => {
     const tlsProps = variantProps.tls?.properties ?? {}
-    const out: Record<string, JSONSchema> = {}
+    const candidates: Record<string, JSONSchema> = {}
     for (const [k, v] of Object.entries(tlsProps)) {
-      if (SCHEMA_TLS_ADV_KEYS.has(k)) out[k] = v
+      if (!SCHEMA_TLS_STANDARD_KEYS.has(k)) candidates[k] = v
     }
-    return out
-  }, [variantProps])
+    return pickPopulatedSchemaProps(candidates, (rawExtra.tls && typeof rawExtra.tls === 'object' ? rawExtra.tls : {}) as Record<string, unknown>)
+  }, [variantProps, rawExtra.tls])
 
   useLayoutEffect(() => {
     submitSessionRef.current += 1
@@ -568,6 +575,13 @@ export default function InboundForm({
         : '',
     )
   }, [form, open, inbound, prefill])
+
+  useEffect(() => {
+    if (!open || !showTLS) return
+    if (!form.getFieldValue('tls_mode')) {
+      form.setFieldValue('tls_mode', !inbound && type === 'vless' ? 'reality' : (TLS_REQUIRED.has(type) ? 'self' : 'none'))
+    }
+  }, [open, showTLS, type, inbound, form])
 
   const switchEditorMode = (nextMode: string) => {
     if (nextMode !== 'form' && nextMode !== 'json') return
@@ -706,13 +720,12 @@ export default function InboundForm({
     }
   }
 
-  const showTLS = !NO_TLS.has(type)
   const showTransport = WS_TYPES.has(type)
   const canMultiUser = supportsMultiUser(type, method)
   const hasCredentials = canMultiUser || UUID_TYPES.has(type) || PW_TYPES.has(type) || type === 'shadowsocks' || type === 'socks' || type === 'mixed' || type === 'http' || type === 'snell'
   const hasProtocolSchemaExtras = Object.keys(protocolExtraSchemaProps).length > 0
   const hasParams = type === 'vless' || type === 'tuic' || type === 'snell' || HAS_BANDWIDTH.has(type) || hasProtocolSchemaExtras
-  const hasOtherParams = Object.keys(otherParamsSchemaProps).length > 0 || type === 'vless' || type === 'vmess' || type === 'anytls' || showTLS
+  const hasOtherParams = Object.keys(otherParamsSchemaProps).length > 0 || Object.keys(tlsAdvSchemaProps).length > 0 || type === 'vless' || type === 'vmess' || type === 'anytls' || type === 'tuic' || type === 'trojan' || (showTLS && tlsMode === 'tls')
   const jsonField = (key: string, value: unknown) => {
     if (form.getFieldValue(key) === undefined) form.setFieldValue(key, value)
   }
@@ -761,8 +774,9 @@ export default function InboundForm({
               onChange={(t: InboundType) => {
                 if (!GUARD_TYPES.has(t)) form.setFieldValue('guard_enabled', false)
                 const allowed = tlsModeOptions(t).map((o) => o.value)
-                if (!allowed.includes(form.getFieldValue('tls_mode'))) {
-                  form.setFieldValue('tls_mode', allowed[0])
+                const currentTls = form.getFieldValue('tls_mode')
+                if (!currentTls || !allowed.includes(currentTls) || (!inbound && t === 'vless' && currentTls === 'none')) {
+                  form.setFieldValue('tls_mode', t === 'vless' && allowed.includes('reality') ? 'reality' : allowed[0])
                 }
                 jsonField('listen_port', randomPort())
                 jsonField('flow', 'xtls-rprx-vision')
@@ -977,17 +991,9 @@ export default function InboundForm({
               </>
             )}
             {type === 'tuic' && (
-              <>
-                <Form.Item name="congestion_control" label="拥塞控制" rules={[{ required: true }]} className="fm-full">
-                  <Select options={['cubic', 'new_reno', 'bbr'].map((v) => ({ value: v, label: v }))} />
-                </Form.Item>
-                <Form.Item name="auth_timeout" label="认证超时" rules={[{ required: true }]}>
-                  <Input className="mono" />
-                </Form.Item>
-                <Form.Item name="heartbeat" label="心跳间隔" rules={[{ required: true }]}>
-                  <Input className="mono" />
-                </Form.Item>
-              </>
+              <Form.Item name="congestion_control" label="拥塞控制" rules={[{ required: true }]} className="fm-full">
+                <Select options={['cubic', 'new_reno', 'bbr'].map((v) => ({ value: v, label: v }))} />
+              </Form.Item>
             )}
             {type === 'snell' && (
               <>
@@ -1059,7 +1065,7 @@ export default function InboundForm({
                 <Form.Item name="ws_host" label="Host">
                   <Input className="mono" />
                 </Form.Item>
-                {transportType === 'ws' && (
+                {transportType === 'ws' && (Boolean(maxEarlyData) || Boolean(earlyDataHeader)) && (
                   <>
                     <Form.Item name="max_early_data" label="Early Data 长度">
                       <InputNumber min={0} precision={0} />
@@ -1119,7 +1125,7 @@ export default function InboundForm({
 
         {showTLS && (
           <FormGroup title="TLS" panel="inbound">
-            <Form.Item name="tls_mode" label="模式" dependencies={['guard_enabled']} rules={[
+            <Form.Item name="tls_mode" label="模式" className={tlsMode && tlsMode !== 'none' ? undefined : 'fm-full'} dependencies={['guard_enabled']} rules={[
               { required: true },
               ({ getFieldValue }) => ({
                 validator(_, value) {
@@ -1130,9 +1136,11 @@ export default function InboundForm({
             ]}>
               <Select options={tlsModeOptions()} />
             </Form.Item>
-            <Form.Item name="tls_alpn" label="ALPN">
-              <Input className="mono" />
-            </Form.Item>
+            {tlsMode && tlsMode !== 'none' && tlsMode !== 'reality' && (
+              <Form.Item name="tls_alpn" label="ALPN">
+                <Input className="mono" />
+              </Form.Item>
+            )}
             {tlsMode === 'reality' && (
               <>
                 <Form.Item
@@ -1145,15 +1153,7 @@ export default function InboundForm({
                 <Form.Item name="reality_handshake_port" label="握手端口">
                   <InputNumber precision={0} min={1} max={65535} className="mono" />
                 </Form.Item>
-                <Form.Item name="tls_server_name" label="SNI">
-                  <Input className="mono" />
-                </Form.Item>
-                <Form.Item name="reality_max_time_difference" label="时间差限制" rules={[
-                  { validator: (_, value) => {
-                    const error = validateGuardTimeout(value, true)
-                    return error ? Promise.reject(new Error(error)) : Promise.resolve()
-                  } },
-                ]}>
+                <Form.Item name="tls_server_name" label="SNI" className="fm-full">
                   <Input className="mono" />
                 </Form.Item>
                 {GUARD_TYPES.has(type) && (
@@ -1262,20 +1262,30 @@ export default function InboundForm({
                 </Form.Item>
               </>
             )}
-            {tlsMode && tlsMode !== 'none' && Object.keys(tlsAdvSchemaProps).length > 0 && (
-              <div className="fm-full">
-                <SchemaFieldList
-                  properties={tlsAdvSchemaProps}
-                  value={(rawExtra.tls && typeof rawExtra.tls === 'object' ? rawExtra.tls : {}) as Record<string, unknown>}
-                  onChange={(nextTls) => setRawExtra((prev) => ({ ...prev, tls: nextTls }))}
-                  idPrefix="inbound-tls"
-                />
-              </div>
-            )}
           </FormGroup>
         )}
         {hasOtherParams && (
           <FormGroup title="其他参数" panel="inbound">
+            {showTLS && tlsMode === 'reality' && (
+              <Form.Item name="reality_max_time_difference" label="时间差限制" className="fm-full" rules={[
+                { validator: (_, value) => {
+                  const error = validateGuardTimeout(value, true)
+                  return error ? Promise.reject(new Error(error)) : Promise.resolve()
+                } },
+              ]}>
+                <Input className="mono" />
+              </Form.Item>
+            )}
+            {type === 'tuic' && (
+              <>
+                <Form.Item name="auth_timeout" label="认证超时" rules={[{ required: true }]}>
+                  <Input className="mono" />
+                </Form.Item>
+                <Form.Item name="heartbeat" label="心跳间隔" rules={[{ required: true }]}>
+                  <Input className="mono" />
+                </Form.Item>
+              </>
+            )}
             {type === 'vmess' && (
               <>
                 <Form.Item name="vmess_security" label="订阅加密方式">
@@ -1286,7 +1296,7 @@ export default function InboundForm({
                 </Form.Item>
               </>
             )}
-            {showTLS && type !== 'hysteria2' && type !== 'tuic' && (
+            {showTLS && type !== 'hysteria2' && type !== 'tuic' && type !== 'http' && (
               <Form.Item name="tls_fingerprint" label="订阅 uTLS 指纹" className="fm-full">
                 <Select
                   allowClear
@@ -1318,6 +1328,16 @@ export default function InboundForm({
                     <Switch />
                   </Form.Item>
                 )}
+              </div>
+            )}
+            {Object.keys(tlsAdvSchemaProps).length > 0 && (
+              <div className="fm-full">
+                <SchemaFieldList
+                  properties={tlsAdvSchemaProps}
+                  value={(rawExtra.tls && typeof rawExtra.tls === 'object' ? rawExtra.tls : {}) as Record<string, unknown>}
+                  onChange={(nextTls) => setRawExtra((prev) => ({ ...prev, tls: nextTls }))}
+                  idPrefix="inbound-tls"
+                />
               </div>
             )}
             {Object.keys(otherParamsSchemaProps).length > 0 && (

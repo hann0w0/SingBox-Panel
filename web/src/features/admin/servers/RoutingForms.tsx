@@ -24,6 +24,7 @@ import {
   cloneJson,
   nativeJsonToOutboundSettings,
   outboundSettingsToNativeJson,
+  pickPopulatedSchemaProps,
   resolveVariantProperties,
   useSingboxSchemas,
   validateObjectBySchema,
@@ -49,21 +50,13 @@ const UUID_OUT = new Set<OutboundType>(['vless', 'vmess', 'tuic'])
 const PW_OUT = new Set<OutboundType>(['trojan', 'hysteria2', 'tuic', 'anytls'])
 const TUIC_CC = ['cubic', 'new_reno', 'bbr']
 const EXTENDED_OUT_TRANSPORTS = new Set(['ws', 'httpupgrade', 'grpc', 'http', 'quic'])
-const SCHEMA_OUT_OTHER_KEYS = new Set([
-  'detour', 'connect_timeout', 'domain_resolver', 'tcp_fast_open', 'bind_interface',
-  'multiplex', 'plugin', 'plugin_opts', 'network', 'udp_over_tcp',
-  'path', 'idle_session_check_interval', 'idle_session_timeout', 'min_idle_session',
-  'server_ports', 'hop_interval', 'heartbeat', 'udp_over_stream',
-])
-const SCHEMA_OUT_TLS_ADV_KEYS = new Set(['min_version', 'max_version'])
-const SCHEMA_OUT_PROTO_EXCLUDES = new Set([
+const SCHEMA_OUT_PRIMARY_PROTO_KEYS = new Set(['version', 'up_mbps', 'down_mbps'])
+const SCHEMA_OUT_TLS_STANDARD_KEYS = new Set(['enabled', 'server_name', 'insecure', 'alpn', 'utls', 'reality'])
+const SCHEMA_OUT_TOP_EXCLUDES = new Set([
   'type', 'tag', 'server', 'server_port', 'uuid', 'username', 'password', 'psk',
-  'method', 'flow', 'packet_encoding', 'security', 'alter_id', 'congestion_control',
-  'udp_relay_mode', 'zero_rtt_handshake', 'up_mbps', 'down_mbps', 'obfs',
-  'version', 'reuse', 'obfs_mode', 'obfs_host', 'mode', 'tls', 'transport',
-  'headers', 'global_padding', 'authenticated_length',
-  'routing_mark', 'inet4_bind_address', 'inet6_bind_address', 'tcp_multi_path', 'udp_fragment',
-  ...SCHEMA_OUT_OTHER_KEYS,
+  'method', 'flow', 'security', 'alter_id', 'congestion_control',
+  'zero_rtt_handshake', 'obfs', 'reuse', 'obfs_mode', 'obfs_host', 'mode',
+  'tls', 'transport',
 ])
 
 function compactOutboundMultiplexSchema(schema: JSONSchema): JSONSchema {
@@ -188,60 +181,63 @@ export function OutboundForm({
   const snellVersion = Form.useWatch('snell_version', form) ?? 4
   const snellObfsMode = Form.useWatch('snell_obfs_mode', form) ?? 'none'
   const hysteriaObfsType = Form.useWatch('obfs_type', form) ?? ''
-  const tlsChecked = !!Form.useWatch('tls', form)
 
   const variantProps = useMemo(
     () => resolveVariantProperties(schemas.outbound, type),
     [schemas.outbound, type],
   )
-  const otherParamsSchemaProps = useMemo(() => {
-    if (type === 'snell') return {}
-    const out: Record<string, JSONSchema> = {}
-    for (const [k, v] of Object.entries(variantProps)) {
-      if (SCHEMA_OUT_OTHER_KEYS.has(k)) {
-        out[k] = k === 'multiplex' ? compactOutboundMultiplexSchema(v) : v
-      }
-    }
-    return out
-  }, [variantProps, type])
   const protocolExtraSchemaProps = useMemo(() => {
     const out: Record<string, JSONSchema> = {}
     for (const [k, v] of Object.entries(variantProps)) {
-      if (!SCHEMA_OUT_PROTO_EXCLUDES.has(k)) out[k] = v
+      if (SCHEMA_OUT_TOP_EXCLUDES.has(k)) continue
+      if (type !== 'vless' && k === 'packet_encoding') continue
+      if (SCHEMA_OUT_PRIMARY_PROTO_KEYS.has(k)) out[k] = v
     }
-    if (type === 'socks' && variantProps.version) out.version = variantProps.version
     return out
   }, [variantProps, type])
+  const otherParamsSchemaProps = useMemo(() => {
+    const candidates: Record<string, JSONSchema> = {}
+    for (const [k, v] of Object.entries(variantProps)) {
+      if (SCHEMA_OUT_TOP_EXCLUDES.has(k)) continue
+      if (type === 'vless' && k === 'packet_encoding') continue
+      if (SCHEMA_OUT_PRIMARY_PROTO_KEYS.has(k)) continue
+      candidates[k] = k === 'multiplex' ? compactOutboundMultiplexSchema(v) : v
+    }
+    return pickPopulatedSchemaProps(candidates, rawExtra)
+  }, [variantProps, type, rawExtra])
   const transportSchemaProps = useMemo(() => {
     const trProps = variantProps.transport?.properties ?? {}
+    const trRaw = (rawExtra.transport && typeof rawExtra.transport === 'object' ? rawExtra.transport : {}) as Record<string, unknown>
     if (transportType === 'grpc') {
-      return {
+      const candidates = {
         ...(trProps.service_name ? { service_name: trProps.service_name } : {}),
         ...(trProps.idle_timeout ? { idle_timeout: trProps.idle_timeout } : {}),
         ...(trProps.ping_timeout ? { ping_timeout: trProps.ping_timeout } : {}),
         ...(trProps.permit_without_stream ? { permit_without_stream: trProps.permit_without_stream } : {}),
       }
+      return pickPopulatedSchemaProps(candidates, trRaw, new Set(['service_name']))
     }
     if (transportType === 'http') {
-      return {
-        ...(trProps.method ? { method: trProps.method } : {}),
+      const candidates = {
         ...(trProps.host ? { host: trProps.host } : {}),
         ...(trProps.path ? { path: trProps.path } : {}),
+        ...(trProps.method ? { method: trProps.method } : {}),
         ...(trProps.headers ? { headers: trProps.headers } : {}),
         ...(trProps.idle_timeout ? { idle_timeout: trProps.idle_timeout } : {}),
         ...(trProps.ping_timeout ? { ping_timeout: trProps.ping_timeout } : {}),
       }
+      return pickPopulatedSchemaProps(candidates, trRaw, new Set(['host', 'path']))
     }
     return {}
-  }, [variantProps, transportType])
+  }, [variantProps, transportType, rawExtra.transport])
   const tlsAdvSchemaProps = useMemo(() => {
     const tlsProps = variantProps.tls?.properties ?? {}
-    const out: Record<string, JSONSchema> = {}
+    const candidates: Record<string, JSONSchema> = {}
     for (const [k, v] of Object.entries(tlsProps)) {
-      if (SCHEMA_OUT_TLS_ADV_KEYS.has(k)) out[k] = v
+      if (!SCHEMA_OUT_TLS_STANDARD_KEYS.has(k)) candidates[k] = v
     }
-    return out
-  }, [variantProps])
+    return pickPopulatedSchemaProps(candidates, (rawExtra.tls && typeof rawExtra.tls === 'object' ? rawExtra.tls : {}) as Record<string, unknown>)
+  }, [variantProps, rawExtra.tls])
 
   useLayoutEffect(() => {
     submitSessionRef.current += 1
@@ -739,16 +735,6 @@ export function OutboundForm({
                 </div>
               </>
             )}
-            {tlsMode && tlsMode !== 'none' && Object.keys(tlsAdvSchemaProps).length > 0 && (
-              <div className="fm-full">
-                <SchemaFieldList
-                  properties={tlsAdvSchemaProps}
-                  value={(rawExtra.tls && typeof rawExtra.tls === 'object' ? rawExtra.tls : {}) as Record<string, unknown>}
-                  onChange={(nextTls) => setRawExtra((prev) => ({ ...prev, tls: nextTls }))}
-                  idPrefix="outbound-tls"
-                />
-              </div>
-            )}
           </FormGroup>
         )}
 
@@ -768,28 +754,30 @@ export function OutboundForm({
                 <Switch />
               </Form.Item>
             </div>
-            {(TLS_REQUIRED_OUT.has(type) || tlsChecked) && Object.keys(tlsAdvSchemaProps).length > 0 && (
+          </FormGroup>
+        )}
+        {(Object.keys(otherParamsSchemaProps).length > 0 || Object.keys(tlsAdvSchemaProps).length > 0) && (
+          <FormGroup title="其他参数">
+            {Object.keys(tlsAdvSchemaProps).length > 0 && (
               <div className="fm-full">
                 <SchemaFieldList
                   properties={tlsAdvSchemaProps}
                   value={(rawExtra.tls && typeof rawExtra.tls === 'object' ? rawExtra.tls : {}) as Record<string, unknown>}
                   onChange={(nextTls) => setRawExtra((prev) => ({ ...prev, tls: nextTls }))}
-                  idPrefix="outbound-tls-generic"
+                  idPrefix="outbound-tls"
                 />
               </div>
             )}
-          </FormGroup>
-        )}
-        {Object.keys(otherParamsSchemaProps).length > 0 && (
-          <FormGroup title="其他参数">
-            <div className="fm-full">
-              <SchemaFieldList
-                properties={otherParamsSchemaProps}
-                value={rawExtra}
-                onChange={setRawExtra}
-                idPrefix="outbound-other"
-              />
-            </div>
+            {Object.keys(otherParamsSchemaProps).length > 0 && (
+              <div className="fm-full">
+                <SchemaFieldList
+                  properties={otherParamsSchemaProps}
+                  value={rawExtra}
+                  onChange={setRawExtra}
+                  idPrefix="outbound-other"
+                />
+              </div>
+            )}
           </FormGroup>
         )}
       </Form>
@@ -1071,15 +1059,16 @@ export function RuleForm({
 
   const schemaProps = useMemo(() => schemas.route_rule.properties ?? {}, [schemas.route_rule])
   const advancedSchemaProps = useMemo(() => {
-    const out: Record<string, JSONSchema> = {}
+    const candidates: Record<string, JSONSchema> = {}
     for (const [k, v] of Object.entries(schemaProps)) {
       if (STANDARD_RULE_MATCH_KEYS.has(k)) continue
       const actions = v['x-ui']?.actions
       if (actions && !actions.includes(action)) continue
-      out[k] = v
+      candidates[k] = v
     }
-    return out
-  }, [schemaProps, action])
+    const commonKeys = new Set(['domain_regex', 'port_range', 'ip_is_private', 'invert', 'server', 'strategy'])
+    return pickPopulatedSchemaProps(candidates, extraMatch, commonKeys)
+  }, [schemaProps, action, extraMatch])
   const hasAdvancedSchemaProps = Object.keys(advancedSchemaProps).length > 0
 
   useLayoutEffect(() => {

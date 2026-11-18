@@ -131,13 +131,22 @@ describe('InboundForm JSON Schema integration', () => {
     })
   })
 
-  it('omits duplicate listen address and legacy fields from inbound 其他参数 UI, and keeps Snell flat without extra drawer', async () => {
+  it('omits unpopulated advanced fields from new inbounds and keeps Snell flat', async () => {
     const { rerender } = render(<InboundForm serverId={1} inbound={null} open onClose={vi.fn()} onSaved={vi.fn()} />)
 
-    // Default shadowsocks should show 其他参数 with concise TCP Fast Open / Multiplex, without duplicate 监听地址 or legacy sniff
-    expect(await screen.findByText('其他参数')).toBeTruthy()
+    // Fresh shadowsocks creation exposes only core fields without 其他参数 bloat
+    expect(screen.queryByText('其他参数')).toBeNull()
     expect(screen.queryByText('监听地址')).toBeNull()
     expect(screen.queryByText(/legacy/i)).toBeNull()
+
+    // Fresh VLESS creation exposes common REALITY/Flow fields without TLS version or kernel bloat
+    fireEvent.click(screen.getByRole('combobox', { name: /协议/ }))
+    fireEvent.click(await screen.findByText('vless'))
+    expect(screen.getByLabelText('Flow')).toBeTruthy()
+    expect(screen.getByLabelText(/^握手域名/)).toBeTruthy()
+    expect(screen.queryByText('最低 TLS 版本')).toBeNull()
+    expect(screen.queryByText('TCP Fast Open')).toBeNull()
+    expect(screen.queryByText('多路复用')).toBeNull()
 
     // Snell renders PSK, 版本, 混淆 directly without folding into 其他参数
     const snellInbound: Inbound = {

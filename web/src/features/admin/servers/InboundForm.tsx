@@ -1314,24 +1314,20 @@ export default function InboundForm({
               </div>
             )}
             {Object.keys(tlsAdvSchemaProps).length > 0 && (
-              <div className="fm-full">
-                <SchemaFieldList
-                  properties={tlsAdvSchemaProps}
-                  value={(rawExtra.tls && typeof rawExtra.tls === 'object' ? rawExtra.tls : {}) as Record<string, unknown>}
-                  onChange={(nextTls) => setRawExtra((prev) => ({ ...prev, tls: nextTls }))}
-                  idPrefix="inbound-tls"
-                />
-              </div>
+              <SchemaFieldList
+                properties={tlsAdvSchemaProps}
+                value={(rawExtra.tls && typeof rawExtra.tls === 'object' ? rawExtra.tls : {}) as Record<string, unknown>}
+                onChange={(nextTls) => setRawExtra((prev) => ({ ...prev, tls: nextTls }))}
+                idPrefix="inbound-tls"
+              />
             )}
             {Object.keys(otherParamsSchemaProps).length > 0 && (
-              <div className="fm-full">
-                <SchemaFieldList
-                  properties={otherParamsSchemaProps}
-                  value={rawExtra}
-                  onChange={setRawExtra}
-                  idPrefix="inbound-other"
-                />
-              </div>
+              <SchemaFieldList
+                properties={otherParamsSchemaProps}
+                value={rawExtra}
+                onChange={setRawExtra}
+                idPrefix="inbound-other"
+              />
             )}
           </FormGroup>
         )}

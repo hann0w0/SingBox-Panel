@@ -310,7 +310,7 @@
 .fm-modal .fm-group-fold > summary:focus-visible { outline: 2px solid var(--console-focus); outline-offset: -3px; }
 .fm-modal .fm-group-fold > summary small { margin-left: auto; }
 .fm-modal .fm-group-fold[open] > summary { box-shadow: inset 0 -1px var(--console-border); }
-.fm-modal .fm-group-fold > .fm-grid { padding: 20px 16px 0; }
+.fm-modal .fm-group-fold > .fm-grid { padding: 16px 16px 14px; }
 .fm-import-form > .ui-form-item:last-child { margin-bottom: 0; }
 .fm-import-hint { margin-top: 8px; color: var(--console-faint); font-size: 12px; }
 

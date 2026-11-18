@@ -261,7 +261,23 @@
 }
 
 .fm-modal.inbound-compact .fm-group-fold > .fm-grid {
-  padding: 11px 12px 0;
+  padding: 12px 14px 14px;
+}
+
+.fm-modal.inbound-compact .fm-group-fold > .fm-grid > :last-child {
+  margin-bottom: 0;
+}
+
+.inbound-compact .fm-grid [data-slot='field'] {
+  gap: 5px;
+  margin-bottom: 11px;
+}
+
+.inbound-compact .fm-grid [data-slot='field-label'] {
+  color: var(--inbound-muted);
+  font-size: 12.5px;
+  font-weight: 500;
+  line-height: 18px;
 }
 
 .inbound-compact .fm-switches {

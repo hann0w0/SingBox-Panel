@@ -61,8 +61,14 @@ export function SchemaFieldList({
   const switchEntries = entries.filter(
     ([, schema]) => schema.type === 'boolean' || schema['x-ui']?.widget === 'switch',
   )
+  const objectEntries = entries.filter(
+    ([, schema]) => schema.type === 'object' && schema.properties && schema['x-ui']?.widget !== 'json',
+  )
   const regularEntries = entries.filter(
-    ([, schema]) => schema.type !== 'boolean' && schema['x-ui']?.widget !== 'switch',
+    ([, schema]) =>
+      schema.type !== 'boolean' &&
+      schema['x-ui']?.widget !== 'switch' &&
+      !(schema.type === 'object' && schema.properties && schema['x-ui']?.widget !== 'json'),
   )
 
   return (
@@ -72,32 +78,6 @@ export function SchemaFieldList({
         const label = ui?.label || key
         const fieldId = `${idPrefix}-${autoId}-${key}`
         const current = value[key]
-
-        if (schema.type === 'object' && schema.properties && ui?.widget !== 'json') {
-          const objVal =
-            current && typeof current === 'object' && !Array.isArray(current)
-              ? (current as Record<string, unknown>)
-              : {}
-          return (
-            <div key={key} className="fm-full border border-[var(--console-border)] rounded-[var(--app-radius-control)] p-3 bg-[var(--console-surface)]">
-              <div className="text-[12.5px] font-medium mb-2.5 text-[var(--console-ink)]">{label}</div>
-              <div className="fm-grid">
-                <SchemaFieldList
-                  properties={schema.properties}
-                  value={objVal}
-                  onChange={(nested) => {
-                    if (Object.keys(nested).length === 0) {
-                      updateKey(key, undefined)
-                    } else {
-                      updateKey(key, nested)
-                    }
-                  }}
-                  idPrefix={`${idPrefix}-${key}`}
-                />
-              </div>
-            </div>
-          )
-        }
 
         if (schema.type === 'object' || ui?.widget === 'json') {
           const textVal =
@@ -281,6 +261,35 @@ export function SchemaFieldList({
           })}
         </div>
       )}
+
+      {objectEntries.map(([key, schema]) => {
+        const ui = schema['x-ui']
+        const label = ui?.label || key
+        const current = value[key]
+        const objVal =
+          current && typeof current === 'object' && !Array.isArray(current)
+            ? (current as Record<string, unknown>)
+            : {}
+        return (
+          <div key={key} className="fm-full border-t border-[var(--console-border)] pt-3 mt-1">
+            <div className="text-[12px] font-medium mb-2 text-[var(--console-muted)]">{label}</div>
+            <div className="fm-grid">
+              <SchemaFieldList
+                properties={schema.properties!}
+                value={objVal}
+                onChange={(nested) => {
+                  if (Object.keys(nested).length === 0) {
+                    updateKey(key, undefined)
+                  } else {
+                    updateKey(key, nested)
+                  }
+                }}
+                idPrefix={`${idPrefix}-${key}`}
+              />
+            </div>
+          </div>
+        )
+      })}
     </>
   )
 }

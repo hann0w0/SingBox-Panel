@@ -1,7 +1,9 @@
+import { outboundSettingsToNativeJson } from './singboxSchema'
 import type { InboundSettings, Outbound, OutboundSettings, OutboundType, TransportSettings } from './types'
 
 export const TLS_REQUIRED_OUT = new Set<OutboundType>(['trojan', 'hysteria2', 'tuic', 'anytls'])
 export const TRANSPORT_OUT = new Set<OutboundType>(['vless', 'vmess', 'trojan'])
+const EXTENDED_TRANSPORT_OUT = new Set(['ws', 'httpupgrade', 'grpc', 'http', 'quic'])
 
 type OutboundFormValues = Record<string, any> & { type: OutboundType }
 
@@ -40,7 +42,11 @@ function setHostHeader(transport: TransportSettings, value: unknown) {
 // not expose. Imported configs can contain REALITY, plugins, early-data,
 // repeated transport headers and protocol-specific beta fields; editing a tag
 // or one visible field must leave those values intact.
-export function buildOutboundBody(outbound: Outbound | null, values: OutboundFormValues) {
+export function buildOutboundBody(
+  outbound: Outbound | null,
+  values: OutboundFormValues,
+  extraRaw?: Record<string, unknown>,
+) {
   const type = values.type
   const sameProtocol = outbound?.type === type
   const outer: OutboundSettings = sameProtocol ? cloneJSON(outbound?.settings ?? {}) : {}
@@ -49,7 +55,7 @@ export function buildOutboundBody(outbound: Outbound | null, values: OutboundFor
   outer.server = typeof values.server === 'string' ? values.server.trim() : values.server
   outer.server_port = values.server_port
 
-  if (type === 'socks') {
+  if (type === 'socks' || type === 'http') {
     outer.username = typeof values.username === 'string' ? values.username.trim() : ''
     outer.password = values.password || ''
     // Empty fields explicitly remove authentication, including imported
@@ -106,6 +112,10 @@ export function buildOutboundBody(outbound: Outbound | null, values: OutboundFor
       transport.path = values.ws_path || ''
       setHostHeader(transport, values.ws_host)
       inner.transport = transport
+    } else if (EXTENDED_TRANSPORT_OUT.has(values.transport_type)) {
+      const transport: TransportSettings = sameProtocol ? cloneJSON(inner.transport ?? {}) : {}
+      transport.type = values.transport_type
+      inner.transport = transport
     } else {
       delete inner.transport
     }
@@ -138,7 +148,7 @@ export function buildOutboundBody(outbound: Outbound | null, values: OutboundFor
     } else {
       delete inner.tls
     }
-  } else if (type === 'vmess' || type === 'trojan' || type === 'hysteria2' || type === 'tuic' || type === 'anytls') {
+  } else if (type === 'vmess' || type === 'trojan' || type === 'hysteria2' || type === 'tuic' || type === 'anytls' || type === 'http') {
     if (TLS_REQUIRED_OUT.has(type) || values.tls) {
       const tls = sameProtocol ? cloneJSON(inner.tls ?? {}) : {}
       tls.enabled = true
@@ -149,6 +159,19 @@ export function buildOutboundBody(outbound: Outbound | null, values: OutboundFor
     } else {
       delete inner.tls
     }
+  }
+
+  const rawSource = extraRaw ?? (sameProtocol ? inner.raw : undefined)
+  if (rawSource && Object.keys(rawSource).length > 0) {
+    const mergedRaw = outboundSettingsToNativeJson(type, String(values.tag || ''), {
+      ...outer,
+      settings: { ...inner, raw: rawSource },
+    })
+    if (!inner.tls) delete mergedRaw.tls
+    if (!inner.transport || inner.transport.type === 'tcp') delete mergedRaw.transport
+    inner.raw = mergedRaw
+  } else {
+    delete inner.raw
   }
 
   outer.settings = inner

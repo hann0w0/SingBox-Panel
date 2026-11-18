@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react'
 import * as api from './api'
-import type { InboundSettings, InboundType, TLSSettings, TransportSettings } from './types'
+import type { InboundSettings, InboundType, OutboundSettings, OutboundType, TLSSettings, TransportSettings } from './types'
 
 export type UIMeta = {
   label?: string
@@ -36,36 +36,141 @@ export type JSONSchema = {
 export type SchemaBundle = {
   version: string
   inbound: JSONSchema
+  outbound: JSONSchema
   route_rule: JSONSchema
 }
 
-const TLS_SUBSCHEMA: JSONSchema = {
-  type: 'object',
-  additionalProperties: true,
-  properties: {
+function inboundMultiplexSubSchema(): JSONSchema {
+  return {
+    type: 'object',
+    additionalProperties: true,
+    properties: {
+      enabled: { type: 'boolean', 'x-ui': { label: '启用多路复用 (Multiplex)', order: 1, widget: 'switch' } },
+      padding: { type: 'boolean', 'x-ui': { label: '启用 Padding', order: 2, widget: 'switch' } },
+      brutal: {
+        type: 'object',
+        additionalProperties: true,
+        properties: {
+          enabled: { type: 'boolean', 'x-ui': { label: '启用 Brutal 拥塞控制', order: 1, widget: 'switch' } },
+          up_mbps: { type: 'integer', minimum: 0, 'x-ui': { label: '上行 Mbps', order: 2 } },
+          down_mbps: { type: 'integer', minimum: 0, 'x-ui': { label: '下行 Mbps', order: 3 } },
+        },
+        'x-ui': { label: 'TCP Brutal', order: 3 },
+      },
+    },
+    'x-ui': { label: '多路复用', group: '高级网络', advanced: true },
+  }
+}
+
+function outboundMultiplexSubSchema(): JSONSchema {
+  return {
+    type: 'object',
+    additionalProperties: true,
+    properties: {
+      enabled: { type: 'boolean', 'x-ui': { label: '启用多路复用 (Multiplex)', order: 1, widget: 'switch' } },
+      protocol: { type: 'string', default: 'h2mux', enum: ['', 'h2mux', 'smux', 'yamux'], 'x-ui': { label: '复用协议', order: 2, widget: 'select' } },
+      max_connections: { type: 'integer', minimum: 0, 'x-ui': { label: '最大物理连接数', order: 3 } },
+      min_streams: { type: 'integer', minimum: 0, 'x-ui': { label: '最小并发流数', order: 4 } },
+      max_streams: { type: 'integer', minimum: 0, 'x-ui': { label: '单连接最大流数', order: 5 } },
+      padding: { type: 'boolean', 'x-ui': { label: '启用 Padding', order: 6, widget: 'switch' } },
+      brutal: {
+        type: 'object',
+        additionalProperties: true,
+        properties: {
+          enabled: { type: 'boolean', 'x-ui': { label: '启用 Brutal 拥塞控制', order: 1, widget: 'switch' } },
+          up_mbps: { type: 'integer', minimum: 0, 'x-ui': { label: '上行 Mbps', order: 2 } },
+          down_mbps: { type: 'integer', minimum: 0, 'x-ui': { label: '下行 Mbps', order: 3 } },
+        },
+        'x-ui': { label: 'TCP Brutal', order: 7 },
+      },
+    },
+    'x-ui': { label: '多路复用', group: '拨号与高级网络', advanced: true },
+  }
+}
+
+function tlsInboundSubSchema(includeReality: boolean): JSONSchema {
+  const props: Record<string, JSONSchema> = {
     enabled: { type: 'boolean', 'x-ui': { label: '启用 TLS', group: 'TLS', order: 1, widget: 'switch' } },
     server_name: { type: 'string', 'x-ui': { label: 'SNI', group: 'TLS', order: 2, placeholder: 'example.com' } },
     alpn: { type: 'array', items: { type: 'string' }, 'x-ui': { label: 'ALPN', group: 'TLS', order: 3, widget: 'tags' } },
     min_version: { type: 'string', enum: ['', '1.0', '1.1', '1.2', '1.3'], 'x-ui': { label: '最低 TLS 版本', group: 'TLS', order: 4, widget: 'select', advanced: true } },
     max_version: { type: 'string', enum: ['', '1.0', '1.1', '1.2', '1.3'], 'x-ui': { label: '最高 TLS 版本', group: 'TLS', order: 5, widget: 'select', advanced: true } },
-    cipher_suites: { type: 'array', items: { type: 'string' }, 'x-ui': { label: '密码套件', group: 'TLS', order: 6, widget: 'tags', advanced: true } },
-    curve_preferences: { type: 'array', items: { type: 'string' }, 'x-ui': { label: '椭圆曲线偏好', group: 'TLS', order: 7, widget: 'tags', advanced: true } },
-    client_authentication: { type: 'string', enum: ['', 'no', 'request', 'require-any', 'verify-if-given', 'require-and-verify'], 'x-ui': { label: '客户端证书验证', group: 'TLS', order: 8, widget: 'select', advanced: true } },
+    cipher_suites: { type: 'array', items: { type: 'string' }, 'x-ui': { label: '密码套件 (仅 TLS 1.2)', group: 'TLS', order: 6, widget: 'tags', advanced: true } },
+    curve_preferences: { type: 'array', items: { type: 'string' }, 'x-ui': { label: '密钥交换曲线偏好', group: 'TLS', order: 7, widget: 'tags', placeholder: 'X25519, X25519MLKEM768', advanced: true } },
+    client_authentication: { type: 'string', enum: ['', 'no', 'request', 'require-any', 'verify-if-given', 'require-and-verify'], 'x-ui': { label: '客户端证书验证 (mTLS)', group: 'TLS', order: 8, widget: 'select', advanced: true } },
     certificate_path: { type: 'string', 'x-ui': { label: '证书路径', group: 'TLS', order: 10 } },
     key_path: { type: 'string', 'x-ui': { label: '私钥路径', group: 'TLS', order: 11 } },
-    insecure: { type: 'boolean', 'x-ui': { label: '客户端跳过证书验证', group: 'TLS', order: 14, widget: 'switch' } },
+    ech: {
+      type: 'object',
+      additionalProperties: true,
+      properties: {
+        enabled: { type: 'boolean', 'x-ui': { label: '启用服务端 ECH', widget: 'switch' } },
+        key: { type: 'array', items: { type: 'string' }, 'x-ui': { label: 'ECH 私钥 PEM', widget: 'lines', full_width: true } },
+        key_path: { type: 'string', 'x-ui': { label: 'ECH 密钥路径' } },
+      },
+      'x-ui': { label: 'ECH', group: 'TLS', order: 16, advanced: true },
+    },
+  }
+  if (includeReality) {
+    props.reality = {
+      type: 'object',
+      additionalProperties: true,
+      properties: {
+        enabled: { type: 'boolean', 'x-ui': { label: '启用 REALITY', widget: 'switch' } },
+        private_key: { type: 'string' },
+        short_id: { type: 'array', items: { type: 'string' } },
+        max_time_difference: { type: 'string' },
+      },
+    }
+  }
+  return { type: 'object', additionalProperties: true, properties: props }
+}
+
+function tlsOutboundSubSchema(includeReality: boolean): JSONSchema {
+  const props: Record<string, JSONSchema> = {
+    enabled: { type: 'boolean', 'x-ui': { label: '启用 TLS', group: 'TLS', order: 1, widget: 'switch' } },
+    server_name: { type: 'string', 'x-ui': { label: 'SNI', group: 'TLS', order: 2, placeholder: 'example.com' } },
+    insecure: { type: 'boolean', 'x-ui': { label: '跳过证书验证', group: 'TLS', order: 3, widget: 'switch' } },
+    alpn: { type: 'array', items: { type: 'string' }, 'x-ui': { label: 'ALPN', group: 'TLS', order: 4, widget: 'tags' } },
+    min_version: { type: 'string', enum: ['', '1.0', '1.1', '1.2', '1.3'], 'x-ui': { label: '最低 TLS 版本', group: 'TLS', order: 5, widget: 'select', advanced: true } },
+    max_version: { type: 'string', enum: ['', '1.0', '1.1', '1.2', '1.3'], 'x-ui': { label: '最高 TLS 版本', group: 'TLS', order: 6, widget: 'select', advanced: true } },
+    cipher_suites: { type: 'array', items: { type: 'string' }, 'x-ui': { label: '密码套件', group: 'TLS', order: 7, widget: 'tags', advanced: true } },
+    curve_preferences: { type: 'array', items: { type: 'string' }, 'x-ui': { label: '密钥交换曲线偏好', group: 'TLS', order: 8, widget: 'tags', advanced: true } },
+    utls: {
+      type: 'object',
+      additionalProperties: true,
+      properties: {
+        enabled: { type: 'boolean', 'x-ui': { label: '启用 uTLS', widget: 'switch' } },
+        fingerprint: { type: 'string', enum: ['', 'chrome', 'firefox', 'safari', 'ios', 'android', 'edge', '360', 'qq', 'random', 'randomized'], 'x-ui': { label: 'uTLS 指纹', widget: 'select' } },
+      },
+      'x-ui': { label: 'uTLS', group: 'TLS', order: 12 },
+    },
     ech: {
       type: 'object',
       additionalProperties: true,
       properties: {
         enabled: { type: 'boolean', 'x-ui': { label: '启用 ECH', widget: 'switch' } },
+        config: { type: 'array', items: { type: 'string' }, 'x-ui': { label: 'ECH 配置', widget: 'lines', full_width: true } },
+        config_path: { type: 'string', 'x-ui': { label: 'ECH 配置路径' } },
+        query_server_name: { type: 'string', 'x-ui': { label: 'ECH 查询域名' } },
         pq_signature_schemes_enabled: { type: 'boolean', 'x-ui': { label: '启用后量子签名', widget: 'switch' } },
         dynamic_record_sizing_disabled: { type: 'boolean', 'x-ui': { label: '禁用动态记录大小', widget: 'switch' } },
-        key_path: { type: 'string', 'x-ui': { label: 'ECH 密钥路径' } },
       },
-      'x-ui': { label: 'ECH', group: 'TLS', order: 16, advanced: true },
+      'x-ui': { label: 'ECH', group: 'TLS', order: 15, advanced: true },
     },
-  },
+  }
+  if (includeReality) {
+    props.reality = {
+      type: 'object',
+      additionalProperties: true,
+      properties: {
+        enabled: { type: 'boolean', 'x-ui': { label: '启用 REALITY', widget: 'switch' } },
+        public_key: { type: 'string', 'x-ui': { label: '公钥' } },
+        short_id: { type: 'string', 'x-ui': { label: 'Short ID' } },
+      },
+    }
+  }
+  return { type: 'object', additionalProperties: true, properties: props }
 }
 
 const TRANSPORT_SUBSCHEMA: JSONSchema = {
@@ -85,23 +190,23 @@ const TRANSPORT_SUBSCHEMA: JSONSchema = {
   },
 }
 
-const MULTIPLEX_SUBSCHEMA: JSONSchema = {
-  type: 'object',
-  additionalProperties: true,
-  properties: {
-    enabled: { type: 'boolean', 'x-ui': { label: '启用多路复用 (Multiplex)', widget: 'switch' } },
-    padding: { type: 'boolean', 'x-ui': { label: '启用 Padding', widget: 'switch' } },
-    brutal: {
-      type: 'object',
-      additionalProperties: true,
-      properties: {
-        enabled: { type: 'boolean', 'x-ui': { label: '启用 Brutal 拥塞控制', widget: 'switch' } },
-        up_mbps: { type: 'integer', minimum: 0, 'x-ui': { label: '上行 Mbps' } },
-        down_mbps: { type: 'integer', minimum: 0, 'x-ui': { label: '下行 Mbps' } },
-      },
-    },
-  },
-  'x-ui': { label: '多路复用', group: '高级网络', advanced: true },
+function inboundWithListen(tcp: boolean, udp: boolean, props: Record<string, JSONSchema>): JSONSchema {
+  const merged: Record<string, JSONSchema> = {
+    listen: { type: 'string', default: '::', 'x-ui': { label: '监听地址', group: '基本', order: 2 } },
+    listen_port: { type: 'integer', minimum: 1, maximum: 65535, 'x-ui': { label: '端口', group: '基本', order: 3 } },
+    detour: { type: 'string', 'x-ui': { label: '前置入站 (detour)', group: '高级网络', order: 24, placeholder: '转交到另一个入站 tag', advanced: true } },
+  }
+  if (tcp) {
+    merged.tcp_fast_open = { type: 'boolean', 'x-ui': { label: 'TCP Fast Open', group: '高级网络', order: 20, widget: 'switch', advanced: true } }
+    merged.tcp_multi_path = { type: 'boolean', 'x-ui': { label: 'TCP Multi Path', group: '高级网络', order: 21, widget: 'switch', advanced: true } }
+    merged.proxy_protocol = { type: 'boolean', 'x-ui': { label: 'Proxy Protocol', group: '高级网络', order: 25, widget: 'switch', advanced: true } }
+    merged.proxy_protocol_accept_no_header = { type: 'boolean', 'x-ui': { label: '允许无 Proxy Protocol 头连接', group: '高级网络', order: 26, widget: 'switch', advanced: true } }
+  }
+  if (udp) {
+    merged.udp_fragment = { type: 'boolean', 'x-ui': { label: 'UDP Fragment', group: '高级网络', order: 22, widget: 'switch', advanced: true } }
+    merged.udp_timeout = { type: 'string', 'x-ui': { label: 'UDP 超时', group: '高级网络', order: 23, placeholder: '5m', advanced: true } }
+  }
+  return { type: 'object', additionalProperties: true, properties: { ...merged, ...props } }
 }
 
 export const DEFAULT_INBOUND_SCHEMA: JSONSchema = {
@@ -112,33 +217,17 @@ export const DEFAULT_INBOUND_SCHEMA: JSONSchema = {
   properties: {
     type: {
       type: 'string',
-      enum: ['vless', 'vmess', 'trojan', 'shadowsocks', 'hysteria2', 'tuic', 'anytls', 'snell', 'socks', 'mixed', 'http', 'tun', 'direct', 'redirect', 'tproxy'],
+      enum: ['shadowsocks', 'snell', 'socks', 'mixed', 'http', 'tun', 'direct', 'redirect', 'tproxy', 'tuic', 'trojan', 'anytls', 'vless', 'vmess', 'hysteria2'],
       'x-ui': { label: '协议', group: '基本', order: 1, widget: 'select' },
     },
     tag: { type: 'string', 'x-ui': { label: '标签', group: '基本', order: 2 } },
-    listen: { type: 'string', default: '::', 'x-ui': { label: '监听地址', group: '高级网络', order: 10, placeholder: '::', advanced: true } },
-    listen_port: { type: 'integer', minimum: 1, maximum: 65535, 'x-ui': { label: '端口', group: '基本', order: 3 } },
-    tcp_fast_open: { type: 'boolean', 'x-ui': { label: 'TCP Fast Open', group: '高级网络', order: 20, widget: 'switch', advanced: true } },
-    tcp_multi_path: { type: 'boolean', 'x-ui': { label: 'TCP Multi Path', group: '高级网络', order: 21, widget: 'switch', advanced: true } },
-    udp_fragment: { type: 'boolean', 'x-ui': { label: 'UDP Fragment', group: '高级网络', order: 22, widget: 'switch', advanced: true } },
-    udp_timeout: { type: 'string', 'x-ui': { label: 'UDP 超时', group: '高级网络', order: 23, placeholder: '5m', advanced: true } },
-    detour: { type: 'string', 'x-ui': { label: '前置入站 (detour)', group: '高级网络', order: 24, advanced: true } },
-    sniff: { type: 'boolean', 'x-ui': { label: '入站嗅探 (legacy)', group: '高级网络', order: 25, widget: 'switch', advanced: true } },
-    sniff_override_destination: { type: 'boolean', 'x-ui': { label: '嗅探覆盖目标 (legacy)', group: '高级网络', order: 26, widget: 'switch', advanced: true } },
-    domain_strategy: { type: 'string', enum: ['', 'prefer_ipv4', 'prefer_ipv6', 'ipv4_only', 'ipv6_only'], 'x-ui': { label: '域名解析策略 (legacy)', group: '高级网络', order: 27, widget: 'select', advanced: true } },
   },
   'x-variants': {
-    vless: { type: 'object', additionalProperties: true, properties: { flow: { type: 'string', enum: ['', 'xtls-rprx-vision'] }, packet_encoding: { type: 'string', enum: ['', 'none', 'xudp', 'packetaddr'] }, multiplex: MULTIPLEX_SUBSCHEMA, transport: TRANSPORT_SUBSCHEMA, tls: TLS_SUBSCHEMA } },
-    vmess: { type: 'object', additionalProperties: true, properties: { multiplex: MULTIPLEX_SUBSCHEMA, transport: TRANSPORT_SUBSCHEMA, tls: TLS_SUBSCHEMA } },
-    trojan: { type: 'object', additionalProperties: true, properties: { multiplex: MULTIPLEX_SUBSCHEMA, transport: TRANSPORT_SUBSCHEMA, tls: TLS_SUBSCHEMA } },
-    shadowsocks: { type: 'object', additionalProperties: true, properties: { network: { type: 'string', enum: ['', 'tcp', 'udp'], 'x-ui': { label: '网络限制', group: '协议参数', order: 3, widget: 'select', advanced: true } }, multiplex: MULTIPLEX_SUBSCHEMA } },
-    hysteria2: { type: 'object', additionalProperties: true, properties: { masquerade: { type: 'string', 'x-ui': { label: '伪装站点 / 响应 (masquerade)', group: '协议参数', order: 10, placeholder: 'https://example.com', advanced: true } }, bbr_profile: { type: 'string', enum: ['', 'conservative', 'standard', 'aggressive'], 'x-ui': { label: 'BBR 配置', group: '协议参数', order: 11, widget: 'select', advanced: true } }, tls: TLS_SUBSCHEMA } },
-    tuic: { type: 'object', additionalProperties: true, properties: { tls: TLS_SUBSCHEMA } },
-    anytls: { type: 'object', additionalProperties: true, properties: { padding_scheme: { type: 'array', items: { type: 'string' }, 'x-ui': { label: 'Padding 方案', group: '协议参数', widget: 'lines', full_width: true, advanced: true } }, tls: TLS_SUBSCHEMA } },
-    snell: { type: 'object', additionalProperties: true, properties: {} },
-    socks: { type: 'object', additionalProperties: true, properties: { set_system_proxy: { type: 'boolean', 'x-ui': { label: '设置系统代理', group: '协议参数', widget: 'switch', advanced: true } } } },
-    mixed: { type: 'object', additionalProperties: true, properties: { set_system_proxy: { type: 'boolean', 'x-ui': { label: '设置系统代理', group: '协议参数', widget: 'switch', advanced: true } } } },
-    http: { type: 'object', additionalProperties: true, properties: { set_system_proxy: { type: 'boolean', 'x-ui': { label: '设置系统代理', group: '协议参数', widget: 'switch', advanced: true } }, tls: TLS_SUBSCHEMA } },
+    shadowsocks: inboundWithListen(true, true, { network: { type: 'string', enum: ['', 'tcp', 'udp'], 'x-ui': { label: '网络限制', group: '协议参数', order: 3, widget: 'select', advanced: true } }, multiplex: inboundMultiplexSubSchema() }),
+    snell: inboundWithListen(true, false, {}),
+    socks: inboundWithListen(true, true, {}),
+    mixed: inboundWithListen(true, true, {}),
+    http: inboundWithListen(true, false, { realm: { type: 'string', 'x-ui': { label: '认证域 (Realm)', group: '协议参数', order: 1, advanced: true } }, tls: tlsInboundSubSchema(false) }),
     tun: {
       type: 'object',
       additionalProperties: true,
@@ -146,24 +235,160 @@ export const DEFAULT_INBOUND_SCHEMA: JSONSchema = {
         interface_name: { type: 'string', 'x-ui': { label: '网卡名称', group: '协议参数', order: 1, placeholder: 'tun0' } },
         address: { type: 'array', items: { type: 'string' }, 'x-ui': { label: 'TUN 地址 CIDR', group: '协议参数', order: 2, widget: 'tags', placeholder: '172.19.0.1/30' } },
         mtu: { type: 'integer', default: 9000, minimum: 576, maximum: 65535, 'x-ui': { label: 'MTU', group: '协议参数', order: 3 } },
-        auto_route: { type: 'boolean', default: true, 'x-ui': { label: '自动路由', group: '协议参数', order: 4, widget: 'switch' } },
-        strict_route: { type: 'boolean', 'x-ui': { label: '严格路由', group: '协议参数', order: 5, widget: 'switch' } },
-        stack: { type: 'string', enum: ['', 'system', 'gvisor', 'mixed'], 'x-ui': { label: '网络栈', group: '协议参数', order: 6, widget: 'select' } },
-        auto_redirect: { type: 'boolean', 'x-ui': { label: 'Auto Redirect', group: '协议参数', order: 7, widget: 'switch', advanced: true } },
+        stack: { type: 'string', enum: ['', 'system', 'gvisor', 'mixed'], 'x-ui': { label: '网络栈', group: '协议参数', order: 4, widget: 'select' } },
+        auto_route: { type: 'boolean', default: true, 'x-ui': { label: '自动路由', group: '协议参数', order: 5, widget: 'switch' } },
+        strict_route: { type: 'boolean', 'x-ui': { label: '严格路由', group: '协议参数', order: 6, widget: 'switch' } },
+        auto_redirect: { type: 'boolean', 'x-ui': { label: 'Auto Redirect (Linux)', group: '协议参数', order: 7, widget: 'switch', advanced: true } },
         endpoint_independent_nat: { type: 'boolean', 'x-ui': { label: '独立端点 NAT', group: '协议参数', order: 8, widget: 'switch', advanced: true } },
+        route_address: { type: 'array', items: { type: 'string' }, 'x-ui': { label: '路由网段 (route_address)', group: '协议参数', order: 9, widget: 'tags', advanced: true } },
+        route_exclude_address: { type: 'array', items: { type: 'string' }, 'x-ui': { label: '排除网段 (route_exclude_address)', group: '协议参数', order: 10, widget: 'tags', advanced: true } },
+        udp_timeout: { type: 'string', 'x-ui': { label: 'UDP 超时', group: '协议参数', order: 11, placeholder: '5m' } },
       },
     },
-    direct: {
+    direct: inboundWithListen(true, true, {
+      network: { type: 'string', enum: ['', 'tcp', 'udp'], 'x-ui': { label: '网络', group: '协议参数', order: 1, widget: 'select' } },
+      override_address: { type: 'string', 'x-ui': { label: '覆盖目标地址', group: '协议参数', order: 2 } },
+      override_port: { type: 'integer', minimum: 1, maximum: 65535, 'x-ui': { label: '覆盖目标端口', group: '协议参数', order: 3 } },
+    }),
+    redirect: inboundWithListen(true, false, {}),
+    tproxy: inboundWithListen(true, true, { network: { type: 'string', enum: ['', 'tcp', 'udp'], 'x-ui': { label: '网络', group: '协议参数', widget: 'select' } } }),
+    tuic: inboundWithListen(false, true, { tls: tlsInboundSubSchema(false) }),
+    trojan: inboundWithListen(true, true, { fallback_for_alpn: { type: 'object', additionalProperties: true, 'x-ui': { label: '按 ALPN 回落映射', group: '回落', widget: 'json', full_width: true, advanced: true } }, multiplex: inboundMultiplexSubSchema(), transport: TRANSPORT_SUBSCHEMA, tls: tlsInboundSubSchema(false) }),
+    anytls: inboundWithListen(true, false, { padding_scheme: { type: 'array', items: { type: 'string' }, 'x-ui': { label: 'Padding 方案', group: '协议参数', widget: 'lines', full_width: true, advanced: true } }, tls: tlsInboundSubSchema(false) }),
+    vless: inboundWithListen(true, true, { flow: { type: 'string', enum: ['', 'xtls-rprx-vision'] }, multiplex: inboundMultiplexSubSchema(), transport: TRANSPORT_SUBSCHEMA, tls: tlsInboundSubSchema(true) }),
+    vmess: inboundWithListen(true, true, { multiplex: inboundMultiplexSubSchema(), transport: TRANSPORT_SUBSCHEMA, tls: tlsInboundSubSchema(true) }),
+    hysteria2: inboundWithListen(false, true, {
+      masquerade: { type: 'string', 'x-ui': { label: '伪装站点 / 响应 (masquerade)', group: '协议参数', order: 10, placeholder: 'https://example.com', advanced: true } },
+      bbr_profile: { type: 'string', enum: ['', 'conservative', 'standard', 'aggressive'], 'x-ui': { label: 'BBR 配置', group: '协议参数', order: 11, widget: 'select', advanced: true } },
+      brutal_debug: { type: 'boolean', 'x-ui': { label: 'Brutal 调试日志', group: '协议参数', order: 12, widget: 'switch', advanced: true } },
+      tls: tlsInboundSubSchema(false),
+    }),
+  },
+}
+
+export const DEFAULT_OUTBOUND_SCHEMA: JSONSchema = {
+  type: 'object',
+  additionalProperties: true,
+  required: ['type'],
+  'x-discriminator': 'type',
+  properties: {
+    type: {
+      type: 'string',
+      enum: ['shadowsocks', 'snell', 'socks', 'http', 'tuic', 'trojan', 'anytls', 'vless', 'vmess', 'hysteria2'],
+      'x-ui': { label: '类型', group: '基本', order: 1, widget: 'select' },
+    },
+    tag: { type: 'string', 'x-ui': { label: '标签', group: '基本', order: 2 } },
+    server: { type: 'string', 'x-ui': { label: '服务器地址', group: '基本', order: 3 } },
+    server_port: { type: 'integer', minimum: 1, maximum: 65535, 'x-ui': { label: '端口', group: '基本', order: 4 } },
+    detour: { type: 'string', 'x-ui': { label: '前置出站 (detour)', group: '拨号参数', order: 20, placeholder: '上游出站 tag', advanced: true } },
+    connect_timeout: { type: 'string', 'x-ui': { label: '连接超时', group: '拨号参数', order: 21, placeholder: '5s', advanced: true } },
+    domain_resolver: { type: 'string', 'x-ui': { label: '域名解析器 (domain_resolver)', group: '拨号参数', order: 22, advanced: true } },
+    bind_interface: { type: 'string', 'x-ui': { label: '绑定网卡', group: '拨号参数', order: 23, advanced: true } },
+    inet4_bind_address: { type: 'string', 'x-ui': { label: '绑定 IPv4 地址', group: '拨号参数', order: 24, advanced: true } },
+    inet6_bind_address: { type: 'string', 'x-ui': { label: '绑定 IPv6 地址', group: '拨号参数', order: 25, advanced: true } },
+    routing_mark: { type: 'integer', minimum: 0, 'x-ui': { label: '路由标记 (fwmark)', group: '拨号参数', order: 26, advanced: true } },
+    tcp_fast_open: { type: 'boolean', 'x-ui': { label: 'TCP Fast Open', group: '拨号参数', order: 27, widget: 'switch', advanced: true } },
+    tcp_multi_path: { type: 'boolean', 'x-ui': { label: 'TCP Multi Path', group: '拨号参数', order: 28, widget: 'switch', advanced: true } },
+    udp_fragment: { type: 'boolean', 'x-ui': { label: 'UDP Fragment', group: '拨号参数', order: 29, widget: 'switch', advanced: true } },
+  },
+  'x-variants': {
+    shadowsocks: {
       type: 'object',
       additionalProperties: true,
       properties: {
-        network: { type: 'string', enum: ['', 'tcp', 'udp'], 'x-ui': { label: '网络', group: '协议参数', order: 1, widget: 'select' } },
-        override_address: { type: 'string', 'x-ui': { label: '覆盖目标地址', group: '协议参数', order: 2 } },
-        override_port: { type: 'integer', minimum: 1, maximum: 65535, 'x-ui': { label: '覆盖目标端口', group: '协议参数', order: 3 } },
+        plugin: { type: 'string', enum: ['', 'obfs-local', 'v2ray-plugin'], 'x-ui': { label: 'SIP003 插件', group: '协议参数', order: 3, widget: 'select', advanced: true } },
+        plugin_opts: { type: 'string', 'x-ui': { label: '插件参数 (plugin_opts)', group: '协议参数', order: 4, advanced: true } },
+        network: { type: 'string', enum: ['', 'tcp', 'udp'], 'x-ui': { label: '网络限制', group: '协议参数', order: 5, widget: 'select', advanced: true } },
+        udp_over_tcp: { type: 'boolean', 'x-ui': { label: 'UDP over TCP', group: '协议参数', order: 6, widget: 'switch', advanced: true } },
+        multiplex: outboundMultiplexSubSchema(),
       },
     },
-    redirect: { type: 'object', additionalProperties: true, properties: {} },
-    tproxy: { type: 'object', additionalProperties: true, properties: { network: { type: 'string', enum: ['', 'tcp', 'udp'], 'x-ui': { label: '网络', group: '协议参数', widget: 'select' } } } },
+    snell: { type: 'object', additionalProperties: true, properties: {} },
+    socks: {
+      type: 'object',
+      additionalProperties: true,
+      properties: {
+        version: { type: 'string', default: '5', enum: ['', '4', '4a', '5'], 'x-ui': { label: 'SOCKS 版本', group: '协议参数', order: 1, widget: 'select' } },
+        network: { type: 'string', enum: ['', 'tcp', 'udp'], 'x-ui': { label: '网络限制', group: '协议参数', order: 2, widget: 'select', advanced: true } },
+        udp_over_tcp: { type: 'boolean', 'x-ui': { label: 'UDP over TCP', group: '协议参数', order: 3, widget: 'switch', advanced: true } },
+      },
+    },
+    http: {
+      type: 'object',
+      additionalProperties: true,
+      properties: {
+        path: { type: 'string', 'x-ui': { label: '请求路径 (path)', group: '协议参数', order: 1, placeholder: '/', advanced: true } },
+        headers: { type: 'object', additionalProperties: true, 'x-ui': { label: '自定义请求头', group: '协议参数', order: 2, widget: 'json', full_width: true, advanced: true } },
+        tls: tlsOutboundSubSchema(false),
+      },
+    },
+    tuic: {
+      type: 'object',
+      additionalProperties: true,
+      properties: {
+        udp_relay_mode: { type: 'string', enum: ['', 'native', 'quic'], 'x-ui': { label: 'UDP 中继模式', group: '协议参数', order: 2, widget: 'select' } },
+        udp_over_stream: { type: 'boolean', 'x-ui': { label: 'UDP over Stream', group: '协议参数', order: 3, widget: 'switch', advanced: true } },
+        zero_rtt_handshake: { type: 'boolean', 'x-ui': { label: '0-RTT 握手', group: '协议参数', order: 4, widget: 'switch' } },
+        heartbeat: { type: 'string', default: '10s', 'x-ui': { label: '心跳间隔', group: '协议参数', order: 5 } },
+        network: { type: 'string', enum: ['', 'tcp', 'udp'], 'x-ui': { label: '网络限制', group: '协议参数', order: 6, widget: 'select', advanced: true } },
+        tls: tlsOutboundSubSchema(false),
+      },
+    },
+    trojan: {
+      type: 'object',
+      additionalProperties: true,
+      properties: {
+        network: { type: 'string', enum: ['', 'tcp', 'udp'], 'x-ui': { label: '网络限制', group: '协议参数', order: 1, widget: 'select', advanced: true } },
+        multiplex: outboundMultiplexSubSchema(),
+        transport: TRANSPORT_SUBSCHEMA,
+        tls: tlsOutboundSubSchema(false),
+      },
+    },
+    anytls: {
+      type: 'object',
+      additionalProperties: true,
+      properties: {
+        idle_session_check_interval: { type: 'string', 'x-ui': { label: '空闲检查间隔', group: '协议参数', order: 1, placeholder: '30s', advanced: true } },
+        idle_session_timeout: { type: 'string', 'x-ui': { label: '空闲会话超时', group: '协议参数', order: 2, placeholder: '30s', advanced: true } },
+        min_idle_session: { type: 'integer', minimum: 0, 'x-ui': { label: '最小空闲会话数', group: '协议参数', order: 3, advanced: true } },
+        tls: tlsOutboundSubSchema(false),
+      },
+    },
+    vless: {
+      type: 'object',
+      additionalProperties: true,
+      properties: {
+        packet_encoding: { type: 'string', default: 'xudp', enum: ['', 'xudp', 'packetaddr'], 'x-ui': { label: 'UDP 封包编码', group: '协议参数', order: 2, widget: 'select' } },
+        network: { type: 'string', enum: ['', 'tcp', 'udp'], 'x-ui': { label: '网络限制', group: '协议参数', order: 3, widget: 'select', advanced: true } },
+        multiplex: outboundMultiplexSubSchema(),
+        transport: TRANSPORT_SUBSCHEMA,
+        tls: tlsOutboundSubSchema(true),
+      },
+    },
+    vmess: {
+      type: 'object',
+      additionalProperties: true,
+      properties: {
+        global_padding: { type: 'boolean', 'x-ui': { label: '全局随机填充', group: '协议参数', order: 3, widget: 'switch', advanced: true } },
+        authenticated_length: { type: 'boolean', 'x-ui': { label: '长度块认证', group: '协议参数', order: 4, widget: 'switch', advanced: true } },
+        network: { type: 'string', enum: ['', 'tcp', 'udp'], 'x-ui': { label: '网络限制', group: '协议参数', order: 5, widget: 'select', advanced: true } },
+        multiplex: outboundMultiplexSubSchema(),
+        transport: TRANSPORT_SUBSCHEMA,
+        tls: tlsOutboundSubSchema(false),
+      },
+    },
+    hysteria2: {
+      type: 'object',
+      additionalProperties: true,
+      properties: {
+        up_mbps: { type: 'integer', minimum: 0, 'x-ui': { label: '上行 Mbps', group: '协议参数', order: 1 } },
+        down_mbps: { type: 'integer', minimum: 0, 'x-ui': { label: '下行 Mbps', group: '协议参数', order: 2 } },
+        server_ports: { type: 'array', items: { type: 'string' }, 'x-ui': { label: '端口跳跃 (server_ports)', group: '协议参数', order: 3, widget: 'tags', placeholder: '20000:50000', advanced: true } },
+        hop_interval: { type: 'string', 'x-ui': { label: '跳跃间隔 (hop_interval)', group: '协议参数', order: 4, placeholder: '30s', advanced: true } },
+        network: { type: 'string', enum: ['', 'tcp', 'udp'], 'x-ui': { label: '网络限制', group: '协议参数', order: 5, widget: 'select', advanced: true } },
+        tls: tlsOutboundSubSchema(false),
+      },
+    },
   },
 }
 
@@ -215,6 +440,7 @@ export const DEFAULT_ROUTE_RULE_SCHEMA: JSONSchema = {
 const DEFAULT_BUNDLE: SchemaBundle = {
   version: 'sing-box-1.14',
   inbound: DEFAULT_INBOUND_SCHEMA,
+  outbound: DEFAULT_OUTBOUND_SCHEMA,
   route_rule: DEFAULT_ROUTE_RULE_SCHEMA,
 }
 
@@ -236,10 +462,16 @@ export function useSingboxSchemas(active = true): SchemaBundle {
     loader(controller.signal)
       .then((raw) => {
         if (controller.signal.aborted || !raw || typeof raw !== 'object') return
-        const next = raw as unknown as SchemaBundle
+        const next = raw as unknown as Partial<SchemaBundle>
         if (next.inbound && next.route_rule) {
-          cachedBundle = next
-          setBundle(next)
+          const merged: SchemaBundle = {
+            version: next.version || DEFAULT_BUNDLE.version,
+            inbound: next.inbound,
+            outbound: next.outbound ?? DEFAULT_OUTBOUND_SCHEMA,
+            route_rule: next.route_rule,
+          }
+          cachedBundle = merged
+          setBundle(merged)
         }
       })
       .catch(() => {})
@@ -352,7 +584,8 @@ export function inboundSettingsToNativeJson(
 
   if (type === 'vless') {
     if (settings.flow) base.flow = settings.flow
-    if (settings.packet_encoding) base.packet_encoding = settings.packet_encoding
+    // packet_encoding belongs to client subscriptions, not server-side VLESS inbound JSON.
+    delete base.packet_encoding
   } else if (type === 'shadowsocks') {
     if (settings.method) base.method = settings.method
     if (settings.ss_server_psk) base.password = settings.ss_server_psk
@@ -398,6 +631,9 @@ export function inboundSettingsToNativeJson(
   if (settings.tls?.enabled || settings.tls?.reality?.enabled || settings.tls?.acme_domain) {
     const prevTls = (base.tls && typeof base.tls === 'object' ? base.tls : {}) as Record<string, unknown>
     const tlsObj: Record<string, unknown> = { ...prevTls, enabled: true }
+    // Client-only fields must never appear inside server inbound TLS JSON.
+    delete tlsObj.insecure
+    delete tlsObj.utls
     if (settings.tls.server_name) tlsObj.server_name = settings.tls.server_name
     if (settings.tls.alpn?.length) tlsObj.alpn = settings.tls.alpn
     if (settings.tls.certificate_path) tlsObj.certificate_path = settings.tls.certificate_path
@@ -412,7 +648,7 @@ export function inboundSettingsToNativeJson(
     }
     if (settings.tls.reality?.enabled) {
       const prevReality = (prevTls.reality && typeof prevTls.reality === 'object' ? prevTls.reality : {}) as Record<string, unknown>
-      tlsObj.reality = {
+      const nextReality: Record<string, unknown> = {
         ...prevReality,
         enabled: true,
         handshake: {
@@ -424,6 +660,9 @@ export function inboundSettingsToNativeJson(
         ...(settings.tls.reality.short_id?.length ? { short_id: settings.tls.reality.short_id } : {}),
         ...(settings.tls.reality.max_time_difference ? { max_time_difference: settings.tls.reality.max_time_difference } : {}),
       }
+      delete nextReality.guard
+      delete nextReality.public_key
+      tlsObj.reality = nextReality
     }
     base.tls = tlsObj
   }
@@ -513,4 +752,205 @@ export function nativeJsonToInboundSettings(prev: InboundSettings, rawObj: Recor
   }
 
   return next
+}
+
+/** Build a native sing-box outbound JSON object from stored OutboundSettings (for Schema/JSON editing). */
+export function outboundSettingsToNativeJson(
+  type: OutboundType,
+  tag: string,
+  settings: OutboundSettings,
+): Record<string, unknown> {
+  const inner = settings.settings || {}
+  const base = cloneJson((inner.raw ?? {}) as Record<string, unknown>)
+  base.type = type
+  if (tag) base.tag = tag
+  if (settings.server) base.server = settings.server
+  if (settings.server_port) base.server_port = settings.server_port
+
+  if (type === 'vless') {
+    if (settings.uuid) base.uuid = settings.uuid
+    if (inner.flow) base.flow = inner.flow
+    if (inner.packet_encoding) base.packet_encoding = inner.packet_encoding
+  } else if (type === 'vmess') {
+    if (settings.uuid) base.uuid = settings.uuid
+    if (inner.vmess_security) base.security = inner.vmess_security
+    if (inner.vmess_alter_id !== undefined) base.alter_id = inner.vmess_alter_id
+  } else if (type === 'trojan') {
+    if (settings.password) base.password = settings.password
+  } else if (type === 'shadowsocks') {
+    if (inner.method) base.method = inner.method
+    const pw = settings.password || inner.ss_server_psk
+    if (pw) base.password = pw
+  } else if (type === 'hysteria2') {
+    if (settings.password) base.password = settings.password
+    if (inner.up_mbps) base.up_mbps = inner.up_mbps
+    if (inner.down_mbps) base.down_mbps = inner.down_mbps
+    if (inner.obfs_type || inner.obfs_password) {
+      base.obfs = {
+        ...(typeof base.obfs === 'object' && base.obfs ? (base.obfs as Record<string, unknown>) : {}),
+        type: inner.obfs_type || 'salamander',
+        ...(inner.obfs_password ? { password: inner.obfs_password } : {}),
+        ...(inner.obfs_type === 'gecko' && inner.gecko_min_packet_size ? { min_packet_size: inner.gecko_min_packet_size } : {}),
+        ...(inner.obfs_type === 'gecko' && inner.gecko_max_packet_size ? { max_packet_size: inner.gecko_max_packet_size } : {}),
+      }
+    }
+  } else if (type === 'tuic') {
+    if (settings.uuid) base.uuid = settings.uuid
+    if (settings.password) base.password = settings.password
+    if (inner.congestion_control) base.congestion_control = inner.congestion_control
+    if (inner.zero_rtt_handshake !== undefined) base.zero_rtt_handshake = inner.zero_rtt_handshake
+    if (inner.heartbeat) base.heartbeat = inner.heartbeat
+  } else if (type === 'anytls') {
+    if (settings.password) base.password = settings.password
+  } else if (type === 'snell') {
+    const psk = settings.password || inner.snell_psk
+    if (psk) base.psk = psk
+    if (inner.snell_version) base.version = inner.snell_version
+    if (inner.snell_network) base.network = inner.snell_network
+    if (inner.snell_reuse) base.reuse = true
+    if (inner.snell_version === 4 && inner.snell_obfs_mode && inner.snell_obfs_mode !== 'none') base.obfs_mode = inner.snell_obfs_mode
+    if (inner.snell_version === 4 && inner.snell_obfs_host) base.obfs_host = inner.snell_obfs_host
+    if (inner.snell_version === 6 && inner.snell_mode) base.mode = inner.snell_mode
+  } else if (type === 'socks' || type === 'http') {
+    const user = settings.username ?? inner.username
+    const pw = settings.password ?? inner.password
+    if (user) base.username = user
+    if (pw) base.password = pw
+    if (type === 'http') {
+      if (inner.http_path) base.path = inner.http_path
+      if (inner.http_headers && Object.keys(inner.http_headers).length > 0) base.headers = inner.http_headers
+    }
+  }
+
+  if (inner.transport?.type && inner.transport.type !== 'tcp') {
+    const prevTr = (base.transport && typeof base.transport === 'object' ? base.transport : {}) as Record<string, unknown>
+    base.transport = {
+      ...prevTr,
+      type: inner.transport.type,
+      ...(inner.transport.path ? { path: inner.transport.path } : {}),
+      ...(inner.transport.headers ? { headers: inner.transport.headers } : {}),
+    }
+  }
+
+  if (inner.tls?.enabled || inner.tls?.reality?.enabled) {
+    const prevTls = (base.tls && typeof base.tls === 'object' ? base.tls : {}) as Record<string, unknown>
+    const tlsObj: Record<string, unknown> = { ...prevTls, enabled: true }
+    if (inner.tls.server_name) tlsObj.server_name = inner.tls.server_name
+    if (inner.tls.insecure !== undefined) tlsObj.insecure = inner.tls.insecure
+    if (inner.tls.alpn?.length) tlsObj.alpn = inner.tls.alpn
+    if (inner.tls.fingerprint) {
+      tlsObj.utls = {
+        ...(typeof prevTls.utls === 'object' && prevTls.utls ? (prevTls.utls as Record<string, unknown>) : {}),
+        enabled: true,
+        fingerprint: inner.tls.fingerprint,
+      }
+    }
+    if (inner.tls.reality?.enabled) {
+      tlsObj.reality = {
+        ...(typeof prevTls.reality === 'object' && prevTls.reality ? (prevTls.reality as Record<string, unknown>) : {}),
+        enabled: true,
+        ...(inner.tls.reality.public_key ? { public_key: inner.tls.reality.public_key } : {}),
+        ...(inner.tls.reality.short_id?.length ? { short_id: inner.tls.reality.short_id[0] } : {}),
+      }
+    }
+    base.tls = tlsObj
+  }
+
+  return base
+}
+
+/** Convert an edited native sing-box outbound JSON object into stored OutboundSettings. */
+export function nativeJsonToOutboundSettings(prev: OutboundSettings, rawObj: Record<string, unknown>): OutboundSettings {
+  const outer: OutboundSettings = cloneJson(prev || {})
+  const inner: InboundSettings = cloneJson(prev?.settings || {})
+  inner.raw = cloneJson(rawObj)
+
+  if (typeof rawObj.server === 'string') outer.server = rawObj.server
+  if (typeof rawObj.server_port === 'number') outer.server_port = rawObj.server_port
+  if (typeof rawObj.uuid === 'string') outer.uuid = rawObj.uuid
+  if (typeof rawObj.username === 'string') {
+    outer.username = rawObj.username
+    inner.username = rawObj.username
+  }
+  if (typeof rawObj.password === 'string') {
+    outer.password = rawObj.password
+    if (rawObj.type === 'shadowsocks') inner.ss_server_psk = rawObj.password
+    else if (rawObj.type === 'socks' || rawObj.type === 'http') inner.password = rawObj.password
+  }
+  if (typeof rawObj.psk === 'string') {
+    outer.password = rawObj.psk
+    inner.snell_psk = rawObj.psk
+  }
+  if (typeof rawObj.method === 'string') inner.method = rawObj.method
+  if (typeof rawObj.flow === 'string') inner.flow = rawObj.flow
+  if (typeof rawObj.packet_encoding === 'string') inner.packet_encoding = rawObj.packet_encoding
+  if (typeof rawObj.security === 'string') inner.vmess_security = rawObj.security
+  if (typeof rawObj.alter_id === 'number') inner.vmess_alter_id = rawObj.alter_id
+  if (typeof rawObj.congestion_control === 'string') inner.congestion_control = rawObj.congestion_control
+  if (typeof rawObj.zero_rtt_handshake === 'boolean') inner.zero_rtt_handshake = rawObj.zero_rtt_handshake
+  if (typeof rawObj.heartbeat === 'string') inner.heartbeat = rawObj.heartbeat
+  if (typeof rawObj.up_mbps === 'number') inner.up_mbps = rawObj.up_mbps
+  if (typeof rawObj.down_mbps === 'number') inner.down_mbps = rawObj.down_mbps
+  if (rawObj.obfs && typeof rawObj.obfs === 'object') {
+    const obfs = rawObj.obfs as Record<string, unknown>
+    if (typeof obfs.type === 'string') inner.obfs_type = obfs.type
+    if (typeof obfs.password === 'string') inner.obfs_password = obfs.password
+    if (typeof obfs.min_packet_size === 'number') inner.gecko_min_packet_size = obfs.min_packet_size
+    if (typeof obfs.max_packet_size === 'number') inner.gecko_max_packet_size = obfs.max_packet_size
+  }
+  if (rawObj.type === 'snell') {
+    if (typeof rawObj.version === 'number') inner.snell_version = rawObj.version
+    if (typeof rawObj.network === 'string') inner.snell_network = rawObj.network
+    if (typeof rawObj.reuse === 'boolean') inner.snell_reuse = rawObj.reuse
+    if (typeof rawObj.obfs_mode === 'string') inner.snell_obfs_mode = rawObj.obfs_mode
+    if (typeof rawObj.obfs_host === 'string') inner.snell_obfs_host = rawObj.obfs_host
+    if (typeof rawObj.mode === 'string') inner.snell_mode = rawObj.mode
+  }
+  if (rawObj.type === 'http') {
+    if (typeof rawObj.path === 'string') inner.http_path = rawObj.path
+    if (rawObj.headers && typeof rawObj.headers === 'object') inner.http_headers = rawObj.headers as Record<string, string | string[]>
+  }
+
+  if (rawObj.transport && typeof rawObj.transport === 'object' && !Array.isArray(rawObj.transport)) {
+    const tr = rawObj.transport as Record<string, unknown>
+    if (typeof tr.type === 'string' && tr.type !== 'tcp') {
+      inner.transport = {
+        type: tr.type,
+        ...(typeof tr.path === 'string' ? { path: tr.path } : {}),
+        ...(tr.headers && typeof tr.headers === 'object' ? { headers: tr.headers as Record<string, string | string[]> } : {}),
+      }
+    } else {
+      delete inner.transport
+    }
+  } else {
+    delete inner.transport
+  }
+
+  if (rawObj.tls && typeof rawObj.tls === 'object' && !Array.isArray(rawObj.tls)) {
+    const t = rawObj.tls as Record<string, unknown>
+    const utls = (t.utls && typeof t.utls === 'object' ? t.utls : {}) as Record<string, unknown>
+    const nextTls: TLSSettings = {
+      enabled: t.enabled !== false,
+      ...(typeof t.server_name === 'string' ? { server_name: t.server_name } : {}),
+      ...(typeof t.insecure === 'boolean' ? { insecure: t.insecure } : {}),
+      ...(Array.isArray(t.alpn) ? { alpn: t.alpn.map(String) } : {}),
+      ...(typeof utls.fingerprint === 'string' ? { fingerprint: utls.fingerprint } : {}),
+    }
+    if (t.reality && typeof t.reality === 'object') {
+      const r = t.reality as Record<string, unknown>
+      if (r.enabled) {
+        nextTls.reality = {
+          enabled: true,
+          ...(typeof r.public_key === 'string' ? { public_key: r.public_key } : {}),
+          ...(typeof r.short_id === 'string' && r.short_id ? { short_id: [r.short_id] } : (Array.isArray(r.short_id) ? { short_id: r.short_id.map(String) } : {})),
+        }
+      }
+    }
+    inner.tls = nextTls
+  } else {
+    delete inner.tls
+  }
+
+  outer.settings = inner
+  return outer
 }

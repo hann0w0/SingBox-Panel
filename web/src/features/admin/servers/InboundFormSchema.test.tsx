@@ -92,8 +92,8 @@ describe('InboundForm JSON Schema integration', () => {
     fireEvent.click(screen.getByRole('radio', { name: 'JSON 编辑' }))
     const editor = await screen.findByLabelText('inbound.json')
 
-    // Invalid schema: missing type or wrong port type
-    fireEvent.change(editor, { target: { value: JSON.stringify({ type: 'tun', listen_port: 'bad-port' }) } })
+    // Invalid schema: wrong mtu type on tun
+    fireEvent.change(editor, { target: { value: JSON.stringify({ type: 'tun', mtu: 'bad-mtu' }) } })
     fireEvent.click(screen.getByRole('button', { name: '应用' }))
     expect(await screen.findByText(/必须是数字/)).toBeTruthy()
     expect(createInbound).not.toHaveBeenCalled()
@@ -129,6 +129,15 @@ describe('InboundForm JSON Schema integration', () => {
       auto_route: true,
       stack: 'mixed',
     })
+  })
+
+  it('omits duplicate listen address and legacy fields from inbound 高级网络 UI, and hides 高级网络 on tun', async () => {
+    render(<InboundForm serverId={1} inbound={null} open onClose={vi.fn()} onSaved={vi.fn()} />)
+
+    // Default shadowsocks should show 高级网络 with TCP Fast Open / Multiplex, without duplicate 监听地址 or legacy sniff
+    expect(await screen.findByText('高级网络')).toBeTruthy()
+    expect(screen.queryByText('监听地址')).toBeNull()
+    expect(screen.queryByText(/legacy/i)).toBeNull()
   })
 
   it('validates inbound schema constraints locally', () => {

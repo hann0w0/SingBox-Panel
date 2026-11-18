@@ -43,8 +43,8 @@ const NO_TLS = new Set<InboundType>(['shadowsocks', 'snell', 'socks', 'mixed', '
 const HAS_BANDWIDTH = new Set<InboundType>(['hysteria2'])
 const EXTENDED_TRANSPORTS = new Set(['ws', 'httpupgrade', 'grpc', 'http', 'quic'])
 const SCHEMA_NETWORK_KEYS = new Set([
-  'listen', 'tcp_fast_open', 'tcp_multi_path', 'udp_fragment', 'udp_timeout',
-  'detour', 'sniff', 'sniff_override_destination', 'domain_strategy', 'multiplex',
+  'tcp_fast_open', 'tcp_multi_path', 'udp_fragment', 'udp_timeout',
+  'proxy_protocol', 'proxy_protocol_accept_no_header', 'detour', 'multiplex',
 ])
 const SCHEMA_TLS_ADV_KEYS = new Set([
   'min_version', 'max_version', 'cipher_suites', 'curve_preferences', 'client_authentication', 'ech',
@@ -53,7 +53,8 @@ const SCHEMA_PROTOCOL_EXTRA_EXCLUDES = new Set([
   'type', 'tag', 'listen', 'listen_port', 'flow', 'packet_encoding', 'method', 'password',
   'up_mbps', 'down_mbps', 'ignore_client_bandwidth', 'obfs', 'congestion_control',
   'auth_timeout', 'zero_rtt_handshake', 'heartbeat', 'version', 'psk', 'obfs_mode', 'mode',
-  'fallback', 'tls', 'transport', ...SCHEMA_NETWORK_KEYS,
+  'fallback', 'tls', 'transport', 'sniff', 'sniff_override_destination', 'domain_strategy',
+  ...SCHEMA_NETWORK_KEYS,
 ])
 // Which credential a single-user inbound presents.
 const UUID_TYPES = new Set<InboundType>(['vless', 'vmess', 'tuic'])
@@ -1009,6 +1010,7 @@ export default function InboundForm({
                   <Form.Item
                     name="packet_encoding"
                     label="UDP 使用 xudp"
+                    extra="仅写入客户端订阅配置"
                     valuePropName="checked"
                     className="fm-switch"
                     getValueFromEvent={(checked: boolean) => (checked ? 'xudp' : 'none')}
@@ -1018,7 +1020,7 @@ export default function InboundForm({
                   </Form.Item>
                 )}
                 {type === 'anytls' && (
-                  <Form.Item name="anytls_udp_over_stream" label="UDP 走 TLS 流" valuePropName="checked" className="fm-switch">
+                  <Form.Item name="anytls_udp_over_stream" label="UDP 走 TLS 流" extra="仅写入客户端订阅链接" valuePropName="checked" className="fm-switch">
                     <Switch />
                   </Form.Item>
                 )}
@@ -1283,7 +1285,7 @@ export default function InboundForm({
               </>
             )}
             {type !== 'hysteria2' && type !== 'tuic' && (
-              <Form.Item name="tls_fingerprint" label="uTLS 指纹">
+              <Form.Item name="tls_fingerprint" label="uTLS 指纹" extra="仅作用于下发给用户的客户端订阅">
                 <Select
                   placeholder="不指定"
                   options={['chrome', 'firefox', 'safari', 'ios', 'random', 'randomized'].map((v) => ({ value: v, label: v }))}
@@ -1292,7 +1294,7 @@ export default function InboundForm({
             )}
             {tlsMode === 'tls' && (
               <div className="fm-switches">
-                <Form.Item name="tls_insecure" label="客户端跳过证书验证" valuePropName="checked" className="fm-switch">
+                <Form.Item name="tls_insecure" label="客户端跳过证书验证" extra="仅作用于客户端订阅（如自签证书场景）" valuePropName="checked" className="fm-switch">
                   <Switch />
                 </Form.Item>
               </div>
@@ -1309,7 +1311,7 @@ export default function InboundForm({
             )}
           </FormGroup>
         )}
-        {Object.keys(networkSchemaProps).length > 0 && (
+        {type !== 'tun' && Object.keys(networkSchemaProps).length > 0 && (
           <FormGroup title="高级网络" panel="inbound">
             <div className="fm-full">
               <SchemaFieldList

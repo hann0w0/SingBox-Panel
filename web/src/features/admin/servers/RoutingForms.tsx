@@ -19,18 +19,27 @@ import { Pills } from '../../../components/kit/Page'
 import { Field, FieldGroup, FieldLabel } from '@/components/ui/field'
 import { JsonCodeEditor } from '../../../components/JsonCodeEditor'
 import { SchemaFieldList } from '../../../components/SchemaFormFields'
-import { useSingboxSchemas, validateObjectBySchema, type JSONSchema } from '../../../lib/singboxSchema'
+import {
+  cloneJson,
+  nativeJsonToOutboundSettings,
+  outboundSettingsToNativeJson,
+  resolveVariantProperties,
+  useSingboxSchemas,
+  validateObjectBySchema,
+  type JSONSchema,
+} from '../../../lib/singboxSchema'
 
 const OUT_TYPES: { value: OutboundType; label: string }[] = [
-  { value: 'shadowsocks', label: 'Shadowsocks' },
-  { value: 'socks', label: 'SOCKS5' },
-  { value: 'vless', label: 'VLESS' },
-  { value: 'vmess', label: 'VMess' },
-  { value: 'trojan', label: 'Trojan' },
-  { value: 'hysteria2', label: 'Hysteria2' },
-  { value: 'tuic', label: 'TUIC' },
-  { value: 'anytls', label: 'AnyTLS' },
-  { value: 'snell', label: 'Snell' },
+  { value: 'shadowsocks', label: 'ss' },
+  { value: 'snell', label: 'snell' },
+  { value: 'socks', label: 'socks' },
+  { value: 'http', label: 'http' },
+  { value: 'tuic', label: 'tuic' },
+  { value: 'trojan', label: 'trojan' },
+  { value: 'anytls', label: 'anytls' },
+  { value: 'vless', label: 'vless' },
+  { value: 'vmess', label: 'vmess' },
+  { value: 'hysteria2', label: 'hysteria2' },
 ]
 
 type OutboundSourceMode = 'manual' | NodeImportMode
@@ -38,6 +47,90 @@ type OutboundSourceMode = 'manual' | NodeImportMode
 const UUID_OUT = new Set<OutboundType>(['vless', 'vmess', 'tuic'])
 const PW_OUT = new Set<OutboundType>(['trojan', 'hysteria2', 'tuic', 'anytls'])
 const TUIC_CC = ['cubic', 'new_reno', 'bbr']
+const EXTENDED_OUT_TRANSPORTS = new Set(['ws', 'httpupgrade', 'grpc', 'http', 'quic'])
+const SCHEMA_OUT_DIAL_KEYS = new Set([
+  'detour', 'connect_timeout', 'domain_resolver', 'bind_interface',
+  'inet4_bind_address', 'inet6_bind_address', 'routing_mark',
+  'tcp_fast_open', 'tcp_multi_path', 'udp_fragment', 'multiplex',
+])
+const SCHEMA_OUT_TLS_ADV_KEYS = new Set([
+  'min_version', 'max_version', 'cipher_suites', 'curve_preferences', 'ech',
+])
+const SCHEMA_OUT_PROTO_EXCLUDES = new Set([
+  'type', 'tag', 'server', 'server_port', 'uuid', 'username', 'password', 'psk',
+  'method', 'flow', 'security', 'alter_id', 'congestion_control', 'zero_rtt_handshake',
+  'heartbeat', 'up_mbps', 'down_mbps', 'obfs', 'version', 'network', 'reuse',
+  'obfs_mode', 'obfs_host', 'mode', 'tls', 'transport', ...SCHEMA_OUT_DIAL_KEYS,
+])
+
+function outboundToForm(outbound: Outbound | null) {
+  if (!outbound) {
+    return {
+      type: 'shadowsocks' as OutboundType,
+      method: '2022-blake3-aes-128-gcm',
+      server_port: undefined,
+      tls: false,
+      tls_mode: 'none',
+      tls_alpn: '',
+      tls_fingerprint: 'chrome',
+      reality_server_name: '',
+      reality_public_key: '',
+      reality_short_id: '',
+      vmess_security: 'auto',
+      vmess_alter_id: 0,
+      congestion_control: 'cubic',
+      snell_version: 4,
+      obfs_type: '',
+      gecko_min_packet_size: undefined,
+      gecko_max_packet_size: undefined,
+      snell_reuse: false,
+      snell_network: 'tcp',
+      snell_obfs_mode: 'none',
+      snell_obfs_host: '',
+      snell_mode: '',
+      transport_type: 'tcp',
+    }
+  }
+  const s = outbound.settings || {}
+  const inner = s.settings || {}
+  return {
+    tag: outbound.tag,
+    type: outbound.type,
+    server: s.server,
+    server_port: s.server_port,
+    username: s.username ?? inner.username,
+    uuid: s.uuid,
+    password: s.password ?? (outbound.type === 'snell' ? inner.snell_psk : (outbound.type === 'socks' || outbound.type === 'http') ? inner.password : undefined),
+    method: inner.method ?? '2022-blake3-aes-128-gcm',
+    ss_psk: inner.ss_server_psk ?? s.password,
+    tls: TLS_REQUIRED_OUT.has(outbound.type) || !!inner.tls?.enabled,
+    sni: inner.tls?.server_name,
+    insecure: inner.tls?.insecure,
+    flow: inner.flow,
+    tls_mode: inner.tls?.reality?.enabled ? 'reality' : (inner.tls?.enabled ? 'tls' : 'none'),
+    tls_alpn: inner.tls?.alpn?.join(', '),
+    tls_fingerprint: inner.tls?.fingerprint ?? 'chrome',
+    reality_server_name: inner.tls?.server_name || '',
+    reality_public_key: inner.tls?.reality?.public_key || '',
+    reality_short_id: inner.tls?.reality?.short_id?.join(', '),
+    vmess_security: inner.vmess_security ?? 'auto',
+    vmess_alter_id: inner.vmess_alter_id ?? 0,
+    congestion_control: inner.congestion_control ?? 'cubic',
+    obfs_type: inner.obfs_type ?? (inner.obfs_password ? 'salamander' : ''),
+    obfs_password: inner.obfs_password,
+    gecko_min_packet_size: inner.gecko_min_packet_size,
+    gecko_max_packet_size: inner.gecko_max_packet_size,
+    snell_version: inner.snell_version === 6 ? 6 : 4,
+    snell_reuse: !!inner.snell_reuse,
+    snell_network: inner.snell_network ?? 'tcp',
+    snell_obfs_mode: inner.snell_obfs_mode ?? 'none',
+    snell_obfs_host: inner.snell_obfs_host ?? '',
+    snell_mode: inner.snell_mode ?? '',
+    transport_type: inner.transport?.type && EXTENDED_OUT_TRANSPORTS.has(inner.transport.type) ? inner.transport.type : 'tcp',
+    ws_path: inner.transport?.path,
+    ws_host: transportHost(inner.transport?.headers),
+  }
+}
 
 // ---------------- Outbound 出站 ----------------
 
@@ -59,6 +152,11 @@ export function OutboundForm({
   const [importReady, setImportReady] = useState(false)
   const [source, setSource] = useState<OutboundSourceMode>('manual')
   const [submitting, setSubmitting] = useState(false)
+  const [editorMode, setEditorMode] = useState<'form' | 'json'>('form')
+  const [rawExtra, setRawExtra] = useState<Record<string, unknown>>({})
+  const [jsonText, setJsonText] = useState('')
+  const [jsonError, setJsonError] = useState('')
+  const schemas = useSingboxSchemas(open)
   const submitLock = useRef(false)
   const submitSessionRef = useRef(0)
   const type: OutboundType = Form.useWatch('type', form) ?? 'shadowsocks'
@@ -67,6 +165,56 @@ export function OutboundForm({
   const snellVersion = Form.useWatch('snell_version', form) ?? 4
   const snellObfsMode = Form.useWatch('snell_obfs_mode', form) ?? 'none'
   const hysteriaObfsType = Form.useWatch('obfs_type', form) ?? ''
+  const tlsChecked = !!Form.useWatch('tls', form)
+
+  const variantProps = useMemo(
+    () => resolveVariantProperties(schemas.outbound, type),
+    [schemas.outbound, type],
+  )
+  const dialSchemaProps = useMemo(() => {
+    const out: Record<string, JSONSchema> = {}
+    for (const [k, v] of Object.entries(variantProps)) {
+      if (SCHEMA_OUT_DIAL_KEYS.has(k)) out[k] = v
+    }
+    return out
+  }, [variantProps])
+  const protocolExtraSchemaProps = useMemo(() => {
+    const out: Record<string, JSONSchema> = {}
+    for (const [k, v] of Object.entries(variantProps)) {
+      if (!SCHEMA_OUT_PROTO_EXCLUDES.has(k)) out[k] = v
+    }
+    return out
+  }, [variantProps])
+  const transportSchemaProps = useMemo(() => {
+    const trProps = variantProps.transport?.properties ?? {}
+    if (transportType === 'grpc') {
+      return {
+        ...(trProps.service_name ? { service_name: trProps.service_name } : {}),
+        ...(trProps.idle_timeout ? { idle_timeout: trProps.idle_timeout } : {}),
+        ...(trProps.ping_timeout ? { ping_timeout: trProps.ping_timeout } : {}),
+        ...(trProps.permit_without_stream ? { permit_without_stream: trProps.permit_without_stream } : {}),
+      }
+    }
+    if (transportType === 'http') {
+      return {
+        ...(trProps.method ? { method: trProps.method } : {}),
+        ...(trProps.host ? { host: trProps.host } : {}),
+        ...(trProps.path ? { path: trProps.path } : {}),
+        ...(trProps.headers ? { headers: trProps.headers } : {}),
+        ...(trProps.idle_timeout ? { idle_timeout: trProps.idle_timeout } : {}),
+        ...(trProps.ping_timeout ? { ping_timeout: trProps.ping_timeout } : {}),
+      }
+    }
+    return {}
+  }, [variantProps, transportType])
+  const tlsAdvSchemaProps = useMemo(() => {
+    const tlsProps = variantProps.tls?.properties ?? {}
+    const out: Record<string, JSONSchema> = {}
+    for (const [k, v] of Object.entries(tlsProps)) {
+      if (SCHEMA_OUT_TLS_ADV_KEYS.has(k)) out[k] = v
+    }
+    return out
+  }, [variantProps])
 
   useLayoutEffect(() => {
     submitSessionRef.current += 1
@@ -79,78 +227,58 @@ export function OutboundForm({
     if (!open) return
     setSource('manual')
     setImportReady(false)
-    // Reset first: keys omitted below would otherwise leak from the previously
-    // opened outbound (e.g. a credential typed for a different landing).
+    setEditorMode('form')
+    setJsonError('')
     form.resetFields()
-    if (outbound) {
-      const s = outbound.settings || {}
-      const inner = s.settings || {}
-      form.setFieldsValue({
-        tag: outbound.tag,
-        type: outbound.type,
-        server: s.server,
-        server_port: s.server_port,
-        username: s.username ?? s.settings?.username,
-        uuid: s.uuid,
-        password: s.password ?? (outbound.type === 'snell' ? inner.snell_psk : outbound.type === 'socks' ? inner.password : undefined),
-        method: inner.method ?? '2022-blake3-aes-128-gcm',
-        ss_psk: inner.ss_server_psk ?? s.password,
-        tls: TLS_REQUIRED_OUT.has(outbound.type) || !!inner.tls?.enabled,
-        sni: inner.tls?.server_name,
-        insecure: inner.tls?.insecure,
-        flow: inner.flow,
-        tls_mode: inner.tls?.reality?.enabled ? 'reality' : (inner.tls?.enabled ? 'tls' : 'none'),
-        tls_alpn: inner.tls?.alpn?.join(', '),
-        tls_fingerprint: inner.tls?.fingerprint ?? 'chrome',
-        reality_server_name: inner.tls?.server_name || '',
-        reality_public_key: inner.tls?.reality?.public_key || '',
-        reality_short_id: inner.tls?.reality?.short_id?.join(', '),
-        vmess_security: inner.vmess_security ?? 'auto',
-        vmess_alter_id: inner.vmess_alter_id ?? 0,
-        congestion_control: inner.congestion_control ?? 'cubic',
-        obfs_type: inner.obfs_type ?? (inner.obfs_password ? 'salamander' : ''),
-        obfs_password: inner.obfs_password,
-        gecko_min_packet_size: inner.gecko_min_packet_size,
-        gecko_max_packet_size: inner.gecko_max_packet_size,
-        snell_version: inner.snell_version === 6 ? 6 : 4,
-        snell_reuse: !!inner.snell_reuse,
-        snell_network: inner.snell_network ?? 'tcp',
-        snell_obfs_mode: inner.snell_obfs_mode ?? 'none',
-        snell_obfs_host: inner.snell_obfs_host ?? '',
-        snell_mode: inner.snell_mode ?? '',
-        transport_type: inner.transport?.type === 'ws' || inner.transport?.type === 'httpupgrade' ? inner.transport.type : 'tcp',
-        ws_path: inner.transport?.path,
-        ws_host: transportHost(inner.transport?.headers),
-      })
-    } else {
-      form.setFieldsValue({
-        type: 'shadowsocks',
-        method: '2022-blake3-aes-128-gcm',
-        // Landing port must match the remote server — never guess it.
-        server_port: undefined,
-        tls: false,
-        tls_mode: 'none',
-        tls_alpn: '',
-        tls_fingerprint: 'chrome',
-        reality_server_name: '',
-        reality_public_key: '',
-        reality_short_id: '',
-        vmess_security: 'auto',
-        vmess_alter_id: 0,
-        congestion_control: 'cubic',
-        snell_version: 4,
-        obfs_type: '',
-        gecko_min_packet_size: undefined,
-        gecko_max_packet_size: undefined,
-        snell_reuse: false,
-        snell_network: 'tcp',
-        snell_obfs_mode: 'none',
-        snell_obfs_host: '',
-        snell_mode: '',
-        transport_type: 'tcp',
-      })
+    form.setFieldsValue(outboundToForm(outbound))
+    setRawExtra(cloneJson((outbound?.settings?.settings?.raw ?? {}) as Record<string, unknown>))
+    setJsonText(
+      outbound
+        ? JSON.stringify(outboundSettingsToNativeJson(outbound.type, outbound.tag, outbound.settings || {}), null, 2)
+        : '',
+    )
+  }, [open, outbound, form])
+
+  const switchEditorMode = (nextMode: string) => {
+    if (nextMode !== 'form' && nextMode !== 'json') return
+    if (nextMode === editorMode) return
+    setJsonError('')
+    if (nextMode === 'json') {
+      const v = form.getFieldsValue()
+      const activeType = (v.type || type) as OutboundType
+      const built = buildOutboundBody(outbound, { ...v, type: activeType }, rawExtra)
+      setJsonText(JSON.stringify(outboundSettingsToNativeJson(activeType, String(built.tag || ''), built.settings), null, 2))
+      setEditorMode('json')
+      return
     }
-  }, [open, outbound])
+    try {
+      const parsed = JSON.parse(jsonText || '{}') as Record<string, unknown>
+      if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
+        setJsonError('配置必须是 JSON 对象')
+        return
+      }
+      const schemaErr = validateObjectBySchema(schemas.outbound, parsed)
+      if (schemaErr) {
+        setJsonError(schemaErr)
+        return
+      }
+      const nextType = (typeof parsed.type === 'string' && OUT_TYPES.some((t) => t.value === parsed.type) ? parsed.type : type) as OutboundType
+      const nextSettings = nativeJsonToOutboundSettings(outbound?.settings || {}, parsed)
+      const nextTag = typeof parsed.tag === 'string' ? parsed.tag : ''
+      setRawExtra(cloneJson((nextSettings.settings?.raw ?? {}) as Record<string, unknown>))
+      form.setFieldsValue(
+        outboundToForm({
+          ...(outbound ?? { id: 0, server_id: serverId, remark: '', sort: 0 }),
+          tag: nextTag,
+          type: nextType,
+          settings: nextSettings,
+        }),
+      )
+      setEditorMode('form')
+    } catch (err) {
+      setJsonError(err instanceof Error ? `JSON 解析失败: ${err.message}` : 'JSON 格式错误')
+    }
+  }
 
   const submit = async () => {
     if (!open || submitLock.current) return
@@ -158,12 +286,39 @@ export function OutboundForm({
     const session = submitSessionRef.current
     setSubmitting(true)
     try {
-      const v = await form.validateFields().catch((err) => {
-        scrollToFirstError(form, err)
-        throw err
-      })
-      if (session !== submitSessionRef.current) return
-      const body = buildOutboundBody(outbound, v)
+      let body: { tag: string; type: OutboundType; settings: Outbound['settings'] }
+      if (editorMode === 'json') {
+        setJsonError('')
+        let parsed: Record<string, unknown>
+        try {
+          parsed = JSON.parse(jsonText || '{}') as Record<string, unknown>
+        } catch (err) {
+          setJsonError(err instanceof Error ? `JSON 解析失败: ${err.message}` : 'JSON 格式错误')
+          return
+        }
+        if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
+          setJsonError('配置必须是 JSON 对象')
+          return
+        }
+        const schemaErr = validateObjectBySchema(schemas.outbound, parsed)
+        if (schemaErr) {
+          setJsonError(schemaErr)
+          return
+        }
+        const nextType = (typeof parsed.type === 'string' && OUT_TYPES.some((t) => t.value === parsed.type) ? parsed.type : type) as OutboundType
+        body = {
+          tag: typeof parsed.tag === 'string' ? parsed.tag.trim() : '',
+          type: nextType,
+          settings: nativeJsonToOutboundSettings(outbound?.settings || {}, parsed),
+        }
+      } else {
+        const v = await form.validateFields().catch((err) => {
+          scrollToFirstError(form, err)
+          throw err
+        })
+        if (session !== submitSessionRef.current) return
+        body = buildOutboundBody(outbound, v as Record<string, any> & { type: OutboundType }, rawExtra)
+      }
       const editing = outbound
       const saved = await applyWithToast(`outbound-${editing ? editing.id : 'new'}`, () =>
         editing ? updateOutbound(serverId, editing.id, body) : createOutbound(serverId, body),
@@ -180,7 +335,8 @@ export function OutboundForm({
   }
 
   const showGenericTLS = type !== 'shadowsocks' && type !== 'socks' && type !== 'vless' && type !== 'snell'
-  const hasParams = type === 'vless' || type === 'vmess' || type === 'tuic' || type === 'hysteria2' || type === 'snell'
+  const hasProtocolSchemaExtras = Object.keys(protocolExtraSchemaProps).length > 0
+  const hasParams = type === 'vless' || type === 'vmess' || type === 'tuic' || type === 'hysteria2' || type === 'snell' || hasProtocolSchemaExtras
 
   return (
     <Modal
@@ -227,6 +383,31 @@ export function OutboundForm({
       {!outbound && source !== 'manual' ? (
         <OutboundImport key={`${serverId}-${source}`} serverId={serverId} mode={source} onClose={onClose} onSaved={onSaved} onSavingChange={setSubmitting} formId={importFormId} onReadyChange={setImportReady} />
       ) : <fieldset disabled={submitting} aria-busy={submitting} className="min-w-0 border-0 p-0 m-0">
+      <div className="mb-4 flex items-center justify-between gap-3">
+        <Segmented
+          aria-label="出站编辑模式"
+          value={editorMode}
+          onChange={switchEditorMode}
+          options={[
+            { value: 'form', label: 'Schema 表单' },
+            { value: 'json', label: 'JSON 编辑' },
+          ]}
+        />
+      </div>
+      {editorMode === 'json' ? (
+        <div className="space-y-3">
+          {jsonError && <Alert type="error" showIcon message={jsonError} />}
+          <JsonCodeEditor
+            ariaLabel="outbound.json"
+            value={jsonText}
+            disabled={submitting}
+            onChange={(val) => {
+              setJsonText(val)
+              if (jsonError) setJsonError('')
+            }}
+          />
+        </div>
+      ) : (
       <Form form={form} layout="vertical" className="fm-form">
         <FormGroup title="基本">
           <Form.Item name="tag" label="标签" rules={[{ required: true }]}>
@@ -308,7 +489,7 @@ export function OutboundForm({
               </Space.Compact>
             </Form.Item>
           )}
-          {type === 'socks' && (
+          {(type === 'socks' || type === 'http') && (
             <>
               <Form.Item
                 name="username"
@@ -424,6 +605,16 @@ export function OutboundForm({
                 </div>
               </>
             )}
+            {hasProtocolSchemaExtras && (
+              <div className="fm-full">
+                <SchemaFieldList
+                  properties={protocolExtraSchemaProps}
+                  value={rawExtra}
+                  onChange={setRawExtra}
+                  idPrefix="outbound-proto"
+                />
+              </div>
+            )}
           </FormGroup>
         )}
 
@@ -434,6 +625,9 @@ export function OutboundForm({
                 { value: 'tcp', label: 'TCP' },
                 { value: 'ws', label: 'WebSocket' },
                 { value: 'httpupgrade', label: 'HTTPUpgrade' },
+                { value: 'grpc', label: 'gRPC' },
+                { value: 'http', label: 'HTTP' },
+                { value: 'quic', label: 'QUIC' },
               ]} />
             </Form.Item>
             {(transportType === 'ws' || transportType === 'httpupgrade') && (
@@ -445,6 +639,16 @@ export function OutboundForm({
                   <Input className="mono" />
                 </Form.Item>
               </>
+            )}
+            {Object.keys(transportSchemaProps).length > 0 && (
+              <div className="fm-full">
+                <SchemaFieldList
+                  properties={transportSchemaProps}
+                  value={(rawExtra.transport && typeof rawExtra.transport === 'object' ? rawExtra.transport : {}) as Record<string, unknown>}
+                  onChange={(nextTr) => setRawExtra((prev) => ({ ...prev, transport: nextTr }))}
+                  idPrefix="outbound-tr"
+                />
+              </div>
             )}
           </FormGroup>
         )}
@@ -499,6 +703,16 @@ export function OutboundForm({
                 </div>
               </>
             )}
+            {tlsMode && tlsMode !== 'none' && Object.keys(tlsAdvSchemaProps).length > 0 && (
+              <div className="fm-full">
+                <SchemaFieldList
+                  properties={tlsAdvSchemaProps}
+                  value={(rawExtra.tls && typeof rawExtra.tls === 'object' ? rawExtra.tls : {}) as Record<string, unknown>}
+                  onChange={(nextTls) => setRawExtra((prev) => ({ ...prev, tls: nextTls }))}
+                  idPrefix="outbound-tls"
+                />
+              </div>
+            )}
           </FormGroup>
         )}
 
@@ -518,9 +732,32 @@ export function OutboundForm({
                 <Switch />
               </Form.Item>
             </div>
+            {(TLS_REQUIRED_OUT.has(type) || tlsChecked) && Object.keys(tlsAdvSchemaProps).length > 0 && (
+              <div className="fm-full">
+                <SchemaFieldList
+                  properties={tlsAdvSchemaProps}
+                  value={(rawExtra.tls && typeof rawExtra.tls === 'object' ? rawExtra.tls : {}) as Record<string, unknown>}
+                  onChange={(nextTls) => setRawExtra((prev) => ({ ...prev, tls: nextTls }))}
+                  idPrefix="outbound-tls-generic"
+                />
+              </div>
+            )}
+          </FormGroup>
+        )}
+        {Object.keys(dialSchemaProps).length > 0 && (
+          <FormGroup title="拨号参数与高级网络">
+            <div className="fm-full">
+              <SchemaFieldList
+                properties={dialSchemaProps}
+                value={rawExtra}
+                onChange={setRawExtra}
+                idPrefix="outbound-dial"
+              />
+            </div>
           </FormGroup>
         )}
       </Form>
+      )}
       </fieldset>}
     </Modal>
   )

@@ -245,6 +245,8 @@ export interface InboundSettings {
   username?: string
   uuid?: string
   password?: string
+  http_path?: string
+  http_headers?: Record<string, string | string[]>
   transport?: TransportSettings
   tls?: TLSSettings
   raw?: Record<string, unknown>
@@ -253,15 +255,16 @@ export interface InboundSettings {
 // OutboundType is a routing target protocol (plus "direct").
 export type OutboundType =
   | 'direct'
+  | 'shadowsocks'
+  | 'snell'
+  | 'socks'
+  | 'http'
+  | 'tuic'
+  | 'trojan'
+  | 'anytls'
   | 'vless'
   | 'vmess'
-  | 'trojan'
-  | 'shadowsocks'
   | 'hysteria2'
-  | 'tuic'
-  | 'socks'
-  | 'anytls'
-  | 'snell'
 
 export interface OutboundSettings {
   server?: string

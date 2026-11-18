@@ -404,9 +404,10 @@ export function CustomNodesPanel({ nodes, loading, error, onNodesChange }: {
   }
 
   const removeNode = (n: CustomNode) => {
+    const label = n.name || n.link.slice(0, 24) || (n.address ? `${n.address}:${n.port}` : '未命名')
     Modal.confirm({
       title: '删除节点',
-      content: `确认删除「${n.name || n.link.slice(0, 24)}」？`,
+      content: `确认删除「${label}」？`,
       okText: '删除',
       okType: 'danger',
       onOk: async () => {

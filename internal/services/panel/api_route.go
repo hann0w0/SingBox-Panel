@@ -179,6 +179,19 @@ func (a *App) updateOutbound(c *gin.Context) {
 		return
 	}
 	oldTag := ob.Tag
+	if oldTag != nextTag {
+		for _, key := range []string{"outbound", "detour", "download_detour"} {
+			refs, err := preservedConfigReferences(a.db, sid, key)
+			if err != nil {
+				c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+				return
+			}
+			if refs[oldTag] {
+				c.JSON(http.StatusConflict, gin.H{"error": "该出站仍被自定义配置引用，请先在配置文件中修改引用"})
+				return
+			}
+		}
+	}
 	ob.Tag = nextTag
 	ob.Type = nextType
 	ob.Settings = model.JSONText(nextSettings)
@@ -269,6 +282,17 @@ func (a *App) deleteOutbound(c *gin.Context) {
 	if ruleCount > 0 || finalCount > 0 || ruleSetCount > 0 {
 		c.JSON(http.StatusConflict, gin.H{"error": "该出站仍被分流规则、final 或规则集下载引用，请先修改引用"})
 		return
+	}
+	for _, key := range []string{"outbound", "detour", "download_detour"} {
+		refs, err := preservedConfigReferences(a.db, sid, key)
+		if err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+			return
+		}
+		if refs[ob.Tag] {
+			c.JSON(http.StatusConflict, gin.H{"error": "该出站仍被自定义配置引用，请先修改引用"})
+			return
+		}
 	}
 	if err := a.db.Delete(&ob).Error; err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
@@ -906,7 +930,7 @@ func (a *App) setFinalOutbound(c *gin.Context) {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
-	if !exists || final == "block" || final == "reject" || final == "sniff" || final == "hijack-dns" {
+	if !exists || final == "block" || final == "reject" || final == "sniff" || final == "hijack-dns" || final == "resolve" || final == "route-options" {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "final 出站不存在或不能作为默认出站"})
 		return
 	}

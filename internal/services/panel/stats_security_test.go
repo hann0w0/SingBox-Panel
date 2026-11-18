@@ -143,7 +143,7 @@ func TestImportKeepsPanelGeneratedStatsConfigManaged(t *testing.T) {
 			t.Fatalf("loopback guard leaked into imported rules: %+v", parsed.Rules)
 		}
 	}
-	if mode := importedConfigMode(parsed, raw); mode != model.ConfigModeManaged {
+	if mode := importedConfigMode(t, parsed, raw); mode != model.ConfigModeManaged {
 		t.Fatalf("panel-generated config imported as %q", mode)
 	}
 }

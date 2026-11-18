@@ -134,8 +134,8 @@ func TestOutboundImportPreviewAndSave(t *testing.T) {
 	if reserved.Code != 200 || !strings.Contains(reserved.Body.String(), `"tag":"direct-2"`) {
 		t.Fatalf("reserved tag: %s", reserved.Body.String())
 	}
-	db.Model(&srv).Update("config_mode", model.ConfigModeRaw)
-	if w := call(http.MethodPost, "preview", gin.H{"uri": link}); w.Code != 409 {
-		t.Fatalf("raw mode: %d", w.Code)
+	db.Model(&srv).Updates(map[string]any{"config_mode": model.ConfigModeRaw, "raw_config": model.JSONText(`{"inbounds":[],"outbounds":[],"custom":true}`)})
+	if w := call(http.MethodPost, "preview", gin.H{"uri": link}); w.Code != 200 {
+		t.Fatalf("raw config prevented editing: %d %s", w.Code, w.Body)
 	}
 }

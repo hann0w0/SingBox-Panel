@@ -8,11 +8,12 @@ import (
 
 // InboundInput describes one inbound to render into a server config.
 type InboundInput struct {
-	Tag        string
-	Type       string // vless | vmess | trojan | shadowsocks | hysteria2 | tuic
-	ListenPort int
-	Settings   InboundSettings
-	Users      []ProxyUser
+	ProjectionOnly bool
+	Tag            string
+	Type           string // vless | vmess | trojan | shadowsocks | hysteria2 | tuic
+	ListenPort     int
+	Settings       InboundSettings
+	Users          []ProxyUser
 }
 
 // ---- sing-box wire structs (subset we generate) ----
@@ -156,7 +157,7 @@ func buildTransport(t TransportSettings) *v2rayTransport {
 
 // BuildInbound renders a single inbound object as official config JSON.
 func BuildInbound(in InboundInput) (json.RawMessage, error) {
-	if err := in.Settings.Validate(in.Type); err != nil {
+	if err := in.Settings.Validate(in.Type); err != nil && !in.ProjectionOnly {
 		return nil, err
 	}
 	if in.Settings.IPv6Only && in.Settings.ListenAddress() == "::" {

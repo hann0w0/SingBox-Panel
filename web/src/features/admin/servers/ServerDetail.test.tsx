@@ -42,6 +42,20 @@ beforeEach(() => {
 })
 afterEach(cleanup)
 
+it('keeps form controls editable for an imported raw configuration without a lock banner', async () => {
+  vi.mocked(getServer).mockResolvedValue({ server: { id: 1, name: 'Imported', address: 'example.com', inbounds: [], config_mode: 'raw' } as unknown as Server, install_command: '', public_url: '' })
+  vi.mocked(listRules).mockResolvedValue([{ id: 5, server_id: 1, outbound: 'direct', match: { domain: ['example.com'] }, enabled: true, sort: 0, remark: '' }])
+  mount()
+  const add = await screen.findByRole('button', { name: '新增规则' })
+  for (const button of [add, screen.getByRole('button', { name: '编辑 规则 5' }), screen.getByRole('button', { name: '删除 规则 5' }), screen.getByRole('button', { name: '调整第 1 条规则顺序' })]) {
+    expect(button.hasAttribute('disabled')).toBe(false)
+  }
+  expect(screen.queryByText('原始配置模式，面板编辑已锁定')).toBeNull()
+  expect(screen.queryByRole('button', { name: '切换到面板管理' })).toBeNull()
+  fireEvent.click(add)
+  expect(screen.getByRole('group', { name: '可选路由用户' })).toBeTruthy()
+})
+
 it.each(['resolve', 'reject'] as const)('aborts a pending user request after the main load settles and ignores it on server switch (%s)', async (settle) => {
   const first = deferred<ServerAuthUser[]>()
   const second = deferred<ServerAuthUser[]>()

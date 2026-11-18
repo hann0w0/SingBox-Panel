@@ -77,6 +77,10 @@ func (o *Orchestrator) lockServer(serverID uint) func() {
 
 // BuildServerConfig assembles a server's full official config.json from the DB.
 func (o *Orchestrator) BuildServerConfig(srv *model.Server) ([]byte, error) {
+	return o.buildServerConfig(srv, nil)
+}
+
+func (o *Orchestrator) buildServerConfig(srv *model.Server, projection *singbox.ConfigProjection) ([]byte, error) {
 	if srv.EffectiveConfigMode() == model.ConfigModeRaw {
 		if !json.Valid(srv.RawConfig) {
 			return nil, fmt.Errorf("server raw config is not valid JSON")
@@ -201,7 +205,7 @@ func (o *Orchestrator) BuildServerConfig(srv *model.Server) ([]byte, error) {
 
 	rules := make([]singbox.RuleInput, 0, len(ruleRows))
 	for _, r := range ruleRows {
-		if !builtinOutboundTags[r.Outbound] && !seenTags[r.Outbound] {
+		if !builtinOutboundTags[r.Outbound] && !seenTags[r.Outbound] && !singbox.OverlayHasOutbound(srv.ConfigOverlay, r.Outbound) {
 			return nil, fmt.Errorf("route rule %d references missing outbound %q", r.ID, r.Outbound)
 		}
 		var ri singbox.RuleInput
@@ -218,12 +222,13 @@ func (o *Orchestrator) BuildServerConfig(srv *model.Server) ([]byte, error) {
 		ri.Outbound = r.Outbound
 		rules = append(rules, ri)
 	}
-	if srv.FinalOutbound != "" && srv.FinalOutbound != "direct" && !seenTags[srv.FinalOutbound] {
+	if srv.FinalOutbound != "" && srv.FinalOutbound != "direct" && !seenTags[srv.FinalOutbound] && !singbox.OverlayHasOutbound(srv.ConfigOverlay, srv.FinalOutbound) {
 		return nil, fmt.Errorf("final references missing outbound %q", srv.FinalOutbound)
 	}
 
 	// Rule-sets.
 	var rsRows []struct {
+		ID             uint
 		Tag            string
 		Type           string
 		URL            string
@@ -233,7 +238,7 @@ func (o *Orchestrator) BuildServerConfig(srv *model.Server) ([]byte, error) {
 		UpdateInterval string
 	}
 	if err := o.db.Table("server_rule_sets").
-		Select("rule_sets.tag, rule_sets.type, rule_sets.url, rule_sets.path, rule_sets.format, server_rule_sets.download_detour, rule_sets.update_interval").
+		Select("rule_sets.id, rule_sets.tag, rule_sets.type, rule_sets.url, rule_sets.path, rule_sets.format, server_rule_sets.download_detour, rule_sets.update_interval").
 		Joins("JOIN rule_sets ON rule_sets.id = server_rule_sets.rule_set_id").
 		Where("server_rule_sets.server_id = ?", srv.ID).
 		Order("rule_sets.id").
@@ -248,7 +253,7 @@ func (o *Orchestrator) BuildServerConfig(srv *model.Server) ([]byte, error) {
 		})
 	}
 
-	rendered, err := singbox.BuildServerConfig(singbox.ServerConfigInput{
+	input := singbox.ServerConfigInput{
 		Inbounds:        ins,
 		Outbounds:       obs,
 		Rules:           rules,
@@ -257,9 +262,56 @@ func (o *Orchestrator) BuildServerConfig(srv *model.Server) ([]byte, error) {
 		StatsController: protocol.LocalTrafficAddress,
 		StatsSecret:     statsSecret(srv.AgentToken),
 		StatsAPI:        statsAPIAddress(srv, inbounds),
-	})
+	}
+	if singbox.HasConfigOverlay(srv.ConfigOverlay) {
+		input.ProjectionOnly = true
+		var overlay singbox.ConfigOverlay
+		if err := json.Unmarshal(srv.ConfigOverlay, &overlay); err != nil {
+			return nil, fmt.Errorf("decode preserved config: %w", err)
+		}
+		// Imported configurations keep their existing control endpoints. Do not
+		// replace a custom service or claim ports the original did not use.
+		input.StatsController = overlay.Baseline.Input.StatsController
+		input.StatsAPI = overlay.Baseline.Input.StatsAPI
+		input.StatsSecret = overlay.Baseline.Input.StatsSecret
+	}
+	p := singbox.ConfigProjection{Input: input, IDs: make(map[string][]string)}
+	for _, row := range inbounds {
+		p.IDs["inbounds"] = append(p.IDs["inbounds"], fmt.Sprint(row.ID))
+	}
+	for _, row := range obRows {
+		p.IDs["outbounds"] = append(p.IDs["outbounds"], fmt.Sprint(row.ID))
+	}
+	for _, row := range ruleRows {
+		p.IDs["rules"] = append(p.IDs["rules"], configRuleIdentity(row))
+		p.RuleTargets = append(p.RuleTargets, row.Outbound)
+	}
+	for _, row := range rsRows {
+		p.IDs["rule_set"] = append(p.IDs["rule_set"], fmt.Sprint(row.ID))
+	}
+	if projection != nil {
+		*projection = p
+	}
+	rendered, err := singbox.BuildServerConfig(input)
 	if err != nil {
 		return nil, err
+	}
+	if singbox.HasConfigOverlay(srv.ConfigOverlay) && projection == nil {
+		merged, err := singbox.ApplyConfigOverlay(srv.ConfigOverlay, p)
+		if err != nil {
+			return nil, err
+		}
+		parsed, err := singbox.ParseServerConfig(merged)
+		if err != nil {
+			return nil, err
+		}
+		// Unknown conditions (for example invert or logical subrules) can
+		// change the scope of a route whose form fields look user-specific.
+		// Validate the actual merged file before it can expose a private exit.
+		if err := validateImportedPrivateRouting(o.db, srv.ID, parsed, merged); err != nil {
+			return nil, err
+		}
+		return merged, nil
 	}
 	// Restore the fields this server's config uses but the panel cannot model,
 	// so a partially understood config stays editable instead of locking the UI.
@@ -425,7 +477,7 @@ func (o *Orchestrator) applyRawConfigUnlocked(ctx context.Context, serverID uint
 		return protocol.CommandResultEvt{}, err
 	}
 	var old model.Server
-	if err := o.db.Select("id", "config_mode", "raw_config", "config_residual", "config_initialized").First(&old, serverID).Error; err != nil {
+	if err := o.db.Select("id", "config_mode", "raw_config", "config_residual", "config_overlay", "config_initialized").First(&old, serverID).Error; err != nil {
 		return protocol.CommandResultEvt{}, err
 	}
 	if err := o.db.Model(&model.Server{}).Where("id = ?", serverID).Updates(map[string]any{
@@ -434,6 +486,7 @@ func (o *Orchestrator) applyRawConfigUnlocked(ctx context.Context, serverID uint
 		// The residual belongs to the previous managed view; raw mode re-applies
 		// this JSON verbatim, so leaving a stale patch would be misleading.
 		"config_residual": model.JSONText(nil),
+		"config_overlay":  model.JSONText(nil),
 	}).Error; err != nil {
 		return protocol.CommandResultEvt{}, err
 	}
@@ -443,6 +496,7 @@ func (o *Orchestrator) applyRawConfigUnlocked(ctx context.Context, serverID uint
 			"config_mode":     old.ConfigMode,
 			"raw_config":      old.RawConfig,
 			"config_residual": old.ConfigResidual,
+			"config_overlay":  old.ConfigOverlay,
 		}).Error; rollbackErr != nil {
 			return res, fmt.Errorf("apply raw config: %v; restore raw snapshot: %w", err, rollbackErr)
 		}
@@ -481,8 +535,18 @@ func (o *Orchestrator) SwitchToManagedConfig(ctx context.Context, serverID uint)
 	defer unlock()
 
 	var old model.Server
-	if err := o.db.Select("id", "config_mode", "raw_config", "config_initialized").First(&old, serverID).Error; err != nil {
+	if err := o.db.First(&old, serverID).Error; err != nil {
 		return err
+	}
+	if old.EffectiveConfigMode() == model.ConfigModeRaw {
+		parsed, err := singbox.ParseServerConfig(old.RawConfig)
+		if err != nil {
+			return err
+		}
+		app := &App{db: o.db, orch: o}
+		if err := app.applyImportUnlocked(&old, parsed, old.RawConfig); err != nil {
+			return err
+		}
 	}
 	if err := o.db.Model(&model.Server{}).Where("id = ?", serverID).Updates(map[string]any{
 		"config_mode":        model.ConfigModeManaged,
@@ -494,6 +558,8 @@ func (o *Orchestrator) SwitchToManagedConfig(ctx context.Context, serverID uint)
 		if rollbackErr := o.db.Model(&model.Server{}).Where("id = ?", serverID).Updates(map[string]any{
 			"config_mode":        old.ConfigMode,
 			"config_initialized": old.ConfigInitialized,
+			"config_overlay":     old.ConfigOverlay,
+			"config_residual":    old.ConfigResidual,
 		}).Error; rollbackErr != nil {
 			return fmt.Errorf("push managed config: %v; restore config mode: %w", err, rollbackErr)
 		}

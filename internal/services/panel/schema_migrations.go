@@ -443,6 +443,19 @@ var applicationMigrations = []schemaMigration{
 		name:    "config residual for hand-written fields",
 		up:      func(tx *gorm.DB) error { return tx.AutoMigrate(&model.Server{}) },
 	},
+	{
+		version: 42,
+		name:    "editable imported configurations with stable overlays",
+		up: func(tx *gorm.DB) error {
+			if err := tx.AutoMigrate(&model.Server{}); err != nil {
+				return err
+			}
+			if err := migrateRawConfigOverlays(tx); err != nil {
+				return err
+			}
+			return migrateManagedConfigOverlays(tx)
+		},
+	},
 }
 
 // migrationReplaySafe records whether an interrupted attempt of each migration
@@ -503,6 +516,7 @@ var migrationReplaySafe = map[uint]bool{
 	39: true,  // HasColumn-guarded DROP COLUMN of the retired node switches
 	40: true,  // AutoMigrate of agent dual stack address columns
 	41: true,  // AutoMigrate adds the config residual column
+	42: true,  // only initializes raw servers without an overlay, in a transaction
 }
 
 // dropRetiredCustomNodeSwitches removes the per-node and per-subscription

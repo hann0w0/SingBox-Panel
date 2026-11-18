@@ -179,7 +179,7 @@ func TestServerDeletionCleansDerivedForwards(t *testing.T) {
 	}
 }
 
-func TestRawServersCannotOfferOrCreateForwards(t *testing.T) {
+func TestRawServersDoNotRestoreRemovedInboundForForwards(t *testing.T) {
 	fixture := newForwardFixture(t)
 	fixture.db.Model(&fixture.server).Updates(map[string]any{"config_mode": model.ConfigModeRaw, "raw_config": model.JSONText(`{"inbounds":[]}`)})
 	fixture.router.GET("/inbounds", fixture.app.listUserInbounds)
@@ -192,7 +192,7 @@ func TestRawServersCannotOfferOrCreateForwards(t *testing.T) {
 	}
 	body := fmt.Sprintf(`{"inbound_tag":%q,"outbound_id":%d}`, fixture.inbound.Tag, fixture.outbound.ID)
 	response = serveJSONRequest(t, fixture.router, http.MethodPost, "/forwards", body)
-	if response.Code != http.StatusConflict {
+	if response.Code != http.StatusBadRequest {
 		t.Fatalf("raw forward accepted: %d %s", response.Code, response.Body)
 	}
 }

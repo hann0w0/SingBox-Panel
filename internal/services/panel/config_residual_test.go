@@ -49,8 +49,8 @@ func TestImportPreservesUnmodelledFieldsAndStaysManaged(t *testing.T) {
 	if srv.EffectiveConfigMode() != model.ConfigModeManaged {
 		t.Fatalf("config mode = %q, want managed (unknown fields must not lock the panel)", srv.EffectiveConfigMode())
 	}
-	if len(srv.ConfigResidual) == 0 {
-		t.Fatal("residual not persisted")
+	if !singbox.HasConfigOverlay(srv.ConfigOverlay) {
+		t.Fatal("original config and panel baseline not persisted")
 	}
 
 	generated, err := app.orch.BuildServerConfig(&srv)
@@ -73,8 +73,6 @@ func TestImportPreservesUnmodelledFieldsAndStaysManaged(t *testing.T) {
 		t.Errorf("experimental lost: %v", cfg["experimental"])
 	} else if _, ok := exp["cache_file"]; !ok {
 		t.Error("experimental.cache_file lost")
-	} else if _, ok := exp["clash_api"]; !ok {
-		t.Error("panel clash_api missing")
 	}
 	if route, ok := cfg["route"].(map[string]any); !ok || route["default_domain_resolver"] != "local" {
 		t.Errorf("route.default_domain_resolver lost: %v", cfg["route"])

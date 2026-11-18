@@ -28,13 +28,19 @@ type outboundStoredSettings struct {
 
 func (a *App) requireManagedMode(c *gin.Context, serverID uint) bool {
 	var srv model.Server
-	if err := a.db.Select("id", "config_mode", "raw_config").First(&srv, serverID).Error; err != nil {
+	if err := a.db.First(&srv, serverID).Error; err != nil {
 		c.JSON(404, gin.H{"error": "server not found"})
 		return false
 	}
 	if srv.EffectiveConfigMode() == model.ConfigModeRaw {
-		c.JSON(409, gin.H{"error": "该节点当前使用原始配置模式；请先明确切换到「面板管理」再编辑协议或路由"})
-		return false
+		parsed, err := singbox.ParseServerConfig(srv.RawConfig)
+		if err == nil {
+			err = a.applyImport(&srv, parsed, srv.RawConfig)
+		}
+		if err != nil {
+			c.JSON(500, gin.H{"error": "保留原始配置并初始化面板编辑失败: " + err.Error()})
+			return false
+		}
 	}
 	return true
 }
@@ -123,6 +129,22 @@ func (a *App) validateInboundIdentityForType(db *gorm.DB, serverID, excludeID ui
 			return fmt.Errorf("监听端口 %d 已被该节点的其它入站使用", port)
 		}
 	}
+	entries, err := unmanagedConfigEntries(db, serverID, "inbounds")
+	if err != nil {
+		return err
+	}
+	for _, entry := range entries {
+		var inbound struct {
+			Tag  string `json:"tag"`
+			Port int    `json:"listen_port"`
+		}
+		if err := json.Unmarshal(entry, &inbound); err != nil {
+			return err
+		}
+		if inbound.Tag == tag || (port > 0 && inbound.Port == port) {
+			return fmt.Errorf("入站标签或端口已被原始配置中的入站 %q 使用", inbound.Tag)
+		}
+	}
 	return nil
 }
 
@@ -171,7 +193,7 @@ func (a *App) validateOutbound(db *gorm.DB, serverID, excludeID uint, tag, typ s
 	if err := validateTag(tag); err != nil {
 		return err
 	}
-	if tag == "direct" || tag == "block" || tag == "reject" || tag == "sniff" || tag == "hijack-dns" {
+	if builtinOutboundTags[tag] {
 		return fmt.Errorf("%s 是内置标签，不能作为自定义出站", tag)
 	}
 	if !supportedOutboundTypes[typ] || typ == "direct" {
@@ -196,6 +218,23 @@ func (a *App) validateOutbound(db *gorm.DB, serverID, excludeID uint, tag, typ s
 	}
 	if n > 0 {
 		return fmt.Errorf("出站标签 %q 已存在", tag)
+	}
+	if serverID != 0 {
+		entries, err := unmanagedConfigEntries(db, serverID, "outbounds")
+		if err != nil {
+			return err
+		}
+		for _, entry := range entries {
+			var out struct {
+				Tag string `json:"tag"`
+			}
+			if err := json.Unmarshal(entry, &out); err != nil {
+				return err
+			}
+			if out.Tag == tag {
+				return fmt.Errorf("出站标签 %q 已被原始配置使用", tag)
+			}
+		}
 	}
 	var st outboundStoredSettings
 	if len(raw) == 0 || json.Unmarshal(raw, &st) != nil {
@@ -256,7 +295,7 @@ func (a *App) validateOutbound(db *gorm.DB, serverID, excludeID uint, tag, typ s
 }
 
 var builtinOutboundTags = map[string]bool{
-	"direct": true, "block": true, "reject": true, "sniff": true, "hijack-dns": true,
+	"direct": true, "block": true, "reject": true, "sniff": true, "hijack-dns": true, "resolve": true, "route-options": true,
 }
 
 // outboundExists checks the server's shared outbounds. User-private exits are
@@ -269,7 +308,17 @@ func (a *App) outboundExists(db *gorm.DB, serverID uint, tag string) (bool, erro
 	var n int64
 	err := db.Model(&model.Outbound{}).
 		Where("server_id = ? AND tag = ? AND owner_user_id = 0", serverID, tag).Count(&n).Error
-	return n > 0, err
+	if err != nil || n > 0 {
+		return n > 0, err
+	}
+	var srv model.Server
+	if err := db.Select("id", "config_overlay").First(&srv, serverID).Error; err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return false, nil
+		}
+		return false, err
+	}
+	return singbox.OverlayHasOutbound(srv.ConfigOverlay, tag), nil
 }
 
 func stringSet(values []string) map[string]bool {
@@ -335,7 +384,7 @@ func (a *App) validateRule(db *gorm.DB, serverID uint, raw json.RawMessage, outb
 		switch outbound {
 		case "block", "reject":
 			action = "reject"
-		case "sniff", "hijack-dns":
+		case "sniff", "hijack-dns", "resolve", "route-options":
 			action = outbound
 		default:
 			action = "route"
@@ -376,6 +425,18 @@ func (a *App) validateRule(db *gorm.DB, serverID uint, raw json.RawMessage, outb
 		return err
 	}
 	inboundSet := stringSet(inbounds)
+	entries, err := unmanagedConfigEntries(db, serverID, "inbounds")
+	if err != nil {
+		return err
+	}
+	for _, entry := range entries {
+		var in struct {
+			Tag string `json:"tag"`
+		}
+		if json.Unmarshal(entry, &in) == nil {
+			inboundSet[in.Tag] = true
+		}
+	}
 	for _, tag := range rule.Inbound {
 		if !inboundSet[tag] {
 			return fmt.Errorf("规则引用的入站 %q 不存在", tag)
@@ -457,6 +518,34 @@ func referencedRuleSetIDsForServer(db *gorm.DB, serverID uint) ([]uint, error) {
 		return nil, err
 	}
 	tags := make(map[string]struct{})
+	// An unknown logical rule or action may reference a modelled rule set.
+	// Pruning only by form rows would silently delete its definition.
+	preserved, err := preservedConfigReferences(db, serverID, "rule_set")
+	if err != nil {
+		return nil, err
+	}
+	for tag := range preserved {
+		tags[tag] = struct{}{}
+	}
+	var imported model.Server
+	if err := db.Select("id", "config_overlay").First(&imported, serverID).Error; err != nil {
+		return nil, err
+	}
+	if singbox.HasConfigOverlay(imported.ConfigOverlay) {
+		var overlay singbox.ConfigOverlay
+		if err := json.Unmarshal(imported.ConfigOverlay, &overlay); err != nil {
+			return nil, err
+		}
+		var definitions []model.RuleSet
+		if len(overlay.Baseline.IDs["rule_set"]) > 0 {
+			if err := db.Where("id IN ?", overlay.Baseline.IDs["rule_set"]).Find(&definitions).Error; err != nil {
+				return nil, err
+			}
+			for _, definition := range definitions {
+				tags[definition.Tag] = struct{}{}
+			}
+		}
+	}
 	for _, row := range rows {
 		var rule singbox.RuleInput
 		if len(row.Match) == 0 || json.Unmarshal(row.Match, &rule) != nil {
@@ -555,6 +644,10 @@ func renameRuleSetRefs(tx *gorm.DB, serverID uint, old, next string) error {
 }
 
 func (a *App) inboundReferenced(db *gorm.DB, serverID uint, tag string) (bool, error) {
+	preserved, err := preservedConfigReferences(db, serverID, "inbound")
+	if err != nil || preserved[tag] {
+		return preserved[tag], err
+	}
 	var rows []model.RouteRule
 	if err := db.Where("server_id = ?", serverID).Find(&rows).Error; err != nil {
 		return false, err
@@ -590,6 +683,10 @@ func (a *App) inboundReferenced(db *gorm.DB, serverID uint, tag string) (bool, e
 // names this tag. Deleting a shared definition must not silently break a rule
 // on a server that happens to use the same tag.
 func sharedRuleSetReferencedAnywhere(db *gorm.DB, tag string) (bool, error) {
+	preserved, err := preservedReferencesAnywhere(db, "rule_set", tag)
+	if err != nil || preserved {
+		return preserved, err
+	}
 	var rows []model.RouteRule
 	if err := db.Find(&rows).Error; err != nil {
 		return false, err
@@ -608,6 +705,11 @@ func sharedRuleSetReferencedAnywhere(db *gorm.DB, tag string) (bool, error) {
 }
 
 func renameSharedRuleSetRefs(tx *gorm.DB, old, next string) error {
+	if referenced, err := preservedReferencesAnywhere(tx, "rule_set", old); err != nil {
+		return err
+	} else if referenced {
+		return fmt.Errorf("该规则集仍被自定义配置引用，请先在配置文件中修改引用")
+	}
 	var rows []model.RouteRule
 	if err := tx.Find(&rows).Error; err != nil {
 		return err

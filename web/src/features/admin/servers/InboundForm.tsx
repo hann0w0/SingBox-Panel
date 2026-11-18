@@ -1020,14 +1020,12 @@ export default function InboundForm({
               </div>
             )}
             {hasProtocolSchemaExtras && (
-              <div className="fm-full">
-                <SchemaFieldList
-                  properties={protocolExtraSchemaProps}
-                  value={rawExtra}
-                  onChange={setRawExtra}
-                  idPrefix="inbound-proto"
-                />
-              </div>
+              <SchemaFieldList
+                properties={protocolExtraSchemaProps}
+                value={rawExtra}
+                onChange={setRawExtra}
+                idPrefix="inbound-proto"
+              />
             )}
           </FormGroup>
         )}
@@ -1065,14 +1063,12 @@ export default function InboundForm({
               </>
             )}
             {Object.keys(transportSchemaProps).length > 0 && (
-              <div className="fm-full">
-                <SchemaFieldList
-                  properties={transportSchemaProps}
-                  value={(rawExtra.transport && typeof rawExtra.transport === 'object' ? rawExtra.transport : {}) as Record<string, unknown>}
-                  onChange={(nextTr) => setRawExtra((prev) => ({ ...prev, transport: nextTr }))}
-                  idPrefix="inbound-tr"
-                />
-              </div>
+              <SchemaFieldList
+                properties={transportSchemaProps}
+                value={(rawExtra.transport && typeof rawExtra.transport === 'object' ? rawExtra.transport : {}) as Record<string, unknown>}
+                onChange={(nextTr) => setRawExtra((prev) => ({ ...prev, transport: nextTr }))}
+                idPrefix="inbound-tr"
+              />
             )}
           </FormGroup>
         )}

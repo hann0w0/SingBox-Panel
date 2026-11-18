@@ -397,38 +397,38 @@ export const DEFAULT_ROUTE_RULE_SCHEMA: JSONSchema = {
   type: 'object',
   additionalProperties: true,
   properties: {
-    action: { type: 'string', default: 'route', enum: ['route', 'reject', 'sniff', 'hijack-dns', 'resolve', 'route-options'], 'x-ui': { label: '动作', group: '动作', order: 1, widget: 'select' } },
-    method: { type: 'string', default: 'default', enum: ['default', 'drop', 'reply'], 'x-ui': { label: '拒绝方式', group: '动作', order: 2, widget: 'select', actions: ['reject'] } },
+    action: { type: 'string', default: 'route', enum: ['', 'route', 'reject', 'sniff', 'hijack-dns', 'resolve', 'route-options'], 'x-ui': { label: '动作', group: '动作', order: 1, widget: 'select' } },
+    method: { type: 'string', default: 'default', enum: ['', 'default', 'drop', 'reply'], 'x-ui': { label: '拒绝方式', group: '动作', order: 2, widget: 'select', actions: ['reject'] } },
     sniffer: { type: 'array', items: { type: 'string' }, 'x-ui': { label: '嗅探协议', group: '动作', order: 3, widget: 'multiselect', actions: ['sniff'] } },
     timeout: { type: 'string', 'x-ui': { label: '嗅探超时', group: '动作', order: 4, placeholder: '300ms', actions: ['sniff'], advanced: true } },
     server: { type: 'string', 'x-ui': { label: '解析 DNS 服务器', group: '动作', order: 5, actions: ['resolve'], advanced: true } },
-    strategy: { type: 'string', enum: ['', 'prefer_ipv4', 'prefer_ipv6', 'ipv4_only', 'ipv6_only'], 'x-ui': { label: '解析策略', group: '动作', order: 6, widget: 'select', actions: ['resolve'], advanced: true } },
+    strategy: { type: 'string', enum: ['', 'prefer_ipv4', 'prefer_ipv6', 'ipv4_only', 'ipv6_only'], 'x-ui': { label: '解析策略', group: '动作', order: 6, widget: 'select', actions: ['resolve', 'route-options'], advanced: true } },
     inbound: { type: 'array', items: { type: 'string' }, 'x-ui': { label: '入站来源', group: '来源与身份', order: 10, widget: 'multiselect' } },
-    auth_user: { type: 'array', items: { type: 'string' }, 'x-ui': { label: '认证用户', group: '来源与身份', order: 11, widget: 'multiselect', actions: ['route', 'reject'] } },
-    rule_set: { type: 'array', items: { type: 'string' }, 'x-ui': { label: '规则集', group: '规则集', order: 20, widget: 'multiselect', actions: ['route', 'reject'] } },
-    rule_set_ip_cidr_match_source: { type: 'boolean', 'x-ui': { label: '规则集匹配来源 IP', group: '规则集', order: 21, widget: 'switch', actions: ['route', 'reject'] } },
-    rule_set_ip_cidr_accept_empty: { type: 'boolean', 'x-ui': { label: '规则集空 IP 也视为匹配', group: '规则集', order: 22, widget: 'switch', actions: ['route', 'reject'], advanced: true } },
-    domain: { type: 'array', items: { type: 'string' }, 'x-ui': { label: '完整域名', group: '域名匹配', order: 30, widget: 'lines', full_width: true, actions: ['route', 'reject'] } },
-    domain_suffix: { type: 'array', items: { type: 'string' }, 'x-ui': { label: '域名后缀', group: '域名匹配', order: 31, widget: 'lines', full_width: true, actions: ['route', 'reject'] } },
-    domain_keyword: { type: 'array', items: { type: 'string' }, 'x-ui': { label: '域名关键词', group: '域名匹配', order: 32, widget: 'lines', full_width: true, actions: ['route', 'reject'] } },
-    domain_regex: { type: 'array', items: { type: 'string' }, 'x-ui': { label: '域名正则', group: '域名匹配', order: 33, widget: 'lines', full_width: true, actions: ['route', 'reject'], advanced: true } },
-    ip_cidr: { type: 'array', items: { type: 'string' }, 'x-ui': { label: '目标 IP / CIDR', group: 'IP 与端口', order: 40, widget: 'lines', full_width: true, actions: ['route', 'reject'] } },
-    ip_is_private: { type: 'boolean', 'x-ui': { label: '目标为内网/私有 IP', group: 'IP 与端口', order: 41, widget: 'switch', actions: ['route', 'reject'], advanced: true } },
-    source_ip_cidr: { type: 'array', items: { type: 'string' }, 'x-ui': { label: '来源 IP / CIDR', group: 'IP 与端口', order: 42, widget: 'lines', full_width: true, actions: ['route', 'reject'] } },
-    source_ip_is_private: { type: 'boolean', 'x-ui': { label: '来源为内网/私有 IP', group: 'IP 与端口', order: 43, widget: 'switch', actions: ['route', 'reject'], advanced: true } },
-    port: { type: 'array', items: { type: 'integer', minimum: 1, maximum: 65535 }, 'x-ui': { label: '目标端口', group: 'IP 与端口', order: 44, widget: 'lines', actions: ['route', 'reject'] } },
-    port_range: { type: 'array', items: { type: 'string' }, 'x-ui': { label: '目标端口范围', group: 'IP 与端口', order: 45, widget: 'tags', placeholder: '1000:2000', actions: ['route', 'reject'], advanced: true } },
-    source_port: { type: 'array', items: { type: 'integer', minimum: 1, maximum: 65535 }, 'x-ui': { label: '来源端口', group: 'IP 与端口', order: 46, widget: 'lines', actions: ['route', 'reject'], advanced: true } },
-    source_port_range: { type: 'array', items: { type: 'string' }, 'x-ui': { label: '来源端口范围', group: 'IP 与端口', order: 47, widget: 'tags', placeholder: '1000:2000', actions: ['route', 'reject'], advanced: true } },
-    network: { type: 'string', enum: ['', 'tcp', 'udp', 'icmp'], 'x-ui': { label: '网络类型', group: '协议与版本', order: 50, widget: 'select', actions: ['route', 'reject'] } },
-    ip_version: { type: 'integer', enum: [4, 6], 'x-ui': { label: 'IP 版本', group: '协议与版本', order: 51, widget: 'select', actions: ['route', 'reject'], advanced: true } },
-    protocol: { type: 'array', items: { type: 'string' }, 'x-ui': { label: '应用协议', group: '协议与版本', order: 52, widget: 'tags', actions: ['route', 'reject'] } },
-    client: { type: 'array', items: { type: 'string' }, 'x-ui': { label: '识别客户端', group: '协议与版本', order: 53, widget: 'tags', actions: ['route', 'reject'], advanced: true } },
-    process_name: { type: 'array', items: { type: 'string' }, 'x-ui': { label: '进程名', group: '进程与环境', order: 60, widget: 'tags', actions: ['route', 'reject'], advanced: true } },
-    process_path: { type: 'array', items: { type: 'string' }, 'x-ui': { label: '进程路径', group: '进程与环境', order: 61, widget: 'lines', full_width: true, actions: ['route', 'reject'], advanced: true } },
-    process_path_regex: { type: 'array', items: { type: 'string' }, 'x-ui': { label: '进程路径正则', group: '进程与环境', order: 62, widget: 'lines', full_width: true, actions: ['route', 'reject'], advanced: true } },
-    package_name: { type: 'array', items: { type: 'string' }, 'x-ui': { label: '应用包名', group: '进程与环境', order: 63, widget: 'tags', actions: ['route', 'reject'], advanced: true } },
-    clash_mode: { type: 'string', 'x-ui': { label: 'Clash 模式', group: '进程与环境', order: 64, actions: ['route', 'reject'], advanced: true } },
+    auth_user: { type: 'array', items: { type: 'string' }, 'x-ui': { label: '认证用户', group: '来源与身份', order: 11, widget: 'multiselect', actions: ['route', 'reject', 'resolve', 'route-options'] } },
+    rule_set: { type: 'array', items: { type: 'string' }, 'x-ui': { label: '规则集', group: '规则集', order: 20, widget: 'multiselect', actions: ['route', 'reject', 'resolve', 'route-options'] } },
+    rule_set_ip_cidr_match_source: { type: 'boolean', 'x-ui': { label: '规则集匹配来源 IP', group: '规则集', order: 21, widget: 'switch', actions: ['route', 'reject', 'resolve', 'route-options'] } },
+    rule_set_ip_cidr_accept_empty: { type: 'boolean', 'x-ui': { label: '规则集空 IP 也视为匹配', group: '规则集', order: 22, widget: 'switch', actions: ['route', 'reject', 'resolve', 'route-options'], advanced: true } },
+    domain: { type: 'array', items: { type: 'string' }, 'x-ui': { label: '完整域名', group: '域名匹配', order: 30, widget: 'lines', full_width: true, actions: ['route', 'reject', 'resolve', 'route-options'] } },
+    domain_suffix: { type: 'array', items: { type: 'string' }, 'x-ui': { label: '域名后缀', group: '域名匹配', order: 31, widget: 'lines', full_width: true, actions: ['route', 'reject', 'resolve', 'route-options'] } },
+    domain_keyword: { type: 'array', items: { type: 'string' }, 'x-ui': { label: '域名关键词', group: '域名匹配', order: 32, widget: 'lines', full_width: true, actions: ['route', 'reject', 'resolve', 'route-options'] } },
+    domain_regex: { type: 'array', items: { type: 'string' }, 'x-ui': { label: '域名正则', group: '域名匹配', order: 33, widget: 'lines', full_width: true, actions: ['route', 'reject', 'resolve', 'route-options'], advanced: true } },
+    ip_cidr: { type: 'array', items: { type: 'string' }, 'x-ui': { label: '目标 IP / CIDR', group: 'IP 与端口', order: 40, widget: 'lines', full_width: true, actions: ['route', 'reject', 'resolve', 'route-options'] } },
+    ip_is_private: { type: 'boolean', 'x-ui': { label: '目标为内网/私有 IP', group: 'IP 与端口', order: 41, widget: 'switch', actions: ['route', 'reject', 'resolve', 'route-options'], advanced: true } },
+    source_ip_cidr: { type: 'array', items: { type: 'string' }, 'x-ui': { label: '来源 IP / CIDR', group: 'IP 与端口', order: 42, widget: 'lines', full_width: true, actions: ['route', 'reject', 'resolve', 'route-options'] } },
+    source_ip_is_private: { type: 'boolean', 'x-ui': { label: '来源为内网/私有 IP', group: 'IP 与端口', order: 43, widget: 'switch', actions: ['route', 'reject', 'resolve', 'route-options'], advanced: true } },
+    port: { type: 'array', items: { type: 'integer', minimum: 1, maximum: 65535 }, 'x-ui': { label: '目标端口', group: 'IP 与端口', order: 44, widget: 'lines', actions: ['route', 'reject', 'resolve', 'route-options'] } },
+    port_range: { type: 'array', items: { type: 'string' }, 'x-ui': { label: '目标端口范围', group: 'IP 与端口', order: 45, widget: 'tags', placeholder: '1000:2000', actions: ['route', 'reject', 'resolve', 'route-options'], advanced: true } },
+    source_port: { type: 'array', items: { type: 'integer', minimum: 1, maximum: 65535 }, 'x-ui': { label: '来源端口', group: 'IP 与端口', order: 46, widget: 'lines', actions: ['route', 'reject', 'resolve', 'route-options'], advanced: true } },
+    source_port_range: { type: 'array', items: { type: 'string' }, 'x-ui': { label: '来源端口范围', group: 'IP 与端口', order: 47, widget: 'tags', placeholder: '1000:2000', actions: ['route', 'reject', 'resolve', 'route-options'], advanced: true } },
+    network: { type: 'string', enum: ['', 'tcp', 'udp', 'icmp'], 'x-ui': { label: '网络类型', group: '协议与版本', order: 50, widget: 'select', actions: ['route', 'reject', 'resolve', 'route-options'] } },
+    ip_version: { type: 'integer', enum: [4, 6], 'x-ui': { label: 'IP 版本', group: '协议与版本', order: 51, widget: 'select', actions: ['route', 'reject', 'resolve', 'route-options'], advanced: true } },
+    protocol: { type: 'array', items: { type: 'string' }, 'x-ui': { label: '应用协议', group: '协议与版本', order: 52, widget: 'tags', actions: ['route', 'reject', 'resolve', 'route-options'] } },
+    client: { type: 'array', items: { type: 'string' }, 'x-ui': { label: '识别客户端', group: '协议与版本', order: 53, widget: 'tags', actions: ['route', 'reject', 'resolve', 'route-options'], advanced: true } },
+    process_name: { type: 'array', items: { type: 'string' }, 'x-ui': { label: '进程名', group: '进程与环境', order: 60, widget: 'tags', actions: ['route', 'reject', 'resolve', 'route-options'], advanced: true } },
+    process_path: { type: 'array', items: { type: 'string' }, 'x-ui': { label: '进程路径', group: '进程与环境', order: 61, widget: 'lines', full_width: true, actions: ['route', 'reject', 'resolve', 'route-options'], advanced: true } },
+    process_path_regex: { type: 'array', items: { type: 'string' }, 'x-ui': { label: '进程路径正则', group: '进程与环境', order: 62, widget: 'lines', full_width: true, actions: ['route', 'reject', 'resolve', 'route-options'], advanced: true } },
+    package_name: { type: 'array', items: { type: 'string' }, 'x-ui': { label: '应用包名', group: '进程与环境', order: 63, widget: 'tags', actions: ['route', 'reject', 'resolve', 'route-options'], advanced: true } },
+    clash_mode: { type: 'string', 'x-ui': { label: 'Clash 模式', group: '进程与环境', order: 64, actions: ['route', 'reject', 'resolve', 'route-options'], advanced: true } },
     invert: { type: 'boolean', 'x-ui': { label: '匹配结果取反', group: '高级选项', order: 70, widget: 'switch', advanced: true } },
     override_address: { type: 'string', 'x-ui': { label: '覆盖目标地址', group: '高级选项', order: 71, actions: ['route', 'route-options'], advanced: true } },
     override_port: { type: 'integer', minimum: 1, maximum: 65535, 'x-ui': { label: '覆盖目标端口', group: '高级选项', order: 72, actions: ['route', 'route-options'], advanced: true } },
@@ -646,6 +646,12 @@ export function inboundSettingsToNativeJson(
         domain: [settings.tls.acme_domain],
         ...(settings.tls.acme_email ? { email: settings.tls.acme_email } : {}),
       }
+    } else if (
+      typeof tlsObj.certificate_provider === 'object' &&
+      tlsObj.certificate_provider &&
+      (tlsObj.certificate_provider as Record<string, unknown>).type === 'acme'
+    ) {
+      delete tlsObj.certificate_provider
     }
     if (settings.tls.reality?.enabled) {
       const prevReality = (prevTls.reality && typeof prevTls.reality === 'object' ? prevTls.reality : {}) as Record<string, unknown>
@@ -664,8 +670,12 @@ export function inboundSettingsToNativeJson(
       delete nextReality.guard
       delete nextReality.public_key
       tlsObj.reality = nextReality
+    } else {
+      delete tlsObj.reality
     }
     base.tls = tlsObj
+  } else {
+    delete base.tls
   }
   return base
 }
@@ -845,6 +855,8 @@ export function outboundSettingsToNativeJson(
         enabled: true,
         fingerprint: inner.tls.fingerprint,
       }
+    } else {
+      delete tlsObj.utls
     }
     if (inner.tls.reality?.enabled) {
       tlsObj.reality = {
@@ -853,8 +865,12 @@ export function outboundSettingsToNativeJson(
         ...(inner.tls.reality.public_key ? { public_key: inner.tls.reality.public_key } : {}),
         ...(inner.tls.reality.short_id?.length ? { short_id: inner.tls.reality.short_id[0] } : {}),
       }
+    } else {
+      delete tlsObj.reality
     }
     base.tls = tlsObj
+  } else {
+    delete base.tls
   }
 
   return base

@@ -178,6 +178,7 @@ func (a *App) applyImportUnlocked(srv *model.Server, p *singbox.ParsedConfig, ra
 	a.userAccessMu.Lock()
 	defer a.userAccessMu.Unlock()
 	preserveManagedUsers := false
+	var rawUsersByTag, generatedUsersByTag map[string]json.RawMessage
 	var current model.Server
 	if err := a.db.First(&current, srv.ID).Error; err != nil {
 		return err
@@ -186,6 +187,9 @@ func (a *App) applyImportUnlocked(srv *model.Server, p *singbox.ParsedConfig, ra
 	if generated, err := a.orch.BuildServerConfig(&current); err == nil {
 		if equivalentJSON(raw, generated) {
 			preserveManagedUsers = true
+		} else {
+			rawUsersByTag = inboundUsersByTag(raw)
+			generatedUsersByTag = inboundUsersByTag(generated)
 		}
 	}
 	return a.db.Transaction(func(tx *gorm.DB) error {
@@ -196,7 +200,7 @@ func (a *App) applyImportUnlocked(srv *model.Server, p *singbox.ParsedConfig, ra
 			return err
 		}
 		inbounds := append([]singbox.ParsedInbound(nil), p.Inbounds...)
-		if preserveManagedUsers {
+		if preserveManagedUsers || generatedUsersByTag != nil {
 			var previous []model.Inbound
 			if err := tx.Where("server_id = ?", srv.ID).Find(&previous).Error; err != nil {
 				return err
@@ -205,8 +209,10 @@ func (a *App) applyImportUnlocked(srv *model.Server, p *singbox.ParsedConfig, ra
 				for _, inbound := range previous {
 					var settings singbox.InboundSettings
 					if inbound.Tag == inbounds[index].Tag && string(inbound.Type) == inbounds[index].Type && json.Unmarshal(inbound.Settings, &settings) == nil && settings.UseMultiUser(string(inbound.Type)) {
-						inbounds[index].Settings.MultiUser = true
-						inbounds[index].Settings.SingleUser = false
+						if preserveManagedUsers || inbounds[index].UserCount >= 2 || equivalentInboundUsers(rawUsersByTag[inbound.Tag], generatedUsersByTag[inbound.Tag]) {
+							inbounds[index].Settings.MultiUser = true
+							inbounds[index].Settings.SingleUser = false
+						}
 					}
 				}
 			}
@@ -317,6 +323,40 @@ func importedStatsSettings(raw []byte) (controller, secret, api string) {
 		}
 	}
 	return controller, secret, api
+}
+
+func inboundUsersByTag(raw []byte) map[string]json.RawMessage {
+	var doc struct {
+		Inbounds []struct {
+			Tag   string          `json:"tag"`
+			Users json.RawMessage `json:"users"`
+		} `json:"inbounds"`
+	}
+	if json.Unmarshal(raw, &doc) != nil {
+		return nil
+	}
+	out := make(map[string]json.RawMessage, len(doc.Inbounds))
+	for _, in := range doc.Inbounds {
+		if in.Tag != "" {
+			out[in.Tag] = in.Users
+		}
+	}
+	return out
+}
+
+func equivalentInboundUsers(left, right json.RawMessage) bool {
+	if isEmptyJSONArrayOrNull(left) && isEmptyJSONArrayOrNull(right) {
+		return true
+	}
+	return equivalentJSON(left, right)
+}
+
+func isEmptyJSONArrayOrNull(raw json.RawMessage) bool {
+	var arr []any
+	if len(raw) == 0 || string(raw) == "null" {
+		return true
+	}
+	return json.Unmarshal(raw, &arr) == nil && len(arr) == 0
 }
 
 func equivalentJSON(left, right []byte) bool {

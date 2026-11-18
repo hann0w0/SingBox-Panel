@@ -111,3 +111,37 @@ func TestImportExplicitSingleCredentialDoesNotRestoreMultiUserMode(t *testing.T)
 		t.Fatalf("imported credential overwritten: %+v", settings)
 	}
 }
+
+func TestImportConfigEditElsewherePreservesMultiUserInbound(t *testing.T) {
+	fixture := newForwardFixture(t)
+	generated, err := fixture.app.orch.BuildServerConfig(&fixture.server)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var root map[string]any
+	if err := json.Unmarshal(generated, &root); err != nil {
+		t.Fatal(err)
+	}
+	// Simulate an admin editing another field in config.json (e.g. log level)
+	// without touching the multi-user inbound's users list.
+	root["log"] = map[string]any{"level": "warn"}
+	edited, err := json.Marshal(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	parsed, err := singbox.ParseServerConfig(edited)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := fixture.app.applyImport(&fixture.server, parsed, edited); err != nil {
+		t.Fatal(err)
+	}
+	fixture.db.First(&fixture.inbound, fixture.inbound.ID)
+	var settings singbox.InboundSettings
+	if err := json.Unmarshal(fixture.inbound.Settings, &settings); err != nil {
+		t.Fatal(err)
+	}
+	if !settings.MultiUser || settings.SingleUser {
+		t.Fatalf("multi_user lost after unrelated config edit: %+v", settings)
+	}
+}

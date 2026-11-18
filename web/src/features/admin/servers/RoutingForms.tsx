@@ -310,8 +310,8 @@ export function OutboundForm({
       </fieldset>}
       {!outbound && source !== 'manual' ? (
         <OutboundImport key={`${serverId}-${source}`} serverId={serverId} mode={source} onClose={onClose} onSaved={onSaved} onSavingChange={setSubmitting} formId={importFormId} onReadyChange={setImportReady} />
-      ) : <fieldset disabled={submitting} aria-busy={submitting} className="min-w-0 border-0 p-0 m-0">
-      <Form form={form} layout="vertical" className="fm-form">
+      ) : <fieldset disabled={submitting} aria-busy={submitting} className="inbound-compact-fieldset">
+      <Form form={form} layout="vertical" className="fm-form inbound-compact-form">
         <FormGroup title="基本">
           <Form.Item name="tag" label="标签" rules={[{ required: true }]}>
             <Input />
@@ -643,24 +643,20 @@ export function OutboundForm({
         {(Object.keys(otherParamsSchemaProps).length > 0 || Object.keys(tlsAdvSchemaProps).length > 0) && (
           <FormGroup title="其他参数">
             {Object.keys(tlsAdvSchemaProps).length > 0 && (
-              <div className="fm-full">
-                <SchemaFieldList
-                  properties={tlsAdvSchemaProps}
-                  value={(rawExtra.tls && typeof rawExtra.tls === 'object' ? rawExtra.tls : {}) as Record<string, unknown>}
-                  onChange={(nextTls) => setRawExtra((prev) => ({ ...prev, tls: nextTls }))}
-                  idPrefix="outbound-tls"
-                />
-              </div>
+              <SchemaFieldList
+                properties={tlsAdvSchemaProps}
+                value={(rawExtra.tls && typeof rawExtra.tls === 'object' ? rawExtra.tls : {}) as Record<string, unknown>}
+                onChange={(nextTls) => setRawExtra((prev) => ({ ...prev, tls: nextTls }))}
+                idPrefix="outbound-tls"
+              />
             )}
             {Object.keys(otherParamsSchemaProps).length > 0 && (
-              <div className="fm-full">
-                <SchemaFieldList
-                  properties={otherParamsSchemaProps}
-                  value={rawExtra}
-                  onChange={setRawExtra}
-                  idPrefix="outbound-other"
-                />
-              </div>
+              <SchemaFieldList
+                properties={otherParamsSchemaProps}
+                value={rawExtra}
+                onChange={setRawExtra}
+                idPrefix="outbound-other"
+              />
             )}
           </FormGroup>
         )}
@@ -763,20 +759,20 @@ type ConditionRow = {
 }
 
 const MATCH_FIELD_OPTIONS: { value: MatchField; label: string }[] = [
+  { value: 'rule_set', label: 'rule_set · 规则集' },
+  { value: 'inbound', label: 'inbound · 入站节点' },
+  { value: 'auth_user', label: 'auth_user · 指定用户' },
   { value: 'domain_suffix', label: 'domain_suffix · 域名后缀' },
   { value: 'domain', label: 'domain · 完整域名' },
+  { value: 'ip_cidr', label: 'ip_cidr · 目标 IP 段' },
+  { value: 'source_ip_cidr', label: 'source_ip_cidr · 来源 IP 段' },
   { value: 'domain_keyword', label: 'domain_keyword · 域名关键词' },
   { value: 'domain_regex', label: 'domain_regex · 域名正则' },
-  { value: 'rule_set', label: 'rule_set · 规则集' },
-  { value: 'ip_cidr', label: 'ip_cidr · 目标 IP / CIDR' },
-  { value: 'source_ip_cidr', label: 'source_ip_cidr · 来源 IP / CIDR' },
   { value: 'port', label: 'port · 目标端口' },
-  { value: 'port_range', label: 'port_range · 目标端口范围' },
-  { value: 'ip_is_private', label: 'ip_is_private · 目标私有 IP' },
-  { value: 'inbound', label: 'inbound · 入站标签' },
-  { value: 'auth_user', label: 'auth_user · 认证用户' },
-  { value: 'protocol', label: 'protocol · 嗅探协议' },
-  { value: 'network', label: 'network · 传输层网络' },
+  { value: 'port_range', label: 'port_range · 端口范围' },
+  { value: 'protocol', label: 'protocol · 应用协议' },
+  { value: 'network', label: 'network · 传输协议 (TCP/UDP)' },
+  { value: 'ip_is_private', label: 'ip_is_private · 私有 IP (局域网)' },
 ]
 
 function emptyConditionRow(field: MatchField, id: string): ConditionRow {

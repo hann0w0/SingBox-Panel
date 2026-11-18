@@ -168,6 +168,7 @@ func (a *App) routes() *gin.Engine {
 	admin.Use(a.auth.Middleware(), AdminOnly())
 	{
 		admin.GET("/overview", a.adminOverview)
+		admin.GET("/schemas", a.getSchemas)
 
 		admin.GET("/servers", a.listServers)
 		admin.POST("/servers", a.createServer)

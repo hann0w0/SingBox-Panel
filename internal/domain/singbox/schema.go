@@ -311,7 +311,7 @@ func InboundSchema() *JSONSchema {
 			Enum: strEnum(
 				"vless", "vmess", "trojan", "shadowsocks", "hysteria2", "tuic",
 				"anytls", "snell", "socks", "mixed", "http", "tun",
-				"direct", "redirect", "tproxy", "naive", "hysteria", "shadowtls",
+				"direct", "redirect", "tproxy",
 			),
 			UI: &UIMeta{Label: "协议", Group: "基本", Order: 1, Widget: "select"},
 		},

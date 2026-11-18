@@ -154,6 +154,9 @@ export const resetSub = () =>
 export const getOverview = (signal?: AbortSignal) =>
   http.get<Overview>('/api/admin/overview', { signal }).then((r) => r.data)
 
+export const getSchemas = (signal?: AbortSignal) =>
+  http.get<Record<string, unknown>>('/api/admin/schemas', { signal }).then((r) => r.data)
+
 // ---- admin: servers ----
 interface ServerBody {
   name: string

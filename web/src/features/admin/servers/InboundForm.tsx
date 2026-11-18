@@ -1,7 +1,18 @@
-import { useEffect, useLayoutEffect, useRef, useState, type ReactNode } from 'react'
-import { Button, Form, Input, InputNumber, Modal, Select, Space, Switch, type FormInstance } from '../../../components/kit'
+import { useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from 'react'
+import { JsonCodeEditor } from '../../../components/JsonCodeEditor'
+import { SchemaFieldList } from '../../../components/SchemaFormFields'
+import { Alert, Button, Form, Input, InputNumber, Modal, Segmented, Select, Space, Switch, type FormInstance } from '../../../components/kit'
 import { createInbound, updateInbound } from '../../../lib/api'
 import { applyWithToast } from '../../../lib/configApply'
+import {
+  cloneJson,
+  inboundSettingsToNativeJson,
+  nativeJsonToInboundSettings,
+  resolveVariantProperties,
+  useSingboxSchemas,
+  validateObjectBySchema,
+  type JSONSchema,
+} from '../../../lib/singboxSchema'
 import type { Inbound, InboundSettings, InboundType, RealityGuardSettings, RealitySettings } from '../../../lib/types'
 import { randomBase64, randomHex, randomUUID, SHADOWSOCKS_METHODS, ss2022KeyLen } from '../../../lib/util'
 import '../../../styles/forms.css'
@@ -11,6 +22,12 @@ export const TYPES: { value: InboundType; label: string }[] = [
   { value: 'shadowsocks', label: 'ss' },
   { value: 'snell', label: 'snell' },
   { value: 'socks', label: 'socks' },
+  { value: 'mixed', label: 'mixed' },
+  { value: 'http', label: 'http' },
+  { value: 'tun', label: 'tun' },
+  { value: 'direct', label: 'direct' },
+  { value: 'redirect', label: 'redirect' },
+  { value: 'tproxy', label: 'tproxy' },
   { value: 'tuic', label: 'tuic' },
   { value: 'trojan', label: 'trojan' },
   { value: 'anytls', label: 'anytls' },
@@ -22,8 +39,22 @@ export const TYPES: { value: InboundType; label: string }[] = [
 const WS_TYPES = new Set<InboundType>(['vless', 'vmess', 'trojan'])
 const REALITY_TYPES = new Set<InboundType>(['vless', 'vmess'])
 const TLS_REQUIRED = new Set<InboundType>(['trojan', 'hysteria2', 'tuic', 'anytls'])
-const NO_TLS = new Set<InboundType>(['shadowsocks', 'snell', 'socks'])
+const NO_TLS = new Set<InboundType>(['shadowsocks', 'snell', 'socks', 'mixed', 'tun', 'direct', 'redirect', 'tproxy'])
 const HAS_BANDWIDTH = new Set<InboundType>(['hysteria2'])
+const EXTENDED_TRANSPORTS = new Set(['ws', 'httpupgrade', 'grpc', 'http', 'quic'])
+const SCHEMA_NETWORK_KEYS = new Set([
+  'listen', 'tcp_fast_open', 'tcp_multi_path', 'udp_fragment', 'udp_timeout',
+  'detour', 'sniff', 'sniff_override_destination', 'domain_strategy', 'multiplex',
+])
+const SCHEMA_TLS_ADV_KEYS = new Set([
+  'min_version', 'max_version', 'cipher_suites', 'curve_preferences', 'client_authentication', 'ech',
+])
+const SCHEMA_PROTOCOL_EXTRA_EXCLUDES = new Set([
+  'type', 'tag', 'listen', 'listen_port', 'flow', 'packet_encoding', 'method', 'password',
+  'up_mbps', 'down_mbps', 'ignore_client_bandwidth', 'obfs', 'congestion_control',
+  'auth_timeout', 'zero_rtt_handshake', 'heartbeat', 'version', 'psk', 'obfs_mode', 'mode',
+  'fallback', 'tls', 'transport', ...SCHEMA_NETWORK_KEYS,
+])
 // Which credential a single-user inbound presents.
 const UUID_TYPES = new Set<InboundType>(['vless', 'vmess', 'tuic'])
 const PW_TYPES = new Set<InboundType>(['trojan', 'hysteria2', 'anytls', 'tuic'])
@@ -205,7 +236,7 @@ export function toForm(ib: Inbound | null): FormVals {
     tls_insecure: tls.insecure,
     acme_domain: tls.acme_domain,
     acme_email: tls.acme_email,
-    transport_type: s.transport?.type === 'ws' || s.transport?.type === 'httpupgrade' ? s.transport.type : 'tcp',
+    transport_type: EXTENDED_TRANSPORTS.has(s.transport?.type ?? '') ? s.transport!.type : 'tcp',
     ws_path: s.transport?.path,
     ws_host: transportHost(s.transport?.headers),
     max_early_data: s.transport?.max_early_data,
@@ -221,13 +252,22 @@ function transportHost(headers: Record<string, string | string[]> | undefined): 
   return Array.isArray(value) ? value[0] ?? '' : value ?? ''
 }
 
-// Build settings, preserving generated secrets from `base` (edit case).
-export function assembleSettings(base: InboundSettings, v: FormVals, type: InboundType): InboundSettings {
+// Build settings, preserving generated secrets from `base` (edit case) and
+// merging any schema-driven raw sing-box fields without losing complex parameters.
+export function assembleSettings(
+  base: InboundSettings,
+  v: FormVals,
+  type: InboundType,
+  extraRaw?: Record<string, unknown>,
+): InboundSettings {
   const s: InboundSettings = JSON.parse(JSON.stringify(base || {}))
   if (v.listen_mode !== undefined) {
     const originalMode = base.ipv6_only ? 'ipv6' : base.listen === '0.0.0.0' ? 'ipv4' : base.listen === '127.0.0.1' || base.listen === '::1' ? 'local' : 'all'
     s.listen = v.listen_mode === originalMode && base.listen ? base.listen : ({ all: '::', ipv4: '0.0.0.0', ipv6: '::', local: '127.0.0.1' } as Record<string, string>)[v.listen_mode] || '::'
     s.ipv6_only = v.listen_mode === 'ipv6'
+  }
+  if (extraRaw && typeof extraRaw.listen === 'string' && extraRaw.listen !== base.raw?.listen) {
+    s.listen = extraRaw.listen
   }
 
   // Multi-user is explicit and capability-gated. Snell and legacy
@@ -284,25 +324,29 @@ export function assembleSettings(base: InboundSettings, v: FormVals, type: Inbou
     s.snell_obfs_mode = s.snell_version === 5 ? (v.snell_obfs_mode || 'none') : 'none'
     s.snell_mode = s.snell_version === 6 ? (v.snell_mode || '') : ''
   }
-  if (type === 'socks') {
+  if (type === 'socks' || type === 'mixed' || type === 'http') {
     s.username = typeof v.username === 'string' ? v.username.trim() : ''
     s.password = typeof v.password === 'string' ? v.password : ''
   }
-  // transport (ws/httpupgrade only for vless/vmess/trojan)
-  if (WS_TYPES.has(type) && (v.transport_type === 'ws' || v.transport_type === 'httpupgrade')) {
-    const headers = { ...(s.transport?.headers ?? {}) }
-    const host = typeof v.ws_host === 'string' ? v.ws_host.trim() : ''
-    if (host !== transportHost(headers)) {
-      for (const key of Object.keys(headers)) if (key.toLowerCase() === 'host') delete headers[key]
-      if (host) headers.Host = host
-    }
-    s.transport = {
-      ...s.transport,
-      type: v.transport_type,
-      path: v.ws_path || '',
-      headers: Object.keys(headers).length ? headers : undefined,
-      max_early_data: v.max_early_data || 0,
-      early_data_header: v.early_data_header || '',
+  // transport (vless/vmess/trojan)
+  if (WS_TYPES.has(type) && EXTENDED_TRANSPORTS.has(v.transport_type)) {
+    if (v.transport_type === 'ws' || v.transport_type === 'httpupgrade') {
+      const headers = { ...(s.transport?.headers ?? {}) }
+      const host = typeof v.ws_host === 'string' ? v.ws_host.trim() : ''
+      if (host !== transportHost(headers)) {
+        for (const key of Object.keys(headers)) if (key.toLowerCase() === 'host') delete headers[key]
+        if (host) headers.Host = host
+      }
+      s.transport = {
+        ...s.transport,
+        type: v.transport_type,
+        path: v.ws_path || '',
+        headers: Object.keys(headers).length ? headers : undefined,
+        max_early_data: v.max_early_data || 0,
+        early_data_header: v.early_data_header || '',
+      }
+    } else {
+      s.transport = { type: v.transport_type }
     }
   } else {
     delete s.transport
@@ -374,6 +418,18 @@ export function assembleSettings(base: InboundSettings, v: FormVals, type: Inbou
       }
     }
   }
+
+  const rawSource = extraRaw ?? base.raw
+  if (rawSource && Object.keys(rawSource).length > 0) {
+    const mergedRaw = inboundSettingsToNativeJson(type, String(v.tag || ''), v.listen_port, { ...s, raw: rawSource })
+    if (!s.tls) delete mergedRaw.tls
+    else if (mergedRaw.tls && typeof mergedRaw.tls === 'object') {
+      const tlsRaw = mergedRaw.tls as Record<string, unknown>
+      if (!s.tls.reality?.enabled) delete tlsRaw.reality
+    }
+    if (!s.transport || s.transport.type === 'tcp') delete mergedRaw.transport
+    s.raw = mergedRaw
+  }
   return s
 }
 
@@ -400,6 +456,11 @@ export default function InboundForm({
 }) {
   const [form] = Form.useForm()
   const [submitting, setSubmitting] = useState(false)
+  const [editorMode, setEditorMode] = useState<'form' | 'json'>('form')
+  const [rawExtra, setRawExtra] = useState<Record<string, unknown>>({})
+  const [jsonText, setJsonText] = useState('')
+  const [jsonError, setJsonError] = useState('')
+  const schemas = useSingboxSchemas(open)
   const submitLock = useRef(false)
   const submitSessionRef = useRef(0)
   const type: InboundType = Form.useWatch('type', form) ?? 'shadowsocks'
@@ -415,6 +476,55 @@ export default function InboundForm({
   const guardPort = Form.useWatch('guard_internal_port', form)
   const listenMode = Form.useWatch('listen_mode', form)
 
+  const variantProps = useMemo(
+    () => resolveVariantProperties(schemas.inbound, type),
+    [schemas.inbound, type],
+  )
+  const networkSchemaProps = useMemo(() => {
+    const out: Record<string, JSONSchema> = {}
+    for (const [k, v] of Object.entries(variantProps)) {
+      if (SCHEMA_NETWORK_KEYS.has(k)) out[k] = v
+    }
+    return out
+  }, [variantProps])
+  const protocolExtraSchemaProps = useMemo(() => {
+    const out: Record<string, JSONSchema> = {}
+    for (const [k, v] of Object.entries(variantProps)) {
+      if (!SCHEMA_PROTOCOL_EXTRA_EXCLUDES.has(k)) out[k] = v
+    }
+    return out
+  }, [variantProps])
+  const transportSchemaProps = useMemo(() => {
+    const trProps = variantProps.transport?.properties ?? {}
+    if (transportType === 'grpc') {
+      return {
+        ...(trProps.service_name ? { service_name: trProps.service_name } : {}),
+        ...(trProps.idle_timeout ? { idle_timeout: trProps.idle_timeout } : {}),
+        ...(trProps.ping_timeout ? { ping_timeout: trProps.ping_timeout } : {}),
+        ...(trProps.permit_without_stream ? { permit_without_stream: trProps.permit_without_stream } : {}),
+      }
+    }
+    if (transportType === 'http') {
+      return {
+        ...(trProps.method ? { method: trProps.method } : {}),
+        ...(trProps.host ? { host: trProps.host } : {}),
+        ...(trProps.path ? { path: trProps.path } : {}),
+        ...(trProps.headers ? { headers: trProps.headers } : {}),
+        ...(trProps.idle_timeout ? { idle_timeout: trProps.idle_timeout } : {}),
+        ...(trProps.ping_timeout ? { ping_timeout: trProps.ping_timeout } : {}),
+      }
+    }
+    return {}
+  }, [variantProps, transportType])
+  const tlsAdvSchemaProps = useMemo(() => {
+    const tlsProps = variantProps.tls?.properties ?? {}
+    const out: Record<string, JSONSchema> = {}
+    for (const [k, v] of Object.entries(tlsProps)) {
+      if (SCHEMA_TLS_ADV_KEYS.has(k)) out[k] = v
+    }
+    return out
+  }, [variantProps])
+
   useLayoutEffect(() => {
     submitSessionRef.current += 1
     submitLock.current = false
@@ -429,7 +539,60 @@ export default function InboundForm({
     // 新增协议 would inherit the last one's tag and secrets.
     form.resetFields()
     form.setFieldsValue(prefill ?? toForm(inbound))
+    const initialRaw = cloneJson((inbound?.settings?.raw ?? {}) as Record<string, unknown>)
+    setRawExtra(initialRaw)
+    setEditorMode('form')
+    setJsonError('')
+    setJsonText(
+      inbound
+        ? JSON.stringify(inboundSettingsToNativeJson(inbound.type, inbound.tag, inbound.listen_port, inbound.settings || {}), null, 2)
+        : '',
+    )
   }, [form, open, inbound, prefill])
+
+  const switchEditorMode = (nextMode: string) => {
+    if (nextMode !== 'form' && nextMode !== 'json') return
+    if (nextMode === editorMode) return
+    setJsonError('')
+    if (nextMode === 'json') {
+      const v = form.getFieldsValue()
+      const activeType = (v.type || type) as InboundType
+      const settings = assembleSettings(inbound?.settings || {}, v, activeType, rawExtra)
+      const nativeObj = inboundSettingsToNativeJson(activeType, String(v.tag || ''), Number(v.listen_port || 0) || undefined, settings)
+      setJsonText(JSON.stringify(nativeObj, null, 2))
+      setEditorMode('json')
+      return
+    }
+    try {
+      const parsed = JSON.parse(jsonText || '{}') as Record<string, unknown>
+      if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
+        setJsonError('配置必须是 JSON 对象')
+        return
+      }
+      const schemaErr = validateObjectBySchema(schemas.inbound, parsed)
+      if (schemaErr) {
+        setJsonError(schemaErr)
+        return
+      }
+      const nextType = (typeof parsed.type === 'string' && TYPES.some((t) => t.value === parsed.type) ? parsed.type : type) as InboundType
+      const nextSettings = nativeJsonToInboundSettings(inbound?.settings || {}, parsed)
+      const nextTag = typeof parsed.tag === 'string' ? parsed.tag : ''
+      const nextPort = typeof parsed.listen_port === 'number' ? parsed.listen_port : (form.getFieldValue('listen_port') || 0)
+      setRawExtra(cloneJson(nextSettings.raw ?? {}))
+      form.setFieldsValue(
+        toForm({
+          ...(inbound ?? { id: 0, server_id: serverId, enabled: true, remark: '', created_at: '', updated_at: '' }),
+          type: nextType,
+          tag: nextTag,
+          listen_port: nextPort,
+          settings: nextSettings,
+        }),
+      )
+      setEditorMode('form')
+    } catch (err) {
+      setJsonError(err instanceof Error ? `JSON 解析失败: ${err.message}` : 'JSON 格式错误')
+    }
+  }
 
   const tlsModeOptions = (t: InboundType = type) => {
     const opts: { value: string; label: string }[] = []
@@ -454,20 +617,56 @@ export default function InboundForm({
     const session = submitSessionRef.current
     setSubmitting(true)
     try {
-      const v = await readValues()
-      if (session !== submitSessionRef.current) return
-      const settings = assembleSettings(inbound?.settings || {}, v, v.type)
-      // An auto port must not land on the loopback port the guard reserved.
-      const guardPort = settings.tls?.reality?.guard?.internal_port
-      let listenPort: number = v.listen_port || randomPort()
-      if (!v.listen_port && listenPort === guardPort) listenPort = guardPort === 65535 ? 65534 : guardPort + 1
-      const body = {
-        type: v.type as InboundType,
-        tag: v.tag,
-        listen_port: listenPort,
-        // Inbounds are always active; remove one instead of pausing it.
-        enabled: true,
-        settings,
+      let body: {
+        type: InboundType
+        tag: string
+        listen_port: number
+        enabled: boolean
+        settings: InboundSettings
+      }
+      if (editorMode === 'json') {
+        setJsonError('')
+        let parsed: Record<string, unknown>
+        try {
+          parsed = JSON.parse(jsonText || '{}') as Record<string, unknown>
+        } catch (err) {
+          setJsonError(err instanceof Error ? `JSON 解析失败: ${err.message}` : 'JSON 格式错误')
+          return
+        }
+        if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
+          setJsonError('配置必须是 JSON 对象')
+          return
+        }
+        const schemaErr = validateObjectBySchema(schemas.inbound, parsed)
+        if (schemaErr) {
+          setJsonError(schemaErr)
+          return
+        }
+        const nextType = (typeof parsed.type === 'string' && TYPES.some((t) => t.value === parsed.type) ? parsed.type : type) as InboundType
+        const nextSettings = nativeJsonToInboundSettings(inbound?.settings || {}, parsed)
+        body = {
+          type: nextType,
+          tag: typeof parsed.tag === 'string' ? parsed.tag : '',
+          listen_port: nextType === 'tun' ? Number(parsed.listen_port || 0) : (Number(parsed.listen_port || 0) || randomPort()),
+          enabled: true,
+          settings: nextSettings,
+        }
+      } else {
+        const v = await readValues()
+        if (session !== submitSessionRef.current) return
+        const settings = assembleSettings(inbound?.settings || {}, v, v.type, rawExtra)
+        // An auto port must not land on the loopback port the guard reserved.
+        const guardPort = settings.tls?.reality?.guard?.internal_port
+        let listenPort: number = v.type === 'tun' ? Number(v.listen_port || 0) : (v.listen_port || randomPort())
+        if (v.type !== 'tun' && !v.listen_port && listenPort === guardPort) listenPort = guardPort === 65535 ? 65534 : guardPort + 1
+        body = {
+          type: v.type as InboundType,
+          tag: v.tag,
+          listen_port: listenPort,
+          // Inbounds are always active; remove one instead of pausing it.
+          enabled: true,
+          settings,
+        }
       }
       if (preview) {
         onPreview?.(body)
@@ -491,8 +690,9 @@ export default function InboundForm({
   const showTLS = !NO_TLS.has(type)
   const showTransport = WS_TYPES.has(type)
   const canMultiUser = supportsMultiUser(type, method)
-  const hasCredentials = canMultiUser || UUID_TYPES.has(type) || PW_TYPES.has(type) || type === 'shadowsocks' || type === 'socks' || type === 'snell'
-  const hasParams = type === 'vless' || type === 'vmess' || type === 'anytls' || type === 'tuic' || type === 'snell' || HAS_BANDWIDTH.has(type)
+  const hasCredentials = canMultiUser || UUID_TYPES.has(type) || PW_TYPES.has(type) || type === 'shadowsocks' || type === 'socks' || type === 'mixed' || type === 'http' || type === 'snell'
+  const hasProtocolSchemaExtras = Object.keys(protocolExtraSchemaProps).length > 0
+  const hasParams = type === 'vless' || type === 'vmess' || type === 'anytls' || type === 'tuic' || type === 'snell' || HAS_BANDWIDTH.has(type) || hasProtocolSchemaExtras
   const jsonField = (key: string, value: unknown) => {
     if (form.getFieldValue(key) === undefined) form.setFieldValue(key, value)
   }
@@ -510,6 +710,31 @@ export default function InboundForm({
       width={680}
     >
       <fieldset disabled={submitting} aria-busy={submitting} className="inbound-compact-fieldset">
+      <div className="mb-4 flex items-center justify-between gap-3">
+        <Segmented
+          aria-label="入站编辑模式"
+          value={editorMode}
+          onChange={switchEditorMode}
+          options={[
+            { value: 'form', label: 'Schema 表单' },
+            { value: 'json', label: 'JSON 编辑' },
+          ]}
+        />
+      </div>
+      {editorMode === 'json' ? (
+        <div className="space-y-3">
+          {jsonError && <Alert type="error" showIcon message={jsonError} />}
+          <JsonCodeEditor
+            ariaLabel="inbound.json"
+            value={jsonText}
+            disabled={submitting}
+            onChange={(val) => {
+              setJsonText(val)
+              if (jsonError) setJsonError('')
+            }}
+          />
+        </div>
+      ) : (
       <Form form={form} layout="vertical" className="fm-form inbound-compact-form">
         <FormGroup title="基本" panel="inbound">
           <Form.Item name="type" label="协议" rules={[{ required: true }]} className="inbound-compact-type">
@@ -538,18 +763,20 @@ export default function InboundForm({
               }}
             />
           </Form.Item>
-          <Form.Item name="listen_mode" label="监听" getValueProps={(value) => ({ value: value === 'ipv6' && !ipv6Available ? null : value })} rules={[{ validator: (_, value) => {
-            if (value === 'ipv6' && !ipv6Available) throw new Error('服务器当前没有可用的 IPv6 地址，请选择其他监听方式')
-          } }]}>
-            <Select options={[
-              { value: 'all', label: '双栈' },
-              { value: 'local', label: '本机' },
-              { value: 'ipv4', label: 'IPv4' },
-              ...(ipv6Available ? [{ value: 'ipv6', label: 'IPv6' }] : []),
-            ]} placeholder={listenMode === 'ipv6' ? 'IPv6 不可用' : undefined} />
-          </Form.Item>
+          {type !== 'tun' && (
+            <Form.Item name="listen_mode" label="监听" getValueProps={(value) => ({ value: value === 'ipv6' && !ipv6Available ? null : value })} rules={[{ validator: (_, value) => {
+              if (value === 'ipv6' && !ipv6Available) throw new Error('服务器当前没有可用的 IPv6 地址，请选择其他监听方式')
+            } }]}>
+              <Select options={[
+                { value: 'all', label: '双栈' },
+                { value: 'local', label: '本机' },
+                { value: 'ipv4', label: 'IPv4' },
+                ...(ipv6Available ? [{ value: 'ipv6', label: 'IPv6' }] : []),
+              ]} placeholder={listenMode === 'ipv6' ? 'IPv6 不可用' : undefined} />
+            </Form.Item>
+          )}
           <Form.Item name="listen_port" label="端口">
-            <InputNumber precision={0} min={1} max={65535} className="mono" />
+            <InputNumber precision={0} min={type === 'tun' ? 0 : 1} max={65535} className="mono" />
           </Form.Item>
           <Form.Item name="tag" label="标签">
             <Input />
@@ -646,7 +873,7 @@ export default function InboundForm({
                 </Space.Compact>
               </Form.Item>
             )}
-            {type === 'socks' && !multiUser && (
+            {(type === 'socks' || type === 'mixed' || type === 'http') && !multiUser && (
               <>
                 <Form.Item
                   name="username"
@@ -807,6 +1034,16 @@ export default function InboundForm({
                 )}
               </div>
             )}
+            {hasProtocolSchemaExtras && (
+              <div className="fm-full">
+                <SchemaFieldList
+                  properties={protocolExtraSchemaProps}
+                  value={rawExtra}
+                  onChange={setRawExtra}
+                  idPrefix="inbound-proto"
+                />
+              </div>
+            )}
           </FormGroup>
         )}
 
@@ -817,6 +1054,9 @@ export default function InboundForm({
                 { value: 'tcp', label: 'TCP' },
                 { value: 'ws', label: 'WebSocket' },
                 { value: 'httpupgrade', label: 'HTTPUpgrade' },
+                { value: 'grpc', label: 'gRPC' },
+                { value: 'http', label: 'HTTP' },
+                { value: 'quic', label: 'QUIC' },
               ]} />
             </Form.Item>
             {(transportType === 'ws' || transportType === 'httpupgrade') && (
@@ -838,6 +1078,16 @@ export default function InboundForm({
                   </>
                 )}
               </>
+            )}
+            {Object.keys(transportSchemaProps).length > 0 && (
+              <div className="fm-full">
+                <SchemaFieldList
+                  properties={transportSchemaProps}
+                  value={(rawExtra.transport && typeof rawExtra.transport === 'object' ? rawExtra.transport : {}) as Record<string, unknown>}
+                  onChange={(nextTr) => setRawExtra((prev) => ({ ...prev, transport: nextTr }))}
+                  idPrefix="inbound-tr"
+                />
+              </div>
             )}
           </FormGroup>
         )}
@@ -1047,9 +1297,32 @@ export default function InboundForm({
                 </Form.Item>
               </div>
             )}
+            {tlsMode && tlsMode !== 'none' && Object.keys(tlsAdvSchemaProps).length > 0 && (
+              <div className="fm-full">
+                <SchemaFieldList
+                  properties={tlsAdvSchemaProps}
+                  value={(rawExtra.tls && typeof rawExtra.tls === 'object' ? rawExtra.tls : {}) as Record<string, unknown>}
+                  onChange={(nextTls) => setRawExtra((prev) => ({ ...prev, tls: nextTls }))}
+                  idPrefix="inbound-tls"
+                />
+              </div>
+            )}
+          </FormGroup>
+        )}
+        {Object.keys(networkSchemaProps).length > 0 && (
+          <FormGroup title="高级网络" panel="inbound">
+            <div className="fm-full">
+              <SchemaFieldList
+                properties={networkSchemaProps}
+                value={rawExtra}
+                onChange={setRawExtra}
+                idPrefix="inbound-net"
+              />
+            </div>
           </FormGroup>
         )}
       </Form>
+      )}
       </fieldset>
     </Modal>
   )

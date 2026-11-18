@@ -151,6 +151,12 @@ export type InboundType =
   | 'trojan'
   | 'hysteria2'
   | 'socks'
+  | 'mixed'
+  | 'http'
+  | 'tun'
+  | 'direct'
+  | 'redirect'
+  | 'tproxy'
 
 export interface RealitySettings {
   enabled?: boolean
@@ -241,6 +247,7 @@ export interface InboundSettings {
   password?: string
   transport?: TransportSettings
   tls?: TLSSettings
+  raw?: Record<string, unknown>
 }
 
 // OutboundType is a routing target protocol (plus "direct").
@@ -278,23 +285,41 @@ export interface Outbound {
   source_id?: number
 }
 
-// RuleMatch mirrors singbox.RuleInput match fields.
+// RuleMatch mirrors singbox.RuleInput match fields plus arbitrary schema fields.
 export interface RuleMatch {
-  action?: 'route' | 'sniff' | 'reject' | 'hijack-dns'
+  action?: 'route' | 'sniff' | 'reject' | 'hijack-dns' | 'resolve' | 'route-options'
   auth_user?: string[]
   inbound?: string[]
   domain?: string[]
   domain_suffix?: string[]
   domain_keyword?: string[]
+  domain_regex?: string[]
   ip_cidr?: string[]
+  ip_is_private?: boolean
   source_ip_cidr?: string[]
+  source_ip_is_private?: boolean
   port?: number[]
+  port_range?: string[]
+  source_port?: number[]
+  source_port_range?: string[]
   protocol?: string[]
   sniffer?: string[]
-  method?: 'default' | 'drop'
+  method?: 'default' | 'drop' | 'reply'
   network?: string
+  ip_version?: number
+  client?: string[]
+  process_name?: string[]
+  process_path?: string[]
+  process_path_regex?: string[]
+  package_name?: string[]
+  clash_mode?: string
+  invert?: boolean
+  override_address?: string
+  override_port?: number
   rule_set?: string[]
   rule_set_ip_cidr_match_source?: boolean
+  rule_set_ip_cidr_accept_empty?: boolean
+  [key: string]: unknown
 }
 
 export interface RouteRule {

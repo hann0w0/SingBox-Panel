@@ -120,7 +120,7 @@ export function SchemaFieldList({
                   id={fieldId}
                   mode="tags"
                   allowClear
-                  placeholder={ui?.placeholder || '输入后回车添加'}
+                  placeholder={ui?.placeholder}
                   value={Array.isArray(current) ? current.map(String) : []}
                   onChange={(vals: string[]) => {
                     if (isIntArray) {
@@ -143,7 +143,7 @@ export function SchemaFieldList({
                 id={fieldId}
                 autoSize={{ minRows: 1, maxRows: 4 }}
                 className="mono"
-                placeholder={ui?.placeholder || '每行一项或用逗号分隔'}
+                placeholder={ui?.placeholder}
                 value={joinLines(current)}
                 onChange={(e) => {
                   const items = splitLines(e.target.value)
@@ -167,7 +167,7 @@ export function SchemaFieldList({
               <Select
                 id={fieldId}
                 allowClear
-                placeholder={ui?.placeholder || '不指定'}
+                placeholder={ui?.placeholder}
                 value={current !== undefined && current !== '' ? (current as string | number) : undefined}
                 onChange={(val) => updateKey(key, val === undefined || val === '' ? undefined : val)}
                 options={schema.enum

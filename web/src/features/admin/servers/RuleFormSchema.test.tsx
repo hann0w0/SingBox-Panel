@@ -63,7 +63,7 @@ describe('RuleForm JSON Schema integration', () => {
       />,
     )
 
-    expect(await screen.findByText('高级匹配与路由参数')).toBeTruthy()
+    expect(await screen.findByText('其他参数')).toBeTruthy()
     expect(screen.getByDisplayValue('^api\\..*\\.example\\.com$')).toBeTruthy()
     expect(screen.getByDisplayValue('rule')).toBeTruthy()
 

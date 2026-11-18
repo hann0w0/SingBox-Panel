@@ -781,7 +781,7 @@ export default function ServerDetail() {
       columns={[
         { title: '标签', dataIndex: 'tag', render: (v: string) => <span className="sd-strong">{v}</span> },
         { title: '协议', dataIndex: 'type', render: (v: string) => <ProtocolTag type={v} /> },
-        { title: '端口', dataIndex: 'listen_port', render: (v: number) => <span className="mono">{v}</span> },
+        { title: '端口', dataIndex: 'listen_port', render: (v: number) => (v > 0 ? <span className="mono">{v}</span> : <span className="faint">—</span>) },
         { title: '用户', render: (_, ib: Inbound) => <span className="muted">{ib.settings?.multi_user ? '多用户' : '单用户'}</span> },
         { title: '', width: 88, align: 'right', render: (_, ib: Inbound) => rowActions(() => { setEditing(ib); setFormOpen(true) }, () => onDeleteInbound(ib), `入站 ${ib.tag}`) },
       ]}

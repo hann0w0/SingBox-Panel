@@ -387,11 +387,7 @@ export function OutboundForm({
           type="info"
           showIcon
           className="fm-edit-follow-hint"
-          message={
-            outbound.source_kind === 'inbound'
-              ? '该出站由面板节点导入，会跟随源节点自动更新；在此手动保存后将改为固定配置，不再跟随。'
-              : '该出站由外部节点导入；在此手动保存后将改为固定配置，不再跟随。'
-          }
+          message="手动保存后将转为固定配置，不再跟随源节点。"
         />
       )}
       {!outbound && <fieldset className="fm-source-picker" disabled={submitting}>
@@ -528,7 +524,7 @@ export function OutboundForm({
                   }),
                 ]}
               >
-                <Input placeholder="可选" autoComplete="off" />
+                <Input autoComplete="off" />
               </Form.Item>
               <Form.Item
                 name="password"
@@ -543,7 +539,7 @@ export function OutboundForm({
                   }),
                 ]}
               >
-                <Input.Password placeholder="可选" autoComplete="new-password" />
+                <Input.Password autoComplete="new-password" />
               </Form.Item>
             </>
           )}
@@ -593,15 +589,15 @@ export function OutboundForm({
             {type === 'hysteria2' && (
               <>
                 <Form.Item name="obfs_type" label="混淆类型">
-                  <Select placeholder="无" options={[{ value: '', label: '无' }, { value: 'salamander', label: 'salamander' }, { value: 'gecko', label: 'gecko' }]} />
+                  <Select options={[{ value: '', label: '无' }, { value: 'salamander', label: 'salamander' }, { value: 'gecko', label: 'gecko' }]} />
                 </Form.Item>
                 <Form.Item name="obfs_password" label="混淆密码">
                   <Input.Password />
                 </Form.Item>
                 {hysteriaObfsType === 'gecko' && (
                   <>
-                    <Form.Item name="gecko_min_packet_size" label="最小包大小"><InputNumber min={512} precision={0} placeholder="默认" /></Form.Item>
-                    <Form.Item name="gecko_max_packet_size" label="最大包大小"><InputNumber min={512} precision={0} placeholder="默认" /></Form.Item>
+                    <Form.Item name="gecko_min_packet_size" label="最小包大小"><InputNumber min={512} precision={0} /></Form.Item>
+                    <Form.Item name="gecko_max_packet_size" label="最大包大小"><InputNumber min={512} precision={0} /></Form.Item>
                   </>
                 )}
               </>
@@ -1254,7 +1250,6 @@ export function RuleForm({
             <Form.Item name="outbound" label="目标出站" rules={[{ required: true, message: '请选择目标出站' }]}>
               <Select
                 allowClear
-                placeholder="选择出站"
                 options={[
                   { value: 'direct', label: 'direct' },
                   ...outboundTags.filter((t) => t !== 'direct').map((t) => ({ value: t, label: t })),
@@ -1278,7 +1273,6 @@ export function RuleForm({
                 <Select
                   mode="multiple"
                   allowClear
-                  placeholder="全部协议"
                   options={[
                     { value: 'tls', label: 'TLS' },
                     { value: 'http', label: 'HTTP' },
@@ -1291,7 +1285,6 @@ export function RuleForm({
                 <Select
                   mode="multiple"
                   allowClear
-                  placeholder="全部入站"
                   options={inboundTags.map((t) => ({ value: t, label: t }))}
                 />
               </Form.Item>
@@ -1302,7 +1295,6 @@ export function RuleForm({
               <Select
                 mode="multiple"
                 allowClear
-                placeholder="全部入站"
                 options={inboundTags.map((t) => ({ value: t, label: t }))}
               />
             </Form.Item>
@@ -1314,9 +1306,9 @@ export function RuleForm({
             <Field>
               <div className="flex items-baseline justify-between gap-3">
                 <FieldLabel>匹配条件</FieldLabel>
-                <span className="text-sm text-muted-foreground">
-                  {matchFields.length ? `已选 ${matchFields.length} 项` : '匹配全部'}
-                </span>
+                {matchFields.length > 0 && (
+                  <span className="text-sm text-muted-foreground">已选 {matchFields.length} 项</span>
+                )}
               </div>
               <Form.Item name="match_fields" noStyle>
                 <Checkbox.Group className="fm-chips" options={MATCH_FIELD_OPTIONS} />
@@ -1325,13 +1317,13 @@ export function RuleForm({
 
             {showMatchField('auth_user') && (
               <Form.Item name="auth_user" label="用户" rules={[{ required: true, message: '请选择至少一个用户' }]} className="fm-full">
-                <Select mode="multiple" allowClear placeholder="选择用户" options={users.map((user) => ({ value: user.auth_user, label: user.name }))} />
+                <Select mode="multiple" allowClear options={users.map((user) => ({ value: user.auth_user, label: user.name }))} />
               </Form.Item>
             )}
 
             {showMatchField('inbound') && (
               <Form.Item name="inbound" label="入站来源" rules={[{ required: true, message: '请选择至少一个入站' }]} className="fm-full">
-                <Select mode="multiple" allowClear placeholder="选择入站" options={inboundTags.map((t) => ({ value: t, label: t }))} />
+                <Select mode="multiple" allowClear options={inboundTags.map((t) => ({ value: t, label: t }))} />
               </Form.Item>
             )}
 
@@ -1341,14 +1333,12 @@ export function RuleForm({
                   <Select
                     mode="multiple"
                     allowClear
-                    placeholder={ruleSets?.length ? '选择规则集' : '暂无规则集'}
                     options={(ruleSets || []).map((rs) => ({ label: rs.tag, value: rs.tag }))}
                   />
                 </Form.Item>
                 <Form.Item
                   name="rule_set_ip_direction"
                   label="规则集 IP 匹配方向"
-                  extra="仅影响规则集中的 IP 网段。来源 IP 为入站看到的连接来源；开启 REALITY 前置 SNI 过滤时无法匹配真实客户端 IP。"
                   className="fm-full"
                 >
                   <Segmented aria-label="规则集 IP 匹配方向" options={[
@@ -1440,7 +1430,7 @@ export function RuleForm({
           </FieldGroup>
         )}
         {hasAdvancedSchemaProps && (
-          <FormGroup title="高级匹配与路由参数">
+          <FormGroup title="其他参数">
             <SchemaFieldList
               properties={advancedSchemaProps}
               value={extraMatch}

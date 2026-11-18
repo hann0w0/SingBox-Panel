@@ -488,7 +488,6 @@ export default function InboundForm({
   const multiUser = requestedMultiUser && supportsMultiUser(type, method)
   const invalidSSMultiUser = type === 'shadowsocks' && method === SS2022_CHACHA_METHOD && requestedMultiUser
   const guardEnabled = !!Form.useWatch('guard_enabled', form)
-  const guardPort = Form.useWatch('guard_internal_port', form)
   const listenMode = Form.useWatch('listen_mode', form)
 
   const variantProps = useMemo(
@@ -712,7 +711,8 @@ export default function InboundForm({
   const canMultiUser = supportsMultiUser(type, method)
   const hasCredentials = canMultiUser || UUID_TYPES.has(type) || PW_TYPES.has(type) || type === 'shadowsocks' || type === 'socks' || type === 'mixed' || type === 'http' || type === 'snell'
   const hasProtocolSchemaExtras = Object.keys(protocolExtraSchemaProps).length > 0
-  const hasParams = type === 'vless' || type === 'vmess' || type === 'anytls' || type === 'tuic' || type === 'snell' || HAS_BANDWIDTH.has(type) || hasProtocolSchemaExtras
+  const hasParams = type === 'vless' || type === 'tuic' || type === 'snell' || HAS_BANDWIDTH.has(type) || hasProtocolSchemaExtras
+  const hasOtherParams = Object.keys(otherParamsSchemaProps).length > 0 || type === 'vless' || type === 'vmess' || type === 'anytls' || showTLS
   const jsonField = (key: string, value: unknown) => {
     if (form.getFieldValue(key) === undefined) form.setFieldValue(key, value)
   }
@@ -941,16 +941,6 @@ export default function InboundForm({
                 />
               </Form.Item>
             )}
-            {type === 'vmess' && (
-              <>
-                <Form.Item name="vmess_security" label="客户端加密" rules={[{ required: true }]}>
-                  <Select options={VMESS_SECURITIES.map((value) => ({ value, label: value }))} />
-                </Form.Item>
-                <Form.Item name="vmess_alter_id" label="Alter ID" rules={[{ required: true }]}>
-                  <InputNumber min={0} precision={0} />
-                </Form.Item>
-              </>
-            )}
             {HAS_BANDWIDTH.has(type) && (
               <>
                 <Form.Item name="up_mbps" label="上行 Mbps">
@@ -960,7 +950,7 @@ export default function InboundForm({
                   <InputNumber precision={0} min={0} />
                 </Form.Item>
                 <Form.Item name="obfs_type" label="混淆类型" className={obfsType ? undefined : 'fm-full'}>
-                  <Select placeholder="无" options={[
+                  <Select options={[
                     { value: '', label: '无' },
                     { value: 'salamander', label: 'salamander' },
                     { value: 'gecko', label: 'gecko' },
@@ -1009,7 +999,7 @@ export default function InboundForm({
                     <Select
                       allowClear
                       options={[
-                        { value: '', label: '不指定' },
+                        { value: '', label: '默认' },
                         { value: 'unshaped', label: 'unshaped' },
                         { value: 'unsafe-raw', label: 'unsafe-raw' },
                       ]}
@@ -1022,26 +1012,8 @@ export default function InboundForm({
                 )}
               </>
             )}
-            {(type === 'vless' || type === 'anytls' || type === 'tuic' || HAS_BANDWIDTH.has(type)) && (
+            {(type === 'tuic' || HAS_BANDWIDTH.has(type)) && (
               <div className="fm-switches">
-                {type === 'vless' && (
-                  <Form.Item
-                    name="packet_encoding"
-                    label="UDP 使用 xudp"
-                    extra="仅写入客户端订阅配置"
-                    valuePropName="checked"
-                    className="fm-switch"
-                    getValueFromEvent={(checked: boolean) => (checked ? 'xudp' : 'none')}
-                    getValueProps={(value: string) => ({ checked: !value || value === 'xudp' })}
-                  >
-                    <Switch />
-                  </Form.Item>
-                )}
-                {type === 'anytls' && (
-                  <Form.Item name="anytls_udp_over_stream" label="UDP 走 TLS 流" extra="仅写入客户端订阅链接" valuePropName="checked" className="fm-switch">
-                    <Switch />
-                  </Form.Item>
-                )}
                 {type === 'tuic' && (
                   <Form.Item name="zero_rtt_handshake" label="0-RTT 握手" valuePropName="checked" className="fm-switch">
                     <Switch />
@@ -1173,10 +1145,10 @@ export default function InboundForm({
                 <Form.Item name="reality_handshake_port" label="握手端口">
                   <InputNumber precision={0} min={1} max={65535} className="mono" />
                 </Form.Item>
-                <Form.Item name="tls_server_name" label="SNI" extra="留空沿用握手域名">
+                <Form.Item name="tls_server_name" label="SNI">
                   <Input className="mono" />
                 </Form.Item>
-                <Form.Item name="reality_max_time_difference" label="时间差限制" extra="留空不检查客户端时间差" rules={[
+                <Form.Item name="reality_max_time_difference" label="时间差限制" rules={[
                   { validator: (_, value) => {
                     const error = validateGuardTimeout(value, true)
                     return error ? Promise.reject(new Error(error)) : Promise.resolve()
@@ -1204,11 +1176,6 @@ export default function InboundForm({
                       >
                         <Switch />
                       </Form.Item>
-                      <p className="text-xs text-muted-foreground">
-                        {transportType === 'tcp'
-                          ? '公网端口仍用于订阅，真实 VLESS 改在 127.0.0.1 的内部端口监听。'
-                          : '前置 SNI 过滤仅支持 TCP 传输，请先调整传输层。'}
-                      </p>
                     </div>
                     {guardEnabled && (
                       <>
@@ -1227,11 +1194,6 @@ export default function InboundForm({
                               },
                             }),
                           ]}
-                          extra={
-                            guardPort
-                              ? `真实 VLESS 监听 127.0.0.1:${guardPort}`
-                              : '真实 VLESS 改在 127.0.0.1 的本地端口监听'
-                          }
                         >
                           <InputNumber precision={0} min={1} max={65535} className="mono" />
                         </Form.Item>
@@ -1263,11 +1225,9 @@ export default function InboundForm({
                               },
                             }),
                           ]}
-                          extra="留空使用 sing-box 默认值（300ms）"
                         >
                           <Input className="mono" />
                         </Form.Item>
-
                       </>
                     )}
                   </>
@@ -1302,21 +1262,6 @@ export default function InboundForm({
                 </Form.Item>
               </>
             )}
-            {type !== 'hysteria2' && type !== 'tuic' && (
-              <Form.Item name="tls_fingerprint" label="uTLS 指纹" extra="仅作用于下发给用户的客户端订阅">
-                <Select
-                  placeholder="不指定"
-                  options={['chrome', 'firefox', 'safari', 'ios', 'random', 'randomized'].map((v) => ({ value: v, label: v }))}
-                />
-              </Form.Item>
-            )}
-            {tlsMode === 'tls' && (
-              <div className="fm-switches">
-                <Form.Item name="tls_insecure" label="客户端跳过证书验证" extra="仅作用于客户端订阅（如自签证书场景）" valuePropName="checked" className="fm-switch">
-                  <Switch />
-                </Form.Item>
-              </div>
-            )}
             {tlsMode && tlsMode !== 'none' && Object.keys(tlsAdvSchemaProps).length > 0 && (
               <div className="fm-full">
                 <SchemaFieldList
@@ -1329,16 +1274,62 @@ export default function InboundForm({
             )}
           </FormGroup>
         )}
-        {Object.keys(otherParamsSchemaProps).length > 0 && (
+        {hasOtherParams && (
           <FormGroup title="其他参数" panel="inbound">
-            <div className="fm-full">
-              <SchemaFieldList
-                properties={otherParamsSchemaProps}
-                value={rawExtra}
-                onChange={setRawExtra}
-                idPrefix="inbound-other"
-              />
-            </div>
+            {type === 'vmess' && (
+              <>
+                <Form.Item name="vmess_security" label="订阅加密方式">
+                  <Select options={VMESS_SECURITIES.map((value) => ({ value, label: value }))} />
+                </Form.Item>
+                <Form.Item name="vmess_alter_id" label="Alter ID">
+                  <InputNumber min={0} precision={0} />
+                </Form.Item>
+              </>
+            )}
+            {showTLS && type !== 'hysteria2' && type !== 'tuic' && (
+              <Form.Item name="tls_fingerprint" label="订阅 uTLS 指纹" className="fm-full">
+                <Select
+                  allowClear
+                  options={['chrome', 'firefox', 'safari', 'ios', 'random', 'randomized'].map((v) => ({ value: v, label: v }))}
+                />
+              </Form.Item>
+            )}
+            {(type === 'vless' || type === 'anytls' || (showTLS && tlsMode === 'tls')) && (
+              <div className="fm-switches">
+                {type === 'vless' && (
+                  <Form.Item
+                    name="packet_encoding"
+                    label="订阅 UDP xudp"
+                    valuePropName="checked"
+                    className="fm-switch"
+                    getValueFromEvent={(checked: boolean) => (checked ? 'xudp' : 'none')}
+                    getValueProps={(value: string) => ({ checked: !value || value === 'xudp' })}
+                  >
+                    <Switch />
+                  </Form.Item>
+                )}
+                {type === 'anytls' && (
+                  <Form.Item name="anytls_udp_over_stream" label="订阅 UDP over Stream" valuePropName="checked" className="fm-switch">
+                    <Switch />
+                  </Form.Item>
+                )}
+                {showTLS && tlsMode === 'tls' && (
+                  <Form.Item name="tls_insecure" label="订阅跳过证书校验" valuePropName="checked" className="fm-switch">
+                    <Switch />
+                  </Form.Item>
+                )}
+              </div>
+            )}
+            {Object.keys(otherParamsSchemaProps).length > 0 && (
+              <div className="fm-full">
+                <SchemaFieldList
+                  properties={otherParamsSchemaProps}
+                  value={rawExtra}
+                  onChange={setRawExtra}
+                  idPrefix="inbound-other"
+                />
+              </div>
+            )}
           </FormGroup>
         )}
       </Form>
@@ -1360,7 +1351,7 @@ export function FormGroup({ title, extra, panel, children }: {
       <div className="fm-grid" data-panel={panel}>{children}</div>
     </section>
   }
-  if (title === '其他参数' || title === '高级匹配与路由参数') {
+  if (title === '其他参数') {
     return <details className="fm-group fm-group-fold">
       <summary className="fm-group-title">{title}{extra && <small>{extra}</small>}</summary>
       <div className="fm-grid" data-panel={panel}>{children}</div>

@@ -45,7 +45,7 @@ function inboundMultiplexSubSchema(): JSONSchema {
     type: 'object',
     additionalProperties: true,
     properties: {
-      enabled: { type: 'boolean', 'x-ui': { label: '启用多路复用 (Multiplex)', order: 1, widget: 'switch' } },
+      enabled: { type: 'boolean', 'x-ui': { label: '启用多路复用', order: 1, widget: 'switch' } },
       padding: { type: 'boolean', 'x-ui': { label: '启用 Padding', order: 2, widget: 'switch' } },
       brutal: {
         type: 'object',
@@ -58,7 +58,7 @@ function inboundMultiplexSubSchema(): JSONSchema {
         'x-ui': { label: 'TCP Brutal', order: 3 },
       },
     },
-    'x-ui': { label: '多路复用', group: '高级网络', advanced: true },
+    'x-ui': { label: '多路复用', group: '其他参数', advanced: true },
   }
 }
 
@@ -67,7 +67,7 @@ function outboundMultiplexSubSchema(): JSONSchema {
     type: 'object',
     additionalProperties: true,
     properties: {
-      enabled: { type: 'boolean', 'x-ui': { label: '启用多路复用 (Multiplex)', order: 1, widget: 'switch' } },
+      enabled: { type: 'boolean', 'x-ui': { label: '启用多路复用', order: 1, widget: 'switch' } },
       protocol: { type: 'string', default: 'h2mux', enum: ['', 'h2mux', 'smux', 'yamux'], 'x-ui': { label: '复用协议', order: 2, widget: 'select' } },
       max_connections: { type: 'integer', minimum: 0, 'x-ui': { label: '最大物理连接数', order: 3 } },
       min_streams: { type: 'integer', minimum: 0, 'x-ui': { label: '最小并发流数', order: 4 } },
@@ -84,20 +84,20 @@ function outboundMultiplexSubSchema(): JSONSchema {
         'x-ui': { label: 'TCP Brutal', order: 7 },
       },
     },
-    'x-ui': { label: '多路复用', group: '拨号与高级网络', advanced: true },
+    'x-ui': { label: '多路复用', group: '其他参数', advanced: true },
   }
 }
 
 function tlsInboundSubSchema(includeReality: boolean): JSONSchema {
   const props: Record<string, JSONSchema> = {
     enabled: { type: 'boolean', 'x-ui': { label: '启用 TLS', group: 'TLS', order: 1, widget: 'switch' } },
-    server_name: { type: 'string', 'x-ui': { label: 'SNI', group: 'TLS', order: 2, placeholder: 'example.com' } },
+    server_name: { type: 'string', 'x-ui': { label: 'SNI', group: 'TLS', order: 2 } },
     alpn: { type: 'array', items: { type: 'string' }, 'x-ui': { label: 'ALPN', group: 'TLS', order: 3, widget: 'tags' } },
     min_version: { type: 'string', enum: ['', '1.0', '1.1', '1.2', '1.3'], 'x-ui': { label: '最低 TLS 版本', group: 'TLS', order: 4, widget: 'select', advanced: true } },
     max_version: { type: 'string', enum: ['', '1.0', '1.1', '1.2', '1.3'], 'x-ui': { label: '最高 TLS 版本', group: 'TLS', order: 5, widget: 'select', advanced: true } },
-    cipher_suites: { type: 'array', items: { type: 'string' }, 'x-ui': { label: '密码套件 (仅 TLS 1.2)', group: 'TLS', order: 6, widget: 'tags', advanced: true } },
-    curve_preferences: { type: 'array', items: { type: 'string' }, 'x-ui': { label: '密钥交换曲线偏好', group: 'TLS', order: 7, widget: 'tags', placeholder: 'X25519, X25519MLKEM768', advanced: true } },
-    client_authentication: { type: 'string', enum: ['', 'no', 'request', 'require-any', 'verify-if-given', 'require-and-verify'], 'x-ui': { label: '客户端证书验证 (mTLS)', group: 'TLS', order: 8, widget: 'select', advanced: true } },
+    cipher_suites: { type: 'array', items: { type: 'string' }, 'x-ui': { label: '密码套件', group: 'TLS', order: 6, widget: 'tags', advanced: true } },
+    curve_preferences: { type: 'array', items: { type: 'string' }, 'x-ui': { label: '密钥交换曲线偏好', group: 'TLS', order: 7, widget: 'tags', advanced: true } },
+    client_authentication: { type: 'string', enum: ['', 'no', 'request', 'require-any', 'verify-if-given', 'require-and-verify'], 'x-ui': { label: '客户端证书验证', group: 'TLS', order: 8, widget: 'select', advanced: true } },
     certificate_path: { type: 'string', 'x-ui': { label: '证书路径', group: 'TLS', order: 10 } },
     key_path: { type: 'string', 'x-ui': { label: '私钥路径', group: 'TLS', order: 11 } },
     ech: {
@@ -129,7 +129,7 @@ function tlsInboundSubSchema(includeReality: boolean): JSONSchema {
 function tlsOutboundSubSchema(includeReality: boolean): JSONSchema {
   const props: Record<string, JSONSchema> = {
     enabled: { type: 'boolean', 'x-ui': { label: '启用 TLS', group: 'TLS', order: 1, widget: 'switch' } },
-    server_name: { type: 'string', 'x-ui': { label: 'SNI', group: 'TLS', order: 2, placeholder: 'example.com' } },
+    server_name: { type: 'string', 'x-ui': { label: 'SNI', group: 'TLS', order: 2 } },
     insecure: { type: 'boolean', 'x-ui': { label: '跳过证书验证', group: 'TLS', order: 3, widget: 'switch' } },
     alpn: { type: 'array', items: { type: 'string' }, 'x-ui': { label: 'ALPN', group: 'TLS', order: 4, widget: 'tags' } },
     min_version: { type: 'string', enum: ['', '1.0', '1.1', '1.2', '1.3'], 'x-ui': { label: '最低 TLS 版本', group: 'TLS', order: 5, widget: 'select', advanced: true } },
@@ -180,7 +180,7 @@ const TRANSPORT_SUBSCHEMA: JSONSchema = {
     type: { type: 'string', default: 'tcp', enum: ['tcp', 'ws', 'http', 'grpc', 'httpupgrade', 'quic'], 'x-ui': { label: '传输层', order: 1, widget: 'select' } },
     path: { type: 'string', 'x-ui': { label: '路径', order: 2, placeholder: '/ws' } },
     host: { type: 'string', 'x-ui': { label: 'Host', order: 3 } },
-    method: { type: 'string', 'x-ui': { label: 'HTTP 方法', order: 4, placeholder: 'GET', advanced: true } },
+    method: { type: 'string', 'x-ui': { label: 'HTTP 方法', order: 4, advanced: true } },
     service_name: { type: 'string', 'x-ui': { label: 'gRPC Service Name', order: 6, placeholder: 'TunService' } },
     idle_timeout: { type: 'string', 'x-ui': { label: '空闲超时', order: 7, placeholder: '15s', advanced: true } },
     ping_timeout: { type: 'string', 'x-ui': { label: 'Ping 超时', order: 8, placeholder: '15s', advanced: true } },
@@ -194,17 +194,17 @@ function inboundWithListen(tcp: boolean, udp: boolean, props: Record<string, JSO
   const merged: Record<string, JSONSchema> = {
     listen: { type: 'string', default: '::', 'x-ui': { label: '监听地址', group: '基本', order: 2 } },
     listen_port: { type: 'integer', minimum: 1, maximum: 65535, 'x-ui': { label: '端口', group: '基本', order: 3 } },
-    detour: { type: 'string', 'x-ui': { label: '前置入站 (detour)', group: '高级网络', order: 24, placeholder: '转交到另一个入站 tag', advanced: true } },
+    detour: { type: 'string', 'x-ui': { label: '前置入站', group: '其他参数', order: 24, advanced: true } },
   }
   if (tcp) {
-    merged.tcp_fast_open = { type: 'boolean', 'x-ui': { label: 'TCP Fast Open', group: '高级网络', order: 20, widget: 'switch', advanced: true } }
-    merged.tcp_multi_path = { type: 'boolean', 'x-ui': { label: 'TCP Multi Path', group: '高级网络', order: 21, widget: 'switch', advanced: true } }
-    merged.proxy_protocol = { type: 'boolean', 'x-ui': { label: 'Proxy Protocol', group: '高级网络', order: 25, widget: 'switch', advanced: true } }
-    merged.proxy_protocol_accept_no_header = { type: 'boolean', 'x-ui': { label: '允许无 Proxy Protocol 头连接', group: '高级网络', order: 26, widget: 'switch', advanced: true } }
+    merged.tcp_fast_open = { type: 'boolean', 'x-ui': { label: 'TCP Fast Open', group: '其他参数', order: 20, widget: 'switch', advanced: true } }
+    merged.tcp_multi_path = { type: 'boolean', 'x-ui': { label: 'TCP Multi Path', group: '其他参数', order: 21, widget: 'switch', advanced: true } }
+    merged.proxy_protocol = { type: 'boolean', 'x-ui': { label: 'Proxy Protocol', group: '其他参数', order: 25, widget: 'switch', advanced: true } }
+    merged.proxy_protocol_accept_no_header = { type: 'boolean', 'x-ui': { label: '允许无 Proxy Protocol 头连接', group: '其他参数', order: 26, widget: 'switch', advanced: true } }
   }
   if (udp) {
-    merged.udp_fragment = { type: 'boolean', 'x-ui': { label: 'UDP Fragment', group: '高级网络', order: 22, widget: 'switch', advanced: true } }
-    merged.udp_timeout = { type: 'string', 'x-ui': { label: 'UDP 超时', group: '高级网络', order: 23, placeholder: '5m', advanced: true } }
+    merged.udp_fragment = { type: 'boolean', 'x-ui': { label: 'UDP Fragment', group: '其他参数', order: 22, widget: 'switch', advanced: true } }
+    merged.udp_timeout = { type: 'string', 'x-ui': { label: 'UDP 超时', group: '其他参数', order: 23, placeholder: '5m', advanced: true } }
   }
   return { type: 'object', additionalProperties: true, properties: { ...merged, ...props } }
 }
@@ -227,7 +227,7 @@ export const DEFAULT_INBOUND_SCHEMA: JSONSchema = {
     snell: inboundWithListen(true, false, {}),
     socks: inboundWithListen(true, true, {}),
     mixed: inboundWithListen(true, true, {}),
-    http: inboundWithListen(true, false, { realm: { type: 'string', 'x-ui': { label: '认证域 (Realm)', group: '协议参数', order: 1, advanced: true } }, tls: tlsInboundSubSchema(false) }),
+    http: inboundWithListen(true, false, { realm: { type: 'string', 'x-ui': { label: '认证域', group: '协议参数', order: 1, advanced: true } }, tls: tlsInboundSubSchema(false) }),
     tun: {
       type: 'object',
       additionalProperties: true,
@@ -238,10 +238,10 @@ export const DEFAULT_INBOUND_SCHEMA: JSONSchema = {
         stack: { type: 'string', enum: ['', 'system', 'gvisor', 'mixed'], 'x-ui': { label: '网络栈', group: '协议参数', order: 4, widget: 'select' } },
         auto_route: { type: 'boolean', default: true, 'x-ui': { label: '自动路由', group: '协议参数', order: 5, widget: 'switch' } },
         strict_route: { type: 'boolean', 'x-ui': { label: '严格路由', group: '协议参数', order: 6, widget: 'switch' } },
-        auto_redirect: { type: 'boolean', 'x-ui': { label: 'Auto Redirect (Linux)', group: '协议参数', order: 7, widget: 'switch', advanced: true } },
+        auto_redirect: { type: 'boolean', 'x-ui': { label: 'Auto Redirect', group: '协议参数', order: 7, widget: 'switch', advanced: true } },
         endpoint_independent_nat: { type: 'boolean', 'x-ui': { label: '独立端点 NAT', group: '协议参数', order: 8, widget: 'switch', advanced: true } },
-        route_address: { type: 'array', items: { type: 'string' }, 'x-ui': { label: '路由网段 (route_address)', group: '协议参数', order: 9, widget: 'tags', advanced: true } },
-        route_exclude_address: { type: 'array', items: { type: 'string' }, 'x-ui': { label: '排除网段 (route_exclude_address)', group: '协议参数', order: 10, widget: 'tags', advanced: true } },
+        route_address: { type: 'array', items: { type: 'string' }, 'x-ui': { label: '路由网段', group: '协议参数', order: 9, widget: 'tags', advanced: true } },
+        route_exclude_address: { type: 'array', items: { type: 'string' }, 'x-ui': { label: '排除网段', group: '协议参数', order: 10, widget: 'tags', advanced: true } },
         udp_timeout: { type: 'string', 'x-ui': { label: 'UDP 超时', group: '协议参数', order: 11, placeholder: '5m' } },
       },
     },
@@ -258,7 +258,7 @@ export const DEFAULT_INBOUND_SCHEMA: JSONSchema = {
     vless: inboundWithListen(true, true, { flow: { type: 'string', enum: ['', 'xtls-rprx-vision'] }, multiplex: inboundMultiplexSubSchema(), transport: TRANSPORT_SUBSCHEMA, tls: tlsInboundSubSchema(true) }),
     vmess: inboundWithListen(true, true, { multiplex: inboundMultiplexSubSchema(), transport: TRANSPORT_SUBSCHEMA, tls: tlsInboundSubSchema(true) }),
     hysteria2: inboundWithListen(false, true, {
-      masquerade: { type: 'string', 'x-ui': { label: '伪装站点 / 响应 (masquerade)', group: '协议参数', order: 10, placeholder: 'https://example.com', advanced: true } },
+      masquerade: { type: 'string', 'x-ui': { label: '伪装站点', group: '协议参数', order: 10, advanced: true } },
       bbr_profile: { type: 'string', enum: ['', 'conservative', 'standard', 'aggressive'], 'x-ui': { label: 'BBR 配置', group: '协议参数', order: 11, widget: 'select', advanced: true } },
       brutal_debug: { type: 'boolean', 'x-ui': { label: 'Brutal 调试日志', group: '协议参数', order: 12, widget: 'switch', advanced: true } },
       tls: tlsInboundSubSchema(false),
@@ -280,16 +280,16 @@ export const DEFAULT_OUTBOUND_SCHEMA: JSONSchema = {
     tag: { type: 'string', 'x-ui': { label: '标签', group: '基本', order: 2 } },
     server: { type: 'string', 'x-ui': { label: '服务器地址', group: '基本', order: 3 } },
     server_port: { type: 'integer', minimum: 1, maximum: 65535, 'x-ui': { label: '端口', group: '基本', order: 4 } },
-    detour: { type: 'string', 'x-ui': { label: '前置出站 (detour)', group: '拨号参数', order: 20, placeholder: '上游出站 tag', advanced: true } },
-    connect_timeout: { type: 'string', 'x-ui': { label: '连接超时', group: '拨号参数', order: 21, placeholder: '5s', advanced: true } },
-    domain_resolver: { type: 'string', 'x-ui': { label: '域名解析器 (domain_resolver)', group: '拨号参数', order: 22, advanced: true } },
-    bind_interface: { type: 'string', 'x-ui': { label: '绑定网卡', group: '拨号参数', order: 23, advanced: true } },
-    inet4_bind_address: { type: 'string', 'x-ui': { label: '绑定 IPv4 地址', group: '拨号参数', order: 24, advanced: true } },
-    inet6_bind_address: { type: 'string', 'x-ui': { label: '绑定 IPv6 地址', group: '拨号参数', order: 25, advanced: true } },
-    routing_mark: { type: 'integer', minimum: 0, 'x-ui': { label: '路由标记 (fwmark)', group: '拨号参数', order: 26, advanced: true } },
-    tcp_fast_open: { type: 'boolean', 'x-ui': { label: 'TCP Fast Open', group: '拨号参数', order: 27, widget: 'switch', advanced: true } },
-    tcp_multi_path: { type: 'boolean', 'x-ui': { label: 'TCP Multi Path', group: '拨号参数', order: 28, widget: 'switch', advanced: true } },
-    udp_fragment: { type: 'boolean', 'x-ui': { label: 'UDP Fragment', group: '拨号参数', order: 29, widget: 'switch', advanced: true } },
+    detour: { type: 'string', 'x-ui': { label: '前置出站', group: '其他参数', order: 20, advanced: true } },
+    connect_timeout: { type: 'string', 'x-ui': { label: '连接超时', group: '其他参数', order: 21, placeholder: '5s', advanced: true } },
+    domain_resolver: { type: 'string', 'x-ui': { label: '域名解析器', group: '其他参数', order: 22, advanced: true } },
+    bind_interface: { type: 'string', 'x-ui': { label: '绑定网卡', group: '其他参数', order: 23, advanced: true } },
+    inet4_bind_address: { type: 'string', 'x-ui': { label: '绑定 IPv4 地址', group: '其他参数', order: 24, advanced: true } },
+    inet6_bind_address: { type: 'string', 'x-ui': { label: '绑定 IPv6 地址', group: '其他参数', order: 25, advanced: true } },
+    routing_mark: { type: 'integer', minimum: 0, 'x-ui': { label: '路由标记', group: '其他参数', order: 26, advanced: true } },
+    tcp_fast_open: { type: 'boolean', 'x-ui': { label: 'TCP Fast Open', group: '其他参数', order: 27, widget: 'switch', advanced: true } },
+    tcp_multi_path: { type: 'boolean', 'x-ui': { label: 'TCP Multi Path', group: '其他参数', order: 28, widget: 'switch', advanced: true } },
+    udp_fragment: { type: 'boolean', 'x-ui': { label: 'UDP Fragment', group: '其他参数', order: 29, widget: 'switch', advanced: true } },
   },
   'x-variants': {
     shadowsocks: {
@@ -297,7 +297,7 @@ export const DEFAULT_OUTBOUND_SCHEMA: JSONSchema = {
       additionalProperties: true,
       properties: {
         plugin: { type: 'string', enum: ['', 'obfs-local', 'v2ray-plugin'], 'x-ui': { label: 'SIP003 插件', group: '协议参数', order: 3, widget: 'select', advanced: true } },
-        plugin_opts: { type: 'string', 'x-ui': { label: '插件参数 (plugin_opts)', group: '协议参数', order: 4, advanced: true } },
+        plugin_opts: { type: 'string', 'x-ui': { label: '插件参数', group: '协议参数', order: 4, advanced: true } },
         network: { type: 'string', enum: ['', 'tcp', 'udp'], 'x-ui': { label: '网络限制', group: '协议参数', order: 5, widget: 'select', advanced: true } },
         udp_over_tcp: { type: 'boolean', 'x-ui': { label: 'UDP over TCP', group: '协议参数', order: 6, widget: 'switch', advanced: true } },
         multiplex: outboundMultiplexSubSchema(),
@@ -317,7 +317,7 @@ export const DEFAULT_OUTBOUND_SCHEMA: JSONSchema = {
       type: 'object',
       additionalProperties: true,
       properties: {
-        path: { type: 'string', 'x-ui': { label: '请求路径 (path)', group: '协议参数', order: 1, placeholder: '/', advanced: true } },
+        path: { type: 'string', 'x-ui': { label: '请求路径', group: '协议参数', order: 1, advanced: true } },
         headers: { type: 'object', additionalProperties: true, 'x-ui': { label: '自定义请求头', group: '协议参数', order: 2, widget: 'json', full_width: true, advanced: true } },
         tls: tlsOutboundSubSchema(false),
       },
@@ -369,9 +369,10 @@ export const DEFAULT_OUTBOUND_SCHEMA: JSONSchema = {
       type: 'object',
       additionalProperties: true,
       properties: {
-        global_padding: { type: 'boolean', 'x-ui': { label: '全局随机填充', group: '协议参数', order: 3, widget: 'switch', advanced: true } },
-        authenticated_length: { type: 'boolean', 'x-ui': { label: '长度块认证', group: '协议参数', order: 4, widget: 'switch', advanced: true } },
-        network: { type: 'string', enum: ['', 'tcp', 'udp'], 'x-ui': { label: '网络限制', group: '协议参数', order: 5, widget: 'select', advanced: true } },
+        packet_encoding: { type: 'string', enum: ['', 'xudp', 'packetaddr'], 'x-ui': { label: 'UDP 封包编码', group: '协议参数', order: 3, widget: 'select', advanced: true } },
+        global_padding: { type: 'boolean', 'x-ui': { label: '全局随机填充', group: '协议参数', order: 4, widget: 'switch', advanced: true } },
+        authenticated_length: { type: 'boolean', 'x-ui': { label: '长度块认证', group: '协议参数', order: 5, widget: 'switch', advanced: true } },
+        network: { type: 'string', enum: ['', 'tcp', 'udp'], 'x-ui': { label: '网络限制', group: '协议参数', order: 6, widget: 'select', advanced: true } },
         multiplex: outboundMultiplexSubSchema(),
         transport: TRANSPORT_SUBSCHEMA,
         tls: tlsOutboundSubSchema(false),
@@ -383,8 +384,8 @@ export const DEFAULT_OUTBOUND_SCHEMA: JSONSchema = {
       properties: {
         up_mbps: { type: 'integer', minimum: 0, 'x-ui': { label: '上行 Mbps', group: '协议参数', order: 1 } },
         down_mbps: { type: 'integer', minimum: 0, 'x-ui': { label: '下行 Mbps', group: '协议参数', order: 2 } },
-        server_ports: { type: 'array', items: { type: 'string' }, 'x-ui': { label: '端口跳跃 (server_ports)', group: '协议参数', order: 3, widget: 'tags', placeholder: '20000:50000', advanced: true } },
-        hop_interval: { type: 'string', 'x-ui': { label: '跳跃间隔 (hop_interval)', group: '协议参数', order: 4, placeholder: '30s', advanced: true } },
+        server_ports: { type: 'array', items: { type: 'string' }, 'x-ui': { label: '端口跳跃', group: '协议参数', order: 3, widget: 'tags', placeholder: '20000:50000', advanced: true } },
+        hop_interval: { type: 'string', 'x-ui': { label: '跳跃间隔', group: '协议参数', order: 4, placeholder: '30s', advanced: true } },
         network: { type: 'string', enum: ['', 'tcp', 'udp'], 'x-ui': { label: '网络限制', group: '协议参数', order: 5, widget: 'select', advanced: true } },
         tls: tlsOutboundSubSchema(false),
       },
@@ -422,13 +423,13 @@ export const DEFAULT_ROUTE_RULE_SCHEMA: JSONSchema = {
     network: { type: 'string', enum: ['', 'tcp', 'udp', 'icmp'], 'x-ui': { label: '网络类型', group: '协议与版本', order: 50, widget: 'select', actions: ['route', 'reject'] } },
     ip_version: { type: 'integer', enum: [4, 6], 'x-ui': { label: 'IP 版本', group: '协议与版本', order: 51, widget: 'select', actions: ['route', 'reject'], advanced: true } },
     protocol: { type: 'array', items: { type: 'string' }, 'x-ui': { label: '应用协议', group: '协议与版本', order: 52, widget: 'tags', actions: ['route', 'reject'] } },
-    client: { type: 'array', items: { type: 'string' }, 'x-ui': { label: '识别客户端 (client)', group: '协议与版本', order: 53, widget: 'tags', placeholder: 'chromium, safari', actions: ['route', 'reject'], advanced: true } },
+    client: { type: 'array', items: { type: 'string' }, 'x-ui': { label: '识别客户端', group: '协议与版本', order: 53, widget: 'tags', actions: ['route', 'reject'], advanced: true } },
     process_name: { type: 'array', items: { type: 'string' }, 'x-ui': { label: '进程名', group: '进程与环境', order: 60, widget: 'tags', actions: ['route', 'reject'], advanced: true } },
     process_path: { type: 'array', items: { type: 'string' }, 'x-ui': { label: '进程路径', group: '进程与环境', order: 61, widget: 'lines', full_width: true, actions: ['route', 'reject'], advanced: true } },
     process_path_regex: { type: 'array', items: { type: 'string' }, 'x-ui': { label: '进程路径正则', group: '进程与环境', order: 62, widget: 'lines', full_width: true, actions: ['route', 'reject'], advanced: true } },
     package_name: { type: 'array', items: { type: 'string' }, 'x-ui': { label: '应用包名', group: '进程与环境', order: 63, widget: 'tags', actions: ['route', 'reject'], advanced: true } },
-    clash_mode: { type: 'string', 'x-ui': { label: 'Clash 模式', group: '进程与环境', order: 64, placeholder: 'rule / global / direct', actions: ['route', 'reject'], advanced: true } },
-    invert: { type: 'boolean', 'x-ui': { label: '匹配结果取反 (invert)', group: '高级选项', order: 70, widget: 'switch', advanced: true } },
+    clash_mode: { type: 'string', 'x-ui': { label: 'Clash 模式', group: '进程与环境', order: 64, actions: ['route', 'reject'], advanced: true } },
+    invert: { type: 'boolean', 'x-ui': { label: '匹配结果取反', group: '高级选项', order: 70, widget: 'switch', advanced: true } },
     override_address: { type: 'string', 'x-ui': { label: '覆盖目标地址', group: '高级选项', order: 71, actions: ['route', 'route-options'], advanced: true } },
     override_port: { type: 'integer', minimum: 1, maximum: 65535, 'x-ui': { label: '覆盖目标端口', group: '高级选项', order: 72, actions: ['route', 'route-options'], advanced: true } },
     udp_disable_domain_unmapping: { type: 'boolean', 'x-ui': { label: '禁用 UDP 域名反解', group: '高级选项', order: 73, widget: 'switch', actions: ['route', 'route-options'], advanced: true } },

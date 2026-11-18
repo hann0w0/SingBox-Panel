@@ -336,7 +336,7 @@ func ApplyResidual(rendered []byte, res Residual) ([]byte, error) {
 		if rules, ok := route["rules"].([]any); ok {
 			for index := range rules {
 				rule, ok := rules[index].(map[string]any)
-				if !ok {
+				if !ok || IsLoopbackGuardRule(rule) {
 					continue
 				}
 				mergeInto(rule, res.RuleFields[fmt.Sprintf("%d", index)])

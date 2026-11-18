@@ -203,6 +203,7 @@ func NewConfigOverlay(raw []byte, baseline ConfigProjection, ruleSources map[int
 				byTag[obj.Tag] = item.ID
 			}
 		}
+		assignedIDs := make(map[string]bool, len(entries))
 		for i, entry := range entries {
 			id := ""
 			if path == "rules" {
@@ -211,7 +212,7 @@ func NewConfigOverlay(raw []byte, baseline ConfigProjection, ruleSources map[int
 					for _, item := range items[path] {
 						// Only generated rules are inferred by content; editable
 						// rules have an explicit parser source index.
-						if len(item.ID) > 0 && !isPanelRuleID(item.ID, baseline.IDs["rules"]) && canonicalRaw(entry) == canonicalRaw(item.Projection) {
+						if len(item.ID) > 0 && !assignedIDs[item.ID] && !isPanelRuleID(item.ID, baseline.IDs["rules"]) && canonicalRaw(entry) == canonicalRaw(item.Projection) {
 							id = item.ID
 							break
 						}
@@ -224,6 +225,13 @@ func NewConfigOverlay(raw []byte, baseline ConfigProjection, ruleSources map[int
 				_ = json.Unmarshal(entry, &obj)
 				if obj.Tag != "" {
 					id = byTag[obj.Tag]
+				}
+			}
+			if id != "" {
+				if assignedIDs[id] {
+					id = ""
+				} else {
+					assignedIDs[id] = true
 				}
 			}
 			o.Bindings[path] = append(o.Bindings[path], id)

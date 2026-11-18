@@ -73,7 +73,12 @@ func (a *App) availableOutboundTag(serverID uint, name string) (string, error) {
 //   - a share link (uri), which produces an independent snapshot as before.
 func (a *App) previewOutboundImport(c *gin.Context) {
 	sid, ok := uintParam(c, "id")
-	if !ok || !a.requireManagedMode(c, sid) {
+	if !ok {
+		return
+	}
+	unlockOperation := a.lockServerOperation(sid)
+	defer unlockOperation()
+	if !a.requireManagedMode(c, sid) {
 		return
 	}
 	c.Header("Cache-Control", "no-store")

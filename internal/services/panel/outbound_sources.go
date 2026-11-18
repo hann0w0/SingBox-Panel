@@ -166,7 +166,12 @@ func (a *App) outboundSourceReason(kind string, id, targetServerID uint) string 
 // target server's own inbounds cannot be its own outbound and are marked so.
 func (a *App) listOutboundSources(c *gin.Context) {
 	sid, ok := uintParam(c, "id")
-	if !ok || !a.requireManagedMode(c, sid) {
+	if !ok {
+		return
+	}
+	unlockOperation := a.lockServerOperation(sid)
+	defer unlockOperation()
+	if !a.requireManagedMode(c, sid) {
 		return
 	}
 	c.Header("Cache-Control", "no-store")

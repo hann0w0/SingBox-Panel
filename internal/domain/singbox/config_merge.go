@@ -104,6 +104,16 @@ func mergeConfigObjectList(source, before, after []any) ([]any, bool) {
 		if !shared {
 			continue
 		}
+		claimedOldIDs := make(map[string]bool, len(source))
+		for _, value := range source {
+			object, _ := value.(map[string]any)
+			if id, _ := object[key].(string); id != "" {
+				if _, ok := oldByID[id]; ok {
+					claimedOldIDs[id] = true
+				}
+			}
+		}
+		assignedOldIDs := make(map[string]bool, len(source))
 		var slots []configMergeSlot
 		for i, value := range source {
 			object, _ := value.(map[string]any)
@@ -115,10 +125,17 @@ func mergeConfigObjectList(source, before, after []any) ([]any, bool) {
 				known = i == 0
 				index = 0
 				id = oldIDs[0]
-			} else if !known && len(source) == len(before) {
+			} else if !known && len(source) == len(before) && !claimedOldIDs[oldIDs[i]] {
 				index = i
 				id = oldIDs[i]
 				known = true
+			}
+			if known {
+				if assignedOldIDs[id] {
+					known = false
+				} else {
+					assignedOldIDs[id] = true
+				}
 			}
 			raw, err := json.Marshal(value)
 			if err != nil {

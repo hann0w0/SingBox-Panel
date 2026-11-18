@@ -1,6 +1,6 @@
 module github.com/hann0w0/singbox-panel
 
-go 1.26.11
+go 1.27.4
 
 require (
 	github.com/gin-gonic/gin v1.12.0

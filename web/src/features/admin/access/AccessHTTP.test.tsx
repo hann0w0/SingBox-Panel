@@ -129,14 +129,14 @@ async function saveCreate() {
 
 describe('external HTTP and SOCKS proxy forms', () => {
   it('defaults HTTP to plaintext and permits a username with an empty password', async () => {
-    await create('HTTP / HTTPS')
+    await create('http')
     expect(screen.getByLabelText('TLS 模式').textContent).toContain('无')
     fireEvent.change(screen.getByLabelText('用户名'), { target: { value: 'literal-user' } })
     expect(await saveCreate()).toMatchObject({ protocol: 'http', params: { username: 'literal-user', tls: 'none' } })
   })
 
   it('submits HTTPS authentication, TLS, ALPN and fingerprint settings', async () => {
-    await create('HTTP / HTTPS')
+    await create('http')
     await select('TLS 模式', 'TLS')
     expect(screen.getByLabelText('TLS 模式').textContent).toContain('TLS')
     fireEvent.click(await screen.findByLabelText('跳过证书校验'))
@@ -151,7 +151,7 @@ describe('external HTTP and SOCKS proxy forms', () => {
   })
 
   it('offers SOCKS5 with authentication and keeps TLS fields out of its payload', async () => {
-    await create('SOCKS5')
+    await create('socks')
     expect(screen.queryByLabelText('TLS 模式')).toBeNull()
     fireEvent.change(screen.getByLabelText('用户名'), { target: { value: 'user' } })
     fireEvent.change(screen.getByLabelText('密码'), { target: { value: 'secret' } })
@@ -177,7 +177,7 @@ describe('external HTTP and SOCKS proxy forms', () => {
 
 describe('新增节点 dialog', () => {
   it('validates the active source and preserves draft parameters when switching modes', async () => {
-    await create('SOCKS5')
+    await create('socks')
     fireEvent.mouseDown(screen.getByRole('tab', { name: 'URI 导入' }), { button: 0, ctrlKey: false })
     expect(screen.queryByLabelText('地址')).toBeNull()
     fireEvent.click(screen.getByRole('button', { name: '保存' }))

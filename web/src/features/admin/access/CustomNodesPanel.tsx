@@ -47,8 +47,12 @@ import type { CustomNode, CustomNodeSubscription, NameRewriteRule } from '../../
 import { RegionFlag, regionCodeFromFlag, removeRegionFlag } from '../../../components/RegionFlag'
 import { RequestState } from '../../../components/RequestState'
 import { buildCustomNodeParams } from '../../../lib/customNodeForm'
+import { EXTERNAL_NODE_PROTOCOL_TYPES, toProtocolOptions } from '../../../lib/protocols'
 import { SHADOWSOCKS_METHODS } from '../../../lib/util'
 import { MODAL_MD } from '../../../components/kit/modal'
+import { FormGroup } from '../servers/InboundForm'
+import '../../../styles/forms.css'
+import '../../../styles/inbound-editor.css'
 import {
   HAS_AUTH,
   HAS_BANDWIDTH,
@@ -863,130 +867,174 @@ export function CustomNodesPanel({ nodes, loading, error, onNodesChange }: {
         confirmLoading={nodeSaving}
         okText="保存"
         cancelText="取消"
-        className="um-modal um-source-modal"
-        width={MODAL_MD}
+        className="um-modal inbound-compact"
+        width={680}
       >
-        <Form form={nodeForm} fieldLayout onFinish={submitNode}>
-          <FieldGroup>
+        <Form form={nodeForm} layout="vertical" className="fm-form inbound-compact-form" onFinish={submitNode}>
           <Tabs value={nodeMode} onValueChange={(value) => setNodeMode(value as 'manual' | 'uri')}>
             <TabsList aria-label="节点添加方式">
               <TabsTrigger value="manual">手动配置</TabsTrigger>
               <TabsTrigger value="uri">URI 导入</TabsTrigger>
             </TabsList>
-          <TabsContent value="uri" className="mt-5">
-          <Form.Item name="link" label="URI 链接" rules={[{ required: true, whitespace: true, message: '请粘贴节点 URI 链接' }]}>
-            <Input.TextArea
-              rows={3}
-              spellCheck={false}
-            />
-          </Form.Item>
-          </TabsContent>
-          <TabsContent value="manual" className="mt-5">
-            <FieldGroup>
-              <Form.Item name="protocol" label="协议" rules={[{ required: true, message: '请选择协议' }]}>
-                <Select
-                  placeholder="选择协议"
-                  onChange={(protocol) => {
-                    if (protocol === 'http') nodeForm.setFieldValue('tls_mode', 'none')
-                    else if (nodeProtocol === 'http' && !['vless', 'vmess'].includes(protocol)) nodeForm.setFieldValue('tls_mode', 'tls')
-                  }}
-                  options={[
-                    { value: 'vless', label: 'VLESS' },
-                    { value: 'vmess', label: 'VMess' },
-                    { value: 'trojan', label: 'Trojan' },
-                    { value: 'anytls', label: 'AnyTLS' },
-                    { value: 'shadowsocks', label: 'Shadowsocks' },
-                    { value: 'tuic', label: 'TUIC' },
-                    { value: 'hysteria2', label: 'Hysteria2' },
-                    { value: 'snell', label: 'Snell' },
-                    { value: 'socks', label: 'SOCKS5' },
-                    { value: 'http', label: 'HTTP / HTTPS' },
-                    { value: 'mixed', label: 'Mixed (HTTP+SOCKS5)' },
-                    { value: 'hysteria', label: 'Hysteria' },
-                  ]}
-                />
-              </Form.Item>
-                <FieldGroup className="um-source-address">
-                  <Form.Item name="address" label="地址" rules={[{ required: true, message: '请填写地址' }]}>
-                    <Input aria-label="地址" />
-                  </Form.Item>
-                  <Form.Item name="port" label="端口" rules={[{ required: true, message: '请填写端口' }]}>
-                    <InputNumber precision={0} aria-label="端口" min={1} max={65535} style={{ width: '100%' }} />
-                  </Form.Item>
-                </FieldGroup>
+            <TabsContent value="uri" className="mt-5">
+              <div className="fm-grid">
+                <Form.Item name="link" label="URI 链接" className="fm-full" rules={[{ required: true, whitespace: true, message: '请粘贴节点 URI 链接' }]}>
+                  <Input.TextArea
+                    rows={3}
+                    spellCheck={false}
+                  />
+                </Form.Item>
+                <Form.Item name="group" label="分组" className="fm-full">
+                  <AutoComplete options={groupOptions} allowClear filterOption={(input, option) => (option?.value ?? '').toLowerCase().includes(input.toLowerCase())} />
+                </Form.Item>
+              </div>
+            </TabsContent>
+            <TabsContent value="manual" className="mt-5">
+              <FormGroup title="基本">
+                <Form.Item name="protocol" label="协议" rules={[{ required: true, message: '请选择协议' }]}>
+                  <Select
+                    placeholder="选择协议"
+                    onChange={(protocol) => {
+                      if (protocol === 'http') nodeForm.setFieldValue('tls_mode', 'none')
+                      else if (nodeProtocol === 'http' && !['vless', 'vmess'].includes(protocol)) nodeForm.setFieldValue('tls_mode', 'tls')
+                    }}
+                    options={toProtocolOptions(EXTERNAL_NODE_PROTOCOL_TYPES)}
+                  />
+                </Form.Item>
+                <Form.Item name="group" label="分组">
+                  <AutoComplete options={groupOptions} allowClear filterOption={(input, option) => (option?.value ?? '').toLowerCase().includes(input.toLowerCase())} />
+                </Form.Item>
+                <Form.Item name="address" label="地址" rules={[{ required: true, message: '请填写地址' }]}>
+                  <Input aria-label="地址" />
+                </Form.Item>
+                <Form.Item name="port" label="端口" rules={[{ required: true, message: '请填写端口' }]}>
+                  <InputNumber precision={0} aria-label="端口" min={1} max={65535} style={{ width: '100%' }} />
+                </Form.Item>
 
-              {HAS_UUID.includes(nodeProtocol) && (
-                <Form.Item name="uuid" label="UUID" rules={[{ required: true, message: '请填写 UUID' }]}>
-                  <Input />
-                </Form.Item>
-              )}
-              {HAS_PASSWORD.includes(nodeProtocol) && (
-                <Form.Item name="password" label={nodeProtocol === 'shadowsocks' ? '密码 / PSK' : '密码'} rules={[{ required: true, message: '请填写密码' }]}>
-                  <Input.Password />
-                </Form.Item>
-              )}
-              {HAS_AUTH.includes(nodeProtocol) && (
-                <>
-                  <Form.Item name="username" label="用户名">
-                    <Input autoComplete="off" />
+                {HAS_UUID.includes(nodeProtocol) && (
+                  <Form.Item name="uuid" label="UUID" rules={[{ required: true, message: '请填写 UUID' }]}>
+                    <Input />
                   </Form.Item>
-                  <Form.Item name="password" label="密码">
-                    <Input.Password autoComplete="new-password" />
+                )}
+                {nodeProtocol === 'shadowsocks' && (
+                  <Form.Item name="method" label="加密方式">
+                    <Select
+                      options={SHADOWSOCKS_METHODS.map((m) => ({ value: m, label: m }))}
+                    />
                   </Form.Item>
-                </>
-              )}
-              {nodeProtocol === 'shadowsocks' && (
-                <Form.Item name="method" label="加密方式">
-                  <Select
-                    options={SHADOWSOCKS_METHODS.map((m) => ({ value: m, label: m }))}
-                  />
-                </Form.Item>
-              )}
-              {nodeProtocol === 'vless' && (
-                <Form.Item name="flow" label="Flow">
-                  <Select
-                    options={[
-                      { value: '', label: '无' },
-                      { value: 'xtls-rprx-vision', label: 'xtls-rprx-vision' },
-                    ]}
-                  />
-                </Form.Item>
-              )}
-              {nodeProtocol === 'tuic' && (
-                <>
-                  <Form.Item name="congestion_control" label="拥塞控制">
+                )}
+                {HAS_PASSWORD.includes(nodeProtocol) && (
+                  <Form.Item name="password" label={nodeProtocol === 'shadowsocks' ? '密码 / PSK' : '密码'} rules={[{ required: true, message: '请填写密码' }]}>
+                    <Input.Password />
+                  </Form.Item>
+                )}
+                {HAS_AUTH.includes(nodeProtocol) && (
+                  <>
+                    <Form.Item name="username" label="用户名">
+                      <Input autoComplete="off" />
+                    </Form.Item>
+                    <Form.Item name="password" label="密码">
+                      <Input.Password autoComplete="new-password" />
+                    </Form.Item>
+                  </>
+                )}
+                {nodeProtocol === 'vless' && (
+                  <Form.Item name="flow" label="Flow">
                     <Select
                       options={[
-                        { value: 'cubic', label: 'cubic' },
-                        { value: 'new_reno', label: 'new_reno' },
-                        { value: 'bbr', label: 'bbr' },
+                        { value: '', label: '无' },
+                        { value: 'xtls-rprx-vision', label: 'xtls-rprx-vision' },
                       ]}
                     />
                   </Form.Item>
-                  <Form.Item name="udp_relay_mode" label="UDP 中继模式">
-                    <Select
-                      options={[
-                        { value: 'native', label: 'native' },
-                        { value: 'quic', label: 'quic' },
-                      ]}
-                    />
+                )}
+                {nodeProtocol === 'tuic' && (
+                  <>
+                    <Form.Item name="congestion_control" label="拥塞控制">
+                      <Select
+                        options={[
+                          { value: 'cubic', label: 'cubic' },
+                          { value: 'new_reno', label: 'new_reno' },
+                          { value: 'bbr', label: 'bbr' },
+                        ]}
+                      />
+                    </Form.Item>
+                    <Form.Item name="udp_relay_mode" label="UDP 中继模式">
+                      <Select
+                        options={[
+                          { value: 'native', label: 'native' },
+                          { value: 'quic', label: 'quic' },
+                        ]}
+                      />
+                    </Form.Item>
+                  </>
+                )}
+                {nodeProtocol === 'shadowsocks' && (
+                  <Form.Item name="ss_plugin" label="SIP002 Plugin" className="fm-full">
+                    <Input />
                   </Form.Item>
-                </>
-              )}
-              {nodeProtocol === 'anytls' && (
-                <Form.Item name="udp_over_stream" label="UDP over Stream" valuePropName="checked">
-                  <Switch />
-                </Form.Item>
-              )}
-              {nodeProtocol === 'shadowsocks' && (
-                <Form.Item name="ss_plugin" label="SIP002 Plugin">
-                  <Input />
-                </Form.Item>
-              )}
+                )}
+                {nodeProtocol === 'anytls' && (
+                  <div className="fm-switches">
+                    <Form.Item name="udp_over_stream" label="UDP over Stream" valuePropName="checked" className="fm-switch">
+                      <Switch />
+                    </Form.Item>
+                  </div>
+                )}
+
+                {nodeProtocol === 'snell' && (
+                  <>
+                    <Form.Item
+                      name="psk"
+                      label="PSK"
+                      dependencies={['snell_version']}
+                      rules={[
+                        { required: true, message: '请填写 PSK' },
+                        ({ getFieldValue }) => ({
+                          validator(_, value) {
+                            const bytes = value ? new TextEncoder().encode(String(value)).length : 0
+                            if (getFieldValue('snell_version') === 6 && bytes > 0 && (bytes < 12 || bytes > 255)) {
+                              return Promise.reject(new Error('Snell v6 的 PSK 长度必须在 12-255 字节之间'))
+                            }
+                            return Promise.resolve()
+                          },
+                        }),
+                      ]}
+                    >
+                      <Input />
+                    </Form.Item>
+                    <Form.Item name="snell_version" label="版本">
+                      <Select options={[{ value: 5, label: 'v5' }, { value: 6, label: 'v6' }]} />
+                    </Form.Item>
+                    {nodeSnellVersion === 6 ? (
+                      <Form.Item name="snell_mode" label="模式">
+                        <Select
+                          allowClear
+                          options={[
+                            { value: '', label: '不指定' },
+                            { value: 'unshaped', label: 'unshaped' },
+                            { value: 'unsafe-raw', label: 'unsafe-raw' },
+                          ]}
+                        />
+                      </Form.Item>
+                    ) : (
+                      <>
+                        <Form.Item name="snell_obfs_mode" label="混淆">
+                          <Select options={[{ value: 'none', label: '无' }, { value: 'http', label: 'http' }, { value: 'tls', label: 'tls' }]} />
+                        </Form.Item>
+                        {(nodeSnellObfsMode === 'http' || nodeSnellObfsMode === 'tls') && (
+                          <Form.Item name="snell_obfs_host" label="混淆 Host">
+                            <Input />
+                          </Form.Item>
+                        )}
+                      </>
+                    )}
+                  </>
+                )}
+              </FormGroup>
 
               {HAS_TLS.includes(nodeProtocol) && (
-                <FieldSet className="um-source-section">
-                  <FieldLegend>TLS</FieldLegend>
+                <FormGroup title="TLS">
                   <Form.Item name="tls_mode" label="TLS 模式">
                     <Select
                       options={
@@ -1022,27 +1070,28 @@ export function CustomNodesPanel({ nodes, loading, error, onNodesChange }: {
                       </Form.Item>
                     </>
                   )}
+                  {nodeTLSMode === 'reality' && (
+                    <>
+                      <Form.Item name="pbk" label="REALITY 公钥" rules={[{ required: true, message: '请填写公钥' }]}>
+                        <Input />
+                      </Form.Item>
+                      <Form.Item name="sid" label="REALITY Short ID">
+                        <Input />
+                      </Form.Item>
+                    </>
+                  )}
                   {nodeTLSMode === 'tls' && (
-                    <Form.Item name="insecure" label="跳过证书校验" valuePropName="checked">
-                      <Switch />
-                    </Form.Item>
+                    <div className="fm-switches">
+                      <Form.Item name="insecure" label="跳过证书校验" valuePropName="checked" className="fm-switch">
+                        <Switch />
+                      </Form.Item>
+                    </div>
                   )}
-                  {nodeTLSMode === 'reality' && (
-                    <Form.Item name="pbk" label="REALITY 公钥" rules={[{ required: true, message: '请填写公钥' }]}>
-                      <Input />
-                    </Form.Item>
-                  )}
-                  {nodeTLSMode === 'reality' && (
-                    <Form.Item name="sid" label="REALITY Short ID">
-                      <Input />
-                    </Form.Item>
-                  )}
-                </FieldSet>
+                </FormGroup>
               )}
 
               {HAS_TRANSPORT.includes(nodeProtocol) && (
-                <FieldSet className="um-source-section">
-                  <FieldLegend>传输</FieldLegend>
+                <FormGroup title="传输">
                   <Form.Item name="transport" label="传输协议">
                     <Select
                       options={[
@@ -1054,7 +1103,7 @@ export function CustomNodesPanel({ nodes, loading, error, onNodesChange }: {
                   </Form.Item>
                   {(nodeTransport === 'ws' || nodeTransport === 'httpupgrade') && (
                     <>
-                      <Form.Item name="path" label="传输路径">
+                      <Form.Item name="path" label="传输路径" style={{ gridColumnStart: 1 }}>
                         <Input />
                       </Form.Item>
                       <Form.Item name="host" label="Host 头">
@@ -1062,12 +1111,11 @@ export function CustomNodesPanel({ nodes, loading, error, onNodesChange }: {
                       </Form.Item>
                     </>
                   )}
-                </FieldSet>
+                </FormGroup>
               )}
 
               {HAS_BANDWIDTH.includes(nodeProtocol) && (
-                <FieldSet className="um-source-section">
-                  <FieldLegend>混淆与带宽</FieldLegend>
+                <FormGroup title="混淆与带宽">
                   <Form.Item name="obfs" label="混淆类型">
                     <Select
                       options={[
@@ -1081,80 +1129,21 @@ export function CustomNodesPanel({ nodes, loading, error, onNodesChange }: {
                     <Input.Password />
                   </Form.Item>
                   {nodeProtocol === 'hysteria2' && nodeObfsType === 'gecko' && (
-                    <FieldGroup className="um-source-grid">
+                    <>
                       <Form.Item name="gecko_min_packet_size" label="最小包大小"><InputNumber min={512} precision={0} style={{ width: '100%' }} /></Form.Item>
                       <Form.Item name="gecko_max_packet_size" label="最大包大小"><InputNumber min={512} precision={0} style={{ width: '100%' }} /></Form.Item>
-                    </FieldGroup>
+                    </>
                   )}
-                  <FieldGroup className="um-source-grid">
-                    <Form.Item name="up_mbps" label="上行 Mbps">
-                      <InputNumber precision={0} min={1} style={{ width: '100%' }} />
-                    </Form.Item>
-                    <Form.Item name="down_mbps" label="下行 Mbps">
-                      <InputNumber precision={0} min={1} style={{ width: '100%' }} />
-                    </Form.Item>
-                  </FieldGroup>
-                </FieldSet>
-              )}
-
-              {nodeProtocol === 'snell' && (
-                <>
-                  <Form.Item
-                    name="psk"
-                    label="PSK"
-                    dependencies={['snell_version']}
-                    rules={[
-                      { required: true, message: '请填写 PSK' },
-                      ({ getFieldValue }) => ({
-                        validator(_, value) {
-                          const bytes = value ? new TextEncoder().encode(String(value)).length : 0
-                          if (getFieldValue('snell_version') === 6 && bytes > 0 && (bytes < 12 || bytes > 255)) {
-                            return Promise.reject(new Error('Snell v6 的 PSK 长度必须在 12-255 字节之间'))
-                          }
-                          return Promise.resolve()
-                        },
-                      }),
-                    ]}
-                  >
-                    <Input />
+                  <Form.Item name="up_mbps" label="上行 Mbps">
+                    <InputNumber precision={0} min={1} style={{ width: '100%' }} />
                   </Form.Item>
-                  <FieldGroup className="um-source-grid">
-                    <Form.Item name="snell_version" label="版本">
-                      <Select options={[{ value: 5, label: 'v5' }, { value: 6, label: 'v6' }]} />
-                    </Form.Item>
-                    {nodeSnellVersion === 6 ? (
-                      <Form.Item name="snell_mode" label="模式">
-                        <Select
-                          allowClear
-                          options={[
-                            { value: '', label: '不指定' },
-                            { value: 'unshaped', label: 'unshaped' },
-                            { value: 'unsafe-raw', label: 'unsafe-raw' },
-                          ]}
-                        />
-                      </Form.Item>
-                    ) : (
-                      <>
-                        <Form.Item name="snell_obfs_mode" label="混淆">
-                          <Select options={[{ value: 'none', label: '无' }, { value: 'http', label: 'http' }, { value: 'tls', label: 'tls' }]} />
-                        </Form.Item>
-                        {(nodeSnellObfsMode === 'http' || nodeSnellObfsMode === 'tls') && (
-                          <Form.Item name="snell_obfs_host" label="混淆 Host">
-                            <Input />
-                          </Form.Item>
-                        )}
-                      </>
-                    )}
-                  </FieldGroup>
-                </>
+                  <Form.Item name="down_mbps" label="下行 Mbps">
+                    <InputNumber precision={0} min={1} style={{ width: '100%' }} />
+                  </Form.Item>
+                </FormGroup>
               )}
-            </FieldGroup>
-          </TabsContent>
+            </TabsContent>
           </Tabs>
-          <Form.Item name="group" label="分组">
-            <AutoComplete options={groupOptions} allowClear filterOption={(input, option) => (option?.value ?? '').toLowerCase().includes(input.toLowerCase())} />
-          </Form.Item>
-          </FieldGroup>
         </Form>
       </Modal>
     </>

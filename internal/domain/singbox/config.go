@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net"
+	"net/netip"
 	"strconv"
 )
 
@@ -145,15 +146,24 @@ func BuildServerConfig(in ServerConfigInput) ([]byte, error) {
 	// general loopback protection. The terminal reject isolates all other
 	// gate traffic from user rules and the global sniff fallback.
 	rules := append([]map[string]any{}, guardRules...)
+	statsPorts := collectStatsPorts(in.StatsController, in.StatsAPI)
+	var preGuardRules, postGuardRules []map[string]any
+	for _, r := range in.Rules {
+		built := buildRouteRule(r)
+		if in.StatsController != "" && rulePrecedesLoopbackGuard(r, statsPorts) {
+			preGuardRules = append(preGuardRules, built)
+		} else {
+			postGuardRules = append(postGuardRules, built)
+		}
+	}
+	rules = append(rules, preGuardRules...)
 	if in.StatsController != "" {
 		rules = append(rules, LoopbackGuardRule())
 	}
 	if needSniff && !hasGlobalSniff {
 		rules = append(rules, map[string]any{"action": "sniff"})
 	}
-	for _, r := range in.Rules {
-		rules = append(rules, buildRouteRule(r))
-	}
+	rules = append(rules, postGuardRules...)
 	final := in.Final
 	if final == "" {
 		final = "direct"
@@ -226,6 +236,60 @@ func statsService(address, secret string) (map[string]any, error) {
 		"type": "api", "tag": StatsServiceTag,
 		"listen": host, "listen_port": port, "secret": secret,
 	}, nil
+}
+
+func collectStatsPorts(addrs ...string) map[int]bool {
+	ports := make(map[int]bool, len(addrs))
+	for _, addr := range addrs {
+		if addr == "" {
+			continue
+		}
+		if _, portText, err := net.SplitHostPort(addr); err == nil {
+			if p, err := strconv.Atoi(portText); err == nil && p > 0 {
+				ports[p] = true
+			}
+		}
+	}
+	return ports
+}
+
+// rulePrecedesLoopbackGuard reports whether a rule must run before the global
+// LoopbackGuardRule: non-terminating resolve/route-options rules and narrow
+// admin-configured local host+port exceptions (excluding stats endpoints).
+func rulePrecedesLoopbackGuard(r RuleInput, statsPorts map[int]bool) bool {
+	act := routeRuleAction(r)
+	if act == "resolve" || act == "route-options" {
+		return true
+	}
+	if act != "route" || len(r.IPCIDR) == 0 || len(r.Port) == 0 {
+		return false
+	}
+	for _, p := range r.Port {
+		if statsPorts[p] {
+			return false
+		}
+	}
+	for _, raw := range r.IPCIDR {
+		prefix, err := netip.ParsePrefix(raw)
+		if err != nil {
+			addr, addrErr := netip.ParseAddr(raw)
+			if addrErr != nil {
+				return false
+			}
+			prefix = netip.PrefixFrom(addr, addr.BitLen())
+		}
+		addr := prefix.Addr().Unmap()
+		if !addr.IsLoopback() && !addr.IsLinkLocalUnicast() {
+			return false
+		}
+		if addr.Is4() && prefix.Bits() < 24 {
+			return false
+		}
+		if addr.Is6() && prefix.Bits() < 64 {
+			return false
+		}
+	}
+	return true
 }
 
 // LoopbackGuardRule rejects proxied connections to the node itself, so proxy

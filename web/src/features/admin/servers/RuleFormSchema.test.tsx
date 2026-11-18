@@ -165,4 +165,40 @@ describe('RuleForm JSON Schema integration', () => {
       strategy: 'prefer_ipv4',
     })
   })
+
+  it('creates an explicit ip_cidr + port -> direct rule in JSON mode even when action is omitted', async () => {
+    render(
+      <RuleForm
+        serverId={1}
+        rule={null}
+        outboundTags={['direct']}
+        inboundTags={['vless-in']}
+        open
+        onClose={vi.fn()}
+        onSaved={vi.fn()}
+      />,
+    )
+
+    fireEvent.click(screen.getByRole('radio', { name: 'JSON' }))
+    const editor = await screen.findByLabelText('rule.json')
+    fireEvent.change(editor, {
+      target: {
+        value: JSON.stringify({
+          ip_cidr: ['127.0.0.1/32'],
+          port: [9928],
+          outbound: 'direct',
+        }),
+      },
+    })
+    fireEvent.click(screen.getByRole('button', { name: '创建' }))
+
+    await waitFor(() => expect(createRule).toHaveBeenCalledOnce())
+    const body = vi.mocked(createRule).mock.calls[0][1]
+    expect(body.outbound).toBe('direct')
+    expect(body.match).toMatchObject({
+      action: 'route',
+      ip_cidr: ['127.0.0.1/32'],
+      port: [9928],
+    })
+  })
 })

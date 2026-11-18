@@ -58,3 +58,56 @@ func TestLegacyLoopbackGuardIsRecognisedAndUpgraded(t *testing.T) {
 		t.Fatal("config without a legacy guard was rewritten")
 	}
 }
+
+func TestBuildServerConfigOrdersResolveAndNarrowLoopbackExceptionsBeforeGuard(t *testing.T) {
+	raw, err := BuildServerConfig(ServerConfigInput{
+		StatsController: "127.0.0.1:29091",
+		StatsAPI:        "127.0.0.1:29092",
+		StatsSecret:     "secret",
+		Rules: []RuleInput{
+			{Action: "resolve", Extra: map[string]any{"strategy": "prefer_ipv4"}},
+			{IPCIDR: []string{"127.0.0.1/32"}, Port: []int{9928}, Outbound: "direct"},
+			// Broad loopback or stats-port exceptions must stay behind LoopbackGuardRule.
+			{IPCIDR: []string{"127.0.0.0/8"}, Port: []int{9928}, Outbound: "direct"},
+			{IPCIDR: []string{"127.0.0.1/32"}, Port: []int{29091}, Outbound: "direct"},
+			{DomainSuffix: []string{"example.com"}, Outbound: "direct"},
+		},
+	})
+	if err != nil {
+		t.Fatalf("BuildServerConfig: %v", err)
+	}
+	var root struct {
+		Route struct {
+			Rules []map[string]any `json:"rules"`
+		} `json:"route"`
+	}
+	if err := json.Unmarshal(raw, &root); err != nil {
+		t.Fatal(err)
+	}
+	// Expected order:
+	// 0: resolve (prefer_ipv4)
+	// 1: 127.0.0.1/32:9928 -> direct
+	// 2: LoopbackGuardRule
+	// 3: auto sniff (because example.com domain_suffix is present)
+	// 4: broad 127.0.0.0/8:9928 (blocked by guard above)
+	// 5: stats port 127.0.0.1/32:29091 (blocked by guard above)
+	// 6: example.com -> direct
+	if len(root.Route.Rules) != 7 {
+		t.Fatalf("expected 7 rules, got %d: %s", len(root.Route.Rules), raw)
+	}
+	if root.Route.Rules[0]["action"] != "resolve" || root.Route.Rules[0]["strategy"] != "prefer_ipv4" {
+		t.Fatalf("rule[0] should be resolve, got %v", root.Route.Rules[0])
+	}
+	if root.Route.Rules[1]["outbound"] != "direct" {
+		t.Fatalf("rule[1] should be 127.0.0.1/32:9928 -> direct, got %v", root.Route.Rules[1])
+	}
+	if !IsLoopbackGuardRule(root.Route.Rules[2]) {
+		t.Fatalf("rule[2] should be LoopbackGuardRule, got %v", root.Route.Rules[2])
+	}
+	if root.Route.Rules[3]["action"] != "sniff" {
+		t.Fatalf("rule[3] should be auto sniff, got %v", root.Route.Rules[3])
+	}
+	if root.Route.Rules[4]["outbound"] != "direct" || root.Route.Rules[5]["outbound"] != "direct" {
+		t.Fatalf("unsafe loopback rules must remain after LoopbackGuardRule: %v", root.Route.Rules[4:6])
+	}
+}

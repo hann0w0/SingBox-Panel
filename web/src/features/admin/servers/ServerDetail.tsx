@@ -8,6 +8,7 @@ import {
   Popconfirm,
   Select,
   Space,
+  Switch,
   Table,
   Typography,
   message,
@@ -42,6 +43,7 @@ import {
   uninstallAgent,
   uninstallSingbox,
   updateAgent,
+  updateRule,
 } from '../../../lib/api'
 import type { ImportSummary, OutboundTest } from '../../../lib/api'
 import type { ServerAuthUser } from '../../../lib/api'
@@ -617,6 +619,27 @@ export default function ServerDetail() {
     })
   }
 
+  const onToggleRule = async (r: RouteRule, enabled: boolean) => {
+    const targetSID = sid
+    const key = `rule-toggle-${r.id}`
+    if (currentSIDRef.current !== targetSID || busy === key) return
+    setBusy(key)
+    try {
+      const saved = await applyWithToast(key, () =>
+        updateRule(targetSID, r.id, {
+          match: r.match || {},
+          outbound: r.outbound,
+          enabled,
+          remark: r.remark,
+          sort: r.sort,
+        }),
+      )
+      if (saved && currentSIDRef.current === targetSID) void loadCurrentServer()
+    } finally {
+      if (currentSIDRef.current === targetSID) setBusy('')
+    }
+  }
+
   const onDeleteRule = (r: RouteRule) => {
     const targetSID = sid
     return Modal.confirm({
@@ -813,11 +836,13 @@ export default function ServerDetail() {
     />
   )
 
+  const userLabelByAuth = new Map(routeUsers.map((u) => [u.auth_user, u.name]))
   const matchChips = (r: RouteRule) => {
     const m = r.match || {}
+    const authUsers = m.auth_user?.map((v) => userLabelByAuth.get(v) || v)
     const groups: [string, (string | number)[] | undefined][] = [
-      [m.rule_set_ip_cidr_match_source ? '来源 IP 规则集' : '规则集', m.rule_set], ['入站', m.inbound], ['域名', m.domain], ['后缀', m.domain_suffix],
-      ['用户', m.auth_user], ['关键词', m.domain_keyword], ['正则', m.domain_regex], ['目标 IP', m.ip_cidr], ['来源 IP', m.source_ip_cidr],
+      [m.rule_set_ip_cidr_match_source ? '来源规则集' : '规则集', m.rule_set], ['入站', m.inbound], ['域名', m.domain], ['后缀', m.domain_suffix],
+      ['用户', authUsers], ['关键词', m.domain_keyword], ['正则', m.domain_regex], ['目标 IP', m.ip_cidr], ['来源 IP', m.source_ip_cidr],
       ['端口', m.port], ['端口范围', m.port_range], ['源端口', m.source_port], ['源端口范围', m.source_port_range],
       ['协议', m.protocol], ['客户端', m.client], ['网络', m.network ? [String(m.network).toUpperCase()] : undefined],
       ['进程名', m.process_name], ['进程路径', m.process_path], ['包名', m.package_name],
@@ -825,11 +850,14 @@ export default function ServerDetail() {
       ['DNS', m.server ? [String(m.server)] : undefined],
       ['覆盖目标', m.override_address ? [`${m.override_address}${m.override_port ? `:${m.override_port}` : ''}`] : (m.override_port ? [`:${m.override_port}`] : undefined)],
     ]
-    const chips = groups.flatMap(([label, values]) => (values || []).map((value) => (
-      <span key={`${label}-${value}`} className="sd-chip"><span>{label}</span>{String(value)}</span>
-    )))
-    if (m.ip_is_private) chips.push(<span key="ip_is_private" className="sd-chip"><span>目标</span>私有 IP</span>)
-    if (m.source_ip_is_private) chips.push(<span key="source_ip_is_private" className="sd-chip"><span>来源</span>私有 IP</span>)
+    const chips = groups.flatMap(([label, values]) => {
+      const items = (values || []).map(String).filter(Boolean)
+      if (!items.length) return []
+      const preview = items.length > 3 ? `${items.slice(0, 3).join(', ')} +${items.length - 3}` : items.join(', ')
+      return [<span key={label} className="sd-chip" title={items.join(', ')}><span>{label}</span>{preview}</span>]
+    })
+    if (m.ip_is_private) chips.push(<span key="ip_is_private" className="sd-chip"><span>目标</span>内网 IP</span>)
+    if (m.source_ip_is_private) chips.push(<span key="source_ip_is_private" className="sd-chip"><span>来源</span>内网 IP</span>)
     if (m.invert) chips.push(<span key="invert" className="sd-chip"><span>逻辑</span>取反</span>)
     const handledKeys = new Set([
       'action', 'method', 'sniffer', 'rule_set', 'rule_set_ip_cidr_match_source', 'inbound', 'domain', 'domain_suffix',
@@ -848,12 +876,14 @@ export default function ServerDetail() {
   const ruleTarget = (r: RouteRule) => {
     const v = r.outbound
     const act = (r.match?.action as string) || (v === 'block' ? 'reject' : v)
-    if (act === 'reject' || v === 'block' || v === 'reject') return r.match?.method === 'drop' ? '静默丢弃' : '快速拒绝'
-    if (act === 'sniff' || v === 'sniff') return 'sniff'
-    if (act === 'hijack-dns' || v === 'hijack-dns') return 'hijack-dns'
-    if (act === 'resolve' || v === 'resolve') return 'resolve'
-    if (act === 'route-options' || v === 'route-options') return 'route-options'
-    return v
+    if (act === 'reject' || v === 'block' || v === 'reject') {
+      return <span className="sd-rule-target"><span className="sd-rule-verb">拒绝</span><span>{r.match?.method === 'drop' ? '静默丢弃' : '快速拒绝'}</span></span>
+    }
+    if (act === 'sniff' || v === 'sniff') return '协议嗅探'
+    if (act === 'hijack-dns' || v === 'hijack-dns') return 'DNS 劫持'
+    if (act === 'resolve' || v === 'resolve') return 'DNS 解析'
+    if (act === 'route-options' || v === 'route-options') return '路由选项'
+    return <span className="sd-rule-target"><span className="sd-rule-verb">转发</span><span className="mono">{v}</span></span>
   }
 
   const rulesTable = (
@@ -886,37 +916,52 @@ export default function ServerDetail() {
         columns={[
           {
             title: '',
-            width: 44,
-            align: 'center',
+            width: 72,
             render: (_, __, index) => (
-              <button
-                type="button"
-                className="rule-drag-handle sd-drag"
-                aria-label={`调整第 ${index + 1} 条规则顺序`}
-                aria-describedby="rule-sort-help"
-                onKeyDown={(event) => {
-                  if (event.key === 'ArrowUp' || event.key === 'ArrowDown') {
-                    event.preventDefault()
-                    commitRuleMove(index, index + (event.key === 'ArrowUp' ? -1 : 1))
-                  }
-                }}
-                onPointerDown={(event) => startRulePointerDrag(event, index)}
-                onPointerMove={moveRulePointerDrag}
-                onPointerUp={finishRulePointerDrag}
-                onPointerCancel={cancelRulePointerDrag}
-              >
-                <ChevronsUpDown />
-              </button>
+              <span className="sd-rule-order">
+                <button
+                  type="button"
+                  className="rule-drag-handle sd-drag"
+                  aria-label={`调整第 ${index + 1} 条规则顺序`}
+                  aria-describedby="rule-sort-help"
+                  onKeyDown={(event) => {
+                    if (event.key === 'ArrowUp' || event.key === 'ArrowDown') {
+                      event.preventDefault()
+                      commitRuleMove(index, index + (event.key === 'ArrowUp' ? -1 : 1))
+                    }
+                  }}
+                  onPointerDown={(event) => startRulePointerDrag(event, index)}
+                  onPointerMove={moveRulePointerDrag}
+                  onPointerUp={finishRulePointerDrag}
+                  onPointerCancel={cancelRulePointerDrag}
+                >
+                  <ChevronsUpDown />
+                </button>
+                <span className="sd-rule-idx">#{index + 1}</span>
+              </span>
             ),
           },
           { title: '匹配', render: (_, r: RouteRule) => <span className="sd-chips">{matchChips(r)}</span> },
-          { title: '出站', width: 160, render: (_, r: RouteRule) => <span className="mono">{ruleTarget(r)}</span> },
-          { title: '状态', dataIndex: 'enabled', width: 90, render: (v: boolean) => <Status tone={v ? 'ok' : 'off'}>{v ? '启用' : '停用'}</Status> },
+          { title: '执行', width: 176, render: (_, r: RouteRule) => ruleTarget(r) },
+          {
+            title: '启用',
+            dataIndex: 'enabled',
+            width: 72,
+            render: (v: boolean, r: RouteRule) => (
+              <Switch
+                size="small"
+                checked={v}
+                disabled={busy === `rule-toggle-${r.id}`}
+                aria-label={`启用规则 ${r.id}`}
+                onChange={(checked) => void onToggleRule(r, checked)}
+              />
+            ),
+          },
           { title: '', width: 88, align: 'right', render: (_, r: RouteRule) => rowActions(() => { setRuleEditing(r); setRuleOpen(true) }, () => onDeleteRule(r), `规则 ${r.id}`) },
         ]}
       />
       <div className="sd-final">
-        <span>其余流量</span>
+        <span>其余流量（兜底）</span>
         <Select
           size="small"
           aria-label="兜底出站"

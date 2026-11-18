@@ -1,5 +1,6 @@
 import { useEffect, useId, useLayoutEffect, useMemo, useRef, useState } from 'react'
-import { Alert, Button, Checkbox, Form, Input, InputNumber, Modal, Segmented, Select, Space, Switch } from '../../../components/kit'
+import { Plus, X } from 'lucide-react'
+import { Alert, Button, Form, Input, InputNumber, Modal, Segmented, Select, Space, Switch } from '../../../components/kit'
 import {
   createOutbound,
   createRule,
@@ -13,10 +14,8 @@ import { randomBase64, randomHex, randomUUID, SHADOWSOCKS_METHODS, ss2022KeyLen 
 import { buildOutboundBody, TLS_REQUIRED_OUT, TRANSPORT_OUT, transportHost } from '../../../lib/outboundForm'
 import { FormGroup, scrollToFirstError } from './InboundForm'
 import '../../../styles/forms.css'
-import { MODAL_MD } from '../../../components/kit/modal'
 import { OutboundImport, type NodeImportMode } from './OutboundImport'
 import { Pills } from '../../../components/kit/Page'
-import { Field, FieldGroup, FieldLabel } from '@/components/ui/field'
 import { EditorModeToggle } from '../../../components/EditorModeToggle'
 import { JsonCodeEditor } from '../../../components/JsonCodeEditor'
 import { SchemaFieldList } from '../../../components/SchemaFormFields'
@@ -694,14 +693,14 @@ function splitLines(s: string | undefined): string[] {
 }
 const joinLines = (a?: string[]) => (a || []).join(', ')
 
-// 动作类型选项
+// 动作类型选项（官方 sing-box 参数 + 中文释义）
 const ACTION_OPTIONS = [
-  { value: 'route', label: '分流' },
-  { value: 'reject', label: '拒绝' },
-  { value: 'sniff', label: '嗅探' },
-  { value: 'hijack-dns', label: 'DNS 劫持' },
-  { value: 'resolve', label: 'DNS 解析' },
-  { value: 'route-options', label: '路由选项' },
+  { value: 'route', label: 'route · 路由分流' },
+  { value: 'reject', label: 'reject · 拒绝连接' },
+  { value: 'sniff', label: 'sniff · 协议嗅探' },
+  { value: 'hijack-dns', label: 'hijack-dns · 劫持 DNS' },
+  { value: 'resolve', label: 'resolve · 解析域名' },
+  { value: 'route-options', label: 'route-options · 路由选项' },
 ]
 
 const STANDARD_RULE_MATCH_KEYS = new Set([
@@ -714,13 +713,17 @@ const STANDARD_RULE_MATCH_KEYS = new Set([
   'domain',
   'domain_suffix',
   'domain_keyword',
+  'domain_regex',
   'ip_cidr',
   'source_ip_cidr',
+  'ip_is_private',
   'port',
+  'port_range',
   'protocol',
   'network',
   'sniffer',
   'method',
+  'server',
 ])
 
 function cloneMatchExtra(m: Record<string, unknown> | undefined): Record<string, unknown> {
@@ -744,6 +747,93 @@ function inferRuleAction(m: Record<string, unknown>, outbound?: string): string 
   return 'route'
 }
 
+type MatchField =
+  | 'domain_suffix'
+  | 'domain'
+  | 'domain_keyword'
+  | 'domain_regex'
+  | 'rule_set'
+  | 'ip_cidr'
+  | 'source_ip_cidr'
+  | 'port'
+  | 'port_range'
+  | 'ip_is_private'
+  | 'inbound'
+  | 'auth_user'
+  | 'protocol'
+  | 'network'
+
+type ConditionRow = {
+  id: string
+  field: MatchField
+  text: string
+  list: string[]
+  single: string
+  ruleSetSource: boolean
+}
+
+const MATCH_FIELD_OPTIONS: { value: MatchField; label: string }[] = [
+  { value: 'domain_suffix', label: 'domain_suffix · 域名后缀' },
+  { value: 'domain', label: 'domain · 完整域名' },
+  { value: 'domain_keyword', label: 'domain_keyword · 域名关键词' },
+  { value: 'domain_regex', label: 'domain_regex · 域名正则' },
+  { value: 'rule_set', label: 'rule_set · 规则集' },
+  { value: 'ip_cidr', label: 'ip_cidr · 目标 IP / CIDR' },
+  { value: 'source_ip_cidr', label: 'source_ip_cidr · 来源 IP / CIDR' },
+  { value: 'port', label: 'port · 目标端口' },
+  { value: 'port_range', label: 'port_range · 目标端口范围' },
+  { value: 'ip_is_private', label: 'ip_is_private · 目标私有 IP' },
+  { value: 'inbound', label: 'inbound · 入站标签' },
+  { value: 'auth_user', label: 'auth_user · 认证用户' },
+  { value: 'protocol', label: 'protocol · 嗅探协议' },
+  { value: 'network', label: 'network · 传输层网络' },
+]
+
+function emptyConditionRow(field: MatchField, id: string): ConditionRow {
+  return { id, field, text: '', list: [], single: '', ruleSetSource: false }
+}
+
+function matchToConditionRows(match: RuleMatch, act: string, nextId: () => string): ConditionRow[] {
+  const rows: ConditionRow[] = []
+  if (match.domain_suffix?.length) rows.push({ ...emptyConditionRow('domain_suffix', nextId()), text: joinLines(match.domain_suffix) })
+  if (match.domain?.length) rows.push({ ...emptyConditionRow('domain', nextId()), text: joinLines(match.domain) })
+  if (match.domain_keyword?.length) rows.push({ ...emptyConditionRow('domain_keyword', nextId()), text: joinLines(match.domain_keyword) })
+  if (match.domain_regex?.length) rows.push({ ...emptyConditionRow('domain_regex', nextId()), text: joinLines(match.domain_regex) })
+  if (match.rule_set?.length) rows.push({ ...emptyConditionRow('rule_set', nextId()), list: [...match.rule_set], ruleSetSource: !!match.rule_set_ip_cidr_match_source })
+  if (match.ip_cidr?.length) rows.push({ ...emptyConditionRow('ip_cidr', nextId()), text: joinLines(match.ip_cidr) })
+  if (match.source_ip_cidr?.length) rows.push({ ...emptyConditionRow('source_ip_cidr', nextId()), text: joinLines(match.source_ip_cidr) })
+  if (match.port?.length) rows.push({ ...emptyConditionRow('port', nextId()), text: joinLines(match.port.map(String)) })
+  if (match.port_range?.length) rows.push({ ...emptyConditionRow('port_range', nextId()), text: joinLines(match.port_range) })
+  if (match.ip_is_private) rows.push(emptyConditionRow('ip_is_private', nextId()))
+  if ((act === 'route' || act === 'reject' || act === 'route-options') && match.inbound?.length) {
+    rows.push({ ...emptyConditionRow('inbound', nextId()), list: [...match.inbound] })
+  }
+  if (match.auth_user?.length) rows.push({ ...emptyConditionRow('auth_user', nextId()), list: [...match.auth_user] })
+  if (act !== 'sniff' && act !== 'hijack-dns' && match.protocol?.length) {
+    rows.push({ ...emptyConditionRow('protocol', nextId()), list: [...match.protocol] })
+  }
+  if (match.network) rows.push({ ...emptyConditionRow('network', nextId()), single: String(match.network) })
+  return rows
+}
+
+function validateConditionRows(rows: ConditionRow[]): string | null {
+  for (const row of rows) {
+    if (row.field === 'port') {
+      const ports = splitLines(row.text)
+      if (ports.some((p) => !/^\d+$/.test(p) || Number(p) < 1 || Number(p) > 65535)) {
+        return '目标端口必须是 1-65535 的整数'
+      }
+    }
+    if (row.field === 'port_range') {
+      const ranges = splitLines(row.text)
+      if (ranges.some((r) => !/^\d+:\d+$/.test(r) && !/^\d+$/.test(r))) {
+        return '端口范围格式应为 start:end，例如 1000:2000'
+      }
+    }
+  }
+  return null
+}
+
 function ruleToFormValues(m: Record<string, unknown>, outbound?: string) {
   const act = inferRuleAction(m, outbound)
   const match = m as RuleMatch
@@ -751,66 +841,63 @@ function ruleToFormValues(m: Record<string, unknown>, outbound?: string) {
     action: act,
     outbound: act === 'route' ? (outbound || undefined) : undefined,
     sniffer: match.sniffer || (act === 'sniff' ? match.protocol : undefined) || [],
-    protocol: act === 'hijack-dns' ? (match.protocol?.length ? match.protocol : ['dns']) : (act !== 'sniff' ? (match.protocol || []) : []),
     method: (match.method as string) || 'default',
-    match_fields: activeMatchFields(match),
-    auth_user: match.auth_user || [],
-    rule_set: match.rule_set || [],
-    rule_set_ip_direction: match.rule_set_ip_cidr_match_source ? 'source' : 'target',
     inbound: match.inbound || [],
-    domain: joinLines(match.domain),
-    domain_suffix: joinLines(match.domain_suffix),
-    domain_keyword: joinLines(match.domain_keyword),
-    ip_cidr: joinLines(match.ip_cidr),
-    source_ip_cidr: joinLines(match.source_ip_cidr),
-    port: joinLines(match.port?.map(String)),
-    network: match.network || '',
+    server: match.server || '',
   }
 }
 
 function buildRulePayload(
   v: Record<string, any>,
+  rows: ConditionRow[],
   extraMatch: Record<string, unknown>,
   schemaProps: Record<string, JSONSchema>,
 ): { match: RuleMatch; outbound: string } {
   const act = String(v.action || 'route') as NonNullable<RuleMatch['action']>
   const match: RuleMatch = { action: act }
-  const selectedFields = new Set<MatchField>(v.match_fields || [])
-  if (selectedFields.has('auth_user') && v.auth_user?.length) match.auth_user = v.auth_user
-  if ((act === 'sniff' || act === 'hijack-dns' || act === 'resolve' || act === 'route-options' || selectedFields.has('inbound')) && v.inbound?.length) {
+  if ((act === 'sniff' || act === 'hijack-dns' || act === 'resolve') && v.inbound?.length) {
     match.inbound = v.inbound
   }
+  if (act === 'resolve' && typeof v.server === 'string' && v.server.trim()) {
+    match.server = v.server.trim()
+  }
   if (act === 'route' || act === 'reject' || act === 'route-options') {
-    if (selectedFields.has('rule_set') && v.rule_set?.length) {
-      match.rule_set = v.rule_set
-      if (v.rule_set_ip_direction === 'source') match.rule_set_ip_cidr_match_source = true
+    for (const row of rows) {
+      if (row.field === 'auth_user' && row.list.length) match.auth_user = row.list
+      else if (row.field === 'inbound' && row.list.length) match.inbound = row.list
+      else if (row.field === 'rule_set' && row.list.length) {
+        match.rule_set = row.list
+        if (row.ruleSetSource) match.rule_set_ip_cidr_match_source = true
+      }
+      else if (row.field === 'protocol' && row.list.length) match.protocol = row.list
+      else if (row.field === 'network' && row.single) match.network = row.single
+      else if (row.field === 'ip_is_private') match.ip_is_private = true
+      else if (row.field === 'domain') {
+        const items = splitLines(row.text)
+        if (items.length) match.domain = items
+      } else if (row.field === 'domain_suffix') {
+        const items = splitLines(row.text)
+        if (items.length) match.domain_suffix = items
+      } else if (row.field === 'domain_keyword') {
+        const items = splitLines(row.text)
+        if (items.length) match.domain_keyword = items
+      } else if (row.field === 'domain_regex') {
+        const items = splitLines(row.text)
+        if (items.length) match.domain_regex = items
+      } else if (row.field === 'ip_cidr') {
+        const items = splitLines(row.text)
+        if (items.length) match.ip_cidr = items
+      } else if (row.field === 'source_ip_cidr') {
+        const items = splitLines(row.text)
+        if (items.length) match.source_ip_cidr = items
+      } else if (row.field === 'port') {
+        const ports = splitLines(row.text).map((x) => Number(x))
+        if (ports.length) match.port = ports
+      } else if (row.field === 'port_range') {
+        const items = splitLines(row.text)
+        if (items.length) match.port_range = items
+      }
     }
-    if (selectedFields.has('protocol') && v.protocol?.length) match.protocol = v.protocol
-    if (selectedFields.has('domain')) {
-      const domains = splitLines(v.domain)
-      if (domains.length) match.domain = domains
-    }
-    if (selectedFields.has('domain_suffix')) {
-      const domains = splitLines(v.domain_suffix)
-      if (domains.length) match.domain_suffix = domains
-    }
-    if (selectedFields.has('domain_keyword')) {
-      const keywords = splitLines(v.domain_keyword)
-      if (keywords.length) match.domain_keyword = keywords
-    }
-    if (selectedFields.has('ip_cidr')) {
-      const cidrs = splitLines(v.ip_cidr)
-      if (cidrs.length) match.ip_cidr = cidrs
-    }
-    if (selectedFields.has('source_ip_cidr')) {
-      const cidrs = splitLines(v.source_ip_cidr)
-      if (cidrs.length) match.source_ip_cidr = cidrs
-    }
-    if (selectedFields.has('port')) {
-      const ports = splitLines(v.port).map((x) => Number(x))
-      if (ports.length) match.port = ports
-    }
-    if (selectedFields.has('network') && v.network) match.network = v.network
   }
 
   for (const [k, val] of Object.entries(extraMatch)) {
@@ -873,49 +960,6 @@ function nativeJsonToRulePayload(parsed: Record<string, unknown>): { match: Rule
   return { match, outbound: targetOutbound }
 }
 
-type MatchField =
-  | 'auth_user'
-  | 'inbound'
-  | 'rule_set'
-  | 'domain'
-  | 'domain_suffix'
-  | 'domain_keyword'
-  | 'ip_cidr'
-  | 'source_ip_cidr'
-  | 'port'
-  | 'protocol'
-  | 'network'
-
-const MATCH_FIELD_OPTIONS: { value: MatchField; label: string }[] = [
-  { value: 'auth_user', label: '用户' },
-  { value: 'inbound', label: '入站来源' },
-  { value: 'rule_set', label: '规则集' },
-  { value: 'domain', label: '完整域名' },
-  { value: 'domain_suffix', label: '域名后缀' },
-  { value: 'domain_keyword', label: '域名关键词' },
-  { value: 'ip_cidr', label: '目标 IP / CIDR' },
-  { value: 'source_ip_cidr', label: '来源 IP / CIDR' },
-  { value: 'port', label: '目标端口' },
-  { value: 'protocol', label: '应用协议' },
-  { value: 'network', label: '网络类型' },
-]
-
-function activeMatchFields(match: RuleMatch): MatchField[] {
-  const fields: MatchField[] = []
-  if (match.auth_user?.length) fields.push('auth_user')
-  if (match.inbound?.length) fields.push('inbound')
-  if (match.rule_set?.length) fields.push('rule_set')
-  if (match.domain?.length) fields.push('domain')
-  if (match.domain_suffix?.length) fields.push('domain_suffix')
-  if (match.domain_keyword?.length) fields.push('domain_keyword')
-  if (match.ip_cidr?.length) fields.push('ip_cidr')
-  if (match.source_ip_cidr?.length) fields.push('source_ip_cidr')
-  if (match.port?.length) fields.push('port')
-  if (match.protocol?.length) fields.push('protocol')
-  if (match.network) fields.push('network')
-  return fields
-}
-
 export function RuleForm({
   serverId,
   rule,
@@ -941,15 +985,18 @@ export function RuleForm({
   const [submitting, setSubmitting] = useState(false)
   const [ruleSets, setRuleSets] = useState<RuleSet[]>(assignedRuleSets ?? [])
   const [editorMode, setEditorMode] = useState<'form' | 'json'>('form')
+  const [conditions, setConditions] = useState<ConditionRow[]>([])
+  const [conditionError, setConditionError] = useState('')
   const [extraMatch, setExtraMatch] = useState<Record<string, unknown>>({})
   const [jsonText, setJsonText] = useState('')
   const [jsonError, setJsonError] = useState('')
   const schemas = useSingboxSchemas(open)
   const submitLock = useRef(false)
   const submitSessionRef = useRef(0)
+  const rowSeqRef = useRef(0)
+  const nextRowId = () => `cond-${++rowSeqRef.current}`
   const action = Form.useWatch('action', form) || 'route'
-  const matchFields = (Form.useWatch('match_fields', form) || []) as MatchField[]
-  const showMatchField = (field: MatchField) => matchFields.includes(field)
+  const showConditions = action === 'route' || action === 'reject' || action === 'route-options'
 
   const schemaProps = useMemo(() => schemas.route_rule.properties ?? {}, [schemas.route_rule])
   const advancedSchemaProps = useMemo(() => {
@@ -960,10 +1007,29 @@ export function RuleForm({
       if (actions && !actions.includes(action)) continue
       candidates[k] = v
     }
-    const commonKeys = new Set(['domain_regex', 'port_range', 'ip_is_private', 'invert', 'server', 'strategy'])
-    return pickPopulatedSchemaProps(candidates, extraMatch, commonKeys)
+    const alwaysInclude = action === 'resolve' ? new Set(['strategy']) : undefined
+    return pickPopulatedSchemaProps(candidates, extraMatch, alwaysInclude)
   }, [schemaProps, action, extraMatch])
   const hasAdvancedSchemaProps = Object.keys(advancedSchemaProps).length > 0
+
+  const usedFields = useMemo(() => new Set(conditions.map((c) => c.field)), [conditions])
+  const nextAvailableField = MATCH_FIELD_OPTIONS.find((opt) => !usedFields.has(opt.value))?.value
+
+  const addConditionRow = () => {
+    if (!nextAvailableField) return
+    setConditionError('')
+    setConditions((prev) => [...prev, emptyConditionRow(nextAvailableField, nextRowId())])
+  }
+
+  const updateConditionRow = (id: string, patch: Partial<ConditionRow>) => {
+    setConditionError('')
+    setConditions((prev) => prev.map((row) => (row.id === id ? { ...row, ...patch } : row)))
+  }
+
+  const removeConditionRow = (id: string) => {
+    setConditionError('')
+    setConditions((prev) => prev.filter((row) => row.id !== id))
+  }
 
   useLayoutEffect(() => {
     submitSessionRef.current += 1
@@ -986,13 +1052,17 @@ export function RuleForm({
     form.resetFields()
     setEditorMode('form')
     setJsonError('')
+    setConditionError('')
     if (rule) {
       const m = (rule.match || {}) as Record<string, unknown>
+      const act = inferRuleAction(m, rule.outbound)
       form.setFieldsValue(ruleToFormValues(m, rule.outbound))
+      setConditions(matchToConditionRows(m as RuleMatch, act, nextRowId))
       setExtraMatch(cloneMatchExtra(m))
       setJsonText(JSON.stringify(ruleToNativeJson(rule.match || {}, rule.outbound), null, 2))
     } else {
       form.setFieldsValue(ruleToFormValues({}, undefined))
+      setConditions([emptyConditionRow('domain_suffix', nextRowId())])
       setExtraMatch({})
       setJsonText('')
     }
@@ -1002,9 +1072,10 @@ export function RuleForm({
     if (nextMode !== 'form' && nextMode !== 'json') return
     if (nextMode === editorMode) return
     setJsonError('')
+    setConditionError('')
     if (nextMode === 'json') {
       const v = form.getFieldsValue()
-      const { match, outbound } = buildRulePayload(v, extraMatch, schemaProps)
+      const { match, outbound } = buildRulePayload(v, conditions, extraMatch, schemaProps)
       setJsonText(JSON.stringify(ruleToNativeJson(match, outbound), null, 2))
       setEditorMode('json')
       return
@@ -1021,7 +1092,9 @@ export function RuleForm({
         return
       }
       const outboundStr = typeof parsed.outbound === 'string' ? parsed.outbound : rule?.outbound
+      const act = inferRuleAction(parsed, outboundStr)
       form.setFieldsValue(ruleToFormValues(parsed, outboundStr))
+      setConditions(matchToConditionRows(parsed as RuleMatch, act, nextRowId))
       setExtraMatch(cloneMatchExtra(parsed))
       setEditorMode('form')
     } catch (err) {
@@ -1059,12 +1132,20 @@ export function RuleForm({
         match = built.match
         targetOutbound = built.outbound
       } else {
+        setConditionError('')
         const v = await form.validateFields().catch((err) => {
           scrollToFirstError(form, err)
           throw err
         })
+        if (showConditions) {
+          const condErr = validateConditionRows(conditions)
+          if (condErr) {
+            setConditionError(condErr)
+            return
+          }
+        }
         if (session !== submitSessionRef.current) return
-        const built = buildRulePayload(v, extraMatch, schemaProps)
+        const built = buildRulePayload(v, conditions, extraMatch, schemaProps)
         match = built.match
         targetOutbound = built.outbound
       }
@@ -1086,19 +1167,133 @@ export function RuleForm({
     }
   }
 
+  const renderConditionValue = (row: ConditionRow) => {
+    if (row.field === 'auth_user') {
+      return (
+        <Select
+          mode="multiple"
+          allowClear
+          aria-label="用户"
+          value={row.list}
+          onChange={(list: string[]) => updateConditionRow(row.id, { list })}
+          options={users.map((user) => ({ value: user.auth_user, label: user.name }))}
+        />
+      )
+    }
+    if (row.field === 'inbound') {
+      return (
+        <Select
+          mode="multiple"
+          allowClear
+          aria-label="入站来源"
+          value={row.list}
+          onChange={(list: string[]) => updateConditionRow(row.id, { list })}
+          options={inboundTags.map((t) => ({ value: t, label: t }))}
+        />
+      )
+    }
+    if (row.field === 'rule_set') {
+      return (
+        <div className="space-y-1.5">
+          <Select
+            mode="multiple"
+            allowClear
+            aria-label="规则集"
+            value={row.list}
+            onChange={(list: string[]) => updateConditionRow(row.id, { list })}
+            options={(ruleSets || []).map((rs) => ({ label: rs.tag, value: rs.tag }))}
+          />
+          <div className="flex items-center justify-between gap-2 pt-0.5">
+            <span className="text-xs text-muted-foreground">规则集 IP 方向</span>
+            <Segmented
+              aria-label="规则集 IP 匹配方向"
+              value={row.ruleSetSource ? 'source' : 'target'}
+              onChange={(val) => updateConditionRow(row.id, { ruleSetSource: val === 'source' })}
+              options={[
+                { value: 'target', label: '目标 IP' },
+                { value: 'source', label: '来源 IP' },
+              ]}
+            />
+          </div>
+        </div>
+      )
+    }
+    if (row.field === 'protocol') {
+      return (
+        <Select
+          mode="tags"
+          allowClear
+          aria-label="应用协议"
+          value={row.list}
+          onChange={(list: string[]) => updateConditionRow(row.id, { list })}
+          options={[
+            { value: 'dns', label: 'DNS' },
+            { value: 'http', label: 'HTTP' },
+            { value: 'tls', label: 'TLS' },
+            { value: 'quic', label: 'QUIC' },
+            { value: 'bittorrent', label: 'BitTorrent' },
+            { value: 'stun', label: 'STUN' },
+          ]}
+        />
+      )
+    }
+    if (row.field === 'network') {
+      return (
+        <Select
+          allowClear
+          aria-label="网络类型"
+          value={row.single}
+          onChange={(single: string) => updateConditionRow(row.id, { single: single || '' })}
+          options={[
+            { value: 'tcp', label: 'TCP' },
+            { value: 'udp', label: 'UDP' },
+            { value: 'icmp', label: 'ICMP' },
+          ]}
+        />
+      )
+    }
+    if (row.field === 'ip_is_private') {
+      return (
+        <div className="flex h-9 items-center rounded-[7px] border border-[var(--inbound-line-strong)] bg-[var(--inbound-field)] px-3 text-[13px] text-muted-foreground">
+          true · 匹配私有 / 局域网 IP
+        </div>
+      )
+    }
+    const label = MATCH_FIELD_OPTIONS.find((opt) => opt.value === row.field)?.label || row.field
+    const placeholderMap: Partial<Record<MatchField, string>> = {
+      domain_suffix: 'openai.com, anthropic.com',
+      domain: 'api.openai.com',
+      domain_keyword: 'google',
+      domain_regex: '^api\\..*',
+      ip_cidr: '10.0.0.0/8',
+      source_ip_cidr: '192.168.1.0/24',
+      port: '80, 443',
+      port_range: '1000:2000',
+    }
+    return (
+      <Input
+        aria-label={label}
+        value={row.text}
+        placeholder={placeholderMap[row.field]}
+        onChange={(e) => updateConditionRow(row.id, { text: e.target.value })}
+        className="mono"
+      />
+    )
+  }
+
   return (
     <Modal
-      className="fm-modal"
-      title={rule ? '编辑路由规则' : '新增路由规则'}
+      className="fm-modal inbound-compact"
+      title={<span className="inbound-compact-heading">{rule ? '编辑路由规则' : '新增路由规则'}</span>}
       open={open}
       onOk={submit}
       onCancel={onClose}
       confirmLoading={submitting}
       okText={rule ? '保存' : '创建'}
       cancelText="取消"
-      width={MODAL_MD}
+      width={680}
     >
-      <fieldset disabled={submitting} aria-busy={submitting} className="min-w-0 border-0 p-0 m-0">
+      <fieldset disabled={submitting} aria-busy={submitting} className="inbound-compact-fieldset">
       <div className="mb-4 flex items-center justify-between gap-3">
         <EditorModeToggle
           ariaLabel="规则编辑模式"
@@ -1121,18 +1316,16 @@ export function RuleForm({
           />
         </div>
       ) : (
-      <Form form={form} layout="vertical" fieldLayout className="fm-form">
-        <FieldGroup className="gap-5">
-          <Field>
-            <FieldLabel htmlFor="rule-action">动作</FieldLabel>
-            <Form.Item name="action" noStyle rules={[{ required: true, message: '请选择规则动作' }]}>
-              <Segmented block options={ACTION_OPTIONS} className="fm-actions" aria-label="规则动作" />
-            </Form.Item>
-          </Field>
+      <Form form={form} layout="vertical" className="fm-form inbound-compact-form">
+        <FormGroup title="基本" panel="inbound">
+          <Form.Item name="action" label="动作" rules={[{ required: true, message: '请选择规则动作' }]}>
+            <Select aria-label="规则动作" options={ACTION_OPTIONS} />
+          </Form.Item>
           {action === 'route' && (
             <Form.Item name="outbound" label="目标出站" rules={[{ required: true, message: '请选择目标出站' }]}>
               <Select
                 allowClear
+                aria-label="目标出站"
                 options={[
                   { value: 'direct', label: 'direct' },
                   ...outboundTags.filter((t) => t !== 'direct').map((t) => ({ value: t, label: t })),
@@ -1141,185 +1334,112 @@ export function RuleForm({
             </Form.Item>
           )}
           {action === 'reject' && (
-            <Form.Item name="method" label="拒绝方式" className="fm-full">
+            <Form.Item name="method" label="拒绝方式">
               <Select
+                aria-label="拒绝方式"
                 options={[
-                  { value: 'default', label: '快速拒绝' },
-                  { value: 'drop', label: '静默丢弃' },
+                  { value: 'default', label: 'default · 拒绝响应' },
+                  { value: 'drop', label: 'drop · 静默丢弃' },
                 ]}
               />
             </Form.Item>
           )}
           {action === 'sniff' && (
-            <>
-              <Form.Item name="sniffer" label="嗅探协议">
-                <Select
-                  mode="multiple"
-                  allowClear
-                  options={[
-                    { value: 'tls', label: 'TLS' },
-                    { value: 'http', label: 'HTTP' },
-                    { value: 'quic', label: 'QUIC' },
-                    { value: 'dns', label: 'DNS' },
-                  ]}
-                />
-              </Form.Item>
-              <Form.Item name="inbound" label="限定入站">
-                <Select
-                  mode="multiple"
-                  allowClear
-                  options={inboundTags.map((t) => ({ value: t, label: t }))}
-                />
-              </Form.Item>
-            </>
+            <Form.Item name="sniffer" label="嗅探协议">
+              <Select
+                mode="multiple"
+                allowClear
+                aria-label="嗅探协议"
+                options={[
+                  { value: 'tls', label: 'TLS' },
+                  { value: 'http', label: 'HTTP' },
+                  { value: 'quic', label: 'QUIC' },
+                  { value: 'dns', label: 'DNS' },
+                ]}
+              />
+            </Form.Item>
           )}
-          {(action === 'hijack-dns' || action === 'resolve' || action === 'route-options') && (
+          {action === 'resolve' && (
+            <Form.Item name="server" label="DNS 服务器">
+              <Input aria-label="DNS 服务器" className="mono" />
+            </Form.Item>
+          )}
+          {(action === 'sniff' || action === 'hijack-dns' || action === 'resolve') && (
             <Form.Item name="inbound" label="限定入站" className="fm-full">
               <Select
                 mode="multiple"
                 allowClear
+                aria-label="限定入站"
                 options={inboundTags.map((t) => ({ value: t, label: t }))}
               />
             </Form.Item>
           )}
-        </FieldGroup>
+        </FormGroup>
 
-        {(action === 'route' || action === 'reject' || action === 'route-options') && (
-          <FieldGroup className="gap-5 mt-6">
-            <Field>
-              <div className="flex items-baseline justify-between gap-3">
-                <FieldLabel>匹配条件</FieldLabel>
-                {matchFields.length > 0 && (
-                  <span className="text-sm text-muted-foreground">已选 {matchFields.length} 项</span>
-                )}
-              </div>
-              <Form.Item name="match_fields" noStyle>
-                <Checkbox.Group className="fm-chips" options={MATCH_FIELD_OPTIONS} />
-              </Form.Item>
-            </Field>
-
-            {showMatchField('auth_user') && (
-              <Form.Item name="auth_user" label="用户" rules={[{ required: true, message: '请选择至少一个用户' }]} className="fm-full">
-                <Select mode="multiple" allowClear options={users.map((user) => ({ value: user.auth_user, label: user.name }))} />
-              </Form.Item>
-            )}
-
-            {showMatchField('inbound') && (
-              <Form.Item name="inbound" label="入站来源" rules={[{ required: true, message: '请选择至少一个入站' }]} className="fm-full">
-                <Select mode="multiple" allowClear options={inboundTags.map((t) => ({ value: t, label: t }))} />
-              </Form.Item>
-            )}
-
-            {showMatchField('rule_set') && (
-              <>
-                <Form.Item name="rule_set" label="规则集" rules={[{ required: true, message: '请选择至少一个规则集' }]} className="fm-full">
-                  <Select
-                    mode="multiple"
-                    allowClear
-                    options={(ruleSets || []).map((rs) => ({ label: rs.tag, value: rs.tag }))}
-                  />
-                </Form.Item>
-                <Form.Item
-                  name="rule_set_ip_direction"
-                  label="规则集 IP 匹配方向"
-                  className="fm-full"
-                >
-                  <Segmented aria-label="规则集 IP 匹配方向" options={[
-                    { value: 'target', label: '目标 IP' },
-                    { value: 'source', label: '来源 IP' },
-                  ]} />
-                </Form.Item>
-              </>
-            )}
-
-            {showMatchField('domain') && (
-              <Form.Item name="domain" label="完整域名" rules={[{ required: true, message: '请输入至少一个完整域名' }]} className="fm-full">
-                <Input.TextArea autoSize={{ minRows: 1, maxRows: 3 }} className="mono" />
-              </Form.Item>
-            )}
-
-            {showMatchField('domain_suffix') && (
-              <Form.Item name="domain_suffix" label="域名后缀" rules={[{ required: true, message: '请输入至少一个域名后缀' }]} className="fm-full">
-                <Input.TextArea autoSize={{ minRows: 1, maxRows: 3 }} className="mono" />
-              </Form.Item>
-            )}
-
-            {showMatchField('domain_keyword') && (
-              <Form.Item name="domain_keyword" label="域名关键词" rules={[{ required: true, message: '请输入至少一个域名关键词' }]} className="fm-full">
-                <Input.TextArea autoSize={{ minRows: 1, maxRows: 3 }} className="mono" />
-              </Form.Item>
-            )}
-
-            {showMatchField('ip_cidr') && (
-              <Form.Item name="ip_cidr" label="目标 IP / CIDR" rules={[{ required: true, message: '请输入至少一个 IP 或 CIDR' }]} className="fm-full">
-                <Input.TextArea autoSize={{ minRows: 1, maxRows: 3 }} className="mono" />
-              </Form.Item>
-            )}
-
-            {showMatchField('source_ip_cidr') && (
-              <Form.Item name="source_ip_cidr" label="来源 IP / CIDR" rules={[{ required: true, message: '请输入至少一个来源 IP 或 CIDR' }]} className="fm-full">
-                <Input.TextArea autoSize={{ minRows: 1, maxRows: 3 }} className="mono" />
-              </Form.Item>
-            )}
-
-            {showMatchField('port') && (
-              <Form.Item
-                name="port"
-                label="目标端口"
-                rules={[
-                  { required: true, message: '请输入至少一个端口' },
-                  {
-                    validator: (_, value) => {
-                      const ports = splitLines(value)
-                      const invalid = ports.some((port) => !/^\d+$/.test(port) || Number(port) < 1 || Number(port) > 65535)
-                      return invalid ? Promise.reject(new Error('端口必须是 1-65535 的整数')) : Promise.resolve()
-                    },
-                  },
-                ]}
-              >
-                <Input className="mono" />
-              </Form.Item>
-            )}
-
-            {showMatchField('protocol') && (
-              <Form.Item name="protocol" label="应用协议" rules={[{ required: true, message: '请选择至少一个应用协议' }]}>
-                <Select
-                  mode="tags"
-                  allowClear
-                  options={[
-                    { value: 'dns', label: 'DNS' },
-                    { value: 'http', label: 'HTTP' },
-                    { value: 'tls', label: 'TLS' },
-                    { value: 'quic', label: 'QUIC' },
-                    { value: 'bittorrent', label: 'BitTorrent' },
-                    { value: 'stun', label: 'STUN' },
-                  ]}
-                />
-              </Form.Item>
-            )}
-
-            {showMatchField('network') && (
-              <Form.Item name="network" label="网络类型" rules={[{ required: true, message: '请选择网络类型' }]}>
-                <Select
-                  allowClear
-                  options={[
-                    { value: 'tcp', label: 'TCP' },
-                    { value: 'udp', label: 'UDP' },
-                    { value: 'icmp', label: 'ICMP' },
-                  ]}
-                />
-              </Form.Item>
-            )}
-          </FieldGroup>
+        {showConditions && (
+          <FormGroup
+            title="匹配条件"
+            panel="inbound"
+            extra={nextAvailableField ? (
+              <Button size="small" type="text" icon={<Plus className="size-3.5" />} onClick={addConditionRow}>
+                添加条件
+              </Button>
+            ) : undefined}
+          >
+            <div className="fm-full space-y-2.5 pb-1">
+              {conditionError && <Alert type="error" showIcon message={conditionError} />}
+              {conditions.length === 0 ? (
+                <div className="rounded-[7px] border border-dashed border-[var(--inbound-line-strong)] px-3 py-2.5 text-[13px] text-muted-foreground">
+                  未设置条件，将匹配全部流量
+                </div>
+              ) : (
+                conditions.map((row) => (
+                  <div key={row.id} className="flex items-start gap-2">
+                    <div className="w-[228px] max-w-[48%] shrink-0">
+                      <Select
+                        aria-label="条件字段"
+                        value={row.field}
+                        onChange={(nextField: MatchField) => {
+                          updateConditionRow(row.id, {
+                            field: nextField,
+                            text: '',
+                            list: [],
+                            single: '',
+                            ruleSetSource: false,
+                          })
+                        }}
+                        options={MATCH_FIELD_OPTIONS.map((opt) => ({
+                          ...opt,
+                          disabled: opt.value !== row.field && usedFields.has(opt.value),
+                        }))}
+                      />
+                    </div>
+                    <div className="min-w-0 flex-1">{renderConditionValue(row)}</div>
+                    <Button
+                      type="text"
+                      size="small"
+                      aria-label={`移除${row.field}`}
+                      className="h-9 w-9 shrink-0 px-0 text-muted-foreground hover:text-foreground"
+                      icon={<X className="size-4" />}
+                      onClick={() => removeConditionRow(row.id)}
+                    />
+                  </div>
+                ))
+              )}
+            </div>
+          </FormGroup>
         )}
+
         {hasAdvancedSchemaProps && (
-          <FormGroup title="其他参数">
-            <SchemaFieldList
-              properties={advancedSchemaProps}
-              value={extraMatch}
-              onChange={setExtraMatch}
-              idPrefix="rule-adv"
-            />
+          <FormGroup title="其他参数" panel="inbound">
+            <div className="fm-full">
+              <SchemaFieldList
+                properties={advancedSchemaProps}
+                value={extraMatch}
+                onChange={setExtraMatch}
+                idPrefix="rule-adv"
+              />
+            </div>
           </FormGroup>
         )}
       </Form>

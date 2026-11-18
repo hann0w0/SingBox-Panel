@@ -32,7 +32,11 @@
 .sd-drag.rule-drag-handle { width: 28px; height: 28px; border-radius: 6px; color: var(--console-faint); }
 .sd-drag.rule-drag-handle:hover:not(:disabled) { color: var(--console-ink); background: var(--console-hover); }
 .sd-drag.rule-drag-handle:focus-visible { outline: 2px solid var(--console-focus); }
-.sd-final { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-top: 12px; padding: 10px 16px; border: 1px dashed var(--console-border-strong); border-radius: var(--app-radius); color: var(--console-muted); font-size: 13px; }
+.sd-rule-order { display: inline-flex; align-items: center; gap: 4px; white-space: nowrap; }
+.sd-rule-idx { font-family: var(--app-mono); font-size: 12px; color: var(--console-faint); font-variant-numeric: tabular-nums; }
+.sd-rule-target { display: inline-flex; align-items: baseline; gap: 6px; white-space: nowrap; }
+.sd-rule-verb { font-size: 12px; color: var(--console-faint); }
+.sd-final { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-top: 8px; padding: 10px 16px; border: 1px solid var(--console-border); border-radius: var(--app-radius); background: var(--console-container); color: var(--console-muted); font-size: 13px; }
 .sd-final .ui-select { min-width: 160px; font-family: var(--app-mono); }
 @media (max-width: 767px) {
   .sd-toolbar { align-items: stretch; flex-wrap: wrap; }

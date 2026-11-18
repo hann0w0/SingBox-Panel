@@ -192,11 +192,7 @@ func TestLogStreamerReplacementAndStopReapProcessGroup(t *testing.T) {
 		t.Fatal("stop did not reap current follower")
 	}
 	for _, pid := range pids {
-		deadline := time.Now().Add(3 * time.Second)
-		for syscall.Kill(pid, 0) == nil && !processIsZombieAt("/proc", pid) && time.Now().Before(deadline) {
-			time.Sleep(10 * time.Millisecond)
-		}
-		if err := syscall.Kill(pid, 0); err == nil && !processIsZombieAt("/proc", pid) {
+		if !waitProcessExited(pid, 3*time.Second) {
 			t.Fatalf("follower descendant %d survived stop", pid)
 		}
 	}

@@ -2,14 +2,47 @@ package agent
 
 import (
 	"context"
+	"errors"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strconv"
 	"strings"
 	"syscall"
 	"testing"
 	"time"
 )
+
+func processExited(pid int) bool {
+	if err := syscall.Kill(pid, 0); err != nil {
+		return true
+	}
+	if runtime.GOOS == "linux" {
+		raw, err := os.ReadFile(filepath.Join("/proc", strconv.Itoa(pid), "stat"))
+		if errors.Is(err, os.ErrNotExist) {
+			// Re-check signal probe in case init reaped the zombie between checks.
+			return syscall.Kill(pid, 0) != nil
+		}
+		if err == nil {
+			state, parseErr := parseProcessState(string(raw))
+			return parseErr == nil && (state == "Z" || state == "X" || state == "x")
+		}
+	}
+	return false
+}
+
+func waitProcessExited(pid int, timeout time.Duration) bool {
+	deadline := time.Now().Add(timeout)
+	for {
+		if processExited(pid) {
+			return true
+		}
+		if !time.Now().Before(deadline) {
+			return false
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+}
 
 func TestRunCancellationKillsOrdinaryChildProcess(t *testing.T) {
 	pidFile := filepath.Join(t.TempDir(), "child.pid")
@@ -47,11 +80,7 @@ func TestRunCancellationKillsOrdinaryChildProcess(t *testing.T) {
 	case <-time.After(3 * time.Second):
 		t.Fatal("run did not return after cancellation")
 	}
-	deadline = time.Now().Add(3 * time.Second)
-	for syscall.Kill(pid, 0) == nil && !processIsZombieAt("/proc", pid) && time.Now().Before(deadline) {
-		time.Sleep(10 * time.Millisecond)
-	}
-	if err := syscall.Kill(pid, 0); err == nil && !processIsZombieAt("/proc", pid) {
+	if !waitProcessExited(pid, 3*time.Second) {
 		t.Fatalf("ordinary child process %d survived cancellation", pid)
 	}
 }

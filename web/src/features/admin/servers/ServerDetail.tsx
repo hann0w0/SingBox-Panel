@@ -986,7 +986,17 @@ export default function ServerDetail() {
     outbounds: outboundTable,
     rules: rulesTable,
     traffic: <ServerTraffic key={`traffic-${sid}`} serverId={sid} toolbar={tabToolbar} />,
-    logs: <Logs key={`logs-${sid}`} serverId={sid} serverOnline={server?.online} embedded toolbar={tabToolbar} />,
+    logs: (
+      <Logs
+        key={`logs-${sid}`}
+        serverId={sid}
+        serverOnline={server?.online}
+        serverLogLevel={server?.log_level}
+        onLogLevelChange={(level) => setServer((prev) => (prev ? { ...prev, log_level: level } : prev))}
+        embedded
+        toolbar={tabToolbar}
+      />
+    ),
   }
 
   return (

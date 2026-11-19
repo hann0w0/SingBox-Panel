@@ -187,6 +187,7 @@ func (a *App) routes() *gin.Engine {
 		admin.GET("/servers/:id/traffic", a.serverTraffic)
 		admin.GET("/servers/:id/traffic/live", a.handleTrafficSSE)
 		admin.GET("/servers/:id/logs", a.serverLogs)
+		admin.PUT("/servers/:id/log-level", a.setLogLevel)
 		admin.POST("/servers/:id/stream-logs", a.streamLogs)
 		admin.GET("/servers/:id/remote-config", a.remoteConfig)
 		admin.POST("/servers/:id/apply-raw", a.applyRawConfig)

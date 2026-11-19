@@ -335,6 +335,9 @@ export const importConfig = (serverId: number, opts: { config?: string; dry_run?
 export const setFinalOutbound = (serverId: number, outbound: string) =>
   http.put<ConfigApplyResult>(`/api/admin/servers/${serverId}/final-outbound`, { outbound }).then((r) => r.data)
 
+export const setServerLogLevel = (serverId: number, level: string) =>
+  http.put<ConfigApplyResult & { ok: boolean; log_level: string }>(`/api/admin/servers/${serverId}/log-level`, { level }).then((r) => r.data)
+
 // ---- admin: log streaming (实时日志推流) ----
 export const streamLogs = (serverId: number, body: { enable: boolean; lines?: number; session_id: string }) =>
   http.post<{ ok: boolean; output: string }>(`/api/admin/servers/${serverId}/stream-logs`, body).then((r) => r.data)

@@ -1,14 +1,14 @@
-import { act, cleanup, render, screen, waitFor } from '@testing-library/react'
+import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { MemoryRouter } from 'react-router-dom'
 import { afterEach, beforeEach, expect, it, vi } from 'vitest'
-import { listServers, serverLogs, streamLogs } from '../../../lib/api'
+import { listServers, serverLogs, setServerLogLevel, streamLogs } from '../../../lib/api'
 import { useSSE } from '../../../hooks/useSSE'
 import type { SSEMessage } from '../../../hooks/useSSE'
 import Logs, { splitAddress } from './Logs'
 
 vi.mock('../../../lib/api', async (importOriginal) => ({
   ...await importOriginal<typeof import('../../../lib/api')>(),
-  listServers: vi.fn(), serverLogs: vi.fn(), streamLogs: vi.fn(),
+  listServers: vi.fn(), serverLogs: vi.fn(), setServerLogLevel: vi.fn(), streamLogs: vi.fn(),
 }))
 vi.mock('../../../hooks/useSSE', () => ({ useSSE: vi.fn(() => ({ connected: true })) }))
 
@@ -17,8 +17,9 @@ beforeEach(() => {
   vi.stubGlobal('ResizeObserver', class { observe() {} unobserve() {} disconnect() {} })
   vi.stubGlobal('requestAnimationFrame', (callback: FrameRequestCallback) => setTimeout(callback, 0))
   HTMLElement.prototype.scrollTo = vi.fn()
-  vi.mocked(listServers).mockResolvedValue([{ id: 1, name: 'One', online: true } as Awaited<ReturnType<typeof listServers>>[number]])
+  vi.mocked(listServers).mockResolvedValue([{ id: 1, name: 'One', online: true, log_level: 'info' } as Awaited<ReturnType<typeof listServers>>[number]])
   vi.mocked(serverLogs).mockResolvedValue('historical one\nhistorical two')
+  vi.mocked(setServerLogLevel).mockResolvedValue({ ok: true, log_level: 'debug', apply_state: 'applied' })
   vi.mocked(streamLogs).mockResolvedValue({ ok: true, output: '' })
 })
 afterEach(() => { cleanup(); Reflect.deleteProperty(HTMLElement.prototype, 'scrollTo'); vi.unstubAllGlobals() })
@@ -57,4 +58,31 @@ it('buffers events until the start request tells whether this tab joined an exis
   expect(screen.getByText(/2 \/ 2 行/)).toBeTruthy()
   await act(async () => finish({ ok: true, output: 'joined existing log stream' }))
   await waitFor(() => expect(screen.getByText(/3 \/ 3 行/)).toBeTruthy())
+})
+
+it('removes local level/direction/noise filters and switches server sing-box log level directly', async () => {
+  const onLogLevelChange = vi.fn()
+  render(
+    <MemoryRouter>
+      <Logs serverId={1} serverOnline serverLogLevel="info" onLogLevelChange={onLogLevelChange} embedded />
+    </MemoryRouter>,
+  )
+  await waitFor(() => expect(serverLogs).toHaveBeenCalledWith(1, 200, expect.any(AbortSignal)))
+
+  expect(screen.queryByText('全部级别')).toBeNull()
+  expect(screen.queryByText('全部方向')).toBeNull()
+  expect(screen.queryByText('过滤噪音')).toBeNull()
+
+  // Search filter still works
+  fireEvent.change(screen.getByLabelText('搜索日志'), { target: { value: 'two' } })
+  await waitFor(() => expect(screen.getByText(/1 \/ 2 行/)).toBeTruthy())
+
+  // Open server log level dropdown and pick debug
+  const trigger = screen.getByRole('button', { name: 'sing-box 日志级别' })
+  expect(trigger.textContent).toContain('info')
+  fireEvent.keyDown(trigger, { key: 'Enter' })
+  fireEvent.click(await screen.findByRole('menuitem', { name: 'debug' }))
+
+  await waitFor(() => expect(setServerLogLevel).toHaveBeenCalledWith(1, 'debug'))
+  expect(onLogLevelChange).toHaveBeenCalledWith('debug')
 })

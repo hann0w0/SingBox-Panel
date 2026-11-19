@@ -1,14 +1,17 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import type { ReactNode, UIEvent } from 'react'
 import { createPortal } from 'react-dom'
-import { Button, Input, Select, Switch, message } from '../../../components/kit'
+import { Button, Input, message } from '../../../components/kit'
 import {
+  Check,
+  ChevronDown,
   Copy,
   Download,
   Search,
   ArrowUpToLine,
 } from 'lucide-react'
-import { errMsg, isCanceledRequest, listServers, serverLogs, streamLogs } from '../../../lib/api'
+import { errMsg, isCanceledRequest, listServers, serverLogs, setServerLogLevel, streamLogs } from '../../../lib/api'
+import { showConfigApplyResult } from '../../../lib/configApply'
 import type { Server } from '../../../lib/types'
 import { parseServerId } from '../../../lib/serverNavigation'
 import { useSSE } from '../../../hooks/useSSE'
@@ -17,31 +20,22 @@ import type { SSEMessage } from '../../../hooks/useSSE'
 import { copyToClipboard } from '../../../lib/util'
 import { VirtualList } from '../../../components/VirtualList'
 import { PageHeader } from '../../../components/kit/Page'
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from '@/components/ui/dropdown-menu'
 import '../../../styles/traffic-logs.css'
 import { LogReplay, mergeLogSnapshot } from '../../../lib/logReplay'
 
-
-const NOISE_PATTERNS = [
-  'unknown user password',
-  'first record does not look like a TLS handshake',
-  'client offered only unsupported versions',
-  'no cipher suite supported',
-  'fallback disabled',
-  "peer doesn't support any of the certificate",
-  'connection reset by peer',
-]
-
 const MAX_LIVE_LINES = 2000
+const SINGBOX_LOG_LEVELS = ['trace', 'debug', 'info', 'warn', 'error', 'fatal', 'panic'] as const
+type SingboxLogLevel = typeof SINGBOX_LOG_LEVELS[number]
 
 type LogLevel = '' | 'TRACE' | 'DEBUG' | 'INFO' | 'WARN' | 'ERROR' | 'FATAL'
-type LevelFilter = 'all' | 'TRACE' | 'DEBUG' | 'INFO' | 'WARN' | 'ERROR'
 type LogDirection = '' | 'inbound' | 'outbound'
-type DirectionFilter = 'all' | 'inbound' | 'outbound'
-const DIRECTION_OPTIONS: Array<{ value: DirectionFilter; label: string }> = [
-  { value: 'all', label: '全部方向' },
-  { value: 'inbound', label: '入站' },
-  { value: 'outbound', label: '出站' },
-]
 type DisplayMode = 'compact' | 'raw'
 
 type ParsedLogLine = {
@@ -58,15 +52,6 @@ type ParsedLogLine = {
 
 type LogEntry = ParsedLogLine & { id: number }
 const logEntryKey = (line: LogEntry) => line.id
-
-const LEVEL_OPTIONS: Array<{ value: LevelFilter; label: string }> = [
-  { value: 'all', label: '全部级别' },
-  { value: 'TRACE', label: 'TRACE' },
-  { value: 'DEBUG', label: 'DEBUG' },
-  { value: 'INFO', label: 'INFO' },
-  { value: 'WARN', label: 'WARN' },
-  { value: 'ERROR', label: 'ERROR' },
-]
 
 function parseLogLine(raw: string): ParsedLogLine {
   let rest = raw.trimEnd()
@@ -142,12 +127,6 @@ function parseLogLine(raw: string): ParsedLogLine {
     message: rest,
     parsed,
   }
-}
-
-function matchesLevel(level: LogLevel, filter: LevelFilter) {
-  if (filter === 'all') return true
-  if (filter === 'ERROR') return level === 'ERROR' || level === 'FATAL'
-  return level === filter
 }
 
 function levelClass(level: LogLevel) {
@@ -288,11 +267,15 @@ function formatUpdatedAt(value: number | null) {
 export default function Logs({
   serverId,
   serverOnline,
+  serverLogLevel,
+  onLogLevelChange,
   embedded = false,
   toolbar,
 }: {
   serverId?: number
   serverOnline?: boolean
+  serverLogLevel?: string
+  onLogLevelChange?: (level: string) => void
   embedded?: boolean
   toolbar?: HTMLElement | null
 } = {}) {
@@ -304,10 +287,8 @@ export default function Logs({
   const [logEntries, setLogEntries] = useState<LogEntry[]>([])
   const [loading, setLoading] = useState(false)
   const [live, setLive] = useState(false)
-  const [hideNoise, setHideNoise] = useState(true)
   const [keyword, setKeyword] = useState('')
-  const [levelFilter, setLevelFilter] = useState<LevelFilter>('all')
-  const [directionFilter, setDirectionFilter] = useState<DirectionFilter>('all')
+  const [savingLevel, setSavingLevel] = useState(false)
   const displayMode: DisplayMode = 'compact'
   const wrapLines = true
   const [following, setFollowing] = useState(true)
@@ -538,14 +519,9 @@ export default function Logs({
 
   const filteredLines = useMemo(() => {
     const kw = keyword.trim().toLocaleLowerCase()
-    return logEntries.filter((line) => {
-      const lowerRaw = line.raw.toLocaleLowerCase()
-      if (hideNoise && NOISE_PATTERNS.some((pattern) => lowerRaw.includes(pattern))) return false
-      if (!matchesLevel(line.level, levelFilter)) return false
-      if (directionFilter !== 'all' && line.direction !== directionFilter) return false
-      return !kw || lowerRaw.includes(kw)
-    })
-  }, [directionFilter, hideNoise, keyword, levelFilter, logEntries])
+    if (!kw) return logEntries
+    return logEntries.filter((line) => line.raw.toLocaleLowerCase().includes(kw))
+  }, [keyword, logEntries])
 
   // Consecutive lines of one connection (inbound + outbound) share a band so
   // pairs read together; the band flips whenever the connection id changes.
@@ -572,6 +548,23 @@ export default function Logs({
 
   const current = servers.find((s) => s.id === sid)
   const isOnline = serverOnline ?? current?.online
+  const activeLogLevel = (serverLogLevel ?? current?.log_level ?? 'info').toLowerCase()
+
+  const handleServerLogLevelChange = async (nextLevel: SingboxLogLevel) => {
+    if (!sid || savingLevel || nextLevel === activeLogLevel) return
+    setSavingLevel(true)
+    try {
+      const result = await setServerLogLevel(sid, nextLevel)
+      const appliedLevel = result.log_level || nextLevel
+      onLogLevelChange?.(appliedLevel)
+      setServers((prev) => prev.map((s) => (s.id === sid ? { ...s, log_level: appliedLevel } : s)))
+      showConfigApplyResult(result)
+    } catch (error) {
+      message.error(errMsg(error))
+    } finally {
+      setSavingLevel(false)
+    }
+  }
 
   const handleScroll = (event: UIEvent<HTMLDivElement>) => {
     const box = event.currentTarget
@@ -616,69 +609,59 @@ export default function Logs({
       ? '没有匹配的日志'
       : '暂无日志'
 
+  const toolbarControls = (
+    <div className="lg-toolbar">
+      {sid ? (
+        <DropdownMenu>
+          <DropdownMenuTrigger asChild>
+            <button
+              type="button"
+              className="lg-level-trigger"
+              disabled={savingLevel}
+              aria-label="sing-box 日志级别"
+            >
+              <span className="lg-level-prefix">日志级别</span>
+              <span className="lg-level-sep" aria-hidden="true">·</span>
+              <span className="lg-level-val">{savingLevel ? '应用中…' : activeLogLevel}</span>
+              <ChevronDown className="lg-level-chev" aria-hidden="true" />
+            </button>
+          </DropdownMenuTrigger>
+          <DropdownMenuContent align="start" className="lg-level-menu">
+            {SINGBOX_LOG_LEVELS.map((level) => {
+              const selected = level === activeLogLevel
+              return (
+                <DropdownMenuItem
+                  key={level}
+                  className={`lg-level-item${selected ? ' is-selected' : ''}`}
+                  onSelect={() => void handleServerLogLevelChange(level)}
+                >
+                  <span>{level}</span>
+                  {selected ? <Check className="lg-level-check" aria-hidden="true" /> : null}
+                </DropdownMenuItem>
+              )
+            })}
+            <DropdownMenuSeparator />
+            <div className="lg-level-foot">修改将重启服务</div>
+          </DropdownMenuContent>
+        </DropdownMenu>
+      ) : null}
+      <Input
+        className="lg-search"
+        prefix={<Search />}
+        placeholder="搜索"
+        aria-label="搜索日志"
+        value={keyword}
+        onChange={(event) => setKeyword(event.target.value)}
+        allowClear
+      />
+    </div>
+  )
+
   return (
     <div className="lg-page">
       {!embedded && <PageHeader title="日志" />}
 
-      {toolbar ? createPortal(<div className="lg-toolbar">
-        <Select
-          className="lg-filter-select"
-          value={levelFilter}
-          onChange={(value: LevelFilter) => setLevelFilter(value)}
-          options={LEVEL_OPTIONS}
-          aria-label="日志级别"
-        />
-        <Select
-          className="lg-filter-select"
-          value={directionFilter}
-          onChange={(value: DirectionFilter) => setDirectionFilter(value)}
-          options={DIRECTION_OPTIONS}
-          aria-label="方向"
-        />
-        <Input
-          className="lg-search"
-          prefix={<Search />}
-          placeholder="搜索"
-          aria-label="搜索日志"
-          value={keyword}
-          onChange={(event) => setKeyword(event.target.value)}
-          allowClear
-        />
-        <label className="lg-toggle">
-          <Switch size="small" checked={hideNoise} onChange={setHideNoise} />
-          <span>过滤噪音</span>
-        </label>
-      </div>, toolbar) : (
-        <div className="lg-toolbar">
-          <Select
-            className="lg-filter-select"
-            value={levelFilter}
-            onChange={(value: LevelFilter) => setLevelFilter(value)}
-            options={LEVEL_OPTIONS}
-            aria-label="日志级别"
-          />
-          <Select
-            className="lg-filter-select"
-            value={directionFilter}
-            onChange={(value: DirectionFilter) => setDirectionFilter(value)}
-            options={DIRECTION_OPTIONS}
-            aria-label="方向"
-          />
-          <Input
-            className="lg-search"
-            prefix={<Search />}
-            placeholder="搜索"
-            aria-label="搜索日志"
-            value={keyword}
-            onChange={(event) => setKeyword(event.target.value)}
-            allowClear
-          />
-          <label className="lg-toggle">
-            <Switch size="small" checked={hideNoise} onChange={setHideNoise} />
-            <span>过滤噪音</span>
-          </label>
-        </div>
-      )}
+      {toolbar ? createPortal(toolbarControls, toolbar) : toolbarControls}
 
       <div className="lg-box">
         <div className="lg-statusbar">

@@ -358,3 +358,57 @@ func TestHandleServersLiveSSEStreamsServerStatus(t *testing.T) {
 		t.Fatalf("unexpected payload: %+v", payload)
 	}
 }
+
+func TestSetServerLogLevelPersistsAndRendersIntoConfig(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	db := testDB(t)
+	srv := model.Server{Name: "log-node", AgentToken: "log-level-token", ConfigMode: model.ConfigModeManaged}
+	if err := db.Create(&srv).Error; err != nil {
+		t.Fatal(err)
+	}
+	hub := NewHub(db)
+	a := &App{db: db, hub: hub, orch: NewOrchestrator(db, hub)}
+	router := gin.New()
+	router.PUT("/servers/:id/log-level", a.setLogLevel)
+
+	// Invalid level is rejected with 400.
+	badReq := httptest.NewRequest(http.MethodPut, "/servers/1/log-level", strings.NewReader(`{"level":"verbose"}`))
+	badReq.Header.Set("Content-Type", "application/json")
+	badRec := httptest.NewRecorder()
+	router.ServeHTTP(badRec, badReq)
+	if badRec.Code != http.StatusBadRequest {
+		t.Fatalf("invalid level status = %d, want 400: %s", badRec.Code, badRec.Body.String())
+	}
+
+	// Valid level updates DB and flows into BuildServerConfig.
+	req := httptest.NewRequest(http.MethodPut, "/servers/1/log-level", strings.NewReader(`{"level":"trace"}`))
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+	router.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("valid level status = %d, body = %s", rec.Code, rec.Body.String())
+	}
+
+	var updated model.Server
+	if err := db.First(&updated, srv.ID).Error; err != nil {
+		t.Fatal(err)
+	}
+	if updated.LogLevel != "trace" {
+		t.Fatalf("saved log_level = %q, want trace", updated.LogLevel)
+	}
+	rendered, err := a.orch.BuildServerConfig(&updated)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var cfg struct {
+		Log struct {
+			Level string `json:"level"`
+		} `json:"log"`
+	}
+	if err := json.Unmarshal(rendered, &cfg); err != nil {
+		t.Fatal(err)
+	}
+	if cfg.Log.Level != "trace" {
+		t.Fatalf("rendered log.level = %q, want trace", cfg.Log.Level)
+	}
+}

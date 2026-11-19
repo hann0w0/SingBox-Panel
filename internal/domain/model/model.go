@@ -214,6 +214,8 @@ type Server struct {
 
 	// FinalOutbound is the default route target (default "direct").
 	FinalOutbound string `gorm:"size:64" json:"final_outbound"`
+	// LogLevel controls sing-box's log.level (default "info").
+	LogLevel string `gorm:"size:16;default:info" json:"log_level"`
 
 	// ConfigMode selects the source of truth for the node configuration. Managed
 	// mode renders the structured inbound/outbound/routing tables; raw mode keeps

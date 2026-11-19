@@ -5,7 +5,31 @@ import (
 	"fmt"
 	"net"
 	"strconv"
+	"strings"
 )
+
+// NormalizeLogLevel validates a sing-box log level and returns its canonical
+// lowercase form.
+func NormalizeLogLevel(level string) (string, bool) {
+	switch strings.ToLower(strings.TrimSpace(level)) {
+	case "trace":
+		return "trace", true
+	case "debug":
+		return "debug", true
+	case "info":
+		return "info", true
+	case "warn":
+		return "warn", true
+	case "error":
+		return "error", true
+	case "fatal":
+		return "fatal", true
+	case "panic":
+		return "panic", true
+	default:
+		return "", false
+	}
+}
 
 // ServerConfigInput is everything needed to render a server's full config.json.
 type ServerConfigInput struct {

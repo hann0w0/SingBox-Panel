@@ -45,6 +45,7 @@ type ParsedConfig struct {
 	Rules     []ParsedRule
 	RuleSets  []RuleSetInput
 	Final     string
+	LogLevel  string
 	// Skipped lists items the panel cannot model (kind: reason).
 	Skipped []string
 }
@@ -508,6 +509,11 @@ func ParseServerConfig(raw []byte) (*ParsedConfig, error) {
 		return nil, fmt.Errorf("配置不是合法 JSON: %w", err)
 	}
 	out := &ParsedConfig{Final: "direct"}
+	if logObj := mMap(root, "log"); logObj != nil {
+		if level, ok := NormalizeLogLevel(mStr(logObj, "level")); ok {
+			out.LogLevel = level
+		}
+	}
 	guards := findRealityGuardImports(root)
 	guardTargets := make(map[int]realityGuardImport, len(guards))
 	guardInbounds := make(map[int]bool, len(guards))

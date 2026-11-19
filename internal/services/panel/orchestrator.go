@@ -254,6 +254,7 @@ func (o *Orchestrator) buildServerConfig(srv *model.Server, projection *singbox.
 	}
 
 	input := singbox.ServerConfigInput{
+		LogLevel:        srv.LogLevel,
 		Inbounds:        ins,
 		Outbounds:       obs,
 		Rules:           rules,

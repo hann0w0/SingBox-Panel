@@ -218,6 +218,9 @@ func (a *App) listServers(c *gin.Context) {
 	releases := getLatestSingboxReleases()
 	latestAgentVersion := a.latestAgentVersion()
 	for i := range servers {
+		if servers[i].LogLevel == "" {
+			servers[i].LogLevel = "info"
+		}
 		setServerAddressAvailability(&servers[i])
 		servers[i].Online = a.hub.IsOnline(servers[i].ID)
 		if !servers[i].Online {
@@ -290,6 +293,9 @@ func (a *App) getServer(c *gin.Context) {
 	if err := a.db.Preload("Inbounds").First(&srv, id).Error; err != nil {
 		c.JSON(http.StatusNotFound, gin.H{"error": "server not found"})
 		return
+	}
+	if srv.LogLevel == "" {
+		srv.LogLevel = "info"
 	}
 	srv.Online = a.hub.IsOnline(srv.ID)
 	setServerAddressAvailability(&srv)

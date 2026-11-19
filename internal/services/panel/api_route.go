@@ -950,3 +950,33 @@ func (a *App) setFinalOutbound(c *gin.Context) {
 	}
 	a.applyConfigAndRespond(c, id, gin.H{"ok": true, "final_outbound": final})
 }
+
+type logLevelReq struct {
+	Level string `json:"level"`
+}
+
+func (a *App) setLogLevel(c *gin.Context) {
+	id, ok := uintParam(c, "id")
+	if !ok {
+		return
+	}
+	unlockOperation := a.lockServerOperation(id)
+	defer unlockOperation()
+	if !a.requireManagedMode(c, id) {
+		return
+	}
+	var req logLevelReq
+	if !bindJSON(c, &req) {
+		return
+	}
+	level, valid := singbox.NormalizeLogLevel(req.Level)
+	if !valid {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "日志级别无效，仅支持 trace / debug / info / warn / error / fatal / panic"})
+		return
+	}
+	if err := a.db.Model(&model.Server{}).Where("id = ?", id).Update("log_level", level).Error; err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+	a.applyConfigAndRespond(c, id, gin.H{"ok": true, "log_level": level})
+}

@@ -63,6 +63,7 @@ export interface Server {
   mem_used: number
   mem_total: number
   final_outbound: string
+  log_level?: string
   traffic_available?: boolean
   traffic_upload_rate?: number
   traffic_download_rate?: number

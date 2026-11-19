@@ -456,6 +456,11 @@ var applicationMigrations = []schemaMigration{
 			return migrateManagedConfigOverlays(tx)
 		},
 	},
+	{
+		version: 43,
+		name:    "server log level and staged configuration revisions",
+		up:      func(tx *gorm.DB) error { return tx.AutoMigrate(&model.Server{}) },
+	},
 }
 
 // migrationReplaySafe records whether an interrupted attempt of each migration
@@ -517,6 +522,7 @@ var migrationReplaySafe = map[uint]bool{
 	40: true,  // AutoMigrate of agent dual stack address columns
 	41: true,  // AutoMigrate adds the config residual column
 	42: true,  // only initializes raw servers without an overlay, in a transaction
+	43: true,  // AutoMigrate adds server log_level and staged config revision columns
 }
 
 // dropRetiredCustomNodeSwitches removes the per-node and per-subscription

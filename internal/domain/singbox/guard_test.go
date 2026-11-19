@@ -59,15 +59,15 @@ func TestLegacyLoopbackGuardIsRecognisedAndUpgraded(t *testing.T) {
 	}
 }
 
-func TestBuildServerConfigOrdersResolveAndNarrowLoopbackExceptionsBeforeGuard(t *testing.T) {
+func TestBuildServerConfigKeepsFormOrderBeforeLoopbackGuard(t *testing.T) {
 	raw, err := BuildServerConfig(ServerConfigInput{
 		StatsController: "127.0.0.1:29091",
 		StatsAPI:        "127.0.0.1:29092",
 		StatsSecret:     "secret",
 		Rules: []RuleInput{
+			{Port: []int{80}, Outbound: "direct"},
 			{Action: "resolve", Extra: map[string]any{"strategy": "prefer_ipv4"}},
 			{IPCIDR: []string{"127.0.0.1/32"}, Port: []int{9928}, Outbound: "direct"},
-			// Broad loopback or stats-port exceptions must stay behind LoopbackGuardRule.
 			{IPCIDR: []string{"127.0.0.0/8"}, Port: []int{9928}, Outbound: "direct"},
 			{IPCIDR: []string{"127.0.0.1/32"}, Port: []int{29091}, Outbound: "direct"},
 			{DomainSuffix: []string{"example.com"}, Outbound: "direct"},
@@ -84,30 +84,24 @@ func TestBuildServerConfigOrdersResolveAndNarrowLoopbackExceptionsBeforeGuard(t 
 	if err := json.Unmarshal(raw, &root); err != nil {
 		t.Fatal(err)
 	}
-	// Expected order:
-	// 0: resolve (prefer_ipv4)
-	// 1: 127.0.0.1/32:9928 -> direct
-	// 2: LoopbackGuardRule
-	// 3: auto sniff (because example.com domain_suffix is present)
-	// 4: broad 127.0.0.0/8:9928 (blocked by guard above)
-	// 5: stats port 127.0.0.1/32:29091 (blocked by guard above)
-	// 6: example.com -> direct
-	if len(root.Route.Rules) != 7 {
-		t.Fatalf("expected 7 rules, got %d: %s", len(root.Route.Rules), raw)
+	if len(root.Route.Rules) != 8 {
+		t.Fatalf("expected 8 rules, got %d: %s", len(root.Route.Rules), raw)
 	}
-	if root.Route.Rules[0]["action"] != "resolve" || root.Route.Rules[0]["strategy"] != "prefer_ipv4" {
-		t.Fatalf("rule[0] should be resolve, got %v", root.Route.Rules[0])
+	if root.Route.Rules[0]["action"] != "sniff" {
+		t.Fatalf("missing automatic sniff before domain rules: %v", root.Route.Rules[0])
 	}
-	if root.Route.Rules[1]["outbound"] != "direct" {
-		t.Fatalf("rule[1] should be 127.0.0.1/32:9928 -> direct, got %v", root.Route.Rules[1])
+	if canonicalJSON(root.Route.Rules[1]["port"]) != `[80]` || root.Route.Rules[1]["outbound"] != "direct" {
+		t.Fatalf("first form rule moved: %v", root.Route.Rules[1])
 	}
-	if !IsLoopbackGuardRule(root.Route.Rules[2]) {
-		t.Fatalf("rule[2] should be LoopbackGuardRule, got %v", root.Route.Rules[2])
+	if root.Route.Rules[2]["action"] != "resolve" || root.Route.Rules[2]["strategy"] != "prefer_ipv4" {
+		t.Fatalf("resolve moved ahead of first form rule: %v", root.Route.Rules[2])
 	}
-	if root.Route.Rules[3]["action"] != "sniff" {
-		t.Fatalf("rule[3] should be auto sniff, got %v", root.Route.Rules[3])
+	for i, want := range []string{`["127.0.0.1/32"]`, `["127.0.0.0/8"]`, `["127.0.0.1/32"]`} {
+		if canonicalJSON(root.Route.Rules[i+3]["ip_cidr"]) != want {
+			t.Fatalf("local exception changed order: %s", raw)
+		}
 	}
-	if root.Route.Rules[4]["outbound"] != "direct" || root.Route.Rules[5]["outbound"] != "direct" {
-		t.Fatalf("unsafe loopback rules must remain after LoopbackGuardRule: %v", root.Route.Rules[4:6])
+	if canonicalJSON(root.Route.Rules[6]["domain_suffix"]) != `["example.com"]` || !IsLoopbackGuardRule(root.Route.Rules[7]) {
+		t.Fatalf("default guard must follow all form rules: %s", raw)
 	}
 }

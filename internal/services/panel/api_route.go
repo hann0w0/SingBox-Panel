@@ -380,7 +380,7 @@ func (a *App) listRules(c *gin.Context) {
 		return
 	}
 	var rows []model.RouteRule
-	if err := a.db.Where("server_id = ?", id).Order("sort").Find(&rows).Error; err != nil {
+	if err := a.db.Where("server_id = ?", id).Order("sort, id").Find(&rows).Error; err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}

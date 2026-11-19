@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"reflect"
+	"sort"
 )
 
 // ConfigProjection keeps model inputs, not rendered JSON. Re-rendering both
@@ -79,17 +80,17 @@ func projectionObjects(p ConfigProjection) (map[string]json.RawMessage, map[stri
 			}
 		}
 	}
-	if p.Input.StatsController != "" {
-		ruleIDs = append(ruleIDs, "stats:loopback")
-	}
 	var rules []json.RawMessage
 	if err := json.Unmarshal(configArray(root, "rules"), &rules); err != nil {
 		return nil, nil, err
 	}
-	if len(rules) > len(ruleIDs)+len(p.Input.Rules) {
+	if needsAutoSniff(p.Input.Rules) {
 		ruleIDs = append(ruleIDs, "auto:sniff")
 	}
 	ruleIDs = append(ruleIDs, p.IDs["rules"]...)
+	if p.Input.StatsController != "" {
+		ruleIDs = append(ruleIDs, "stats:loopback")
+	}
 	if len(ruleIDs) != len(rules) {
 		return nil, nil, fmt.Errorf("rule identities do not match projection")
 	}
@@ -274,6 +275,80 @@ func canonicalRaw(raw []byte) string {
 	return string(encoded)
 }
 
+// Residual migrations once assigned the renderer's prefix IDs to a reordered
+// rule array. Repair that specific layout only when every original entry can
+// be matched to the baseline; ordinary imported source bindings remain exact.
+func repairRenderedRuleBindings(entries []json.RawMessage, bindings []string, items []configMergeItem, panelIDs []string) []string {
+	var legacy []string
+	for _, item := range items {
+		if !isPanelRuleID(item.ID, panelIDs) && item.ID != "stats:loopback" && item.ID != "auto:sniff" {
+			legacy = append(legacy, item.ID)
+		}
+	}
+	for _, id := range []string{"stats:loopback", "auto:sniff"} {
+		for _, item := range items {
+			if item.ID == id {
+				legacy = append(legacy, id)
+			}
+		}
+	}
+	legacy = append(legacy, panelIDs...)
+	if !reflect.DeepEqual(bindings, legacy) || len(entries) != len(items) {
+		return bindings
+	}
+	normalized := make([]map[string]json.RawMessage, len(entries))
+	for i, entry := range entries {
+		var rule RuleInput
+		var target struct {
+			Outbound string `json:"outbound"`
+		}
+		if json.Unmarshal(entry, &rule) != nil || json.Unmarshal(entry, &target) != nil {
+			return bindings
+		}
+		rule.Outbound = target.Outbound
+		raw, _ := json.Marshal(buildRouteRule(rule))
+		_ = json.Unmarshal(raw, &normalized[i])
+	}
+	repaired := make([]string, len(entries))
+	type candidate struct {
+		id     string
+		fields map[string]json.RawMessage
+	}
+	var candidates []candidate
+	for _, item := range items {
+		var fields map[string]json.RawMessage
+		_ = json.Unmarshal(item.Projection, &fields)
+		candidates = append(candidates, candidate{id: item.ID, fields: fields})
+	}
+	// Match specific rules before catch-alls, which are otherwise a subset of
+	// every route to the same outbound. Extra source fields remain untouched.
+	sort.SliceStable(candidates, func(i, j int) bool { return len(candidates[i].fields) > len(candidates[j].fields) })
+	for _, item := range candidates {
+		matched := false
+		for i, source := range normalized {
+			if repaired[i] != "" {
+				continue
+			}
+			equal := true
+			for key, value := range item.fields {
+				if canonicalRaw(value) != canonicalRaw(source[key]) {
+					equal = false
+					break
+				}
+			}
+			if equal {
+				repaired[i] = item.id
+				matched = true
+				break
+			}
+		}
+		if !matched {
+			return bindings
+		}
+	}
+	return repaired
+}
+
 func ApplyConfigOverlay(encoded []byte, current ConfigProjection) ([]byte, error) {
 	var overlay ConfigOverlay
 	if err := json.Unmarshal(encoded, &overlay); err != nil {
@@ -311,10 +386,37 @@ func ApplyConfigOverlay(encoded []byte, current ConfigProjection) ([]byte, error
 		for _, item := range oldItems[path] {
 			baseline[item.ID] = item.Projection
 		}
+		bindings := overlay.Bindings[path]
+		if path == "rules" {
+			bindings = repairRenderedRuleBindings(entries, bindings, oldItems[path], overlay.Baseline.IDs["rules"])
+			// Older renderers moved rules without moving their IDs. Keep explicit
+			// panel-row bindings, but infer generated rules from their real content.
+			bindings = append([]string(nil), bindings...)
+			assigned := make(map[string]bool)
+			for i, id := range bindings {
+				if isPanelRuleID(id, overlay.Baseline.IDs["rules"]) {
+					assigned[id] = true
+				} else {
+					bindings[i] = ""
+				}
+			}
+			for i, entry := range entries {
+				if bindings[i] != "" {
+					continue
+				}
+				for _, item := range oldItems[path] {
+					if !assigned[item.ID] && !isPanelRuleID(item.ID, overlay.Baseline.IDs["rules"]) && canonicalRaw(entry) == canonicalRaw(item.Projection) {
+						bindings[i] = item.ID
+						assigned[item.ID] = true
+						break
+					}
+				}
+			}
+		}
 		var slots []configMergeSlot
 		bound := make(map[string]bool)
 		for i, entry := range entries {
-			id := overlay.Bindings[path][i]
+			id := bindings[i]
 			if id != "" && baseline[id] == nil {
 				return nil, fmt.Errorf("missing %s baseline %s", path, id)
 			}
@@ -329,7 +431,16 @@ func ApplyConfigOverlay(encoded []byte, current ConfigProjection) ([]byte, error
 			}
 			active = append(active, item)
 		}
-		values, err := mergeConfigSequence(slots, active)
+		var values []json.RawMessage
+		if path == "rules" {
+			if reflect.DeepEqual(oldItems[path], newItems[path]) {
+				values = entries
+			} else {
+				values, err = mergeConfigRules(slots, active)
+			}
+		} else {
+			values, err = mergeConfigSequence(slots, active)
+		}
 		if err != nil {
 			return nil, fmt.Errorf("merge %s: %w", path, err)
 		}
@@ -363,6 +474,41 @@ func ApplyConfigOverlay(encoded []byte, current ConfigProjection) ([]byte, error
 		}
 	}
 	return json.MarshalIndent(root, "", "  ")
+}
+
+// A route edit gives form rules priority in exactly their displayed order.
+// Opaque rules pass through in source order, followed by the default guard.
+// Other sections continue using the generic slot-preserving merge.
+func mergeConfigRules(slots []configMergeSlot, current []configMergeItem) ([]json.RawMessage, error) {
+	var editable []configMergeSlot
+	var opaque, guards []json.RawMessage
+	for _, slot := range slots {
+		if slot.ID != "" {
+			editable = append(editable, slot)
+			continue
+		}
+		if !json.Valid(slot.Original) {
+			return nil, fmt.Errorf("invalid preserved rule")
+		}
+		var rule map[string]any
+		_ = json.Unmarshal(slot.Original, &rule)
+		if IsLoopbackGuardRule(rule) {
+			guards = append(guards, slot.Original)
+		} else {
+			opaque = append(opaque, slot.Original)
+		}
+	}
+	merged, err := mergeConfigSequence(editable, current)
+	if err != nil {
+		return nil, err
+	}
+	// Generated local rejection is the renderer's final item when present.
+	if len(current) > 0 && current[len(current)-1].ID == "stats:loopback" {
+		guards = append(guards, merged[len(merged)-1])
+		merged = merged[:len(merged)-1]
+	}
+	merged = append(merged, opaque...)
+	return append(merged, guards...), nil
 }
 
 func OverlayHasOutbound(encoded []byte, tag string) bool {

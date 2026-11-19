@@ -4,7 +4,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"net"
-	"net/netip"
 	"strconv"
 )
 
@@ -132,38 +131,21 @@ func BuildServerConfig(in ServerConfigInput) ([]byte, error) {
 	// Route rules: keep it minimal. Only add a sniff rule when some rule matches
 	// on a domain (which requires sniffing); a plain inbound/ip/port relay needs
 	// none of it.
-	needSniff := false
-	hasGlobalSniff := false
-	for _, r := range in.Rules {
-		if ruleNeedsSniff(r) {
-			needSniff = true
-		}
-		if routeRuleAction(r) == "sniff" && len(r.Inbound) == 0 {
-			hasGlobalSniff = true
-		}
-	}
 	// Gate traffic must reach only its own local VLESS listener before the
 	// general loopback protection. The terminal reject isolates all other
 	// gate traffic from user rules and the global sniff fallback.
 	rules := append([]map[string]any{}, guardRules...)
-	statsPorts := collectStatsPorts(in.StatsController, in.StatsAPI)
-	var preGuardRules, postGuardRules []map[string]any
-	for _, r := range in.Rules {
-		built := buildRouteRule(r)
-		if in.StatsController != "" && rulePrecedesLoopbackGuard(r, statsPorts) {
-			preGuardRules = append(preGuardRules, built)
-		} else {
-			postGuardRules = append(postGuardRules, built)
-		}
+	if needsAutoSniff(in.Rules) {
+		rules = append(rules, map[string]any{"action": "sniff"})
 	}
-	rules = append(rules, preGuardRules...)
+	// User rules retain the form's exact order, including explicit exceptions
+	// to local rejection. The default guard is the final fallback.
+	for _, r := range in.Rules {
+		rules = append(rules, buildRouteRule(r))
+	}
 	if in.StatsController != "" {
 		rules = append(rules, LoopbackGuardRule())
 	}
-	if needSniff && !hasGlobalSniff {
-		rules = append(rules, map[string]any{"action": "sniff"})
-	}
-	rules = append(rules, postGuardRules...)
 	final := in.Final
 	if final == "" {
 		final = "direct"
@@ -238,63 +220,19 @@ func statsService(address, secret string) (map[string]any, error) {
 	}, nil
 }
 
-func collectStatsPorts(addrs ...string) map[int]bool {
-	ports := make(map[int]bool, len(addrs))
-	for _, addr := range addrs {
-		if addr == "" {
-			continue
+func needsAutoSniff(rules []RuleInput) bool {
+	needed := false
+	for _, r := range rules {
+		if routeRuleAction(r) == "sniff" && len(r.Inbound) == 0 {
+			return false
 		}
-		if _, portText, err := net.SplitHostPort(addr); err == nil {
-			if p, err := strconv.Atoi(portText); err == nil && p > 0 {
-				ports[p] = true
-			}
-		}
+		needed = needed || ruleNeedsSniff(r)
 	}
-	return ports
+	return needed
 }
 
-// rulePrecedesLoopbackGuard reports whether a rule must run before the global
-// LoopbackGuardRule: non-terminating resolve/route-options rules and narrow
-// admin-configured local host+port exceptions (excluding stats endpoints).
-func rulePrecedesLoopbackGuard(r RuleInput, statsPorts map[int]bool) bool {
-	act := routeRuleAction(r)
-	if act == "resolve" || act == "route-options" {
-		return true
-	}
-	if act != "route" || len(r.IPCIDR) == 0 || len(r.Port) == 0 {
-		return false
-	}
-	for _, p := range r.Port {
-		if statsPorts[p] {
-			return false
-		}
-	}
-	for _, raw := range r.IPCIDR {
-		prefix, err := netip.ParsePrefix(raw)
-		if err != nil {
-			addr, addrErr := netip.ParseAddr(raw)
-			if addrErr != nil {
-				return false
-			}
-			prefix = netip.PrefixFrom(addr, addr.BitLen())
-		}
-		addr := prefix.Addr().Unmap()
-		if !addr.IsLoopback() && !addr.IsLinkLocalUnicast() {
-			return false
-		}
-		if addr.Is4() && prefix.Bits() < 24 {
-			return false
-		}
-		if addr.Is6() && prefix.Bits() < 64 {
-			return false
-		}
-	}
-	return true
-}
-
-// LoopbackGuardRule rejects proxied connections to the node itself, so proxy
-// users cannot reach node-local services (including the stats endpoints)
-// through the proxy. Besides loopback it covers:
+// LoopbackGuardRule rejects proxied connections to the node itself as the final
+// fallback after explicit user rules. Besides loopback it covers:
 //   - 0.0.0.0/8 and ::, which Linux delivers to the local host, so connecting
 //     to 0.0.0.0:<port> would otherwise bypass the loopback range;
 //   - link-local addresses and the cloud metadata endpoints (169.254.169.254,

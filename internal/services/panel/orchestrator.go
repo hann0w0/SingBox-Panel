@@ -137,7 +137,7 @@ func (o *Orchestrator) buildServerConfig(srv *model.Server, projection *singbox.
 	// Route rules are loaded before outbounds because a user-private exit only
 	// belongs in this server's config when one of its rules references it.
 	var ruleRows []model.RouteRule
-	if err := o.db.Where("server_id = ? AND enabled = ?", srv.ID, true).Order("sort").Find(&ruleRows).Error; err != nil {
+	if err := o.db.Where("server_id = ? AND enabled = ?", srv.ID, true).Order("sort, id").Find(&ruleRows).Error; err != nil {
 		return nil, fmt.Errorf("load route rules for server %d: %w", srv.ID, err)
 	}
 	ruleRows, err := materializeForwardRoutes(o.db, srv.ID, inbounds, ruleRows)

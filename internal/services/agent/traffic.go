@@ -459,6 +459,16 @@ func (s *trafficSampler) summarySnapshot() *protocol.TrafficSnapshot {
 	}
 }
 
+// liveRates returns the latest instantaneous rates without allocating snapshots.
+func (s *trafficSampler) liveRates() (available bool, uploadRate, downloadRate uint64) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if !s.trafficAvailable() {
+		return false, 0, 0
+	}
+	return true, s.uploadRate, s.downloadRate
+}
+
 func (s *trafficSampler) acknowledge(snapshot *protocol.TrafficSnapshot) {
 	if snapshot == nil {
 		return

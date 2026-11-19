@@ -3,15 +3,18 @@ package panel
 import (
 	"encoding/json"
 	"log"
+	"sort"
 	"sync"
 	"time"
 
 	"github.com/hann0w0/singbox-panel/internal/domain/protocol"
 )
 
+const defaultGlobalFlushInterval = time.Second
+
 // liveEvent is one real-time sample delivered to SSE subscribers.
 type liveEvent struct {
-	Kind string      `json:"kind"` // "traffic" | "progress" | "log" | "server_status"
+	Kind string      `json:"kind"` // "traffic" | "progress" | "log" | "server_status" | "server_status_batch"
 	TS   int64       `json:"ts"`   // unix ms
 	Data interface{} `json:"data"`
 }
@@ -47,9 +50,12 @@ type trafficSub struct {
 // on a closed channel (which would panic) — a subscriber that is too slow to
 // drain its buffer simply drops the sample.
 type liveHub struct {
-	mu         sync.Mutex
-	subs       map[uint][]*trafficSub // serverID -> subscribers
-	globalSubs []*trafficSub          // subscribers receiving server_status for all servers
+	mu                  sync.Mutex
+	subs                map[uint][]*trafficSub    // serverID -> subscribers
+	globalSubs          []*trafficSub             // subscribers receiving batched server_status_batch for all servers
+	pendingGlobal       map[uint]serverLiveStatus // coalesced updates waiting for the next 1s global tick
+	globalFlusherStop   chan struct{}
+	globalFlushInterval time.Duration
 
 	// recentTraffic keeps the last 120 samples (≈6 min at 3s interval) per server
 	// so a newly connected SSE client gets immediate history instead of an empty chart.
@@ -58,8 +64,10 @@ type liveHub struct {
 
 func newLiveHub() *liveHub {
 	return &liveHub{
-		subs:          make(map[uint][]*trafficSub),
-		recentTraffic: make(map[uint][]liveEvent),
+		subs:                make(map[uint][]*trafficSub),
+		pendingGlobal:       make(map[uint]serverLiveStatus),
+		globalFlushInterval: defaultGlobalFlushInterval,
+		recentTraffic:       make(map[uint][]liveEvent),
 	}
 }
 
@@ -92,12 +100,52 @@ func (lh *liveHub) unsubscribe(serverID uint, sub *trafficSub) {
 	close(sub.ch)
 }
 
-// subscribeAll registers an SSE subscriber that receives server_status updates
-// for every server (used by the admin servers overview list).
+func mergeServerLiveStatus(dst *serverLiveStatus, src serverLiveStatus) {
+	dst.ServerID = src.ServerID
+	if src.Online != nil {
+		dst.Online = src.Online
+	}
+	if src.Load1 != nil {
+		dst.Load1 = src.Load1
+	}
+	if src.MemUsed != nil {
+		dst.MemUsed = src.MemUsed
+	}
+	if src.MemTotal != nil {
+		dst.MemTotal = src.MemTotal
+	}
+	if src.Uptime != nil {
+		dst.Uptime = src.Uptime
+	}
+	if src.SingboxActive != nil {
+		dst.SingboxActive = src.SingboxActive
+	}
+	if src.TrafficAvailable != nil {
+		dst.TrafficAvailable = src.TrafficAvailable
+	}
+	if src.TrafficUploadRate != nil {
+		dst.TrafficUploadRate = src.TrafficUploadRate
+	}
+	if src.TrafficDownloadRate != nil {
+		dst.TrafficDownloadRate = src.TrafficDownloadRate
+	}
+}
+
+// subscribeAll registers an SSE subscriber that receives batched server_status_batch
+// updates for every server on a steady 1s cadence (used by the admin servers list).
 func (lh *liveHub) subscribeAll() *trafficSub {
-	sub := &trafficSub{ch: make(chan liveEvent, 128)}
+	sub := &trafficSub{ch: make(chan liveEvent, 32)}
 	lh.mu.Lock()
 	lh.globalSubs = append(lh.globalSubs, sub)
+	if lh.globalFlusherStop == nil {
+		stop := make(chan struct{})
+		lh.globalFlusherStop = stop
+		interval := lh.globalFlushInterval
+		if interval <= 0 {
+			interval = defaultGlobalFlushInterval
+		}
+		go lh.runGlobalFlusher(stop, interval)
+	}
 	lh.mu.Unlock()
 	return sub
 }
@@ -110,12 +158,57 @@ func (lh *liveHub) unsubscribeAll(sub *trafficSub) {
 			break
 		}
 	}
+	if len(lh.globalSubs) == 0 {
+		if lh.globalFlusherStop != nil {
+			close(lh.globalFlusherStop)
+			lh.globalFlusherStop = nil
+		}
+		clear(lh.pendingGlobal)
+	}
 	lh.mu.Unlock()
 	close(sub.ch)
 }
 
-// publishServerStatus broadcasts a partial server telemetry update to both
-// per-server subscribers and global server-list subscribers.
+func (lh *liveHub) runGlobalFlusher(stop <-chan struct{}, interval time.Duration) {
+	ticker := time.NewTicker(interval)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-stop:
+			return
+		case <-ticker.C:
+			lh.flushGlobal()
+		}
+	}
+}
+
+func (lh *liveHub) flushGlobal() {
+	lh.mu.Lock()
+	defer lh.mu.Unlock()
+	if len(lh.globalSubs) == 0 || len(lh.pendingGlobal) == 0 {
+		return
+	}
+	batch := make([]serverLiveStatus, 0, len(lh.pendingGlobal))
+	for _, status := range lh.pendingGlobal {
+		batch = append(batch, status)
+	}
+	clear(lh.pendingGlobal)
+	sort.Slice(batch, func(i, j int) bool { return batch[i].ServerID < batch[j].ServerID })
+	evt := liveEvent{
+		Kind: "server_status_batch",
+		TS:   time.Now().UnixMilli(),
+		Data: batch,
+	}
+	for _, sub := range lh.globalSubs {
+		select {
+		case sub.ch <- evt:
+		default:
+		}
+	}
+}
+
+// publishServerStatus broadcasts a partial server telemetry update immediately
+// to per-server subscribers, and coalesces it for the next 1s global batch tick.
 func (lh *liveHub) publishServerStatus(status serverLiveStatus) {
 	evt := liveEvent{
 		Kind: "server_status",
@@ -129,11 +222,10 @@ func (lh *liveHub) publishServerStatus(status serverLiveStatus) {
 		default:
 		}
 	}
-	for _, sub := range lh.globalSubs {
-		select {
-		case sub.ch <- evt:
-		default:
-		}
+	if len(lh.globalSubs) > 0 {
+		cur := lh.pendingGlobal[status.ServerID]
+		mergeServerLiveStatus(&cur, status)
+		lh.pendingGlobal[status.ServerID] = cur
 	}
 	lh.mu.Unlock()
 }
@@ -202,6 +294,7 @@ func (lh *liveHub) publishLog(serverID uint, evt protocol.LogEvt) {
 func (lh *liveHub) clearServer(serverID uint) {
 	lh.mu.Lock()
 	delete(lh.recentTraffic, serverID)
+	delete(lh.pendingGlobal, serverID)
 	lh.mu.Unlock()
 }
 

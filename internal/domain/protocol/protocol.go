@@ -38,6 +38,7 @@ const (
 	EvtCommandResult MessageType = "command_result"
 	EvtLog           MessageType = "log"
 	EvtTraffic       MessageType = "traffic"
+	EvtMetrics       MessageType = "metrics"
 	EvtProgress      MessageType = "progress"
 )
 
@@ -317,6 +318,17 @@ type LogEvt struct {
 // heartbeat, allowing 2-3s reporting without bloating the heartbeat payload.
 type TrafficEvt struct {
 	Traffic *TrafficSnapshot `json:"traffic,omitempty"`
+}
+
+// MetricsEvt is a lightweight 1s live telemetry frame sent to keep the admin UI
+// responsive without triggering database writes or subprocess probes.
+type MetricsEvt struct {
+	Load1            float64 `json:"load1"`
+	MemUsed          uint64  `json:"mem_used"`
+	MemTotal         uint64  `json:"mem_total"`
+	TrafficAvailable bool    `json:"traffic_available"`
+	UploadRate       uint64  `json:"upload_rate"`
+	DownloadRate     uint64  `json:"download_rate"`
 }
 
 // ProgressEvt is sent during long operations (install, self-update) so the

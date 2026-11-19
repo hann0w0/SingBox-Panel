@@ -148,6 +148,7 @@ func TestHubPublishesServerStatusToGlobalAndPerServerSubscribers(t *testing.T) {
 		t.Fatal(err)
 	}
 	hub := NewHub(db)
+	hub.live.globalFlushInterval = 15 * time.Millisecond
 	ac := &agentConn{
 		serverID: srv.ID,
 		send:     make(chan protocol.Envelope, 4),
@@ -163,7 +164,46 @@ func TestHubPublishesServerStatusToGlobalAndPerServerSubscribers(t *testing.T) {
 	otherSub, _ := hub.live.subscribe(srv.ID + 99)
 	defer hub.live.unsubscribe(srv.ID+99, otherSub)
 
-	// 1. Traffic event publishes rates without overwriting load/memory.
+	// 1. Lightweight 1s EvtMetrics publishes directly in memory without writing to DB.
+	metricsEnv, err := protocol.NewEnvelope(protocol.EvtMetrics, "", protocol.MetricsEvt{
+		Load1:            0.88,
+		MemUsed:          128 << 20,
+		MemTotal:         1024 << 20,
+		TrafficAvailable: true,
+		UploadRate:       333,
+		DownloadRate:     777,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	hub.handleEvent(ac, metricsEnv)
+
+	metricsServerEvt := <-serverSub.ch
+	if metricsServerEvt.Kind != "server_status" {
+		t.Fatalf("metrics serverSub kind = %q, want server_status", metricsServerEvt.Kind)
+	}
+	ms := metricsServerEvt.Data.(serverLiveStatus)
+	if ms.Load1 == nil || *ms.Load1 != 0.88 || ms.TrafficDownloadRate == nil || *ms.TrafficDownloadRate != 777 {
+		t.Fatalf("unexpected metrics status: %+v", ms)
+	}
+	var dbSrv model.Server
+	if err := db.First(&dbSrv, srv.ID).Error; err != nil {
+		t.Fatal(err)
+	}
+	if dbSrv.Load1 != 0 || dbSrv.TrafficDownloadRate != 0 {
+		t.Fatalf("EvtMetrics must not write to database: load1=%v down=%v", dbSrv.Load1, dbSrv.TrafficDownloadRate)
+	}
+
+	gotBatch := <-globalSub.ch
+	if gotBatch.Kind != "server_status_batch" {
+		t.Fatalf("global kind = %q, want server_status_batch", gotBatch.Kind)
+	}
+	batch := gotBatch.Data.([]serverLiveStatus)
+	if len(batch) != 1 || batch[0].ServerID != srv.ID || batch[0].TrafficDownloadRate == nil || *batch[0].TrafficDownloadRate != 777 {
+		t.Fatalf("unexpected metrics batch: %+v", batch)
+	}
+
+	// 2. Traffic event publishes rates without overwriting load/memory.
 	trafficEnv, err := protocol.NewEnvelope(protocol.EvtTraffic, "", protocol.TrafficEvt{
 		Traffic: &protocol.TrafficSnapshot{
 			AccountingVersion: 2,
@@ -178,10 +218,14 @@ func TestHubPublishesServerStatusToGlobalAndPerServerSubscribers(t *testing.T) {
 	hub.handleEvent(ac, trafficEnv)
 
 	gotGlobal := <-globalSub.ch
-	if gotGlobal.Kind != "server_status" {
-		t.Fatalf("global kind = %q, want server_status", gotGlobal.Kind)
+	if gotGlobal.Kind != "server_status_batch" {
+		t.Fatalf("global kind = %q, want server_status_batch", gotGlobal.Kind)
 	}
-	status := gotGlobal.Data.(serverLiveStatus)
+	trafficBatch := gotGlobal.Data.([]serverLiveStatus)
+	if len(trafficBatch) != 1 {
+		t.Fatalf("traffic batch len = %d, want 1", len(trafficBatch))
+	}
+	status := trafficBatch[0]
 	if status.ServerID != srv.ID || status.TrafficUploadRate == nil || *status.TrafficUploadRate != 1234 || status.TrafficDownloadRate == nil || *status.TrafficDownloadRate != 5678 {
 		t.Fatalf("unexpected traffic status: %+v", status)
 	}
@@ -204,7 +248,7 @@ func TestHubPublishesServerStatusToGlobalAndPerServerSubscribers(t *testing.T) {
 		t.Fatalf("serverSub sawTraffic=%v sawStatus=%v, want both true", sawTraffic, sawStatus)
 	}
 
-	// 2. Heartbeat publishes load, memory, and service state.
+	// 3. Heartbeat publishes load, memory, and service state.
 	hub.onHeartbeat(ac, protocol.HeartbeatEvt{
 		Load1:         0.42,
 		MemUsed:       256 << 20,
@@ -219,16 +263,24 @@ func TestHubPublishesServerStatusToGlobalAndPerServerSubscribers(t *testing.T) {
 		},
 	})
 	hbEvt := <-globalSub.ch
-	hbStatus := hbEvt.Data.(serverLiveStatus)
+	hbBatch := hbEvt.Data.([]serverLiveStatus)
+	if len(hbBatch) != 1 {
+		t.Fatalf("heartbeat batch len = %d, want 1", len(hbBatch))
+	}
+	hbStatus := hbBatch[0]
 	if hbStatus.Load1 == nil || *hbStatus.Load1 != 0.42 || hbStatus.MemUsed == nil || *hbStatus.MemUsed != 256<<20 || hbStatus.MemTotal == nil || *hbStatus.MemTotal != 1024<<20 {
 		t.Fatalf("unexpected heartbeat status: %+v", hbStatus)
 	}
 	<-serverSub.ch // drain heartbeat server_status
 
-	// 3. Unregister publishes offline and zero rates.
+	// 4. Unregister publishes offline and zero rates.
 	hub.unregister(ac)
 	offEvt := <-globalSub.ch
-	offStatus := offEvt.Data.(serverLiveStatus)
+	offBatch := offEvt.Data.([]serverLiveStatus)
+	if len(offBatch) != 1 {
+		t.Fatalf("offline batch len = %d, want 1", len(offBatch))
+	}
+	offStatus := offBatch[0]
 	if offStatus.Online == nil || *offStatus.Online || offStatus.TrafficDownloadRate == nil || *offStatus.TrafficDownloadRate != 0 {
 		t.Fatalf("unexpected offline status: %+v", offStatus)
 	}
@@ -248,6 +300,7 @@ func TestHandleServersLiveSSEStreamsServerStatus(t *testing.T) {
 		t.Fatal(err)
 	}
 	a := &App{db: db, auth: NewAuth("0123456789abcdef0123456789abcdef", db), hub: NewHub(db)}
+	a.hub.live.globalFlushInterval = 15 * time.Millisecond
 	router := gin.New()
 	router.GET("/api/admin/servers/live", a.auth.Middleware(), AdminOnly(), a.handleServersLiveSSE)
 	httpServer := httptest.NewServer(router)
@@ -295,13 +348,13 @@ func TestHandleServersLiveSSEStreamsServerStatus(t *testing.T) {
 		t.Fatalf("data line = %q, err = %v", dataLine, err)
 	}
 	var payload struct {
-		Kind string           `json:"kind"`
-		Data serverLiveStatus `json:"data"`
+		Kind string             `json:"kind"`
+		Data []serverLiveStatus `json:"data"`
 	}
 	if err := json.Unmarshal([]byte(strings.TrimPrefix(dataLine, "data: ")), &payload); err != nil {
 		t.Fatalf("unmarshal payload: %v", err)
 	}
-	if payload.Kind != "server_status" || payload.Data.ServerID != 42 || payload.Data.TrafficDownloadRate == nil || *payload.Data.TrafficDownloadRate != 4096 {
+	if payload.Kind != "server_status_batch" || len(payload.Data) != 1 || payload.Data[0].ServerID != 42 || payload.Data[0].TrafficDownloadRate == nil || *payload.Data[0].TrafficDownloadRate != 4096 {
 		t.Fatalf("unexpected payload: %+v", payload)
 	}
 }

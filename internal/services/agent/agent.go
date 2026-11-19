@@ -69,6 +69,9 @@ func (a *Agent) Run(ctx context.Context) {
 	// heartbeat. This lets the panel capture short-lived rate spikes without
 	// bloating the heartbeat payload.
 	go a.trafficReportLoop(ctx)
+	// Push lightweight 1s live metrics (rates + /proc load/memory) for smooth UI
+	// updates. Handled purely in memory on the panel without database writes.
+	go a.liveMetricsLoop(ctx)
 	// Ensure log stream stops when the agent exits.
 	go func() {
 		<-ctx.Done()
@@ -109,6 +112,32 @@ func (a *Agent) reportTraffic() {
 	}) {
 		a.trafficReportInFlight.Store(false)
 	}
+}
+
+func (a *Agent) liveMetricsLoop(ctx context.Context) {
+	ticker := time.NewTicker(time.Second)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			a.reportLiveMetrics()
+		}
+	}
+}
+
+func (a *Agent) reportLiveMetrics() {
+	memUsed, memTotal := memInfo()
+	available, upRate, downRate := a.traffic.liveRates()
+	a.client.sendEvent(protocol.EvtMetrics, protocol.MetricsEvt{
+		Load1:            loadAvg1(),
+		MemUsed:          memUsed,
+		MemTotal:         memTotal,
+		TrafficAvailable: available,
+		UploadRate:       upRate,
+		DownloadRate:     downRate,
+	}, nil)
 }
 
 func (a *Agent) register() protocol.RegisterEvt {

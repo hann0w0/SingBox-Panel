@@ -14,11 +14,39 @@ export interface ServerLiveStatus {
   traffic_download_rate?: number
 }
 
+function isServerLiveStatus(value: unknown): value is ServerLiveStatus {
+  if (!value || typeof value !== 'object') return false
+  const data = value as Partial<ServerLiveStatus>
+  return typeof data.server_id === 'number' && Number.isFinite(data.server_id)
+}
+
 export function parseServerLiveStatus(msg: SSEMessage): ServerLiveStatus | null {
-  if (msg.kind !== 'server_status' || !msg.data || typeof msg.data !== 'object') return null
-  const data = msg.data as Partial<ServerLiveStatus>
-  if (typeof data.server_id !== 'number' || !Number.isFinite(data.server_id)) return null
-  return data as ServerLiveStatus
+  if (msg.kind !== 'server_status') return null
+  return isServerLiveStatus(msg.data) ? msg.data : null
+}
+
+export function parseServerLiveStatuses(msg: SSEMessage): ServerLiveStatus[] {
+  if (msg.kind === 'server_status') {
+    return isServerLiveStatus(msg.data) ? [msg.data] : []
+  }
+  if (msg.kind === 'server_status_batch' && Array.isArray(msg.data)) {
+    return msg.data.filter(isServerLiveStatus)
+  }
+  return []
+}
+
+export function applyServerLiveStatuses(servers: Server[], patches: ServerLiveStatus[]): Server[] {
+  if (patches.length === 0) return servers
+  const byID = new Map<number, ServerLiveStatus>()
+  for (const patch of patches) byID.set(patch.server_id, patch)
+  let changed = false
+  const next = servers.map((server) => {
+    const patch = byID.get(server.id)
+    if (!patch) return server
+    changed = true
+    return mergeServerLiveStatus(server, patch)
+  })
+  return changed ? next : servers
 }
 
 export function mergeServerLiveStatus(server: Server, patch: ServerLiveStatus): Server {

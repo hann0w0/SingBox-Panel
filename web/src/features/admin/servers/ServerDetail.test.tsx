@@ -144,8 +144,10 @@ it('updates the detail summary bar live when server_status SSE events arrive', a
       },
     })
   })
-  expect(screen.getByText('16.00 KB/s')).toBeTruthy()
-  expect(screen.getByText('8.00 KB/s')).toBeTruthy()
   expect(screen.getByText('0.45')).toBeTruthy()
   expect(screen.getByText('30%')).toBeTruthy()
+  await waitFor(() => {
+    expect(screen.getByText('16.00 KB/s')).toBeTruthy()
+    expect(screen.getByText('8.00 KB/s')).toBeTruthy()
+  })
 })

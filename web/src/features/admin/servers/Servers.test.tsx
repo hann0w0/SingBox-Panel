@@ -149,7 +149,7 @@ describe('server remarks', () => {
     expect(screen.queryByText('导出订阅')).toBeNull()
   })
 
-  it('updates rates, load, memory and online status live from server_status SSE events', async () => {
+  it('updates rates, load, memory and online status live from server_status_batch SSE events', async () => {
     let onMessage: ((msg: SSEMessage) => void) | undefined
     vi.mocked(useSSE).mockImplementation((_url, _enabled, cb) => {
       onMessage = cb
@@ -162,9 +162,9 @@ describe('server remarks', () => {
 
     act(() => {
       onMessage?.({
-        kind: 'server_status',
+        kind: 'server_status_batch',
         ts: Date.now(),
-        data: {
+        data: [{
           server_id: 2,
           online: true,
           load1: 0.75,
@@ -173,13 +173,15 @@ describe('server remarks', () => {
           traffic_available: true,
           traffic_download_rate: 2048,
           traffic_upload_rate: 1024,
-        },
+        }],
       })
     })
     expect(row?.textContent).toContain('在线')
     expect(row?.textContent).toContain('0.75')
     expect(row?.textContent).toContain('50%')
-    expect(row?.textContent).toContain('2.00 KB/s')
-    expect(row?.textContent).toContain('1.00 KB/s')
+    await waitFor(() => {
+      expect(row?.textContent).toContain('2.00 KB/s')
+      expect(row?.textContent).toContain('1.00 KB/s')
+    })
   })
 })

@@ -426,6 +426,30 @@ func (h *Hub) handleEvent(ac *agentConn, env protocol.Envelope) {
 				})
 			}
 		}
+	case protocol.EvtMetrics:
+		var e protocol.MetricsEvt
+		if env.Decode(&e) == nil {
+			online := true
+			load1 := e.Load1
+			memUsed := e.MemUsed
+			memTotal := e.MemTotal
+			available := e.TrafficAvailable
+			up := e.UploadRate
+			down := e.DownloadRate
+			if !available {
+				up, down = 0, 0
+			}
+			h.live.publishServerStatus(serverLiveStatus{
+				ServerID:            serverID,
+				Online:              &online,
+				Load1:               &load1,
+				MemUsed:             &memUsed,
+				MemTotal:            &memTotal,
+				TrafficAvailable:    &available,
+				TrafficUploadRate:   &up,
+				TrafficDownloadRate: &down,
+			})
+		}
 	case protocol.EvtProgress:
 		var e protocol.ProgressEvt
 		if env.Decode(&e) == nil {

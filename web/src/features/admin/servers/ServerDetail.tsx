@@ -63,6 +63,7 @@ import { RequestState } from '../../../components/RequestState'
 import { MODAL_MD } from '../../../components/kit/modal'
 import { formatProtocolLabel } from '../../../lib/protocols'
 import { useSSE, type SSEMessage } from '../../../hooks/useSSE'
+import { AnimatedRate } from './AnimatedRate'
 import { mergeServerLiveStatus, parseServerLiveStatus } from './liveServerStatus'
 
 function ProtocolTag({ type }: { type: string }) {
@@ -1028,8 +1029,8 @@ export default function ServerDetail() {
 
       {section !== 'traffic' && section !== 'logs' && (
         <Stats items={[
-          { label: '下行速率', value: server.online && server.traffic_available ? `${formatBytes(server.traffic_download_rate ?? 0)}/s` : '—' },
-          { label: '上行速率', value: server.online && server.traffic_available ? `${formatBytes(server.traffic_upload_rate ?? 0)}/s` : '—' },
+          { label: '下行速率', value: server.online && server.traffic_available ? <AnimatedRate value={server.traffic_download_rate ?? 0} /> : '—' },
+          { label: '上行速率', value: server.online && server.traffic_available ? <AnimatedRate value={server.traffic_upload_rate ?? 0} /> : '—' },
           { label: '负载', value: server.online ? server.load1?.toFixed(2) : '—' },
           { label: '内存', value: server.online && memPct !== null ? `${memPct}%` : '—', hint: server.online && server.mem_total ? `${formatBytes(server.mem_used)} / ${formatBytes(server.mem_total)}` : undefined },
         ]} />

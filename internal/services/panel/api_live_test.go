@@ -412,3 +412,53 @@ func TestSetServerLogLevelPersistsAndRendersIntoConfig(t *testing.T) {
 		t.Fatalf("rendered log.level = %q, want trace", cfg.Log.Level)
 	}
 }
+
+func TestStagedConfigEditsApplyOnceOnDemand(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	db := testDB(t)
+	srv := model.Server{Name: "stage-node", AgentToken: "stage-token", ConfigMode: model.ConfigModeManaged}
+	if err := db.Create(&srv).Error; err != nil {
+		t.Fatal(err)
+	}
+	hub := NewHub(db)
+	conn := &agentConn{
+		serverID: srv.ID,
+		send:     make(chan protocol.Envelope, 4),
+		done:     make(chan struct{}),
+		pending:  make(map[string]chan protocol.CommandResultEvt),
+	}
+	hub.conns[srv.ID] = conn
+	a := &App{db: db, hub: hub, orch: NewOrchestrator(db, hub)}
+	router := gin.New()
+	router.PUT("/servers/:id/final-outbound", a.setFinalOutbound)
+	router.POST("/servers/:id/apply-config", a.applyServerConfig)
+
+	// 1. Editing routing final outbound stages without pushing to the online Agent.
+	req := httptest.NewRequest(http.MethodPut, "/servers/1/final-outbound", strings.NewReader(`{"outbound":"direct"}`))
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+	router.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK || !strings.Contains(rec.Body.String(), `"apply_state":"staged"`) || !strings.Contains(rec.Body.String(), `"config_dirty":true`) {
+		t.Fatalf("staged edit response = %d %s", rec.Code, rec.Body.String())
+	}
+	select {
+	case env := <-conn.send:
+		t.Fatalf("staged edit must not push to agent, got %q", env.Type)
+	default:
+	}
+
+	// 2. Applying config pushes CmdApplyConfig once and clears config_dirty.
+	go func() {
+		env := <-conn.send
+		conn.mu.Lock()
+		ch := conn.pending[env.ID]
+		conn.mu.Unlock()
+		ch <- protocol.CommandResultEvt{ID: env.ID, OK: true}
+	}()
+	applyReq := httptest.NewRequest(http.MethodPost, "/servers/1/apply-config", nil)
+	applyRec := httptest.NewRecorder()
+	router.ServeHTTP(applyRec, applyReq)
+	if applyRec.Code != http.StatusOK || !strings.Contains(applyRec.Body.String(), `"apply_state":"applied"`) || !strings.Contains(applyRec.Body.String(), `"config_dirty":false`) {
+		t.Fatalf("apply-config response = %d %s", applyRec.Code, applyRec.Body.String())
+	}
+}

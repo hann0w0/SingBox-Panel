@@ -51,6 +51,7 @@ const (
 	ConfigApplied       ConfigApplyState = "applied"
 	ConfigPending       ConfigApplyState = "pending"
 	ConfigFailed        ConfigApplyState = "failed"
+	ConfigStaged        ConfigApplyState = "staged"
 	asyncPushAttempts                    = 3
 	asyncPushRetryDelay                  = 2 * time.Second
 )
@@ -466,6 +467,13 @@ func (o *Orchestrator) pushConfigUnlocked(ctx context.Context, serverID uint) er
 			return errors.Join(err, fmt.Errorf("record credential synchronization: %w", saveErr))
 		}
 	}
+	if err == nil && srv.ConfigRevision > srv.ConfigAppliedRevision {
+		if saveErr := o.db.Model(&model.Server{}).
+			Where("id = ? AND config_revision = ?", serverID, srv.ConfigRevision).
+			Update("config_applied_revision", srv.ConfigRevision).Error; saveErr != nil {
+			return fmt.Errorf("record applied configuration revision: %w", saveErr)
+		}
+	}
 	return err
 }
 
@@ -503,6 +511,7 @@ func (o *Orchestrator) applyRawConfigUnlocked(ctx context.Context, serverID uint
 		}
 		return res, err
 	}
+	_ = o.db.Model(&model.Server{}).Where("id = ?", serverID).Update("config_applied_revision", gorm.Expr("config_revision")).Error
 	return res, nil
 }
 

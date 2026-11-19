@@ -190,6 +190,7 @@ func (a *App) routes() *gin.Engine {
 		admin.PUT("/servers/:id/log-level", a.setLogLevel)
 		admin.POST("/servers/:id/stream-logs", a.streamLogs)
 		admin.GET("/servers/:id/remote-config", a.remoteConfig)
+		admin.POST("/servers/:id/apply-config", a.applyServerConfig)
 		admin.POST("/servers/:id/apply-raw", a.applyRawConfig)
 		admin.POST("/servers/:id/import-config", a.importRemoteConfig)
 		admin.POST("/servers/:id/config-mode", a.setConfigMode)

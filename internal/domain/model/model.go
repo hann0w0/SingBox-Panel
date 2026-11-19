@@ -216,6 +216,12 @@ type Server struct {
 	FinalOutbound string `gorm:"size:64" json:"final_outbound"`
 	// LogLevel controls sing-box's log.level (default "info").
 	LogLevel string `gorm:"size:16;default:info" json:"log_level"`
+	// ConfigRevision increments on staged inbound/outbound/routing edits;
+	// ConfigAppliedRevision catches up when the node successfully applies the
+	// rendered config. ConfigDirty reports whether unapplied edits remain.
+	ConfigRevision        uint64 `gorm:"not null;default:0" json:"-"`
+	ConfigAppliedRevision uint64 `gorm:"not null;default:0" json:"-"`
+	ConfigDirty           bool   `gorm:"-" json:"config_dirty"`
 
 	// ConfigMode selects the source of truth for the node configuration. Managed
 	// mode renders the structured inbound/outbound/routing tables; raw mode keeps

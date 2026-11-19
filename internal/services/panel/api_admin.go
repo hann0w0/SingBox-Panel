@@ -221,6 +221,7 @@ func (a *App) listServers(c *gin.Context) {
 		if servers[i].LogLevel == "" {
 			servers[i].LogLevel = "info"
 		}
+		servers[i].ConfigDirty = servers[i].ConfigRevision > servers[i].ConfigAppliedRevision
 		setServerAddressAvailability(&servers[i])
 		servers[i].Online = a.hub.IsOnline(servers[i].ID)
 		if !servers[i].Online {
@@ -297,6 +298,7 @@ func (a *App) getServer(c *gin.Context) {
 	if srv.LogLevel == "" {
 		srv.LogLevel = "info"
 	}
+	srv.ConfigDirty = srv.ConfigRevision > srv.ConfigAppliedRevision
 	srv.Online = a.hub.IsOnline(srv.ID)
 	setServerAddressAvailability(&srv)
 	if srv.SingboxInstalled && srv.SingboxVersion != "" {

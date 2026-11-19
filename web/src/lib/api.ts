@@ -61,8 +61,9 @@ export function isCanceledRequest(e: unknown): boolean {
 }
 
 export interface ConfigApplyResult {
-  apply_state: 'applied' | 'pending' | 'failed'
+  apply_state: 'applied' | 'pending' | 'failed' | 'staged'
   apply_error?: string
+  config_dirty?: boolean
 }
 
 // ---- auth ----
@@ -337,6 +338,9 @@ export const setFinalOutbound = (serverId: number, outbound: string) =>
 
 export const setServerLogLevel = (serverId: number, level: string) =>
   http.put<ConfigApplyResult & { ok: boolean; log_level: string }>(`/api/admin/servers/${serverId}/log-level`, { level }).then((r) => r.data)
+
+export const applyServerConfig = (serverId: number) =>
+  http.post<ConfigApplyResult & { ok: boolean }>(`/api/admin/servers/${serverId}/apply-config`).then((r) => r.data)
 
 // ---- admin: log streaming (实时日志推流) ----
 export const streamLogs = (serverId: number, body: { enable: boolean; lines?: number; session_id: string }) =>

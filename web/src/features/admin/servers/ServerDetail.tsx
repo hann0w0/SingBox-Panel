@@ -24,6 +24,7 @@ import {
 import { useNavigate, useParams } from 'react-router-dom'
 import {
   applyRawConfig,
+  applyServerConfig,
   deleteInbound,
   deleteOutbound,
   deleteRule,
@@ -259,6 +260,9 @@ export default function ServerDetail() {
         if (currentSIDRef.current !== pending.sid) continue
         const result = await reorderRules(pending.sid, pending.order)
         if (currentSIDRef.current !== pending.sid) continue
+        if (typeof result.config_dirty === 'boolean') {
+          setServer((prev) => (prev && prev.id === pending.sid ? { ...prev, config_dirty: result.config_dirty } : prev))
+        }
         // Only the final queued order needs a toast; intermediate responses are
         // implementation details of a rapid sequence of drag operations.
         if (!pendingRuleOrderRef.current) showConfigApplyResult(result)
@@ -387,6 +391,18 @@ export default function ServerDetail() {
   const inboundTags = (server?.inbounds || []).map((i) => i.tag)
 
   const onSetFinal = (v: string) => run('final', () => setFinalOutbound(sid, v), 'final 出站已更新')
+
+  const onApplyConfig = async () => {
+    const targetSID = sid
+    if (currentSIDRef.current !== targetSID || busy) return
+    setBusy('apply-config')
+    try {
+      const saved = await applyWithToast('apply-config', () => applyServerConfig(targetSID), '配置下发中')
+      if (saved && currentSIDRef.current === targetSID) void loadCurrentServer()
+    } finally {
+      if (currentSIDRef.current === targetSID) setBusy('')
+    }
+  }
 
   // Import: preview what the server's own config.json contains, then adopt it.
   const openImport = async () => {
@@ -1019,6 +1035,17 @@ export default function ServerDetail() {
         <div className="sd-tab-actions" ref={setTabToolbar} />
         <div className="sd-toolbar-actions">
           {section !== 'traffic' && section !== 'logs' && <>
+            {server.config_dirty && (
+              <Button
+                type="primary"
+                size="small"
+                loading={busy === 'apply-config'}
+                disabled={!!busy && busy !== 'apply-config'}
+                onClick={() => void onApplyConfig()}
+              >
+                应用配置
+              </Button>
+            )}
             {addButton[section]}
             <ServerOverviewCard
               server={server}

@@ -87,8 +87,8 @@ func TestInboundTrafficRenamePreservesOfflineBucketsAcrossRestart(t *testing.T) 
 	path := fmt.Sprintf("/servers/%d/inbounds/%d", f.server.ID, f.multi.ID)
 	for _, tag := range []string{"intermediate", "renamed"} {
 		response := inboundTrafficRequest(t, router, http.MethodPut, path, gin.H{"tag": tag}, http.StatusOK)
-		if !strings.Contains(response.Body.String(), `"apply_state":"pending"`) {
-			t.Fatalf("offline rename was not pending: %s", response.Body.String())
+		if !strings.Contains(response.Body.String(), `"apply_state":"staged"`) {
+			t.Fatalf("offline rename was not staged: %s", response.Body.String())
 		}
 	}
 	var current model.Inbound

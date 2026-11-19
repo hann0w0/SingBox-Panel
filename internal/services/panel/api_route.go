@@ -119,7 +119,7 @@ func (a *App) createOutbound(c *gin.Context) {
 	if ob.Referenced() {
 		a.pushRoutingSourceChanges(ob)
 	}
-	a.applyConfigAndRespond(c, id, gin.H{"outbound": ob})
+	a.stageConfigAndRespond(c, id, gin.H{"outbound": ob})
 }
 
 func (a *App) updateOutbound(c *gin.Context) {
@@ -242,7 +242,7 @@ func (a *App) updateOutbound(c *gin.Context) {
 	if ob.Referenced() {
 		a.pushRoutingSourceChanges(&ob)
 	}
-	a.applyConfigAndRespond(c, sid, gin.H{"outbound": ob})
+	a.stageConfigAndRespond(c, sid, gin.H{"outbound": ob})
 }
 
 func (a *App) deleteOutbound(c *gin.Context) {
@@ -301,7 +301,7 @@ func (a *App) deleteOutbound(c *gin.Context) {
 	if ob.Referenced() {
 		a.pushRoutingSourceChanges(&ob)
 	}
-	a.applyConfigAndRespond(c, sid, gin.H{"ok": true})
+	a.stageConfigAndRespond(c, sid, gin.H{"ok": true})
 }
 
 // testOutbound asks the node itself to open a TCP connection to this landing
@@ -486,7 +486,7 @@ func (a *App) createRule(c *gin.Context) {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
-	a.applyConfigAndRespond(c, id, gin.H{"rule": r})
+	a.stageConfigAndRespond(c, id, gin.H{"rule": r})
 }
 
 func (a *App) updateRule(c *gin.Context) {
@@ -564,7 +564,7 @@ func (a *App) updateRule(c *gin.Context) {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
-	a.applyConfigAndRespond(c, sid, gin.H{"rule": r})
+	a.stageConfigAndRespond(c, sid, gin.H{"rule": r})
 }
 
 func (a *App) deleteRule(c *gin.Context) {
@@ -607,7 +607,7 @@ func (a *App) deleteRule(c *gin.Context) {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
-	a.applyConfigAndRespond(c, sid, gin.H{"ok": true})
+	a.stageConfigAndRespond(c, sid, gin.H{"ok": true})
 }
 
 type reorderRulesReq struct {
@@ -674,7 +674,7 @@ func (a *App) reorderRules(c *gin.Context) {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
-	a.applyConfigAndRespond(c, sid, gin.H{"ok": true})
+	a.stageConfigAndRespond(c, sid, gin.H{"ok": true})
 }
 
 // ---------- rule-sets ----------
@@ -948,7 +948,17 @@ func (a *App) setFinalOutbound(c *gin.Context) {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
-	a.applyConfigAndRespond(c, id, gin.H{"ok": true, "final_outbound": final})
+	a.stageConfigAndRespond(c, id, gin.H{"ok": true, "final_outbound": final})
+}
+
+func (a *App) applyServerConfig(c *gin.Context) {
+	id, ok := uintParam(c, "id")
+	if !ok {
+		return
+	}
+	unlockOperation := a.lockServerOperation(id)
+	defer unlockOperation()
+	a.applyConfigAndRespond(c, id, gin.H{"ok": true})
 }
 
 type logLevelReq struct {

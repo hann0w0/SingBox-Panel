@@ -245,12 +245,13 @@ func (a *App) applyImportUnlocked(srv *model.Server, p *singbox.ParsedConfig, ra
 			logLevel = "info"
 		}
 		if err := tx.Model(&model.Server{}).Where("id = ?", srv.ID).Updates(map[string]any{
-			"final_outbound":     p.Final,
-			"log_level":          logLevel,
-			"config_mode":        model.ConfigModeManaged,
-			"raw_config":         model.JSONText(append([]byte(nil), raw...)),
-			"config_residual":    model.JSONText(nil),
-			"config_initialized": true,
+			"final_outbound":          p.Final,
+			"log_level":               logLevel,
+			"config_mode":             model.ConfigModeManaged,
+			"raw_config":              model.JSONText(append([]byte(nil), raw...)),
+			"config_residual":         model.JSONText(nil),
+			"config_initialized":      true,
+			"config_applied_revision": gorm.Expr("config_revision"),
 		}).Error; err != nil {
 			return err
 		}

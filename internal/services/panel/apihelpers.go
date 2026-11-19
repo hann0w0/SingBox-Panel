@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
+	"gorm.io/gorm"
 
 	"github.com/hann0w0/singbox-panel/internal/domain/model"
 )
@@ -74,6 +75,21 @@ func uintParam(c *gin.Context, name string) (uint, bool) {
 	return uint(v), true
 }
 
+func (a *App) stageConfigAndRespond(c *gin.Context, serverID uint, payload gin.H) {
+	if err := a.db.Model(&model.Server{}).
+		Where("id = ?", serverID).
+		Update("config_revision", gorm.Expr("config_revision + 1")).Error; err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+	if payload == nil {
+		payload = gin.H{}
+	}
+	payload["apply_state"] = ConfigStaged
+	payload["config_dirty"] = true
+	c.JSON(http.StatusOK, payload)
+}
+
 func (a *App) applyConfigAndRespond(c *gin.Context, serverID uint, payload gin.H) {
 	result := a.orch.ApplyDesiredConfig(c.Request.Context(), serverID)
 	a.reconcileNodeConsumers(serverID)
@@ -83,6 +99,10 @@ func (a *App) applyConfigAndRespond(c *gin.Context, serverID uint, payload gin.H
 	payload["apply_state"] = result.ApplyState
 	if result.ApplyError != "" {
 		payload["apply_error"] = result.ApplyError
+	}
+	var srv model.Server
+	if err := a.db.Select("config_revision", "config_applied_revision").First(&srv, serverID).Error; err == nil {
+		payload["config_dirty"] = srv.ConfigRevision > srv.ConfigAppliedRevision
 	}
 	c.JSON(http.StatusOK, payload)
 }

@@ -2,14 +2,14 @@ import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testi
 import { MemoryRouter, Route, Routes, useNavigate } from 'react-router-dom'
 import { afterEach, beforeEach, expect, it, vi } from 'vitest'
 import { useSSE, type SSEMessage } from '../../../hooks/useSSE'
-import { getServer, listOutbounds, listRules, listServerAuthUsers } from '../../../lib/api'
+import { applyServerConfig, getServer, listOutbounds, listRules, listServerAuthUsers } from '../../../lib/api'
 import type { ServerAuthUser } from '../../../lib/api'
 import type { Server } from '../../../lib/types'
 import ServerDetail from './ServerDetail'
 import { TooltipProvider } from '../../../components/ui/tooltip'
 
 vi.mock('../../../hooks/useSSE', () => ({ useSSE: vi.fn(() => ({ connected: true })) }))
-vi.mock('../../../lib/api', async (original) => ({ ...await original<typeof import('../../../lib/api')>(), getServer: vi.fn(), listOutbounds: vi.fn(), listRules: vi.fn(), listServerAuthUsers: vi.fn() }))
+vi.mock('../../../lib/api', async (original) => ({ ...await original<typeof import('../../../lib/api')>(), applyServerConfig: vi.fn(), getServer: vi.fn(), listOutbounds: vi.fn(), listRules: vi.fn(), listServerAuthUsers: vi.fn() }))
 vi.mock('./InboundForm', () => ({ default: () => null }))
 vi.mock('./RoutingForms', () => ({
   OutboundForm: () => null,
@@ -155,4 +155,32 @@ it('updates the detail summary bar live when server_status SSE events arrive', a
     expect(screen.getByText('16.00 KB/s')).toBeTruthy()
     expect(screen.getByText('8.00 KB/s')).toBeTruthy()
   })
+})
+
+it('shows the apply-config button only when config_dirty is true and applies once on click', async () => {
+  vi.mocked(applyServerConfig).mockResolvedValue({ ok: true, apply_state: 'applied', config_dirty: false })
+  vi.mocked(getServer)
+    .mockResolvedValueOnce({
+      server: { id: 1, name: 'Server 1', address: 'example.com', inbounds: [], config_mode: 'managed', config_dirty: false } as unknown as Server,
+      install_command: '', public_url: '',
+    })
+  const first = mount()
+  await screen.findByRole('button', { name: '新增规则' })
+  expect(screen.queryByRole('button', { name: '应用配置' })).toBeNull()
+  first.unmount()
+
+  vi.mocked(getServer)
+    .mockResolvedValueOnce({
+      server: { id: 1, name: 'Server 1', address: 'example.com', inbounds: [], config_mode: 'managed', config_dirty: true } as unknown as Server,
+      install_command: '', public_url: '',
+    })
+    .mockResolvedValueOnce({
+      server: { id: 1, name: 'Server 1', address: 'example.com', inbounds: [], config_mode: 'managed', config_dirty: false } as unknown as Server,
+      install_command: '', public_url: '',
+    })
+  mount()
+  const applyButton = await screen.findByRole('button', { name: '应用配置' })
+  fireEvent.click(applyButton)
+  await waitFor(() => expect(applyServerConfig).toHaveBeenCalledWith(1))
+  await waitFor(() => expect(screen.queryByRole('button', { name: '应用配置' })).toBeNull())
 })

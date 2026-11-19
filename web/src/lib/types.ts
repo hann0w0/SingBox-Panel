@@ -64,6 +64,7 @@ export interface Server {
   mem_total: number
   final_outbound: string
   log_level?: string
+  config_dirty?: boolean
   traffic_available?: boolean
   traffic_upload_rate?: number
   traffic_download_rate?: number

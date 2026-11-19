@@ -178,7 +178,7 @@ func TestConfigOverlayAPIEditAndCustomReferenceProtection(t *testing.T) {
 	router.DELETE("/servers/:id/outbounds/:outboundID", app.deleteOutbound)
 	path := fmt.Sprintf("/servers/%d/inbounds/%d", srv.ID, inbound.ID)
 	response := serveJSONRequest(t, router, http.MethodPut, path, `{"listen_port":1081}`)
-	if response.Code != http.StatusOK || !strings.Contains(response.Body.String(), `"apply_state":"pending"`) {
+	if response.Code != http.StatusOK || !strings.Contains(response.Body.String(), `"apply_state":"staged"`) {
 		t.Fatalf("edit rejected: %d %s", response.Code, response.Body)
 	}
 	response = serveJSONRequest(t, router, http.MethodPut, path, `{"tag":"renamed"}`)

@@ -132,7 +132,7 @@ func (a *App) createInbound(c *gin.Context) {
 		c.JSON(status, gin.H{"error": err.Error()})
 		return
 	}
-	a.applyConfigAndRespond(c, id, gin.H{"inbound": ib})
+	a.stageConfigAndRespond(c, id, gin.H{"inbound": ib})
 }
 
 func (a *App) updateInbound(c *gin.Context) {
@@ -300,7 +300,7 @@ func (a *App) updateInbound(c *gin.Context) {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
-	a.applyConfigAndRespond(c, sid, gin.H{"inbound": ib})
+	a.stageConfigAndRespond(c, sid, gin.H{"inbound": ib})
 }
 
 func (a *App) deleteInbound(c *gin.Context) {
@@ -366,7 +366,7 @@ func (a *App) deleteInbound(c *gin.Context) {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
-	a.applyConfigAndRespond(c, sid, gin.H{"ok": true})
+	a.stageConfigAndRespond(c, sid, gin.H{"ok": true})
 }
 
 // removeInboundUserAssignments removes an explicitly assigned inbound without

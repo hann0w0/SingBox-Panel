@@ -4,13 +4,16 @@ import { errMsg, type ConfigApplyResult } from './api'
 export function isConfigApplyResult(value: unknown): value is ConfigApplyResult {
   if (!value || typeof value !== 'object' || !('apply_state' in value)) return false
   const state = (value as { apply_state?: unknown }).apply_state
-  return state === 'applied' || state === 'pending' || state === 'failed'
+  return state === 'applied' || state === 'pending' || state === 'failed' || state === 'staged'
 }
 
 // Render a config-apply outcome. When `key` is given the message replaces an
 // existing toast in place (spinner → result), otherwise it shows a fresh one.
 export function showConfigApplyResult(result: ConfigApplyResult, key?: string) {
   switch (result.apply_state) {
+    case 'staged':
+      message.success({ content: '已暂存更改，点击「应用配置」后下发到节点', key })
+      break
     case 'applied':
       message.success({ content: '已保存并应用到节点', key })
       break

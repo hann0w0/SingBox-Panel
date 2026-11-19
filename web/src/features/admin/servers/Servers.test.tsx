@@ -38,7 +38,11 @@ beforeEach(() => {
     key: (index: number) => [...values.keys()][index] ?? null,
     get length() { return values.size },
   })
-  vi.stubGlobal('matchMedia', () => ({ matches: false, addEventListener: vi.fn(), removeEventListener: vi.fn() }))
+  vi.stubGlobal('matchMedia', (query: string) => ({
+    matches: query === '(prefers-reduced-motion: reduce)',
+    addEventListener: vi.fn(),
+    removeEventListener: vi.fn(),
+  }))
   vi.mocked(getServersMeta).mockResolvedValue(metadata([server]))
   vi.mocked(getOverview).mockResolvedValue({ users_total: 0 } as Awaited<ReturnType<typeof getOverview>>)
   vi.mocked(updateServer).mockResolvedValue({ ok: true })

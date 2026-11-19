@@ -27,8 +27,8 @@ export function AnimatedRate({ value }: { value: number }) {
     }
     let rafId = 0
     const startedAt = performance.now()
-    const step = (now: number) => {
-      const progress = Math.min(1, (now - startedAt) / ANIMATION_MS)
+    const step = () => {
+      const progress = Math.min(1, (performance.now() - startedAt) / ANIMATION_MS)
       // easeOutCubic: quick initial response, gentle settle at the target value
       const eased = 1 - (1 - progress) ** 3
       const current = progress >= 1 ? target : from + (target - from) * eased

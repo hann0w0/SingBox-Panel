@@ -37,12 +37,17 @@ const bob: ServerAuthUser = { id: 2, name: 'bob', auth_user: 'auth-bob' }
 
 beforeEach(() => {
   vi.resetAllMocks()
+  vi.stubGlobal('matchMedia', (query: string) => ({
+    matches: query === '(prefers-reduced-motion: reduce)',
+    addEventListener: vi.fn(),
+    removeEventListener: vi.fn(),
+  }))
   vi.mocked(getServer).mockImplementation(async (sid) => ({ server: { id: sid, name: `Server ${sid}`, address: 'example.com', inbounds: [], config_mode: 'managed' } as unknown as Server, install_command: '', public_url: '' }))
   vi.mocked(listOutbounds).mockResolvedValue([])
   vi.mocked(listRules).mockResolvedValue([])
   vi.mocked(listServerAuthUsers).mockResolvedValue([bob])
 })
-afterEach(cleanup)
+afterEach(() => { cleanup(); vi.unstubAllGlobals() })
 
 it('keeps form controls editable for an imported raw configuration without a lock banner', async () => {
   vi.mocked(getServer).mockResolvedValue({ server: { id: 1, name: 'Imported', address: 'example.com', inbounds: [], config_mode: 'raw' } as unknown as Server, install_command: '', public_url: '' })

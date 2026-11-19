@@ -181,6 +181,68 @@ func (a *App) handleTrafficSSE(c *gin.Context) {
 	}
 }
 
+// handleServersLiveSSE opens a Server-Sent Events stream that pushes real-time
+// server_status updates (rates, load, memory, online state) for all servers.
+func (a *App) handleServersLiveSSE(c *gin.Context) {
+	value, _ := c.Get("session_claims")
+	claims, _ := value.(*Claims)
+	ctx := c.Request.Context()
+	if !a.auth.sessionActive(ctx, claims) {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "session revoked"})
+		return
+	}
+
+	c.Header("Content-Type", "text/event-stream")
+	c.Header("Cache-Control", "no-cache")
+	c.Header("Connection", "keep-alive")
+	c.Header("X-Accel-Buffering", "no")
+
+	flusher, ok := c.Writer.(http.Flusher)
+	if !ok {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "streaming not supported"})
+		return
+	}
+	_ = http.NewResponseController(c.Writer).SetReadDeadline(time.Time{})
+
+	sub := a.hub.live.subscribeAll()
+	defer a.hub.live.unsubscribeAll(sub)
+
+	if _, err := io.WriteString(c.Writer, ": connected\n\n"); err != nil {
+		return
+	}
+	flusher.Flush()
+
+	heartbeat := time.NewTicker(15 * time.Second)
+	defer heartbeat.Stop()
+
+	expires := time.NewTimer(time.Until(claims.ExpiresAt.Time))
+	defer expires.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-expires.C:
+			return
+		case evt, ok := <-sub.ch:
+			if !ok || !a.auth.sessionActive(ctx, claims) {
+				return
+			}
+			if _, err := io.WriteString(c.Writer, evt.SSE()); err != nil {
+				return
+			}
+			flusher.Flush()
+		case <-heartbeat.C:
+			if !a.auth.sessionActive(ctx, claims) {
+				return
+			}
+			if _, err := io.WriteString(c.Writer, ": heartbeat\n\n"); err != nil {
+				return
+			}
+			flusher.Flush()
+		}
+	}
+}
+
 // streamLogs starts/stops continuous log streaming from a node.
 func (a *App) streamLogs(c *gin.Context) {
 	id, ok := uintParam(c, "id")

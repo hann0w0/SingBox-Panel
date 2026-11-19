@@ -62,6 +62,8 @@ import '../../../styles/server-detail.css'
 import { RequestState } from '../../../components/RequestState'
 import { MODAL_MD } from '../../../components/kit/modal'
 import { formatProtocolLabel } from '../../../lib/protocols'
+import { useSSE, type SSEMessage } from '../../../hooks/useSSE'
+import { mergeServerLiveStatus, parseServerLiveStatus } from './liveServerStatus'
 
 function ProtocolTag({ type }: { type: string }) {
   return <span className="ui-tag">{formatProtocolLabel(type) || type}</span>
@@ -76,6 +78,13 @@ export default function ServerDetail() {
   const section: DetailSection = (DETAIL_SECTIONS as readonly string[]).includes(sectionParam || '') ? sectionParam as DetailSection : 'inbounds'
   const sid = Number(id)
   const [server, setServer] = useState<Server | null>(null)
+  const onSSEMessage = useCallback((msg: SSEMessage) => {
+    const patch = parseServerLiveStatus(msg)
+    if (!patch) return
+    setServer((prev) => (prev && prev.id === patch.server_id ? mergeServerLiveStatus(prev, patch) : prev))
+  }, [])
+  const liveEnabled = Number.isFinite(sid) && sid > 0 && section !== 'traffic' && section !== 'logs'
+  useSSE(liveEnabled ? `/api/admin/servers/${sid}/traffic/live` : '', liveEnabled, onSSEMessage)
   const [pageLoading, setPageLoading] = useState(true)
   const [loadError, setLoadError] = useState<string | null>(null)
   const [sectionError, setSectionError] = useState<string | null>(null)

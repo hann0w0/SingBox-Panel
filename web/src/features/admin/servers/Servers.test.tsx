@@ -1,12 +1,14 @@
-import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { MemoryRouter } from 'react-router-dom'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { useSSE, type SSEMessage } from '../../../hooks/useSSE'
 import { createServer, getOverview, getServersMeta, updateServer } from '../../../lib/api'
 import { copyToClipboard } from '../../../lib/util'
 import type { Server } from '../../../lib/types'
 import Servers from './Servers'
 import { ServerOverviewCard } from './ServerOverviewCard'
 
+vi.mock('../../../hooks/useSSE', () => ({ useSSE: vi.fn(() => ({ connected: true })) }))
 vi.mock('../../../lib/api', () => ({
   createServer: vi.fn(), updateServer: vi.fn(), getServersMeta: vi.fn(), getOverview: vi.fn(),
   errMsg: (error: Error) => error.message, isCanceledRequest: () => false,
@@ -145,5 +147,39 @@ describe('server remarks', () => {
     expect(screen.queryByText('Backup exit')).toBeNull()
     expect(screen.getByRole('button', { name: '导出节点' })).toBeTruthy()
     expect(screen.queryByText('导出订阅')).toBeNull()
+  })
+
+  it('updates rates, load, memory and online status live from server_status SSE events', async () => {
+    let onMessage: ((msg: SSEMessage) => void) | undefined
+    vi.mocked(useSSE).mockImplementation((_url, _enabled, cb) => {
+      onMessage = cb
+      return { connected: true }
+    })
+    render(<MemoryRouter><Servers /></MemoryRouter>)
+    const row = (await screen.findByText('Frankfurt')).closest('.srv-row')
+    expect(row?.textContent).toContain('离线')
+    expect(useSSE).toHaveBeenCalledWith('/api/admin/servers/live', true, expect.any(Function))
+
+    act(() => {
+      onMessage?.({
+        kind: 'server_status',
+        ts: Date.now(),
+        data: {
+          server_id: 2,
+          online: true,
+          load1: 0.75,
+          mem_used: 512 * 1024 * 1024,
+          mem_total: 1024 * 1024 * 1024,
+          traffic_available: true,
+          traffic_download_rate: 2048,
+          traffic_upload_rate: 1024,
+        },
+      })
+    })
+    expect(row?.textContent).toContain('在线')
+    expect(row?.textContent).toContain('0.75')
+    expect(row?.textContent).toContain('50%')
+    expect(row?.textContent).toContain('2.00 KB/s')
+    expect(row?.textContent).toContain('1.00 KB/s')
   })
 })

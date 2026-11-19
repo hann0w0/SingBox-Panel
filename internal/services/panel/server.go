@@ -171,6 +171,7 @@ func (a *App) routes() *gin.Engine {
 		admin.GET("/schemas", a.getSchemas)
 
 		admin.GET("/servers", a.listServers)
+		admin.GET("/servers/live", a.handleServersLiveSSE)
 		admin.POST("/servers", a.createServer)
 		admin.PUT("/servers/order", a.updateServerOrder)
 		admin.GET("/servers/:id", a.getServer)

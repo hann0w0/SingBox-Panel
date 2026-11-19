@@ -11,9 +11,25 @@ import (
 
 // liveEvent is one real-time sample delivered to SSE subscribers.
 type liveEvent struct {
-	Kind string      `json:"kind"` // "traffic" | "progress" | "log"
+	Kind string      `json:"kind"` // "traffic" | "progress" | "log" | "server_status"
 	TS   int64       `json:"ts"`   // unix ms
 	Data interface{} `json:"data"`
+}
+
+// serverLiveStatus is a partial live telemetry update for one server.
+// Nil fields are omitted so traffic-only updates do not overwrite heartbeat
+// metrics (load, memory, service state) and vice versa.
+type serverLiveStatus struct {
+	ServerID            uint     `json:"server_id"`
+	Online              *bool    `json:"online,omitempty"`
+	Load1               *float64 `json:"load1,omitempty"`
+	MemUsed             *uint64  `json:"mem_used,omitempty"`
+	MemTotal            *uint64  `json:"mem_total,omitempty"`
+	Uptime              *int64   `json:"uptime,omitempty"`
+	SingboxActive       *bool    `json:"singbox_active,omitempty"`
+	TrafficAvailable    *bool    `json:"traffic_available,omitempty"`
+	TrafficUploadRate   *uint64  `json:"traffic_upload_rate,omitempty"`
+	TrafficDownloadRate *uint64  `json:"traffic_download_rate,omitempty"`
 }
 
 // trafficSub is one SSE subscriber for a specific server.
@@ -31,8 +47,9 @@ type trafficSub struct {
 // on a closed channel (which would panic) — a subscriber that is too slow to
 // drain its buffer simply drops the sample.
 type liveHub struct {
-	mu   sync.Mutex
-	subs map[uint][]*trafficSub // serverID -> subscribers
+	mu         sync.Mutex
+	subs       map[uint][]*trafficSub // serverID -> subscribers
+	globalSubs []*trafficSub          // subscribers receiving server_status for all servers
 
 	// recentTraffic keeps the last 120 samples (≈6 min at 3s interval) per server
 	// so a newly connected SSE client gets immediate history instead of an empty chart.
@@ -73,6 +90,52 @@ func (lh *liveHub) unsubscribe(serverID uint, sub *trafficSub) {
 	}
 	lh.mu.Unlock()
 	close(sub.ch)
+}
+
+// subscribeAll registers an SSE subscriber that receives server_status updates
+// for every server (used by the admin servers overview list).
+func (lh *liveHub) subscribeAll() *trafficSub {
+	sub := &trafficSub{ch: make(chan liveEvent, 128)}
+	lh.mu.Lock()
+	lh.globalSubs = append(lh.globalSubs, sub)
+	lh.mu.Unlock()
+	return sub
+}
+
+func (lh *liveHub) unsubscribeAll(sub *trafficSub) {
+	lh.mu.Lock()
+	for i, s := range lh.globalSubs {
+		if s == sub {
+			lh.globalSubs = append(lh.globalSubs[:i], lh.globalSubs[i+1:]...)
+			break
+		}
+	}
+	lh.mu.Unlock()
+	close(sub.ch)
+}
+
+// publishServerStatus broadcasts a partial server telemetry update to both
+// per-server subscribers and global server-list subscribers.
+func (lh *liveHub) publishServerStatus(status serverLiveStatus) {
+	evt := liveEvent{
+		Kind: "server_status",
+		TS:   time.Now().UnixMilli(),
+		Data: status,
+	}
+	lh.mu.Lock()
+	for _, sub := range lh.subs[status.ServerID] {
+		select {
+		case sub.ch <- evt:
+		default:
+		}
+	}
+	for _, sub := range lh.globalSubs {
+		select {
+		case sub.ch <- evt:
+		default:
+		}
+	}
+	lh.mu.Unlock()
 }
 
 // publishTraffic stores a traffic sample in the rolling window and broadcasts

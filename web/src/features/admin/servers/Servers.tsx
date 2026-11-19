@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, type DragEvent, type PointerEvent as ReactPointerEvent } from 'react'
+import { useCallback, useEffect, useRef, useState, type DragEvent, type PointerEvent as ReactPointerEvent } from 'react'
 import { Button, Dropdown, Form, Grid, Input, Modal, Segmented, Select, Typography, message } from '../../../components/kit'
 import { Check, ChevronDown, Copy, Network, Pencil, ChevronsUpDown, Plus, Trash2 } from 'lucide-react'
 import { useNavigate } from 'react-router-dom'
@@ -8,6 +8,8 @@ import { copyToClipboard, formatBytes } from '../../../lib/util'
 import { RequestState } from '../../../components/RequestState'
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
 import { PageHeader, Pills, Stats, Status } from '../../../components/kit/Page'
+import { useSSE, type SSEMessage } from '../../../hooks/useSSE'
+import { mergeServerLiveStatus, parseServerLiveStatus } from './liveServerStatus'
 import '../../../styles/servers.css'
 import { MODAL_MD, MODAL_SM } from '../../../components/kit/modal'
 
@@ -225,13 +227,26 @@ export default function Servers() {
         // Only feeds the summary strip; the list does not depend on it.
       })
   }
+  const onSSEMessage = useCallback((msg: SSEMessage) => {
+    const patch = parseServerLiveStatus(msg)
+    if (!patch) return
+    setServers((prev) => {
+      const idx = prev.findIndex((s) => s.id === patch.server_id)
+      if (idx === -1) return prev
+      const next = prev.slice()
+      next[idx] = mergeServerLiveStatus(prev[idx], patch)
+      return next
+    })
+  }, [])
+  useSSE('/api/admin/servers/live', true, onSSEMessage)
+
   useEffect(() => {
     load()
-    // Online state, rates and versions change on their own; keep them fresh
-    // without the user pressing refresh. Skip while a drag is in progress.
+    // Live rates, load, memory and online state stream over SSE; keep a slow
+    // background sync for user counts, versions and added/removed servers.
     const timer = window.setInterval(() => {
       if (pointerDragRef.current === null && !sorting) load(true)
-    }, 10000)
+    }, 60000)
     return () => {
       window.clearInterval(timer)
       loadRef.current.generation++

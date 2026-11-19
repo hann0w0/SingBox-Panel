@@ -87,6 +87,11 @@ func (h *Hub) register(serverID uint, remoteIP string, conn *websocket.Conn) *ag
 	h.mu.Unlock()
 	touchServerSeen(h.db, serverID, true)
 	unlockState()
+	online := true
+	h.live.publishServerStatus(serverLiveStatus{
+		ServerID: serverID,
+		Online:   &online,
+	})
 	if old != nil {
 		old.close()
 	}
@@ -124,6 +129,15 @@ func (h *Hub) unregister(ac *agentConn) {
 			log.Printf("traffic: clear offline server %d: %v", ac.serverID, err)
 		}
 		h.live.publishTraffic(ac.serverID, nil)
+		offline := false
+		zero := uint64(0)
+		h.live.publishServerStatus(serverLiveStatus{
+			ServerID:            ac.serverID,
+			Online:              &offline,
+			TrafficAvailable:    &offline,
+			TrafficUploadRate:   &zero,
+			TrafficDownloadRate: &zero,
+		})
 	}
 }
 
@@ -387,8 +401,29 @@ func (h *Hub) handleEvent(ac *agentConn, env protocol.Envelope) {
 			live.Report = nil
 			if live.Unavailable {
 				h.live.publishTraffic(serverID, nil)
+				online := true
+				available := false
+				zero := uint64(0)
+				h.live.publishServerStatus(serverLiveStatus{
+					ServerID:            serverID,
+					Online:              &online,
+					TrafficAvailable:    &available,
+					TrafficUploadRate:   &zero,
+					TrafficDownloadRate: &zero,
+				})
 			} else {
 				h.live.publishTraffic(serverID, &live)
+				online := true
+				available := true
+				up := live.UploadRate
+				down := live.DownloadRate
+				h.live.publishServerStatus(serverLiveStatus{
+					ServerID:            serverID,
+					Online:              &online,
+					TrafficAvailable:    &available,
+					TrafficUploadRate:   &up,
+					TrafficDownloadRate: &down,
+				})
 			}
 		}
 	case protocol.EvtProgress:
@@ -476,4 +511,34 @@ func (h *Hub) onHeartbeat(ac *agentConn, e protocol.HeartbeatEvt) {
 	if e.Traffic == nil {
 		h.live.publishTraffic(serverID, nil)
 	}
+	online := true
+	load1 := e.Load1
+	memUsed := e.MemUsed
+	memTotal := e.MemTotal
+	uptime := e.Uptime
+	active := e.SingboxActive
+	status := serverLiveStatus{
+		ServerID:      serverID,
+		Online:        &online,
+		Load1:         &load1,
+		MemUsed:       &memUsed,
+		MemTotal:      &memTotal,
+		Uptime:        &uptime,
+		SingboxActive: &active,
+	}
+	if e.Traffic == nil || e.Traffic.Unavailable {
+		available := false
+		zero := uint64(0)
+		status.TrafficAvailable = &available
+		status.TrafficUploadRate = &zero
+		status.TrafficDownloadRate = &zero
+	} else {
+		available := true
+		up := e.Traffic.UploadRate
+		down := e.Traffic.DownloadRate
+		status.TrafficAvailable = &available
+		status.TrafficUploadRate = &up
+		status.TrafficDownloadRate = &down
+	}
+	h.live.publishServerStatus(status)
 }

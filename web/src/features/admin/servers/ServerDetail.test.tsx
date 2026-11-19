@@ -1,12 +1,14 @@
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import { MemoryRouter, Route, Routes, useNavigate } from 'react-router-dom'
 import { afterEach, beforeEach, expect, it, vi } from 'vitest'
+import { useSSE, type SSEMessage } from '../../../hooks/useSSE'
 import { getServer, listOutbounds, listRules, listServerAuthUsers } from '../../../lib/api'
 import type { ServerAuthUser } from '../../../lib/api'
 import type { Server } from '../../../lib/types'
 import ServerDetail from './ServerDetail'
 import { TooltipProvider } from '../../../components/ui/tooltip'
 
+vi.mock('../../../hooks/useSSE', () => ({ useSSE: vi.fn(() => ({ connected: true })) }))
 vi.mock('../../../lib/api', async (original) => ({ ...await original<typeof import('../../../lib/api')>(), getServer: vi.fn(), listOutbounds: vi.fn(), listRules: vi.fn(), listServerAuthUsers: vi.fn() }))
 vi.mock('./InboundForm', () => ({ default: () => null }))
 vi.mock('./RoutingForms', () => ({
@@ -105,4 +107,45 @@ it('aborts an older route-user request on same-server reload and tracks the repl
   view.unmount()
   expect(vi.mocked(listServerAuthUsers).mock.calls[1][1]?.aborted).toBe(true)
   await act(async () => second.resolve([bob]))
+})
+
+it('updates the detail summary bar live when server_status SSE events arrive', async () => {
+  let onMessage: ((msg: SSEMessage) => void) | undefined
+  vi.mocked(useSSE).mockImplementation((_url, _enabled, cb) => {
+    onMessage = cb
+    return { connected: true }
+  })
+  vi.mocked(getServer).mockResolvedValue({
+    server: {
+      id: 1, name: 'Server 1', address: 'example.com', inbounds: [], config_mode: 'managed',
+      online: true, load1: 0.1, mem_used: 100 * 1024 * 1024, mem_total: 1000 * 1024 * 1024,
+      traffic_available: true, traffic_download_rate: 1024, traffic_upload_rate: 512,
+    } as unknown as Server,
+    install_command: '', public_url: '',
+  })
+  mount()
+  expect(await screen.findByText('1.00 KB/s')).toBeTruthy()
+  expect(screen.getByText('0.10')).toBeTruthy()
+  expect(useSSE).toHaveBeenCalledWith('/api/admin/servers/1/traffic/live', true, expect.any(Function))
+
+  act(() => {
+    onMessage?.({
+      kind: 'server_status',
+      ts: Date.now(),
+      data: {
+        server_id: 1,
+        online: true,
+        load1: 0.45,
+        mem_used: 300 * 1024 * 1024,
+        mem_total: 1000 * 1024 * 1024,
+        traffic_available: true,
+        traffic_download_rate: 16 * 1024,
+        traffic_upload_rate: 8 * 1024,
+      },
+    })
+  })
+  expect(screen.getByText('16.00 KB/s')).toBeTruthy()
+  expect(screen.getByText('8.00 KB/s')).toBeTruthy()
+  expect(screen.getByText('0.45')).toBeTruthy()
+  expect(screen.getByText('30%')).toBeTruthy()
 })

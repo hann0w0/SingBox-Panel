@@ -4,16 +4,16 @@ import { Check, ChevronDown, Copy, Network, Pencil, ChevronsUpDown, Plus, Trash2
 import { useNavigate } from 'react-router-dom'
 import { createServer, deleteServer, errMsg, getOverview, getServersMeta, installSingbox, isCanceledRequest, updateAllAgents, updateServer, updateServerOrder } from '../../../lib/api'
 import type { Server } from '../../../lib/types'
-import { copyToClipboard } from '../../../lib/util'
+import { copyToClipboard, formatBytes } from '../../../lib/util'
 import { RequestState } from '../../../components/RequestState'
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
 import { PageHeader, Pills, Stats, Status } from '../../../components/kit/Page'
 import { useSSE, type SSEMessage } from '../../../hooks/useSSE'
-import { AnimatedRate } from './AnimatedRate'
 import { applyServerLiveStatuses, parseServerLiveStatuses } from './liveServerStatus'
 import '../../../styles/servers.css'
 import { MODAL_MD, MODAL_SM } from '../../../components/kit/modal'
 
+const rate = (n: number) => `${formatBytes(n)}/s`
 type AddressRow = { label: string; value: string; copy: string }
 
 /** Real reported addresses plus the export-only domain, for the network popover. */
@@ -445,8 +445,8 @@ export default function Servers() {
       />
       <Stats items={[
         { label: '在线', value: <>{online.length}<span className="srv-stat-total"> / {servers.length}</span></> },
-        { label: '下行速率', value: <AnimatedRate value={totalDown} /> },
-        { label: '上行速率', value: <AnimatedRate value={totalUp} /> },
+        { label: '下行速率', value: rate(totalDown) },
+        { label: '上行速率', value: rate(totalUp) },
         { label: '用户', value: usersTotal ?? '—' },
       ]} />
       <Pills
@@ -541,8 +541,8 @@ export default function Servers() {
                 <span>{s.online ? s.load1.toFixed(2) : '—'}<span className="faint"> · </span><span className={memPct !== null && s.online && memPct >= 85 ? 'srv-hot' : undefined}>{s.online && memPct !== null ? `${memPct}%` : '—'}</span></span>
               </div>
               <div className="srv-rate mono">
-                <span>↓ {s.online && s.traffic_available ? <AnimatedRate value={s.traffic_download_rate ?? 0} /> : '—'}</span>
-                <span className="faint">↑ {s.online && s.traffic_available ? <AnimatedRate value={s.traffic_upload_rate ?? 0} /> : '—'}</span>
+                <span>↓ {s.online && s.traffic_available ? rate(s.traffic_download_rate ?? 0) : '—'}</span>
+                <span className="faint">↑ {s.online && s.traffic_available ? rate(s.traffic_upload_rate ?? 0) : '—'}</span>
               </div>
               <div className="ui-row-actions">
                 <ServerNetworkButton server={s} />

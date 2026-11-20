@@ -45,7 +45,7 @@ function openSnell(settings: InboundSettings) {
 }
 
 async function saveSettings() {
-  fireEvent.click(screen.getByRole('button', { name: '应用' }))
+  fireEvent.click(screen.getByRole('button', { name: '保存' }))
   await waitFor(() => expect(updateInbound).toHaveBeenCalledOnce())
   const [serverId, inboundId, body] = vi.mocked(updateInbound).mock.calls[0]
   expect([serverId, inboundId]).toEqual([1, 2])

@@ -55,7 +55,7 @@ async function chooseMethod(method: string) {
 }
 
 async function saveSettings() {
-  fireEvent.click(screen.getByRole('button', { name: '应用' }))
+  fireEvent.click(screen.getByRole('button', { name: '保存' }))
   await waitFor(() => expect(updateInbound).toHaveBeenCalledOnce())
   return vi.mocked(updateInbound).mock.calls[0][2].settings
 }
@@ -73,7 +73,7 @@ describe('Shadowsocks multi-user capability', () => {
     }
     render(<InboundForm serverId={1} ipv6Available={false} inbound={inbound} open onClose={vi.fn()} onSaved={vi.fn()} />)
     expect(screen.getByLabelText('监听').textContent).toContain('IPv6 不可用')
-    fireEvent.click(screen.getByRole('button', { name: '应用' }))
+    fireEvent.click(screen.getByRole('button', { name: '保存' }))
     await screen.findByText('服务器当前没有可用的 IPv6 地址，请选择其他监听方式')
     expect(updateInbound).not.toHaveBeenCalled()
   })
@@ -127,7 +127,7 @@ describe('Shadowsocks multi-user capability', () => {
     expect(screen.getByText(/当前多用户配置无效/)).toBeDefined()
     expect((await screen.findByLabelText('单端口多用户')).getAttribute('aria-checked')).toBe('true')
     fireEvent.change(screen.getByLabelText('标签'), { target: { value: 'renamed' } })
-    fireEvent.click(screen.getByRole('button', { name: '应用' }))
+    fireEvent.click(screen.getByRole('button', { name: '保存' }))
     await screen.findByRole('alert')
     expect(updateInbound).not.toHaveBeenCalled()
 

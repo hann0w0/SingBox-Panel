@@ -255,7 +255,7 @@ export function OutboundImport({ serverId, mode, onClose, onSaved, onSavingChang
       )}
       {!formId && <Space style={{ display: 'flex', justifyContent: 'flex-end' }}>
         <Button onClick={onClose} disabled={saving}>取消</Button>
-        <Button type="primary" htmlType="submit" loading={saving} disabled={!preview || !tag.trim() || parsing}>保存出站</Button>
+        <Button type="primary" htmlType="submit" loading={saving} disabled={!preview || !tag.trim() || parsing}>保存</Button>
       </Space>}
     </Form>
   )

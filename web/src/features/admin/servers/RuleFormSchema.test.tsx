@@ -100,7 +100,7 @@ describe('RuleForm JSON Schema integration', () => {
 
     // Invalid schema value: ip_version must be 4 or 6
     fireEvent.change(editor, { target: { value: JSON.stringify({ action: 'route', outbound: 'direct', ip_version: 9 }) } })
-    fireEvent.click(screen.getByRole('button', { name: '创建' }))
+    fireEvent.click(screen.getByRole('button', { name: '保存' }))
     expect(await screen.findByText(/不在允许范围内/)).toBeTruthy()
     expect(createRule).not.toHaveBeenCalled()
 
@@ -116,7 +116,7 @@ describe('RuleForm JSON Schema integration', () => {
         }),
       },
     })
-    fireEvent.click(screen.getByRole('button', { name: '创建' }))
+    fireEvent.click(screen.getByRole('button', { name: '保存' }))
 
     await waitFor(() => expect(createRule).toHaveBeenCalledOnce())
     const body = vi.mocked(createRule).mock.calls[0][1]
@@ -155,7 +155,7 @@ describe('RuleForm JSON Schema integration', () => {
     fireEvent.click(strategyBox)
     fireEvent.click(await screen.findByRole('option', { name: 'prefer_ipv4 · 优先 IPv4' }))
     await waitFor(() => expect(strategyBox.textContent).toContain('prefer_ipv4'))
-    fireEvent.click(screen.getByRole('button', { name: '创建' }))
+    fireEvent.click(screen.getByRole('button', { name: '保存' }))
 
     await waitFor(() => expect(createRule).toHaveBeenCalledOnce())
     const body = vi.mocked(createRule).mock.calls[0][1]
@@ -190,7 +190,7 @@ describe('RuleForm JSON Schema integration', () => {
         }),
       },
     })
-    fireEvent.click(screen.getByRole('button', { name: '创建' }))
+    fireEvent.click(screen.getByRole('button', { name: '保存' }))
 
     await waitFor(() => expect(createRule).toHaveBeenCalledOnce())
     const body = vi.mocked(createRule).mock.calls[0][1]

@@ -78,7 +78,7 @@ describe('rule-set IP match direction', () => {
     fireEvent.click(screen.getByRole('combobox', { name: '规则集' }))
     fireEvent.click(await screen.findByRole('option', { name: 'geoip-cn' }))
     fireEvent.click(screen.getByRole('radio', { name: '来源 IP' }))
-    fireEvent.click(screen.getByRole('button', { name: '创建' }))
+    fireEvent.click(screen.getByRole('button', { name: '保存' }))
     await waitFor(() => expect(createRule).toHaveBeenCalledWith(1, expect.objectContaining({
       outbound: 'block', match: { action: 'reject', method: 'default', inbound: ['dmit-in'], rule_set: ['geoip-cn'], rule_set_ip_cidr_match_source: true },
     })))

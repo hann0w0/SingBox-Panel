@@ -45,7 +45,7 @@ afterEach(() => {
   if (originalScrollIntoView) Object.defineProperty(Element.prototype, 'scrollIntoView', originalScrollIntoView)
   else Reflect.deleteProperty(Element.prototype, 'scrollIntoView')
 })
-const saveButton = () => screen.getByRole('button', { name: '保存出站' }) as HTMLButtonElement
+const saveButton = () => screen.getByRole('button', { name: '保存' }) as HTMLButtonElement
 const parseURI = () => {
   fireEvent.change(screen.getByLabelText('节点 URI'), { target: { value: 'trojan://secret@node.example.com:443' } })
   fireEvent.click(screen.getByRole('button', { name: '解析链接' }))

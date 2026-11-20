@@ -80,7 +80,7 @@ describe('OutboundForm JSON Schema integration', () => {
     expect(screen.getByDisplayValue('RelayGun')).toBeTruthy()
     expect(screen.getByDisplayValue('5s')).toBeTruthy()
 
-    fireEvent.click(screen.getByRole('button', { name: '确定' }))
+    fireEvent.click(screen.getByRole('button', { name: '保存' }))
 
     await waitFor(() => expect(updateOutbound).toHaveBeenCalledOnce())
     const body = vi.mocked(updateOutbound).mock.calls[0][2]
@@ -111,7 +111,7 @@ describe('OutboundForm JSON Schema integration', () => {
     fireEvent.change(screen.getByLabelText(/^端口/), { target: { value: '8443' } })
     fireEvent.change(screen.getByLabelText('用户名'), { target: { value: 'alice' } })
     fireEvent.change(screen.getByLabelText('密码'), { target: { value: 'secret' } })
-    fireEvent.click(screen.getByRole('button', { name: '确定' }))
+    fireEvent.click(screen.getByRole('button', { name: '保存' }))
 
     await waitFor(() => expect(createOutbound).toHaveBeenCalledOnce())
     const body = vi.mocked(createOutbound).mock.calls[0][1]

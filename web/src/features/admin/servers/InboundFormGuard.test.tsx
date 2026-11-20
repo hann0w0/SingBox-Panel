@@ -54,7 +54,7 @@ afterEach(() => {
   else Reflect.deleteProperty(Element.prototype, 'scrollIntoView')
 })
 
-const save = () => fireEvent.click(screen.getByRole('button', { name: '应用' }))
+const save = () => fireEvent.click(screen.getByRole('button', { name: '保存' }))
 
 describe('REALITY front SNI guard form', () => {
   it('submits a preview payload without saving or closing the dialog', async () => {

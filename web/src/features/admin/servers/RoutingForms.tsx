@@ -288,9 +288,11 @@ export function OutboundForm({
       closable={!submitting}
       maskClosable={!submitting}
       keyboard={!submitting}
+      okText="保存"
+      cancelText="取消"
       footer={!outbound && source !== 'manual' ? <>
         <Button disabled={submitting} onClick={onClose}>取消</Button>
-        <Button type="primary" htmlType="submit" form={importFormId} disabled={!importReady} loading={submitting}>保存出站</Button>
+        <Button type="primary" htmlType="submit" form={importFormId} disabled={!importReady} loading={submitting}>保存</Button>
       </> : undefined}
       confirmLoading={submitting}
       width={680}
@@ -1283,7 +1285,7 @@ export function RuleForm({
       onOk={submit}
       onCancel={onClose}
       confirmLoading={submitting}
-      okText={rule ? '保存' : '创建'}
+      okText="保存"
       cancelText="取消"
       width={680}
     >

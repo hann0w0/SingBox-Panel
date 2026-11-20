@@ -74,7 +74,7 @@ describe('InboundForm JSON Schema integration', () => {
     expect(await screen.findByText('其他参数')).toBeTruthy()
     expect(screen.getByDisplayValue('GunService')).toBeTruthy()
 
-    fireEvent.click(screen.getByRole('button', { name: '应用' }))
+    fireEvent.click(screen.getByRole('button', { name: '保存' }))
 
     await waitFor(() => expect(updateInbound).toHaveBeenCalledOnce())
     const payload = vi.mocked(updateInbound).mock.calls[0][2]
@@ -94,7 +94,7 @@ describe('InboundForm JSON Schema integration', () => {
 
     // Invalid schema: wrong mtu type on tun
     fireEvent.change(editor, { target: { value: JSON.stringify({ type: 'tun', mtu: 'bad-mtu' }) } })
-    fireEvent.click(screen.getByRole('button', { name: '应用' }))
+    fireEvent.click(screen.getByRole('button', { name: '保存' }))
     expect(await screen.findByText(/必须是数字/)).toBeTruthy()
     expect(createInbound).not.toHaveBeenCalled()
 
@@ -114,7 +114,7 @@ describe('InboundForm JSON Schema integration', () => {
         }),
       },
     })
-    fireEvent.click(screen.getByRole('button', { name: '应用' }))
+    fireEvent.click(screen.getByRole('button', { name: '保存' }))
 
     await waitFor(() => expect(createInbound).toHaveBeenCalledOnce())
     const body = vi.mocked(createInbound).mock.calls[0][1]

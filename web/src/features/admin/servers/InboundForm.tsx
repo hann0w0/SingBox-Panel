@@ -728,7 +728,7 @@ export default function InboundForm({
       onOk={submit}
       onCancel={onClose}
       confirmLoading={submitting}
-      okText="应用"
+      okText="保存"
       cancelText="取消"
       width={680}
     >

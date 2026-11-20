@@ -58,6 +58,19 @@ export function ss2022KeyLen(method: string): number {
   return 0
 }
 
+// isValidSS2022Key reports whether key is a valid standard-base64 key of the
+// byte length required by an SS2022 method. Returns true for non-SS2022 methods.
+export function isValidSS2022Key(method: string, key: string): boolean {
+  const n = ss2022KeyLen(method)
+  if (n === 0) return true
+  if (!key || !/^[A-Za-z0-9+/]+=*$/.test(key) || key.length % 4 !== 0) return false
+  try {
+    return atob(key).length === n
+  } catch {
+    return false
+  }
+}
+
 // copyToClipboard copies text, falling back to execCommand for non-secure
 // (plain http, non-localhost) contexts where navigator.clipboard is unavailable.
 export async function copyToClipboard(text: string): Promise<void> {

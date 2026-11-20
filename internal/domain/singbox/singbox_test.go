@@ -97,7 +97,7 @@ func TestBuildInbound_TLSRequired(t *testing.T) {
 func TestBuildInbound_Shadowsocks2022MultiUser(t *testing.T) {
 	raw, err := BuildInbound(InboundInput{
 		Tag: "ss", Type: "shadowsocks", ListenPort: 8388,
-		Settings: InboundSettings{Method: "2022-blake3-aes-128-gcm", SSServerPSK: "c2VydmVyLXBzay0xNmJ5"},
+		Settings: InboundSettings{Method: "2022-blake3-aes-128-gcm", SSServerPSK: "c2VydmVyLXBzay0xNmJ5dA=="},
 		Users:    sampleUsers(),
 	})
 	if err != nil {
@@ -221,7 +221,7 @@ func TestBuildShareLinks(t *testing.T) {
 			Settings: InboundSettings{TLS: TLSSettings{Enabled: true, ServerName: "example.com"}},
 			User:     ProxyUser{Password: "pw"}},
 		{Name: "n-ss", Server: "1.2.3.4", ServerPort: 8388, Type: "shadowsocks",
-			Settings: InboundSettings{Method: "2022-blake3-aes-128-gcm", SSServerPSK: "c2VydmVyLXBzay0xNmJ5"},
+			Settings: InboundSettings{Method: "2022-blake3-aes-128-gcm", SSServerPSK: "c2VydmVyLXBzay0xNmJ5dA=="},
 			User:     ProxyUser{Password: "pw"}},
 		{Name: "n-hy2", Server: "1.2.3.4", ServerPort: 8443, Type: "hysteria2",
 			Settings: InboundSettings{ObfsPassword: "obfs", TLS: TLSSettings{Enabled: true, ServerName: "example.com", Insecure: true}},

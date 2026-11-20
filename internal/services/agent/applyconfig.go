@@ -591,6 +591,9 @@ func checkFailureDetail(out string) string {
 			break
 		}
 	}
+	// Strip ANSI escape sequences (e.g. "\x1b[31mFATAL\x1b[0m[0000] ") so both
+	// the prefix stripping below and panel error toasts stay clean.
+	msg = stripANSI(msg)
 	// Drop a leading log-level/timestamp prefix like "FATAL[0000] ".
 	if i := strings.Index(msg, "] "); i > 0 && i < 16 {
 		msg = strings.TrimSpace(msg[i+2:])
@@ -600,4 +603,23 @@ func checkFailureDetail(out string) string {
 		msg = string([]rune(msg)[:max]) + "…"
 	}
 	return msg
+}
+
+func stripANSI(s string) string {
+	var b strings.Builder
+	b.Grow(len(s))
+	for i := 0; i < len(s); i++ {
+		if s[i] == 0x1b && i+1 < len(s) && s[i+1] == '[' {
+			j := i + 2
+			for j < len(s) && !((s[j] >= 'A' && s[j] <= 'Z') || (s[j] >= 'a' && s[j] <= 'z')) {
+				j++
+			}
+			if j < len(s) {
+				i = j
+				continue
+			}
+		}
+		b.WriteByte(s[i])
+	}
+	return b.String()
 }

@@ -140,3 +140,29 @@ func TestSS2022AESMultiUserKeysMatchSubscriptions(t *testing.T) {
 		})
 	}
 }
+
+func TestSS2022ValidateRejectsBadKey(t *testing.T) {
+	key16 := base64.StdEncoding.EncodeToString(make([]byte, 16))
+	key32 := base64.StdEncoding.EncodeToString(make([]byte, 32))
+
+	if err := (InboundSettings{Method: "2022-blake3-aes-128-gcm", SSServerPSK: key16}).Validate("shadowsocks"); err != nil {
+		t.Fatalf("valid 16-byte key rejected: %v", err)
+	}
+	if err := (InboundSettings{Method: "2022-blake3-aes-256-gcm", SSServerPSK: key32}).Validate("shadowsocks"); err != nil {
+		t.Fatalf("valid 32-byte key rejected: %v", err)
+	}
+	for _, tc := range []struct {
+		name, method, psk string
+	}{
+		{"wrong length 16 for aes-256", "2022-blake3-aes-256-gcm", key16},
+		{"wrong length 32 for aes-128", "2022-blake3-aes-128-gcm", key32},
+		{"plain text", "2022-blake3-aes-128-gcm", "not-base64-key"},
+		{"empty", "2022-blake3-aes-128-gcm", ""},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if err := (InboundSettings{Method: tc.method, SSServerPSK: tc.psk}).Validate("shadowsocks"); err == nil {
+				t.Fatalf("expected error for %s", tc.name)
+			}
+		})
+	}
+}

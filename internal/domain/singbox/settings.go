@@ -565,6 +565,21 @@ func SS2022KeyLen(method string) int {
 // single-user-only ChaCha20 variant. Use SupportsMultiUser for user capability.
 func IsSS2022(method string) bool { return SS2022KeyLen(method) > 0 }
 
+// ValidSS2022Key reports whether key is a valid standard-base64 key of the
+// byte length required by a Shadowsocks 2022 method. Returns true for
+// non-SS2022 methods.
+func ValidSS2022Key(method, key string) bool {
+	n := SS2022KeyLen(method)
+	if n == 0 {
+		return true
+	}
+	if key == "" {
+		return false
+	}
+	decoded, err := base64.StdEncoding.DecodeString(key)
+	return err == nil && len(decoded) == n
+}
+
 // DeriveSSUserKey deterministically derives a user's SS2022 password (base64 of
 // the method's key length) from the user's proxy password. The same derivation
 // is used for both the server config and the client subscription so they match.
@@ -764,6 +779,9 @@ func (s InboundSettings) Validate(typ string) error {
 	}
 	if err := s.validateProtocol(typ, true); err != nil {
 		return err
+	}
+	if typ == "shadowsocks" && IsSS2022(s.Method) && !ValidSS2022Key(s.Method, s.SSServerPSK) {
+		return fmt.Errorf("shadowsocks: %s 要求 %d 字节的 Base64 密钥（请留空自动生成或点击“随机”）", s.Method, SS2022KeyLen(s.Method))
 	}
 	// The panel requires paired credentials for its own SOCKS listeners.
 	// External SOCKS outbounds retain the provider's independently optional

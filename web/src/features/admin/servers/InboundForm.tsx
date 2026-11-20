@@ -17,7 +17,7 @@ import {
 } from '../../../lib/singboxSchema'
 import type { Inbound, InboundSettings, InboundType, RealityGuardSettings, RealitySettings } from '../../../lib/types'
 import { INBOUND_PROTOCOL_TYPES, toProtocolOptions } from '../../../lib/protocols'
-import { randomBase64, randomHex, randomUUID, SHADOWSOCKS_METHODS, ss2022KeyLen } from '../../../lib/util'
+import { isValidSS2022Key, randomBase64, randomHex, randomUUID, SHADOWSOCKS_METHODS, ss2022KeyLen } from '../../../lib/util'
 import '../../../styles/forms.css'
 import '../../../styles/inbound-editor.css'
 
@@ -276,7 +276,11 @@ export function assembleSettings(
   s.single_user = !s.multi_user
   if (UUID_TYPES.has(type)) s.uuid = v.uuid || s.uuid
   if (PW_TYPES.has(type)) s.password = v.password || s.password
-  if (type === 'shadowsocks' && v.ss_psk) s.ss_server_psk = v.ss_psk
+  if (type === 'shadowsocks') {
+    const psk = typeof v.ss_psk === 'string' ? v.ss_psk.trim() : ''
+    if (psk) s.ss_server_psk = psk
+    else if (s.ss_server_psk && !isValidSS2022Key(v.method || s.method || '', s.ss_server_psk)) s.ss_server_psk = ''
+  }
 
   if (type === 'vless') {
     s.flow = v.flow || ''
@@ -816,6 +820,11 @@ export default function InboundForm({
                 options={SHADOWSOCKS_METHODS.map((m) => ({ value: m, label: m }))}
                 onChange={(value: string) => {
                   if (value !== method && !supportsMultiUser('shadowsocks', value)) form.setFieldValue('multi_user', false)
+                  const required = ss2022KeyLen(value)
+                  const currentPsk = String(form.getFieldValue('ss_psk') || '').trim()
+                  if (required > 0 && currentPsk && !isValidSS2022Key(value, currentPsk)) {
+                    form.setFieldValue('ss_psk', randomBase64(required))
+                  }
                 }}
               />
             </Form.Item>
@@ -865,7 +874,20 @@ export default function InboundForm({
           {type === 'shadowsocks' && (
             <Form.Item label="密码 / PSK" className="fm-full">
               <Space.Compact>
-                <Form.Item name="ss_psk" noStyle>
+                <Form.Item
+                  name="ss_psk"
+                  noStyle
+                  dependencies={['method']}
+                  rules={[{
+                    validator: (_, value) => {
+                      const raw = String(value || '').trim()
+                      const m = form.getFieldValue('method') || ''
+                      const required = ss2022KeyLen(m)
+                      if (!raw || required === 0 || isValidSS2022Key(m, raw)) return Promise.resolve()
+                      return Promise.reject(new Error(`此加密方式需要 ${required} 字节的 Base64 密钥，可留空自动生成或点击“随机”`))
+                    },
+                  }]}
+                >
                   <Input className="mono" />
                 </Form.Item>
                 <Button

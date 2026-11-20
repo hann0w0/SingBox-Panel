@@ -746,7 +746,9 @@ func preserveInboundSecrets(old, next *singbox.InboundSettings) {
 		next.Password = old.Password
 	}
 	if next.SSServerPSK == "" {
-		next.SSServerPSK = old.SSServerPSK
+		if !singbox.IsSS2022(next.Method) || singbox.ValidSS2022Key(next.Method, old.SSServerPSK) {
+			next.SSServerPSK = old.SSServerPSK
+		}
 	}
 	if next.SnellPSK == "" {
 		next.SnellPSK = old.SnellPSK

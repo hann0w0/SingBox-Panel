@@ -142,4 +142,13 @@ describe('Shadowsocks multi-user capability', () => {
     expect((await screen.findByLabelText('单端口多用户')).getAttribute('aria-checked')).toBe('true')
     expect(await saveSettings()).toMatchObject({ method: aes256, multi_user: true, single_user: false, ss_server_psk: psk })
   })
+
+  it('regenerates an incompatible SS2022 key when switching between 16-byte and 32-byte methods', async () => {
+    const psk16 = openShadowsocks(aes128, false)
+    await chooseMethod(aes256)
+    const saved = await saveSettings()
+    expect(saved?.method).toBe(aes256)
+    expect(saved?.ss_server_psk).not.toBe(psk16)
+    expect(atob(saved?.ss_server_psk || '').length).toBe(32)
+  })
 })

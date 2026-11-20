@@ -231,4 +231,16 @@ func TestSyncFromRawUpdatesIPv6OnlyAndTLSMode(t *testing.T) {
 	if s.PacketEncoding != "none" {
 		t.Fatalf("expected empty packet_encoding in raw to set PacketEncoding=none, got %q", s.PacketEncoding)
 	}
+
+	// Preserving ipv6_only when listen in raw is unchanged (e.g. form edits with
+	// listen_mode=ipv6 and existing raw fields).
+	ipv6Form := InboundSettings{
+		Listen:   "::",
+		IPv6Only: true,
+		Raw:      map[string]any{"listen": "::", "type": "shadowsocks"},
+	}
+	ipv6Form.SyncFromRaw("shadowsocks")
+	if !ipv6Form.IPv6Only {
+		t.Fatal("expected IPv6Only to be preserved when raw listen matches existing ::")
+	}
 }

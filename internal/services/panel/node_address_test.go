@@ -24,8 +24,8 @@ func TestInboundAddressFamilies(t *testing.T) {
 		ipv6               bool
 	}{
 		{"dual", "::", "ipv4-only.example.com", false},
-		{"v4", "0.0.0.0", "ipv4-only.example.com", false},
-		{"v6", "::", "ipv4-only.example.com", true},
+		{"v4", "0.0.0.0", "203.0.113.7", false},
+		{"v6", "::", "2001:db8::7", true},
 		{"imported", "2001:db8::8", "2001:db8::8", false},
 	} {
 		t.Run(test.name, func(t *testing.T) {
@@ -34,7 +34,7 @@ func TestInboundAddressFamilies(t *testing.T) {
 			if err != nil || host != test.host {
 				t.Fatalf("address=%q err=%v", host, err)
 			}
-			if test.name != "dual" && test.name != "v4" && test.name != "v6" && settings.TLS.ServerName != server.Address {
+			if test.name != "dual" && settings.TLS.ServerName != server.Address {
 				t.Fatalf("TLS domain lost: %+v", settings.TLS)
 			}
 		})
@@ -45,12 +45,12 @@ func TestInboundAddressFamilies(t *testing.T) {
 		}
 	}
 	settings := singbox.InboundSettings{Listen: "::", IPv6Only: true, TLS: singbox.TLSSettings{ServerName: "tls.example.com"}}
-	if _, err := inboundNodeAddress(&server, &settings); err != nil || settings.TLS.ServerName != "tls.example.com" {
-		t.Fatal("explicit SNI changed")
+	if host, err := inboundNodeAddress(&server, &settings); err != nil || host != "2001:db8::7" || settings.TLS.ServerName != "tls.example.com" {
+		t.Fatalf("explicit SNI changed or wrong IPv6 host: %q %+v %v", host, settings.TLS, err)
 	}
 	server.PublicIPv6 = ""
-	if host, err := inboundNodeAddress(&server, &settings); err != nil || host != "ipv4-only.example.com" {
-		t.Fatalf("configured domain must not depend on a local IPv6 address: %q %v", host, err)
+	if _, err := inboundNodeAddress(&server, &settings); err == nil {
+		t.Fatal("IPv6-only inbound without public IPv6 must fail instead of falling back to domain")
 	}
 	server.Address = ""
 	server.PublicIPv6 = "2001:db8::7"

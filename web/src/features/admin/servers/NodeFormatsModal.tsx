@@ -106,7 +106,7 @@ export function NodeFormatsModalContent({ data }: { data: NodeFormats }) {
                 <div className="fm-node-main">
                   <span className="fm-node-name">{displayTag}</span>
                   {item.type && <span className="ui-tag">{item.type}</span>}
-                  {item.server ? <span className="fm-node-addr mono">{item.server}:{item.port}</span> : null}
+                  {item.server ? <span className="fm-node-addr mono">{item.server.includes(':') ? `[${item.server}]` : item.server}:{item.port}</span> : null}
                 </div>
                 <div className="fm-node-actions">
                   <Button size="small" type="text" icon={<Eye />} aria-label={`查看 ${displayTag} 详情`} onClick={() => setDetailItem(item)}>详情</Button>

@@ -89,4 +89,17 @@ describe('node export account selection', () => {
     render(<NodeFormatsExportModal serverId={7} open onCancel={vi.fn()} />)
     await waitFor(() => expect(screen.getByText('暂无可用的授权用户，请先在用户页分配此服务器的多用户入站。')).toBeTruthy())
   })
+
+  it('brackets IPv6 server addresses when rendering host:port', async () => {
+    vi.mocked(getNodeFormats).mockResolvedValue({
+      ...initial,
+      multi_user_count: 0,
+      items: [{
+        tag: 'v6', name: 'v6', type: 'shadowsocks', server: '2001:db8::7', port: 57520,
+        params: {}, uri: 'ss://example@[2001:db8::7]:57520#v6', clash: '', surge: '',
+      }],
+    })
+    render(<NodeFormatsExportModal serverId={7} open onCancel={vi.fn()} />)
+    await screen.findByText('[2001:db8::7]:57520')
+  })
 })

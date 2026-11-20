@@ -803,7 +803,7 @@ func (s *InboundSettings) SyncFromRaw(typ string) {
 		return
 	}
 	m := s.Raw
-	if listen := mStr(m, "listen"); listen != "" {
+	if listen := mStr(m, "listen"); listen != "" && listen != s.ListenAddress() {
 		s.Listen = listen
 		s.IPv6Only = specificIPv6(s.Listen)
 	}

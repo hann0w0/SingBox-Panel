@@ -478,6 +478,43 @@ Auto = url-test, SS, Trojan
 	}
 }
 
+func TestParseSubscriptionSurgeVLESS(t *testing.T) {
+	raw := `
+[Proxy]
+VLESS-REALITY = vless, 1.2.3.4, 443, username=2cae91b3-f85c-433b-88ee-a002b9ed6d61, flow=xtls-rprx-vision, sni=www.microsoft.com, reality-public-key=dwrjY6KiAMPxKdlF7T4AWFXXBtsxeHCXtBQYeCOdZV4, reality-short-id=0123456789abcdef
+VLESS-WS = vless, example.com, 443, username=2cae91b3-f85c-433b-88ee-a002b9ed6d61, ws=true, ws-path=/vless, ws-headers=Host:cdn.example.com, tls=true
+VLESS-HTTPUpgrade = vless, cdn.example.com, 443, username=2cae91b3-f85c-433b-88ee-a002b9ed6d61, tls=true, ws=true, ws-http-upgrade=true, ws-path=/up
+VLESS-gRPC = vless, example.com, 443, username=2cae91b3-f85c-433b-88ee-a002b9ed6d61, grpc=true, grpc-service-name=mygrpc, tls=true
+VLESS-XHTTP = vless, example.com, 443, username=2cae91b3-f85c-433b-88ee-a002b9ed6d61, xhttp=true, xhttp-path=/xhttp, tls=true
+`
+	result, err := ParseSubscription([]byte(raw))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.SourceType != "surge" || len(result.Nodes) != 3 || len(result.Skipped) != 2 {
+		t.Fatalf("result = %+v", result)
+	}
+	byName := map[string]ImportedNode{}
+	for _, node := range result.Nodes {
+		byName[node.Name] = node
+	}
+	reality := byName["VLESS-REALITY"]
+	if reality.Protocol != "vless" || reality.Params["uuid"] != "2cae91b3-f85c-433b-88ee-a002b9ed6d61" ||
+		reality.Params["flow"] != "xtls-rprx-vision" || reality.Params["sni"] != "www.microsoft.com" ||
+		reality.Params["tls"] != "reality" || reality.Params["pbk"] != "dwrjY6KiAMPxKdlF7T4AWFXXBtsxeHCXtBQYeCOdZV4" ||
+		reality.Params["sid"] != "0123456789abcdef" {
+		t.Fatalf("surge vless reality params = %#v", reality.Params)
+	}
+	ws := byName["VLESS-WS"]
+	if ws.Params["transport"] != "ws" || ws.Params["path"] != "/vless" || ws.Params["host"] != "cdn.example.com" || ws.Params["tls"] != "tls" {
+		t.Fatalf("surge vless ws params = %#v", ws.Params)
+	}
+	up := byName["VLESS-HTTPUpgrade"]
+	if up.Params["transport"] != "httpupgrade" || up.Params["path"] != "/up" || up.Params["tls"] != "tls" {
+		t.Fatalf("surge vless httpupgrade params = %#v", up.Params)
+	}
+}
+
 func TestParseSubscriptionLoonPositionalProxySection(t *testing.T) {
 	raw := `
 [Proxy]

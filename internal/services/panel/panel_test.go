@@ -1019,7 +1019,7 @@ func TestSelfSignedTLSForcesSkipVerificationInClashAndSurge(t *testing.T) {
 		})
 	}
 
-	for _, typ := range []string{"vmess", "trojan", "hysteria2", "tuic", "anytls"} {
+	for _, typ := range []string{"vless", "vmess", "trojan", "hysteria2", "tuic", "anytls"} {
 		t.Run("surge-"+typ, func(t *testing.T) {
 			line := surgeProxy(node{name: typ, server: "1.2.3.4", port: 443, typ: typ, settings: settings}, typ)
 			if !strings.Contains(line, "skip-cert-verify=true") {

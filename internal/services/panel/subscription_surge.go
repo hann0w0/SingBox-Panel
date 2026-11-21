@@ -3,6 +3,7 @@ package panel
 import (
 	"fmt"
 	"net/http"
+	"sort"
 	"strings"
 	"unicode"
 
@@ -124,6 +125,29 @@ func surgeValue(v string) string {
 	return v
 }
 
+// surgeWSHeaders renders WebSocket/HTTPUpgrade headers in Surge's pipe-separated
+// Key:Value format, placing Host first when present.
+func surgeWSHeaders(tr singbox.TransportSettings) string {
+	var parts []string
+	if h := tr.Host(); h != "" {
+		parts = append(parts, "Host:"+h)
+	}
+	values := tr.HeaderValuesMap()
+	keys := make([]string, 0, len(values))
+	for k := range values {
+		if !strings.EqualFold(k, "host") {
+			keys = append(keys, k)
+		}
+	}
+	sort.Strings(keys)
+	for _, k := range keys {
+		if vals := values[k]; len(vals) > 0 && vals[0] != "" {
+			parts = append(parts, k+":"+vals[0])
+		}
+	}
+	return strings.Join(parts, "|")
+}
+
 // surgeHasUnquotableValue reports a free-form value containing a double quote,
 // which Surge's syntax cannot escape. Such a node is skipped (and reported)
 // rather than emitted in a form Surge would mis-parse.
@@ -132,11 +156,22 @@ func surgeHasUnquotableValue(n node) bool {
 	u := n.getUserIdentity()
 	for _, v := range []string{
 		n.server, st.Method, st.Username, st.Password, u.Password, u.UUID,
+		st.Flow, st.TLS.Reality.PublicKey, firstOf(st.TLS.Reality.ShortID),
 		st.ObfsPassword, st.Transport.Path, st.Transport.Host(), sniOf(st, n.server),
 		singbox.SSClientPassword(st, u.Password), singbox.SnellClientPSK(st, u.Password),
 	} {
 		if strings.Contains(v, `"`) {
 			return true
+		}
+	}
+	for k, vals := range st.Transport.HeaderValuesMap() {
+		if strings.Contains(k, `"`) {
+			return true
+		}
+		for _, v := range vals {
+			if strings.Contains(v, `"`) {
+				return true
+			}
 		}
 	}
 	return false
@@ -266,7 +301,65 @@ func surgeProxyUnchecked(n node, name string) string {
 			line += ", skip-cert-verify=true"
 		}
 		return line
-	default: // vless and anything Surge can't express
+	case "vless":
+		// Surge added native VLESS support in iOS 6.0.0 / macOS 6.12.0 (RAW/TCP,
+		// WebSocket, HTTPUpgrade, REALITY, and XTLS Vision). UDP relay via XUDP
+		// is built in with no extra parameter.
+		if u.UUID == "" {
+			return ""
+		}
+		tr := strings.ToLower(strings.TrimSpace(st.Transport.Type))
+		switch tr {
+		case "", "tcp", "ws", "httpupgrade":
+		default:
+			return ""
+		}
+		if st.TLS.Reality.Enabled {
+			// Surge supports REALITY on RAW (TCP), gRPC, and XHTTP — not WS/HTTPUpgrade.
+			if tr == "ws" || tr == "httpupgrade" || st.TLS.Reality.PublicKey == "" {
+				return ""
+			}
+		}
+		// Without VLESS Encryption, Vision flow requires RAW transport with TLS or REALITY.
+		if st.Flow != "" && (tr == "ws" || tr == "httpupgrade" || (!st.TLS.Reality.Enabled && !nodeTLSOn(st))) {
+			return ""
+		}
+		line := fmt.Sprintf("%s = vless, %s, %d, username=%s", name, n.server, n.port, surgeValue(u.UUID))
+		if st.Flow != "" {
+			line += ", flow=" + surgeValue(st.Flow)
+		}
+		if st.TLS.Reality.Enabled {
+			// Setting reality-public-key enables REALITY and implies TLS;
+			// skip-cert-verify does not apply to REALITY handshakes.
+			if sni != "" {
+				line += ", sni=" + surgeValue(sni)
+			}
+			line += ", reality-public-key=" + surgeValue(st.TLS.Reality.PublicKey)
+			if sid := firstOf(st.TLS.Reality.ShortID); sid != "" {
+				line += ", reality-short-id=" + surgeValue(sid)
+			}
+			line += surgeALPN(st.TLS.ALPN)
+		} else if nodeTLSOn(st) {
+			line += fmt.Sprintf(", tls=true, sni=%s", surgeValue(sni))
+			line += surgeALPN(st.TLS.ALPN)
+			if st.TLS.ClientInsecure() {
+				line += ", skip-cert-verify=true"
+			}
+		}
+		if tr == "ws" || tr == "httpupgrade" {
+			line += ", ws=true"
+			if tr == "httpupgrade" {
+				line += ", ws-http-upgrade=true"
+			}
+			if st.Transport.Path != "" {
+				line += ", ws-path=" + surgeValue(st.Transport.Path)
+			}
+			if hdrs := surgeWSHeaders(st.Transport); hdrs != "" {
+				line += ", ws-headers=" + surgeValue(hdrs)
+			}
+		}
+		return line
+	default: // anything Surge can't express
 		return ""
 	}
 }

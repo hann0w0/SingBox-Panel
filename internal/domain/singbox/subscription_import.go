@@ -1250,9 +1250,18 @@ func parseSurgeSubscription(raw []byte) (SubscriptionParseResult, error) {
 				delete(m, "uuid")
 			}
 		}
-		// Surge's ws=true is a flag rather than a network value.
+		// Surge's REALITY uses flat reality-public-key / reality-short-id fields
+		// (setting reality-public-key enables REALITY and implies TLS).
+		if pbk := getString(m, "reality-public-key"); pbk != "" {
+			opts := map[string]any{"public-key": pbk}
+			if sid := getString(m, "reality-short-id"); sid != "" {
+				opts["short-id"] = sid
+			}
+			m["reality-opts"] = opts
+		}
+		// Surge's ws=true is a flag rather than a network value; ws-http-upgrade=true
+		// switches the transport to HTTPUpgrade.
 		if getBool(m, "ws") {
-			m["network"] = "ws"
 			opts := map[string]any{}
 			if path := getString(m, "ws-path", "path"); path != "" {
 				opts["path"] = path
@@ -1260,7 +1269,17 @@ func parseSurgeSubscription(raw []byte) (SubscriptionParseResult, error) {
 			if headers := getString(m, "ws-headers"); headers != "" {
 				opts["headers"] = parseSurgeHeaders(headers)
 			}
-			m["ws-opts"] = opts
+			if getBool(m, "ws-http-upgrade") {
+				m["network"] = "httpupgrade"
+				m["http-upgrade-opts"] = opts
+			} else {
+				m["network"] = "ws"
+				m["ws-opts"] = opts
+			}
+		} else if getBool(m, "grpc") {
+			m["network"] = "grpc"
+		} else if getBool(m, "xhttp") {
+			m["network"] = "xhttp"
 		}
 		// Surge's bare `tls` marker is a bool; protocol defaults are handled by
 		// parseClashProxy for TLS-native protocols.

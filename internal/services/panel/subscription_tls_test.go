@@ -95,10 +95,7 @@ func TestSubscriptionTLSParameterMatrix(t *testing.T) {
 			// --- Surge ---
 			line := surgeProxy(n, typ)
 			if line == "" {
-				// Surge can't express vless; the other TLS protocols must render.
-				if typ != "vless" {
-					t.Errorf("Surge %s 未渲染: %q", typ, line)
-				}
+				t.Errorf("Surge %s 未渲染: %q", typ, line)
 				return
 			}
 			if !strings.Contains(line, "sni=cdn.example.com") {
@@ -114,7 +111,7 @@ func TestSubscriptionTLSParameterMatrix(t *testing.T) {
 // TestSubscriptionALPNFollowsConfig is the flip side: no ALPN configured means
 // no alpn in any format.
 func TestSubscriptionALPNFollowsConfig(t *testing.T) {
-	for _, typ := range []string{"trojan", "anytls", "hysteria2", "vmess"} {
+	for _, typ := range []string{"vless", "trojan", "anytls", "hysteria2", "vmess"} {
 		n := tlsNode(t, typ, nil)
 		cn := n.clientNode()
 

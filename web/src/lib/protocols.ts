@@ -5,14 +5,14 @@ import type { InboundType, OutboundType } from './types'
  * Inbound, Outbound, and External Node selectors.
  */
 export const SHARED_PROXY_PROTOCOLS = [
+  'snell',
+  'shadowsocks',
+  'anytls',
   'vless',
   'vmess',
-  'trojan',
-  'anytls',
-  'shadowsocks',
   'tuic',
+  'trojan',
   'hysteria2',
-  'snell',
   'socks',
   'http',
 ] as const

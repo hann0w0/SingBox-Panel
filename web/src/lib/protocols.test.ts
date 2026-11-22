@@ -26,14 +26,14 @@ describe('protocol ordering and naming consistency', () => {
 
     const opts = toProtocolOptions(INBOUND_PROTOCOL_TYPES)
     expect(opts.map((o) => o.label)).toEqual([
+      'snell',
+      'shadowsocks',
+      'anytls',
       'vless',
       'vmess',
-      'trojan',
-      'anytls',
-      'shadowsocks',
       'tuic',
+      'trojan',
       'hysteria2',
-      'snell',
       'socks',
       'http',
       'mixed',

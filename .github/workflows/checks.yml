@@ -79,10 +79,29 @@ jobs:
       - name: Verify Docker deployment and native Agent downloads
         run: python3 scripts/docker-smoke.py --image singbox-panel:docker-test
 
+  alpine:
+    name: Alpine OpenRC smoke test
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+
+      - name: Setup Go
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7
+        with:
+          go-version: '1.27.4'
+          cache: true
+
+      - name: Verify Alpine Agent and sing-box lifecycle in real Alpine container
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: sh scripts/alpine-smoke.sh
+
   publish:
     name: Publish main image
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
-    needs: [check, docker]
+    needs: [check, docker, alpine]
     permissions:
       contents: read
       packages: write

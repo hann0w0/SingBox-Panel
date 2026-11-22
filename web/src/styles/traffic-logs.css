@@ -54,13 +54,14 @@
 .lg-server-select { flex: 0 1 240px; min-width: 180px; }
 .lg-level-trigger {
   display: inline-flex; align-items: center; gap: 6px;
-  height: 32px; padding: 0 10px 0 11px;
-  border: 1px solid var(--console-border); border-radius: var(--app-radius);
+  box-sizing: border-box; height: 36px; padding: 0 10px 0 11px;
+  border: 1px solid var(--console-border-strong); border-radius: var(--app-radius-control);
   background: var(--console-container); color: var(--console-ink);
   font-family: var(--app-font); font-size: 13px; line-height: 1; white-space: nowrap;
-  cursor: pointer; transition: border-color .15s, background-color .15s;
+  cursor: pointer; outline: none; transition: border-color .12s, background-color .12s;
 }
-.lg-level-trigger:hover:not(:disabled) { border-color: var(--console-border-strong); }
+.lg-level-trigger:hover:not(:disabled) { border-color: var(--console-border-hover); background: var(--console-hover); }
+.lg-level-trigger:focus-visible { border-color: var(--console-border-hover); box-shadow: 0 0 0 2px var(--console-selected); }
 .lg-level-trigger:disabled { opacity: .6; cursor: not-allowed; }
 .lg-level-prefix { color: var(--console-muted); font-size: 12.5px; }
 .lg-level-sep { color: var(--console-border-strong); }

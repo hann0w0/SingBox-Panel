@@ -3,7 +3,7 @@
 .sd-toolbar .ui-pills-row { flex: 0 1 auto; min-width: 0; margin-bottom: 0; }
 .sd-toolbar-actions { display: flex; align-items: center; gap: 8px; margin-left: auto; }
 .sd-toolbar-actions:empty { display: none; }
-.sd-toolbar :is(.ui-btn, .ui-select-selector, .ui-input-affix-wrapper, .ui-input) { box-sizing: border-box; height: var(--app-control-h); min-height: var(--app-control-h); }
+.sd-toolbar :is(.ui-btn, .ui-select-selector, .ui-input-affix-wrapper, .ui-input, .lg-level-trigger) { box-sizing: border-box; height: var(--app-control-h); min-height: var(--app-control-h); }
 .sd-toolbar .ui-select { flex: none; }
 .sd-toolbar .ui-pills { height: var(--app-control-h); }
 .sd-tab-actions { display: flex; align-items: center; justify-content: flex-end; gap: 8px; min-width: 0; margin-left: auto; }

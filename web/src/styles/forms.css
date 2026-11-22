@@ -1,11 +1,11 @@
 /* Design A — modal editors: outlined groups, compact navigation, minimal hints. */
 
 /* ---------- Groups ---------- */
-.fm-group { padding: 18px 0 4px; }
-.fm-group:first-child { padding-top: 6px; }
-.fm-group + .fm-group { margin-top: 8px; }
-.fm-group-open { padding: 14px 0 2px; border-top: 1px solid var(--console-border); }
-.fm-group-title { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; margin: 0 0 14px; font-size: 13px; font-weight: 600; line-height: 1.4; letter-spacing: -.1px; color: var(--console-ink); }
+.fm-group { padding: 4px 0; }
+.fm-group:first-child { padding-top: 0; }
+.fm-group + .fm-group { margin-top: 20px; }
+.fm-group-open { padding: 0; }
+.fm-group-title { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; margin: 0 0 12px; font-size: 13.5px; font-weight: 600; line-height: 1.4; letter-spacing: -.1px; color: var(--console-ink); }
 .fm-group-title small { font-size: 12px; font-weight: 400; color: var(--console-faint); font-variant-numeric: tabular-nums; }
 
 /* ---------- Form / JSON pill toggle ---------- */
@@ -57,10 +57,9 @@
 .fm-form .ui-input-number, .fm-form .ui-select { width: 100%; }
 
 /* ---------- Switch rows: label left, switch right ---------- */
-.fm-switches { grid-column: 1 / -1; margin-bottom: 14px; }
+.fm-switches { grid-column: 1 / -1; display: flex; flex-direction: column; gap: 6px; margin-bottom: 12px; }
 .fm-form .fm-switch.ui-form-item { margin-bottom: 0; }
-.fm-form .fm-switch.ui-form-item + .fm-switch.ui-form-item { border-top: 1px solid var(--console-border); }
-.fm-form .fm-switch .ui-form-item-row { display: flex; flex-direction: row !important; flex-wrap: nowrap !important; align-items: center; justify-content: space-between; gap: 16px; min-height: 44px; }
+.fm-form .fm-switch .ui-form-item-row { display: flex; flex-direction: row !important; flex-wrap: nowrap !important; align-items: center; justify-content: space-between; gap: 16px; min-height: 36px; padding: 4px 0; }
 .fm-form .fm-switch .ui-form-item-label { flex: 1 1 auto !important; padding: 0 !important; text-align: start; white-space: normal; overflow: visible; }
 .fm-form .fm-switch .ui-form-item-label > label { height: auto; font-weight: 400; }
 .fm-form .fm-switch .ui-form-item-label > label::after { display: none; }

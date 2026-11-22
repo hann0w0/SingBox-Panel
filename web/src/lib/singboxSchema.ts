@@ -661,9 +661,13 @@ export function inboundSettingsToNativeJson(
     delete tlsObj.insecure
     delete tlsObj.utls
     if (settings.tls.server_name) tlsObj.server_name = settings.tls.server_name
+    else delete tlsObj.server_name
     if (settings.tls.alpn?.length) tlsObj.alpn = settings.tls.alpn
+    else delete tlsObj.alpn
     if (settings.tls.certificate_path) tlsObj.certificate_path = settings.tls.certificate_path
+    else delete tlsObj.certificate_path
     if (settings.tls.key_path) tlsObj.key_path = settings.tls.key_path
+    else delete tlsObj.key_path
     if (settings.tls.acme_domain) {
       tlsObj.certificate_provider = {
         ...(typeof prevTls.certificate_provider === 'object' && prevTls.certificate_provider ? (prevTls.certificate_provider as Record<string, unknown>) : {}),

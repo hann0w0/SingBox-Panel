@@ -20,7 +20,8 @@
 }
 
 .ui-modal.inbound-compact .ui-modal-header {
-  padding: 22px 48px 0 24px;
+  padding: 18px 48px 16px 24px;
+  border-bottom: 1px solid var(--inbound-line);
 }
 
 .ui-modal.inbound-compact .ui-modal-title {
@@ -30,22 +31,23 @@
 }
 
 .ui-modal.inbound-compact .ui-modal-body {
-  padding: 16px 24px 24px;
+  padding: 20px 24px 24px;
   background: var(--inbound-bg);
 }
 
 .ui-modal.inbound-compact:has(.ui-modal-footer) .ui-modal-body {
-  padding-bottom: 0;
+  padding-bottom: 24px;
 }
 
 .ui-modal.inbound-compact .ui-modal-footer {
-  padding: 20px 24px;
+  padding: 14px 24px;
+  border-top: 1px solid var(--inbound-line);
   background: transparent;
 }
 
 .ui-modal.inbound-compact [data-slot='dialog-close'] {
-  top: 14px;
-  right: 16px;
+  top: 16px;
+  right: 18px;
   color: var(--inbound-muted);
 }
 
@@ -83,16 +85,15 @@
 }
 
 .inbound-compact .fm-group.fm-group-open {
-  padding-top: 12px;
-  border-top: 1px solid var(--inbound-line);
+  padding-top: 0;
 }
 
 .inbound-compact .fm-group.fm-group-open > .fm-group-title {
-  margin-bottom: 10px;
+  margin-bottom: 12px;
 }
 
 .inbound-compact .fm-group + .fm-group {
-  margin-top: 10px;
+  margin-top: 22px;
 }
 
 .inbound-compact .fm-group-basic > .fm-group-title {
@@ -102,7 +103,7 @@
 .inbound-compact .fm-grid {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 0 12px;
+  gap: 14px 16px;
 }
 
 .inbound-compact .fm-grid > * {
@@ -124,37 +125,38 @@
 }
 
 .inbound-compact .ui-form-item {
-  margin-bottom: 11px;
+  margin-bottom: 0;
 }
 
 .inbound-compact .ui-form-item-label {
-  padding-bottom: 5px;
+  padding-bottom: 6px;
 }
 
 .inbound-compact .ui-form-item-label label {
   color: var(--inbound-muted);
-  font-size: 12.5px;
+  font-size: 13px;
   font-weight: 500;
   line-height: 18px;
 }
 
 .inbound-compact .ui-required {
   color: var(--inbound-faint);
-  font-size: 10.5px;
+  font-size: 11px;
   font-weight: 400;
 }
 
 .inbound-compact :is(.ui-input, .ui-input-affix-wrapper, .ui-input-number, .ui-select-selector) {
   min-height: 36px;
   border-color: var(--inbound-line-strong);
-  border-radius: 7px;
+  border-radius: 8px;
   background: var(--inbound-field);
   color: var(--inbound-ink);
-  font-size: 13px;
+  font-size: 13.5px;
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.03);
 }
 
 .inbound-compact :is(.ui-input, .ui-input-number-input, .ui-select-selector) {
-  padding: 7px 10px;
+  padding: 7px 11px;
 }
 
 .inbound-compact :is(.ui-input, .ui-input-number-input)::placeholder {
@@ -169,17 +171,18 @@
 }
 
 .inbound-compact .ui-input-affix-wrapper {
-  padding: 0 9px;
+  padding: 0 10px;
 }
 
 .inbound-compact .ui-input-affix-wrapper .ui-input {
   min-height: 34px;
   background: transparent;
+  box-shadow: none;
 }
 
 .inbound-compact :is(.ui-input, .ui-input-affix-wrapper, .ui-input-number, .ui-select-selector):is(:focus, :focus-within, :focus-visible) {
   border-color: var(--inbound-focus);
-  box-shadow: 0 0 0 1px color-mix(in srgb, var(--inbound-focus) 55%, transparent);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--inbound-focus) 16%, transparent);
 }
 
 .inbound-compact .ui-form-item-has-error :is(.ui-input, .ui-input-affix-wrapper, .ui-input-number, .ui-select-selector) {
@@ -208,20 +211,22 @@
 }
 
 .inbound-compact .ui-space-compact > .ui-form-item .ui-input {
-  border-radius: 7px;
+  border-radius: 8px;
 }
 
 .inbound-compact .ui-space-compact > .ui-btn {
   width: auto;
-  min-width: 52px;
+  min-width: 56px;
   height: 36px;
   padding: 0 12px;
   border-color: var(--inbound-line-strong);
-  border-radius: 7px !important;
+  border-radius: 8px !important;
   background: var(--inbound-field);
   color: var(--inbound-muted);
-  font-size: 12.5px;
+  font-size: 13px;
+  font-weight: 500;
   white-space: nowrap;
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.03);
 }
 
 .inbound-compact .ui-space-compact > .ui-btn:hover {
@@ -268,33 +273,86 @@
   margin-bottom: 0;
 }
 
+.inbound-compact .fm-mode-toggle,
+.inbound-compact .ui-segmented {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  padding: 3px;
+  border: 1px solid var(--inbound-line);
+  border-radius: 8px;
+  background: var(--inbound-panel);
+}
+
+.inbound-compact .fm-mode-toggle-btn,
+.inbound-compact .ui-segmented-item {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  height: 28px;
+  padding: 0 12px;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--inbound-muted);
+  font-size: 13px;
+  font-weight: 500;
+  line-height: 1;
+  transition: background-color .15s, color .15s, box-shadow .15s;
+}
+
+.inbound-compact .fm-mode-toggle-btn.is-active,
+.inbound-compact .ui-segmented-item[data-state='on'] {
+  background: var(--inbound-bg);
+  color: var(--inbound-ink);
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.08);
+}
+
+:root[data-console-theme='dark'] .inbound-compact .fm-mode-toggle-btn.is-active,
+:root[data-console-theme='dark'] .inbound-compact .ui-segmented-item[data-state='on'] {
+  background: var(--inbound-hover);
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.35);
+}
+
 .inbound-compact .fm-grid [data-slot='field'] {
-  gap: 5px;
-  margin-bottom: 11px;
+  gap: 6px;
+  margin-bottom: 0;
 }
 
 .inbound-compact .fm-grid [data-slot='field-label'] {
   color: var(--inbound-muted);
-  font-size: 12.5px;
+  font-size: 13px;
   font-weight: 500;
   line-height: 18px;
 }
 
 .inbound-compact .fm-switches {
-  margin-bottom: 8px;
+  gap: 10px;
+  margin-bottom: 0;
 }
 
-.inbound-compact .fm-form .fm-switch.ui-form-item + .fm-switch.ui-form-item {
-  border-top-color: var(--inbound-line);
+.inbound-compact .fm-form .fm-switch.ui-form-item {
+  border: 1px solid var(--inbound-line);
+  border-radius: 8px;
+  padding: 0 12px;
+  background: transparent;
+  transition: border-color .15s;
+}
+
+.inbound-compact .fm-form .fm-switch.ui-form-item:hover {
+  border-color: var(--inbound-line-strong);
 }
 
 .inbound-compact .fm-form .fm-switch .ui-form-item-row {
-  min-height: 36px;
+  min-height: 40px;
+  padding: 0;
 }
 
 .inbound-compact .fm-switch .ui-form-item-label label {
-  color: var(--inbound-ink);
-  font-weight: 400;
+  color: var(--inbound-muted);
+  font-size: 13px;
+  font-weight: 500;
 }
 
 .inbound-compact .ui-switch {
@@ -325,9 +383,11 @@
 
 .ui-modal.inbound-compact .ui-modal-footer > .ui-btn {
   min-width: 76px;
-  height: 34px;
-  border-radius: 6px;
-  font-size: 12.5px;
+  height: 36px;
+  padding: 0 16px;
+  border-radius: 8px;
+  font-size: 13px;
+  font-weight: 500;
 }
 
 .ui-modal.inbound-compact .ui-modal-footer > .ui-btn-default {

@@ -135,8 +135,7 @@ describe('REALITY front SNI guard form', () => {
       },
     } } }
     render(<InboundForm serverId={1} inbound={item} open onClose={vi.fn()} onSaved={vi.fn()} />)
-    fireEvent.click(await screen.findByLabelText(/^模式/))
-    fireEvent.click(await screen.findByRole('option', { name: '自签证书' }))
+    fireEvent.click(await screen.findByRole('radio', { name: '证书文件' }))
     save()
     await screen.findByText('请先关闭前置 SNI 过滤，再切换 TLS 模式')
     expect(updateInbound).not.toHaveBeenCalled()

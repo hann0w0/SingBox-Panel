@@ -2,7 +2,7 @@ import { useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode }
 import { EditorModeToggle } from '../../../components/EditorModeToggle'
 import { JsonCodeEditor } from '../../../components/JsonCodeEditor'
 import { SchemaFieldList } from '../../../components/SchemaFormFields'
-import { Alert, Button, Form, Input, InputNumber, Modal, Select, Space, Switch, type FormInstance } from '../../../components/kit'
+import { Alert, Button, Form, Input, InputNumber, Modal, Segmented, Select, Space, Switch, type FormInstance } from '../../../components/kit'
 import { createInbound, updateInbound } from '../../../lib/api'
 import { applyWithToast } from '../../../lib/configApply'
 import {
@@ -34,7 +34,7 @@ const SCHEMA_INBOUND_PRIMARY_PROTO_KEYS = new Set([
   'network', 'override_address', 'override_port',
 ])
 const SCHEMA_TLS_STANDARD_KEYS = new Set([
-  'enabled', 'server_name', 'alpn', 'certificate_path', 'key_path', 'reality', 'acme',
+  'enabled', 'server_name', 'alpn', 'certificate_path', 'key_path', 'reality', 'acme', 'certificate_provider',
 ])
 const SCHEMA_INBOUND_TOP_EXCLUDES = new Set([
   'type', 'tag', 'listen', 'listen_port', 'flow', 'packet_encoding', 'method', 'password',
@@ -166,6 +166,7 @@ export function toForm(ib: Inbound | null): FormVals {
       zero_rtt_handshake: false,
       heartbeat: '10s',
       tls_mode: 'reality',
+      tls_insecure: true,
       // REALITY camouflage target is the operator's choice — do not prefill one.
       reality_handshake_server: undefined,
       reality_handshake_port: undefined,
@@ -233,7 +234,9 @@ export function toForm(ib: Inbound | null): FormVals {
     tls_server_name: tls.reality?.enabled && tls.server_name === tls.reality.handshake_server ? undefined : tls.server_name,
     tls_cert_path: tls.certificate_path,
     tls_key_path: tls.key_path,
-    tls_insecure: tls.insecure,
+    // Preserve explicit choice on existing certificate-file inbounds; default
+    // to skipping client verification when switching another mode to cert files.
+    tls_insecure: tls_mode === 'tls' ? !!tls.insecure : true,
     acme_domain: tls.acme_domain,
     acme_email: tls.acme_email,
     transport_type: EXTENDED_TRANSPORTS.has(s.transport?.type ?? '') ? s.transport!.type : 'tcp',
@@ -391,34 +394,40 @@ export function assembleSettings(
       s.tls = {
         enabled: true,
         self_signed: true,
-        server_name: v.tls_server_name,
+        server_name: String(v.tls_server_name || '').trim() || undefined,
         alpn,
+        fingerprint: v.tls_fingerprint,
         certificate: !v.tls_cert_path && !v.tls_key_path ? s.tls?.certificate : undefined,
         key: !v.tls_cert_path && !v.tls_key_path ? s.tls?.key : undefined,
         insecure: true,
       }
     } else if (mode === 'tls') {
+      const certPath = String(v.tls_cert_path || '').trim()
+      const keyPath = String(v.tls_key_path || '').trim()
       s.tls = {
         enabled: true,
-        server_name: v.tls_server_name,
+        server_name: String(v.tls_server_name || '').trim() || undefined,
         alpn,
         fingerprint: v.tls_fingerprint,
-        certificate_path: v.tls_cert_path,
-        key_path: v.tls_key_path,
+        certificate_path: certPath || undefined,
+        key_path: keyPath || undefined,
         // Preserve imported inline PEM even though this form exposes paths.
         // Otherwise an ordinary edit turns a valid inline-TLS inbound into an
         // invalid paths-only configuration.
-        certificate: !v.tls_cert_path && !v.tls_key_path ? s.tls?.certificate : undefined,
-        key: !v.tls_cert_path && !v.tls_key_path ? s.tls?.key : undefined,
-        insecure: !!v.tls_insecure,
+        certificate: !certPath && !keyPath ? s.tls?.certificate : undefined,
+        key: !certPath && !keyPath ? s.tls?.key : undefined,
+        insecure: v.tls_insecure !== undefined ? !!v.tls_insecure : true,
       }
     } else if (mode === 'acme') {
+      const acmeDomain = String(v.acme_domain || '').trim()
+      const acmeEmail = String(v.acme_email || '').trim()
       s.tls = {
         enabled: true,
-        acme_domain: v.acme_domain,
-        acme_email: v.acme_email,
-        server_name: v.acme_domain,
+        acme_domain: acmeDomain,
+        acme_email: acmeEmail || undefined,
+        server_name: acmeDomain,
         alpn,
+        fingerprint: v.tls_fingerprint,
       }
     }
   }
@@ -470,7 +479,7 @@ export default function InboundForm({
   const type: InboundType = Form.useWatch('type', form) ?? 'shadowsocks'
   const showTLS = !NO_TLS.has(type)
   const watchedTlsMode = Form.useWatch('tls_mode', form)
-  const tlsMode = watchedTlsMode || (showTLS ? (!inbound && type === 'vless' ? 'reality' : (TLS_REQUIRED.has(type) ? 'self' : 'none')) : 'none')
+  const tlsMode = watchedTlsMode || (showTLS ? (!inbound && type === 'vless' ? 'reality' : (TLS_REQUIRED.has(type) ? 'acme' : 'none')) : 'none')
   const transportType = Form.useWatch('transport_type', form)
   const snellVersion = Form.useWatch('snell_version', form)
   const obfsType = Form.useWatch('obfs_type', form)
@@ -568,7 +577,7 @@ export default function InboundForm({
   useEffect(() => {
     if (!open || !showTLS) return
     if (!form.getFieldValue('tls_mode')) {
-      form.setFieldValue('tls_mode', !inbound && type === 'vless' ? 'reality' : (TLS_REQUIRED.has(type) ? 'self' : 'none'))
+      form.setFieldValue('tls_mode', !inbound && type === 'vless' ? 'reality' : (TLS_REQUIRED.has(type) ? 'acme' : 'none'))
     }
   }, [open, showTLS, type, inbound, form])
 
@@ -621,9 +630,9 @@ export default function InboundForm({
     const opts: { value: string; label: string }[] = []
     if (!TLS_REQUIRED.has(t)) opts.push({ value: 'none', label: '无 TLS' })
     if (REALITY_TYPES.has(t)) opts.push({ value: 'reality', label: 'REALITY' })
-    opts.push({ value: 'self', label: '自签证书' })
-    opts.push({ value: 'tls', label: '证书文件' })
     opts.push({ value: 'acme', label: 'ACME 自动证书' })
+    opts.push({ value: 'tls', label: '证书文件' })
+    if (inbound?.settings?.tls?.self_signed) opts.push({ value: 'self', label: '自签证书（旧）' })
     return opts
   }
 
@@ -714,8 +723,8 @@ export default function InboundForm({
   const showTransport = WS_TYPES.has(type)
   const canMultiUser = supportsMultiUser(type, method)
   const hasProtocolSchemaExtras = Object.keys(protocolExtraSchemaProps).length > 0
-  const hasParams = type === 'vless' || type === 'tuic' || type === 'snell' || HAS_BANDWIDTH.has(type) || hasProtocolSchemaExtras
-  const hasOtherParams = Object.keys(otherParamsSchemaProps).length > 0 || Object.keys(tlsAdvSchemaProps).length > 0 || type === 'vless' || type === 'vmess' || type === 'anytls' || type === 'tuic' || type === 'trojan' || (showTLS && tlsMode === 'tls')
+  const hasInlineCert = !!(inbound?.settings?.tls?.certificate && inbound?.settings?.tls?.key)
+  const showTLSFingerprint = showTLS && tlsMode !== 'none' && type !== 'hysteria2' && type !== 'tuic' && type !== 'http'
   const jsonField = (key: string, value: unknown) => {
     if (form.getFieldValue(key) === undefined) form.setFieldValue(key, value)
   }
@@ -756,7 +765,7 @@ export default function InboundForm({
         </div>
       ) : (
       <Form form={form} layout="vertical" className="fm-form inbound-compact-form">
-        <FormGroup title="基本" panel="inbound">
+        <div className="fm-grid" data-panel="inbound">
           <Form.Item name="type" label="协议" rules={[{ required: true }]} className="inbound-compact-type">
             <Select
               options={TYPES}
@@ -944,409 +953,423 @@ export default function InboundForm({
               </Form.Item>
             </>
           )}
-        </FormGroup>
 
-        {hasParams && (
-          <FormGroup title="协议参数" panel="inbound">
-            {type === 'vless' && (
-              <Form.Item name="flow" label="Flow" className="fm-full">
-                <Select
-                  options={[
-                    { value: '', label: '无' },
-                    { value: 'xtls-rprx-vision', label: 'xtls-rprx-vision' },
-                  ]}
-                />
+          {type === 'vless' && (
+            <Form.Item name="flow" label="Flow" className="fm-full">
+              <Select
+                options={[
+                  { value: '', label: '无' },
+                  { value: 'xtls-rprx-vision', label: 'xtls-rprx-vision' },
+                ]}
+              />
+            </Form.Item>
+          )}
+          {type === 'vmess' && (
+            <>
+              <Form.Item name="vmess_security" label="客户端加密方式">
+                <Select options={VMESS_SECURITIES.map((value) => ({ value, label: value }))} />
               </Form.Item>
-            )}
-            {HAS_BANDWIDTH.has(type) && (
-              <>
-                <Form.Item name="up_mbps" label="上行 Mbps">
-                  <InputNumber precision={0} min={0} />
+              <Form.Item name="vmess_alter_id" label="Alter ID">
+                <InputNumber min={0} precision={0} />
+              </Form.Item>
+            </>
+          )}
+          {HAS_BANDWIDTH.has(type) && (
+            <>
+              <Form.Item name="up_mbps" label="上行 Mbps">
+                <InputNumber precision={0} min={0} />
+              </Form.Item>
+              <Form.Item name="down_mbps" label="下行 Mbps">
+                <InputNumber precision={0} min={0} />
+              </Form.Item>
+              <Form.Item name="obfs_type" label="混淆类型" className={obfsType ? undefined : 'fm-full'}>
+                <Select options={[
+                  { value: '', label: '无' },
+                  { value: 'salamander', label: 'salamander' },
+                  { value: 'gecko', label: 'gecko' },
+                ]} />
+              </Form.Item>
+              {obfsType === 'salamander' && (
+                <Form.Item name="obfs_password" label="混淆密码">
+                  <Input.Password />
                 </Form.Item>
-                <Form.Item name="down_mbps" label="下行 Mbps">
-                  <InputNumber precision={0} min={0} />
-                </Form.Item>
-                <Form.Item name="obfs_type" label="混淆类型" className={obfsType ? undefined : 'fm-full'}>
-                  <Select options={[
-                    { value: '', label: '无' },
-                    { value: 'salamander', label: 'salamander' },
-                    { value: 'gecko', label: 'gecko' },
-                  ]} />
-                </Form.Item>
-                {obfsType === 'salamander' && (
-                  <Form.Item name="obfs_password" label="混淆密码">
+              )}
+              {obfsType === 'gecko' && (
+                <>
+                  <Form.Item name="obfs_password" label="混淆密码" rules={[{ required: true, message: '请填写 gecko 混淆密码' }]}>
                     <Input.Password />
                   </Form.Item>
-                )}
-                {obfsType === 'gecko' && (
-                  <>
-                    <Form.Item name="obfs_password" label="混淆密码" rules={[{ required: true, message: '请填写 gecko 混淆密码' }]}>
-                      <Input.Password />
-                    </Form.Item>
-                    <Form.Item name="gecko_min_packet_size" label="最小包大小">
-                      <InputNumber min={512} precision={0} />
-                    </Form.Item>
-                    <Form.Item name="gecko_max_packet_size" label="最大包大小">
-                      <InputNumber min={512} precision={0} />
-                    </Form.Item>
-                  </>
-                )}
-              </>
-            )}
-            {type === 'tuic' && (
+                  <Form.Item name="gecko_min_packet_size" label="最小包大小">
+                    <InputNumber min={512} precision={0} />
+                  </Form.Item>
+                  <Form.Item name="gecko_max_packet_size" label="最大包大小">
+                    <InputNumber min={512} precision={0} />
+                  </Form.Item>
+                </>
+              )}
+            </>
+          )}
+          {type === 'tuic' && (
+            <>
               <Form.Item name="congestion_control" label="拥塞控制" rules={[{ required: true }]} className="fm-full">
                 <Select options={['cubic', 'new_reno', 'bbr'].map((v) => ({ value: v, label: v }))} />
               </Form.Item>
-            )}
-            {type === 'snell' && (
-              <>
-                <Form.Item name="snell_version" label="版本">
-                  <Select options={[{ value: 5, label: 'v5' }, { value: 6, label: 'v6' }]} />
-                </Form.Item>
-                {snellVersion === 6 ? (
-                  <Form.Item name="snell_mode" label="模式">
-                    <Select
-                      allowClear
-                      options={[
-                        { value: '', label: '默认' },
-                        { value: 'unshaped', label: 'unshaped' },
-                        { value: 'unsafe-raw', label: 'unsafe-raw' },
-                      ]}
-                    />
-                  </Form.Item>
-                ) : (
-                  <Form.Item name="snell_obfs_mode" label="混淆">
-                    <Select options={[{ value: 'none', label: '无' }, { value: 'http', label: 'http' }, { value: 'tls', label: 'tls' }]} />
-                  </Form.Item>
-                )}
-              </>
-            )}
-            {(type === 'tuic' || HAS_BANDWIDTH.has(type)) && (
-              <div className="fm-switches">
-                {type === 'tuic' && (
-                  <Form.Item name="zero_rtt_handshake" label="0-RTT 握手" valuePropName="checked" className="fm-switch">
-                    <Switch />
-                  </Form.Item>
-                )}
-                {HAS_BANDWIDTH.has(type) && (
-                  <Form.Item name="ignore_client_bandwidth" label="忽略客户端带宽" valuePropName="checked" className="fm-switch">
-                    <Switch />
-                  </Form.Item>
-                )}
-              </div>
-            )}
-            {hasProtocolSchemaExtras && (
-              <SchemaFieldList
-                properties={protocolExtraSchemaProps}
-                value={rawExtra}
-                onChange={setRawExtra}
-                idPrefix="inbound-proto"
-              />
-            )}
-          </FormGroup>
-        )}
-
-        {showTransport && (
-          <FormGroup title="传输" panel="inbound">
-            <Form.Item name="transport_type" label="传输层" className="fm-full">
-              <Select options={[
-                { value: 'tcp', label: 'TCP' },
-                { value: 'ws', label: 'WebSocket' },
-                { value: 'httpupgrade', label: 'HTTPUpgrade' },
-                { value: 'grpc', label: 'gRPC' },
-                { value: 'http', label: 'HTTP' },
-                { value: 'quic', label: 'QUIC' },
-              ]} />
-            </Form.Item>
-            {(transportType === 'ws' || transportType === 'httpupgrade') && (
-              <>
-                <Form.Item name="ws_path" label="路径">
-                  <Input className="mono" />
-                </Form.Item>
-                <Form.Item name="ws_host" label="Host">
-                  <Input className="mono" />
-                </Form.Item>
-                {transportType === 'ws' && (Boolean(maxEarlyData) || Boolean(earlyDataHeader)) && (
-                  <>
-                    <Form.Item name="max_early_data" label="Early Data 长度">
-                      <InputNumber min={0} precision={0} />
-                    </Form.Item>
-                    <Form.Item name="early_data_header" label="Early Data 头">
-                      <Input className="mono" />
-                    </Form.Item>
-                  </>
-                )}
-              </>
-            )}
-            {Object.keys(transportSchemaProps).length > 0 && (
-              <SchemaFieldList
-                properties={transportSchemaProps}
-                value={(rawExtra.transport && typeof rawExtra.transport === 'object' ? rawExtra.transport : {}) as Record<string, unknown>}
-                onChange={(nextTr) => setRawExtra((prev) => ({ ...prev, transport: nextTr }))}
-                idPrefix="inbound-tr"
-              />
-            )}
-          </FormGroup>
-        )}
-
-        {type === 'trojan' && (
-          <FormGroup title="回落" panel="inbound">
-            <Form.Item
-              name="trojan_fallback_server"
-              label="回落服务器"
-              rules={[
-                ({ getFieldValue }) => ({
-                  validator(_, value) {
-                    if (!getFieldValue('trojan_fallback_port') || value?.trim()) return Promise.resolve()
-                    return Promise.reject(new Error('填写回落端口时必须同时填写回落服务器'))
-                  },
-                }),
-              ]}
-            >
-              <Input className="mono" />
-            </Form.Item>
-            <Form.Item
-              name="trojan_fallback_port"
-              label="回落端口"
-              rules={[
-                ({ getFieldValue }) => ({
-                  validator(_, value) {
-                    if (!getFieldValue('trojan_fallback_server')?.trim() || value) return Promise.resolve()
-                    return Promise.reject(new Error('填写回落服务器时必须同时填写回落端口'))
-                  },
-                }),
-              ]}
-            >
-              <InputNumber min={1} max={65535} precision={0} className="mono" />
-            </Form.Item>
-          </FormGroup>
-        )}
-
-        {showTLS && (
-          <FormGroup title="TLS" panel="inbound">
-            <Form.Item name="tls_mode" label="模式" className={tlsMode && tlsMode !== 'none' ? undefined : 'fm-full'} dependencies={['guard_enabled']} rules={[
-              { required: true },
-              ({ getFieldValue }) => ({
-                validator(_, value) {
-                  if (!getFieldValue('guard_enabled') || value === 'reality') return Promise.resolve()
-                  return Promise.reject(new Error('请先关闭前置 SNI 过滤，再切换 TLS 模式'))
-                },
-              }),
-            ]}>
-              <Select options={tlsModeOptions()} />
-            </Form.Item>
-            {tlsMode && tlsMode !== 'none' && tlsMode !== 'reality' && (
-              <Form.Item name="tls_alpn" label="ALPN">
+              <Form.Item name="auth_timeout" label="认证超时" rules={[{ required: true }]}>
                 <Input className="mono" />
               </Form.Item>
-            )}
-            {tlsMode === 'reality' && (
-              <>
-                <Form.Item
-                  name="reality_handshake_server"
-                  label="握手域名"
-                  rules={[{ required: true, whitespace: true, message: '请填写伪装目标域名' }]}
-                >
-                  <Input className="mono" />
+              <Form.Item name="heartbeat" label="心跳间隔" rules={[{ required: true }]}>
+                <Input className="mono" />
+              </Form.Item>
+            </>
+          )}
+          {type === 'snell' && (
+            <>
+              <Form.Item name="snell_version" label="版本">
+                <Select options={[{ value: 5, label: 'v5' }, { value: 6, label: 'v6' }]} />
+              </Form.Item>
+              {snellVersion === 6 ? (
+                <Form.Item name="snell_mode" label="模式">
+                  <Select
+                    allowClear
+                    options={[
+                      { value: '', label: '默认' },
+                      { value: 'unshaped', label: 'unshaped' },
+                      { value: 'unsafe-raw', label: 'unsafe-raw' },
+                    ]}
+                  />
                 </Form.Item>
-                <Form.Item name="reality_handshake_port" label="握手端口">
-                  <InputNumber precision={0} min={1} max={65535} className="mono" />
+              ) : (
+                <Form.Item name="snell_obfs_mode" label="混淆">
+                  <Select options={[{ value: 'none', label: '无' }, { value: 'http', label: 'http' }, { value: 'tls', label: 'tls' }]} />
                 </Form.Item>
-                <Form.Item name="tls_server_name" label="SNI" className="fm-full">
-                  <Input className="mono" />
+              )}
+            </>
+          )}
+          {(type === 'tuic' || HAS_BANDWIDTH.has(type)) && (
+            <div className="fm-switches">
+              {type === 'tuic' && (
+                <Form.Item name="zero_rtt_handshake" label="0-RTT 握手" valuePropName="checked" className="fm-switch">
+                  <Switch />
                 </Form.Item>
-                {GUARD_TYPES.has(type) && (
-                  <>
-                    <div className="fm-switches">
-                      <Form.Item
-                        name="guard_enabled"
-                        label="前置 SNI 过滤"
-                        valuePropName="checked"
-                        className="fm-switch w-fit"
-                        dependencies={['transport_type']}
-                        rules={[
-                          ({ getFieldValue }) => ({
-                            validator(_, value) {
-                              if (!value || getFieldValue('transport_type') === 'tcp') return Promise.resolve()
-                              return Promise.reject(new Error('前置 SNI 过滤仅支持 TCP 传输'))
-                            },
-                          }),
-                        ]}
-                      >
-                        <Switch />
+              )}
+              {HAS_BANDWIDTH.has(type) && (
+                <Form.Item name="ignore_client_bandwidth" label="忽略客户端带宽" valuePropName="checked" className="fm-switch">
+                  <Switch />
+                </Form.Item>
+              )}
+            </div>
+          )}
+          {hasProtocolSchemaExtras && (
+            <SchemaFieldList
+              properties={protocolExtraSchemaProps}
+              value={rawExtra}
+              onChange={setRawExtra}
+              idPrefix="inbound-proto"
+            />
+          )}
+
+          {showTransport && (
+            <>
+              <Form.Item name="transport_type" label="传输层" className="fm-full">
+                <Select options={[
+                  { value: 'tcp', label: 'TCP' },
+                  { value: 'ws', label: 'WebSocket' },
+                  { value: 'httpupgrade', label: 'HTTPUpgrade' },
+                  { value: 'grpc', label: 'gRPC' },
+                  { value: 'http', label: 'HTTP' },
+                  { value: 'quic', label: 'QUIC' },
+                ]} />
+              </Form.Item>
+              {(transportType === 'ws' || transportType === 'httpupgrade') && (
+                <>
+                  <Form.Item name="ws_path" label="路径">
+                    <Input className="mono" />
+                  </Form.Item>
+                  <Form.Item name="ws_host" label="Host">
+                    <Input className="mono" />
+                  </Form.Item>
+                  {transportType === 'ws' && (Boolean(maxEarlyData) || Boolean(earlyDataHeader)) && (
+                    <>
+                      <Form.Item name="max_early_data" label="Early Data 长度">
+                        <InputNumber min={0} precision={0} />
                       </Form.Item>
-                    </div>
-                    {guardEnabled && (
-                      <>
-                        <Form.Item
-                          name="guard_internal_port"
-                          label="内部端口"
-                          dependencies={['listen_port']}
-                          rules={[
-                            { required: true, message: '请填写内部端口' },
-                            ({ getFieldValue }) => ({
-                              validator(_, value) {
-                                if (!value) return Promise.resolve()
-                                if (!Number.isInteger(Number(value)) || Number(value) < 1 || Number(value) > 65535) return Promise.reject(new Error('内部端口必须在 1-65535 之间'))
-                                if (Number(value) === Number(getFieldValue('listen_port'))) return Promise.reject(new Error('内部端口不能与公网端口相同'))
-                                return Promise.resolve()
-                              },
-                            }),
-                          ]}
-                        >
-                          <InputNumber precision={0} min={1} max={65535} className="mono" />
-                        </Form.Item>
-                        <Form.Item
-                          name="guard_server_names"
-                          label="SNI 白名单"
-                          dependencies={['reality_handshake_server', 'tls_server_name']}
-                          rules={[
-                            ({ getFieldValue }) => ({
-                              validator(_, value) {
-                                const error = validateGuardServerNames(value, getFieldValue('tls_server_name') || getFieldValue('reality_handshake_server'))
-                                if (!error) return Promise.resolve()
-                                return Promise.reject(new Error(error))
-                              },
-                            }),
-                          ]}
-                        >
-                          <Input className="mono" />
-                        </Form.Item>
-                        <Form.Item
-                          name="guard_sniff_timeout"
-                          label="嗅探超时"
-                          rules={[
-                            () => ({
-                              validator(_, value) {
-                                const error = validateGuardTimeout(value)
-                                if (!error) return Promise.resolve()
-                                return Promise.reject(new Error(error))
-                              },
-                            }),
-                          ]}
-                        >
-                          <Input className="mono" />
-                        </Form.Item>
-                      </>
-                    )}
-                  </>
-                )}
-              </>
-            )}
-            {tlsMode === 'self' && (
-              <Form.Item name="tls_server_name" label="SNI">
-                <Input className="mono" />
-              </Form.Item>
-            )}
-            {tlsMode === 'tls' && (
-              <>
-                <Form.Item name="tls_server_name" label="SNI">
-                  <Input className="mono" />
-                </Form.Item>
-                <Form.Item name="tls_cert_path" label="证书路径">
-                  <Input className="mono" />
-                </Form.Item>
-                <Form.Item name="tls_key_path" label="私钥路径">
-                  <Input className="mono" />
-                </Form.Item>
-              </>
-            )}
-            {tlsMode === 'acme' && (
-              <>
-                <Form.Item name="acme_domain" label="ACME 域名" rules={[{ required: true }]}>
-                  <Input className="mono" />
-                </Form.Item>
-                <Form.Item name="acme_email" label="ACME 邮箱">
-                  <Input />
-                </Form.Item>
-              </>
-            )}
-          </FormGroup>
-        )}
-        {hasOtherParams && (
-          <FormGroup title="其他参数" panel="inbound">
-            {showTLS && tlsMode === 'reality' && (
-              <Form.Item name="reality_max_time_difference" label="时间差限制" className="fm-full" rules={[
-                { validator: (_, value) => {
-                  const error = validateGuardTimeout(value, true)
-                  return error ? Promise.reject(new Error(error)) : Promise.resolve()
-                } },
-              ]}>
-                <Input className="mono" />
-              </Form.Item>
-            )}
-            {type === 'tuic' && (
-              <>
-                <Form.Item name="auth_timeout" label="认证超时" rules={[{ required: true }]}>
-                  <Input className="mono" />
-                </Form.Item>
-                <Form.Item name="heartbeat" label="心跳间隔" rules={[{ required: true }]}>
-                  <Input className="mono" />
-                </Form.Item>
-              </>
-            )}
-            {type === 'vmess' && (
-              <>
-                <Form.Item name="vmess_security" label="订阅加密方式">
-                  <Select options={VMESS_SECURITIES.map((value) => ({ value, label: value }))} />
-                </Form.Item>
-                <Form.Item name="vmess_alter_id" label="Alter ID">
-                  <InputNumber min={0} precision={0} />
-                </Form.Item>
-              </>
-            )}
-            {showTLS && type !== 'hysteria2' && type !== 'tuic' && type !== 'http' && (
-              <Form.Item name="tls_fingerprint" label="订阅 uTLS 指纹" className="fm-full">
-                <Select
-                  allowClear
-                  options={['chrome', 'firefox', 'safari', 'ios', 'random', 'randomized'].map((v) => ({ value: v, label: v }))}
+                      <Form.Item name="early_data_header" label="Early Data 头">
+                        <Input className="mono" />
+                      </Form.Item>
+                    </>
+                  )}
+                </>
+              )}
+              {Object.keys(transportSchemaProps).length > 0 && (
+                <SchemaFieldList
+                  properties={transportSchemaProps}
+                  value={(rawExtra.transport && typeof rawExtra.transport === 'object' ? rawExtra.transport : {}) as Record<string, unknown>}
+                  onChange={(nextTr) => setRawExtra((prev) => ({ ...prev, transport: nextTr }))}
+                  idPrefix="inbound-tr"
                 />
+              )}
+            </>
+          )}
+
+          {type === 'trojan' && (
+            <>
+              <Form.Item
+                name="trojan_fallback_server"
+                label="回落服务器"
+                rules={[
+                  ({ getFieldValue }) => ({
+                    validator(_, value) {
+                      if (!getFieldValue('trojan_fallback_port') || value?.trim()) return Promise.resolve()
+                      return Promise.reject(new Error('填写回落端口时必须同时填写回落服务器'))
+                    },
+                  }),
+                ]}
+              >
+                <Input className="mono" />
               </Form.Item>
-            )}
-            {(type === 'vless' || type === 'anytls' || (showTLS && tlsMode === 'tls')) && (
-              <div className="fm-switches">
-                {type === 'vless' && (
+              <Form.Item
+                name="trojan_fallback_port"
+                label="回落端口"
+                rules={[
+                  ({ getFieldValue }) => ({
+                    validator(_, value) {
+                      if (!getFieldValue('trojan_fallback_server')?.trim() || value) return Promise.resolve()
+                      return Promise.reject(new Error('填写回落服务器时必须同时填写回落端口'))
+                    },
+                  }),
+                ]}
+              >
+                <InputNumber min={1} max={65535} precision={0} className="mono" />
+              </Form.Item>
+            </>
+          )}
+
+          {showTLS && (
+            <>
+              <Form.Item
+                name="tls_mode"
+                label="TLS 模式"
+                className="fm-full"
+                dependencies={['guard_enabled']}
+                rules={[
+                  { required: true },
+                  ({ getFieldValue }) => ({
+                    validator(_, value) {
+                      if (!getFieldValue('guard_enabled') || value === 'reality') return Promise.resolve()
+                      return Promise.reject(new Error('请先关闭前置 SNI 过滤，再切换 TLS 模式'))
+                    },
+                  }),
+                ]}
+              >
+                <Segmented aria-label="TLS 模式" options={tlsModeOptions()} />
+              </Form.Item>
+              {tlsMode === 'reality' && (
+                <>
                   <Form.Item
-                    name="packet_encoding"
-                    label="订阅 UDP xudp"
-                    valuePropName="checked"
-                    className="fm-switch"
-                    getValueFromEvent={(checked: boolean) => (checked ? 'xudp' : 'none')}
-                    getValueProps={(value: string) => ({ checked: !value || value === 'xudp' })}
+                    name="reality_handshake_server"
+                    label="握手域名"
+                    rules={[{ required: true, whitespace: true, message: '请填写伪装目标域名' }]}
                   >
-                    <Switch />
+                    <Input className="mono" />
                   </Form.Item>
-                )}
-                {type === 'anytls' && (
-                  <Form.Item name="anytls_udp_over_stream" label="订阅 UDP over Stream" valuePropName="checked" className="fm-switch">
-                    <Switch />
+                  <Form.Item name="reality_handshake_port" label="握手端口">
+                    <InputNumber precision={0} min={1} max={65535} className="mono" />
                   </Form.Item>
-                )}
-                {showTLS && tlsMode === 'tls' && (
-                  <Form.Item name="tls_insecure" label="订阅跳过证书校验" valuePropName="checked" className="fm-switch">
-                    <Switch />
+                  <Form.Item name="tls_server_name" label="SNI">
+                    <Input className="mono" />
                   </Form.Item>
-                )}
-              </div>
-            )}
-            {Object.keys(tlsAdvSchemaProps).length > 0 && (
-              <SchemaFieldList
-                properties={tlsAdvSchemaProps}
-                value={(rawExtra.tls && typeof rawExtra.tls === 'object' ? rawExtra.tls : {}) as Record<string, unknown>}
-                onChange={(nextTls) => setRawExtra((prev) => ({ ...prev, tls: nextTls }))}
-                idPrefix="inbound-tls"
+                  <Form.Item name="reality_max_time_difference" label="时间差限制" rules={[
+                    { validator: (_, value) => {
+                      const error = validateGuardTimeout(value, true)
+                      return error ? Promise.reject(new Error(error)) : Promise.resolve()
+                    } },
+                  ]}>
+                    <Input className="mono" />
+                  </Form.Item>
+                  {GUARD_TYPES.has(type) && (
+                    <>
+                      <div className="fm-switches">
+                        <Form.Item
+                          name="guard_enabled"
+                          label="前置 SNI 过滤"
+                          valuePropName="checked"
+                          className="fm-switch"
+                          dependencies={['transport_type']}
+                          rules={[
+                            ({ getFieldValue }) => ({
+                              validator(_, value) {
+                                if (!value || getFieldValue('transport_type') === 'tcp') return Promise.resolve()
+                                return Promise.reject(new Error('前置 SNI 过滤仅支持 TCP 传输'))
+                              },
+                            }),
+                          ]}
+                        >
+                          <Switch />
+                        </Form.Item>
+                      </div>
+                      {guardEnabled && (
+                        <>
+                          <Form.Item
+                            name="guard_internal_port"
+                            label="内部端口"
+                            dependencies={['listen_port']}
+                            rules={[
+                              { required: true, message: '请填写内部端口' },
+                              ({ getFieldValue }) => ({
+                                validator(_, value) {
+                                  if (!value) return Promise.resolve()
+                                  if (!Number.isInteger(Number(value)) || Number(value) < 1 || Number(value) > 65535) return Promise.reject(new Error('内部端口必须在 1-65535 之间'))
+                                  if (Number(value) === Number(getFieldValue('listen_port'))) return Promise.reject(new Error('内部端口不能与公网端口相同'))
+                                  return Promise.resolve()
+                                },
+                              }),
+                            ]}
+                          >
+                            <InputNumber precision={0} min={1} max={65535} className="mono" />
+                          </Form.Item>
+                          <Form.Item
+                            name="guard_server_names"
+                            label="SNI 白名单"
+                            dependencies={['reality_handshake_server', 'tls_server_name']}
+                            rules={[
+                              ({ getFieldValue }) => ({
+                                validator(_, value) {
+                                  const error = validateGuardServerNames(value, getFieldValue('tls_server_name') || getFieldValue('reality_handshake_server'))
+                                  if (!error) return Promise.resolve()
+                                  return Promise.reject(new Error(error))
+                                },
+                              }),
+                            ]}
+                          >
+                            <Input className="mono" />
+                          </Form.Item>
+                          <Form.Item
+                            name="guard_sniff_timeout"
+                            label="嗅探超时"
+                            rules={[
+                              () => ({
+                                validator(_, value) {
+                                  const error = validateGuardTimeout(value)
+                                  if (!error) return Promise.resolve()
+                                  return Promise.reject(new Error(error))
+                                },
+                              }),
+                            ]}
+                          >
+                            <Input className="mono" />
+                          </Form.Item>
+                        </>
+                      )}
+                    </>
+                  )}
+                </>
+              )}
+              {tlsMode === 'acme' && (
+                <>
+                  <Form.Item
+                    name="acme_domain"
+                    label="ACME 域名"
+                    rules={[{ required: true, whitespace: true, message: '请填写 ACME 域名' }]}
+                  >
+                    <Input className="mono" />
+                  </Form.Item>
+                  <Form.Item name="acme_email" label="ACME 邮箱">
+                    <Input />
+                  </Form.Item>
+                  <Form.Item name="tls_alpn" label="ALPN" className="fm-full">
+                    <Input className="mono" />
+                  </Form.Item>
+                </>
+              )}
+              {tlsMode === 'tls' && (
+                <>
+                  <Form.Item
+                    name="tls_cert_path"
+                    label="证书路径"
+                    rules={hasInlineCert ? undefined : [{ required: true, whitespace: true, message: '请填写证书路径' }]}
+                  >
+                    <Input className="mono" />
+                  </Form.Item>
+                  <Form.Item
+                    name="tls_key_path"
+                    label="私钥路径"
+                    rules={hasInlineCert ? undefined : [{ required: true, whitespace: true, message: '请填写私钥路径' }]}
+                  >
+                    <Input className="mono" />
+                  </Form.Item>
+                  <Form.Item name="tls_server_name" label="SNI">
+                    <Input className="mono" />
+                  </Form.Item>
+                  <Form.Item name="tls_alpn" label="ALPN">
+                    <Input className="mono" />
+                  </Form.Item>
+                  <div className="fm-switches">
+                    <Form.Item name="tls_insecure" label="客户端跳过证书校验" valuePropName="checked" className="fm-switch">
+                      <Switch />
+                    </Form.Item>
+                  </div>
+                </>
+              )}
+              {tlsMode === 'self' && (
+                <>
+                  <Form.Item name="tls_server_name" label="SNI">
+                    <Input className="mono" />
+                  </Form.Item>
+                  <Form.Item name="tls_alpn" label="ALPN">
+                    <Input className="mono" />
+                  </Form.Item>
+                </>
+              )}
+            </>
+          )}
+
+          {showTLSFingerprint && (
+            <Form.Item name="tls_fingerprint" label="订阅 uTLS 指纹" className="fm-full">
+              <Select
+                allowClear
+                options={['chrome', 'firefox', 'safari', 'ios', 'random', 'randomized'].map((v) => ({ value: v, label: v }))}
               />
-            )}
-            {Object.keys(otherParamsSchemaProps).length > 0 && (
-              <SchemaFieldList
-                properties={otherParamsSchemaProps}
-                value={rawExtra}
-                onChange={setRawExtra}
-                idPrefix="inbound-other"
-              />
-            )}
-          </FormGroup>
-        )}
+            </Form.Item>
+          )}
+          {(type === 'vless' || type === 'anytls') && (
+            <div className="fm-switches">
+              {type === 'vless' && (
+                <Form.Item
+                  name="packet_encoding"
+                  label="订阅 UDP xudp"
+                  valuePropName="checked"
+                  className="fm-switch"
+                  getValueFromEvent={(checked: boolean) => (checked ? 'xudp' : 'none')}
+                  getValueProps={(value: string) => ({ checked: !value || value === 'xudp' })}
+                >
+                  <Switch />
+                </Form.Item>
+              )}
+              {type === 'anytls' && (
+                <Form.Item name="anytls_udp_over_stream" label="订阅 UDP over Stream" valuePropName="checked" className="fm-switch">
+                  <Switch />
+                </Form.Item>
+              )}
+            </div>
+          )}
+
+          {Object.keys(tlsAdvSchemaProps).length > 0 && (
+            <SchemaFieldList
+              properties={tlsAdvSchemaProps}
+              value={(rawExtra.tls && typeof rawExtra.tls === 'object' ? rawExtra.tls : {}) as Record<string, unknown>}
+              onChange={(nextTls) => setRawExtra((prev) => ({ ...prev, tls: nextTls }))}
+              idPrefix="inbound-tls"
+            />
+          )}
+          {Object.keys(otherParamsSchemaProps).length > 0 && (
+            <SchemaFieldList
+              properties={otherParamsSchemaProps}
+              value={rawExtra}
+              onChange={setRawExtra}
+              idPrefix="inbound-other"
+            />
+          )}
+        </div>
       </Form>
       )}
       </fieldset>
@@ -1365,12 +1388,6 @@ export function FormGroup({ title, extra, panel, children }: {
       <h3 className="fm-group-title">{title}{extra && <small>{extra}</small>}</h3>
       <div className="fm-grid" data-panel={panel}>{children}</div>
     </section>
-  }
-  if (title === '其他参数') {
-    return <details className="fm-group fm-group-fold">
-      <summary className="fm-group-title">{title}{extra && <small>{extra}</small>}</summary>
-      <div className="fm-grid" data-panel={panel}>{children}</div>
-    </details>
   }
   return <section className="fm-group fm-group-open">
     <h3 className="fm-group-title">{title}{extra && <small>{extra}</small>}</h3>

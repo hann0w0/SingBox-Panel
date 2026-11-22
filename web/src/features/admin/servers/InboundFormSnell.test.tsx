@@ -41,7 +41,6 @@ function openSnell(settings: InboundSettings) {
     settings: { single_user: true, snell_psk: 'a-long-shared-psk', ...settings },
   }
   render(<InboundForm serverId={1} inbound={inbound} open onClose={vi.fn()} onSaved={vi.fn()} />)
-  fireEvent.click(screen.getByText('协议参数'))
 }
 
 async function saveSettings() {

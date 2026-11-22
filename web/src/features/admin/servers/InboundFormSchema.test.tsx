@@ -70,9 +70,9 @@ describe('InboundForm JSON Schema integration', () => {
 
     render(<InboundForm serverId={1} inbound={complexInbound} open onClose={vi.fn()} onSaved={vi.fn()} />)
 
-    // gRPC schema field and collapsed 其他参数 group render for complex inbound
-    expect(await screen.findByText('其他参数')).toBeTruthy()
-    expect(screen.getByDisplayValue('GunService')).toBeTruthy()
+    // gRPC schema field and flat populated advanced fields render directly without folding
+    expect(await screen.findByDisplayValue('GunService')).toBeTruthy()
+    expect(screen.queryByText('其他参数')).toBeNull()
 
     fireEvent.click(screen.getByRole('button', { name: '保存' }))
 

@@ -293,7 +293,9 @@ export default function Logs({
   const wrapLines = true
   const [following, setFollowing] = useState(true)
   const [lastUpdatedAt, setLastUpdatedAt] = useState<number | null>(null)
+  const [copiedErrorId, setCopiedErrorId] = useState<number | null>(null)
   const boxRef = useRef<HTMLDivElement>(null)
+  const copiedTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const followingRef = useRef(true)
   const loadAbortRef = useRef<AbortController | null>(null)
   const loadGenerationRef = useRef(0)
@@ -578,12 +580,31 @@ export default function Logs({
     if (checked) scrollToLatest()
   }
 
+  useEffect(() => () => {
+    if (copiedTimerRef.current) clearTimeout(copiedTimerRef.current)
+  }, [])
+
   const copyLine = async (raw: string) => {
     try {
       await copyToClipboard(raw)
       message.success('该行日志已复制')
     } catch {
       message.error('复制失败，请手动选择日志文本')
+    }
+  }
+
+  const copyError = async (lineId: number, text: string) => {
+    try {
+      await copyToClipboard(text)
+      setCopiedErrorId(lineId)
+      if (copiedTimerRef.current) clearTimeout(copiedTimerRef.current)
+      copiedTimerRef.current = setTimeout(() => {
+        copiedTimerRef.current = null
+        setCopiedErrorId((current) => (current === lineId ? null : current))
+      }, 1400)
+      message.success('报错信息已复制')
+    } catch {
+      message.error('复制失败，请手动选择报错文本')
     }
   }
 
@@ -717,8 +738,13 @@ export default function Logs({
               renderItem={(line) => {
                 const compact = displayMode === 'compact' && line.parsed
                 const componentText = compactComponent(line.component || 'sing-box', line.direction)
-                const { address, detail } = splitAddress(compactMessage(line.message, line.direction))
+                const compactMsg = compactMessage(line.message, line.direction)
+                const { address, detail } = splitAddress(compactMsg)
                 const tone = levelClass(line.level)
+                const isAlertTone = tone === 'warn' || tone === 'error' || tone === 'unknown'
+                const hasErrorContent = Boolean(detail || isAlertTone)
+                const copyableErrorText = hasErrorContent ? (compactMsg.trim() || detail) : ''
+                const errorCopied = copiedErrorId === line.id
                 return (
                   <div
                     className={`lg-line ${compact ? 'lg-line-compact' : 'lg-line-raw'} lg-line-${tone}${connectionBands.get(line.id) ? ' is-band' : ''}`}
@@ -742,14 +768,38 @@ export default function Logs({
                         <span className="lg-address" title={address || undefined}>
                           {address ? highlightText(address, keyword) : <span className="lg-cell-empty">—</span>}
                         </span>
-                        <span className={`lg-error${tone === 'warn' || tone === 'error' ? ' is-' + tone : ''}${detail ? '' : ' is-empty'}`} title={detail || undefined}>
-                          {tone === 'warn' || tone === 'error' || tone === 'unknown' ? (
-                            <>
-                              <span className={`lg-badge lg-badge-${tone === 'unknown' ? 'error' : tone}`}>{line.level || 'INFO'}</span>
-                              {detail ? renderSemanticText(detail, keyword) : null}
-                            </>
-                          ) : detail ? renderSemanticText(detail, keyword) : <span className="lg-cell-empty">—</span>}
-                        </span>
+                        <div className={`lg-error-cell${hasErrorContent ? '' : ' is-empty'}`}>
+                          <div
+                            className={`lg-error-scroll${tone === 'warn' || tone === 'error' ? ` is-${tone}` : ''}`}
+                            title={detail || undefined}
+                            tabIndex={hasErrorContent ? 0 : undefined}
+                          >
+                            <span className="lg-error-content">
+                              {isAlertTone ? (
+                                <>
+                                  <span className={`lg-badge lg-badge-${tone === 'unknown' ? 'error' : tone}`}>{line.level || 'INFO'}</span>
+                                  {detail ? <span className="lg-error-text">{renderSemanticText(detail, keyword)}</span> : null}
+                                </>
+                              ) : detail ? (
+                                <span className="lg-error-text">{renderSemanticText(detail, keyword)}</span>
+                              ) : (
+                                <span className="lg-cell-empty">—</span>
+                              )}
+                            </span>
+                          </div>
+                          {copyableErrorText ? (
+                            <button
+                              type="button"
+                              className={`lg-error-copy${errorCopied ? ' is-copied' : ''}`}
+                              onClick={() => void copyError(line.id, copyableErrorText)}
+                              title="复制报错信息"
+                              aria-label="复制报错信息"
+                            >
+                              {errorCopied ? <Check aria-hidden="true" /> : <Copy aria-hidden="true" />}
+                              <span>{errorCopied ? '已复制' : '复制报错'}</span>
+                            </button>
+                          ) : null}
+                        </div>
                       </>
                     ) : (
                       <span className="lg-raw-text">{renderSemanticText(line.raw, keyword)}</span>

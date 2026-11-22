@@ -2,6 +2,7 @@ import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-libra
 import { MemoryRouter } from 'react-router-dom'
 import { afterEach, beforeEach, expect, it, vi } from 'vitest'
 import { listServers, serverLogs, setServerLogLevel, streamLogs } from '../../../lib/api'
+import { copyToClipboard } from '../../../lib/util'
 import { useSSE } from '../../../hooks/useSSE'
 import type { SSEMessage } from '../../../hooks/useSSE'
 import Logs, { splitAddress } from './Logs'
@@ -9,6 +10,10 @@ import Logs, { splitAddress } from './Logs'
 vi.mock('../../../lib/api', async (importOriginal) => ({
   ...await importOriginal<typeof import('../../../lib/api')>(),
   listServers: vi.fn(), serverLogs: vi.fn(), setServerLogLevel: vi.fn(), streamLogs: vi.fn(),
+}))
+vi.mock('../../../lib/util', async (importOriginal) => ({
+  ...await importOriginal<typeof import('../../../lib/util')>(),
+  copyToClipboard: vi.fn(),
 }))
 vi.mock('../../../hooks/useSSE', () => ({ useSSE: vi.fn(() => ({ connected: true })) }))
 
@@ -21,6 +26,7 @@ beforeEach(() => {
   vi.mocked(serverLogs).mockResolvedValue('historical one\nhistorical two')
   vi.mocked(setServerLogLevel).mockResolvedValue({ ok: true, log_level: 'debug', apply_state: 'applied' })
   vi.mocked(streamLogs).mockResolvedValue({ ok: true, output: '' })
+  vi.mocked(copyToClipboard).mockResolvedValue(undefined)
 })
 afterEach(() => { cleanup(); Reflect.deleteProperty(HTMLElement.prototype, 'scrollTo'); vi.unstubAllGlobals() })
 
@@ -85,4 +91,33 @@ it('removes local level/direction/noise filters and switches server sing-box log
 
   await waitFor(() => expect(setServerLogLevel).toHaveBeenCalledWith(1, 'debug'))
   expect(onLogLevelChange).toHaveBeenCalledWith('debug')
+})
+
+it('renders error details in a horizontally scrollable cell and copies error text directly', async () => {
+  const normalRaw = '13:12:55 INFO [123 0ms] outbound/shadowsocks[BigLobe]: outbound connection to 149.154.171.255:443'
+  const errorRaw = '13:12:56 ERROR [124 3001ms] outbound/shadowsocks[BigLobe]: process connection from 10.100.129.127:51285: dial tcp 149.154.171.255:443: i/o timeout while waiting for TLS handshake'
+  vi.mocked(serverLogs).mockResolvedValue(`${normalRaw}\n${errorRaw}`)
+
+  const { container } = render(
+    <MemoryRouter>
+      <Logs serverId={1} serverOnline serverLogLevel="info" embedded />
+    </MemoryRouter>,
+  )
+
+  const copyErrorButtons = await screen.findAllByRole('button', { name: '复制报错信息' })
+  expect(copyErrorButtons).toHaveLength(1)
+  expect(container.querySelector('.lg-error-scroll.is-error')).toBeTruthy()
+
+  fireEvent.click(copyErrorButtons[0])
+  await waitFor(() => {
+    expect(copyToClipboard).toHaveBeenCalledWith(
+      'process connection from 10.100.129.127:51285: dial tcp 149.154.171.255:443: i/o timeout while waiting for TLS handshake',
+    )
+  })
+  expect(copyErrorButtons[0].textContent).toContain('已复制')
+
+  // Full-line copy button still copies the complete raw log line.
+  const copyLineButtons = screen.getAllByRole('button', { name: '复制该行日志' })
+  fireEvent.click(copyLineButtons[0])
+  await waitFor(() => expect(copyToClipboard).toHaveBeenCalledWith(errorRaw))
 })

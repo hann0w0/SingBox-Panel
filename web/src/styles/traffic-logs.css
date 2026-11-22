@@ -75,7 +75,7 @@
 .lg-search { flex: 1 1 200px; min-width: 160px; max-width: 360px; }
 
 .lg-box { min-width: 0; border: 1px solid var(--console-border); border-radius: var(--app-radius); background: var(--console-container); overflow: hidden; }
-.lg-statusbar { display: flex; align-items: center; justify-content: space-between; gap: 8px 12px; flex-wrap: wrap; min-height: 40px; padding: 4px 8px 4px 14px; border-bottom: 1px solid var(--console-border); background: var(--console-surface); }
+.lg-statusbar { display: flex; align-items: center; justify-content: space-between; gap: 8px 12px; flex-wrap: wrap; min-height: 40px; padding: 4px 10px 4px 16px; border-bottom: 1px solid var(--console-border); background: var(--console-surface); }
 .lg-status-group { display: flex; align-items: center; flex-wrap: wrap; gap: 4px 14px; min-width: 0; }
 .lg-status-right { gap: 4px; }
 .lg-status-right .ui-btn { color: var(--console-muted); }
@@ -104,11 +104,11 @@
 /* Every track has a fixed maximum so the header and the rows resolve to the
    exact same widths; only the detail column absorbs the remaining space. */
 .lg-thead, .lg-line-compact {
-  display: grid; align-items: first baseline; column-gap: 12px;
+  display: grid; align-items: center; column-gap: 16px;
   grid-template-columns:
-    62px 44px 64px minmax(0, 150px) minmax(0, 128px)
-    minmax(0, 200px) minmax(0, 1fr) 22px;
-  padding: 0 14px; box-sizing: border-box;
+    64px 44px 96px minmax(0, 136px) minmax(0, 108px)
+    minmax(0, 250px) minmax(0, 1fr) 24px;
+  padding: 0 16px; box-sizing: border-box;
 }
 /* VirtualList renders the header inside a wrapper; that wrapper is what sticks,
    since a sticky child cannot leave a zero-height parent. */
@@ -123,23 +123,24 @@
    which would drift the header cell away from the data column under it. */
 .lg-thead > span { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 
-.lg-line { position: relative; min-width: 100%; padding: 3px 14px; box-sizing: border-box; }
+.lg-line { position: relative; min-width: 100%; padding: 4px 16px; box-sizing: border-box; }
 .lg-line.is-band { background: var(--console-surface); }
 .lg-line:hover { background: var(--console-hover); }
 .lg-line-warn { background: color-mix(in srgb, var(--console-warning) 6%, transparent); box-shadow: inset 2px 0 0 var(--console-warning); }
 .lg-line-error { background: color-mix(in srgb, var(--console-error) 7%, transparent); box-shadow: inset 2px 0 0 var(--console-error); }
 .lg-line-warn:hover { background: color-mix(in srgb, var(--console-warning) 11%, transparent); }
 .lg-line-error:hover { background: color-mix(in srgb, var(--console-error) 12%, transparent); }
-.lg-line-raw { display: grid; grid-template-columns: minmax(0, 1fr) 22px; align-items: baseline; column-gap: 12px; }
+.lg-line-raw { display: grid; grid-template-columns: minmax(0, 1fr) 24px; align-items: baseline; column-gap: 16px; }
 /* Every compact column is a single line, so rows keep a uniform height like a
-   connection list; the full text stays available on hover and in copy. */
+   connection list; long error details scroll horizontally inside their cell. */
 .lg-viewer.is-nowrap .lg-line { width: max-content; }
-.lg-viewer.is-nowrap :is(.lg-address, .lg-error, .lg-raw-text) { white-space: pre; }
-.lg-viewer.is-wrap :is(.lg-address, .lg-error) { white-space: nowrap; }
+.lg-viewer.is-wrap .lg-line { width: 100%; }
+.lg-viewer.is-nowrap :is(.lg-address, .lg-error-scroll, .lg-raw-text) { white-space: pre; }
+.lg-viewer.is-wrap :is(.lg-address, .lg-error-scroll) { white-space: nowrap; }
 .lg-viewer.is-wrap .lg-raw-text { white-space: pre-wrap; overflow-wrap: anywhere; }
 
 .lg-time { color: var(--console-faint); }
-.lg-dir { display: inline-grid; place-items: center; height: 18px; padding: 0 6px; border-radius: 4px; font-family: var(--app-font); font-size: 11px; font-weight: 600; line-height: 1; align-self: first baseline; white-space: nowrap; }
+.lg-dir { display: inline-grid; place-items: center; height: 18px; padding: 0 6px; border-radius: 4px; font-family: var(--app-font); font-size: 11px; font-weight: 600; line-height: 1; align-self: center; white-space: nowrap; }
 .lg-dir-inbound, .lg-dir-outbound { color: var(--console-muted); background: var(--console-surface); }
 .lg-dir-none { color: var(--console-faint); }
 
@@ -150,9 +151,45 @@
 .lg-user { color: var(--console-muted); font-size: 12px; }
 .lg-raw-text { min-width: 0; color: var(--console-ink); }
 .lg-address { color: var(--console-ink); font-weight: 500; }
-.lg-error { display: inline-flex; align-items: baseline; gap: 6px; color: var(--console-muted); }
-.lg-error.is-warn { color: var(--console-warning-text); }
-.lg-error.is-error { color: var(--console-error-text); }
+.lg-error-cell { display: flex; align-items: center; gap: 8px; min-width: 0; }
+.lg-error-scroll {
+  flex: 1 1 auto; min-width: 0;
+  overflow-x: auto; overflow-y: hidden;
+  white-space: nowrap; text-overflow: clip;
+  overscroll-behavior-x: contain;
+  scrollbar-width: thin; scrollbar-color: transparent transparent;
+  color: var(--console-muted);
+}
+.lg-line:hover .lg-error-scroll,
+.lg-error-scroll:focus-visible { scrollbar-color: var(--console-border-strong) transparent; }
+.lg-error-scroll::-webkit-scrollbar { height: 4px; }
+.lg-error-scroll::-webkit-scrollbar-track { background: transparent; }
+.lg-error-scroll::-webkit-scrollbar-thumb { background: transparent; border-radius: 999px; }
+.lg-line:hover .lg-error-scroll::-webkit-scrollbar-thumb,
+.lg-error-scroll:focus-visible::-webkit-scrollbar-thumb { background: var(--console-border-strong); }
+.lg-error-scroll:focus-visible { outline: 1px solid var(--console-focus); outline-offset: 1px; border-radius: 3px; }
+.lg-error-scroll.is-warn { color: var(--console-warning-text); }
+.lg-error-scroll.is-error { color: var(--console-error-text); }
+.lg-error-content { display: inline-flex; align-items: center; gap: 6px; white-space: nowrap; }
+.lg-error-text { white-space: nowrap; }
+.lg-error-copy {
+  flex: none; display: inline-flex; align-items: center; gap: 4px;
+  height: 20px; padding: 0 6px;
+  border: 1px solid var(--console-border); border-radius: 4px;
+  background: var(--console-container); color: var(--console-muted);
+  font-family: var(--app-font); font-size: 11px; line-height: 1; white-space: nowrap;
+  cursor: pointer; opacity: 0;
+  transition: opacity .12s ease, background-color .12s ease, border-color .12s ease, color .12s ease;
+}
+.lg-error-copy svg { width: 11px; height: 11px; flex: none; }
+.lg-line-warn .lg-error-copy,
+.lg-line-error .lg-error-copy { opacity: .82; }
+.lg-line:hover .lg-error-copy,
+.lg-line:focus-within .lg-error-copy,
+.lg-error-copy:focus-visible,
+.lg-error-copy.is-copied { opacity: 1; }
+.lg-error-copy:hover { border-color: var(--console-border-strong); background: var(--console-selected); color: var(--console-ink); }
+.lg-error-copy:focus-visible { outline: 2px solid var(--console-focus); outline-offset: 1px; }
 .lg-cell-empty { color: var(--console-border-strong); }
 .lg-badge { flex: none; padding: 0 5px; border-radius: 4px; font-family: var(--app-font); font-size: 10.5px; font-weight: 600; line-height: 17px; }
 .lg-badge-warn { color: var(--console-warning-text); background: color-mix(in srgb, var(--console-warning) 16%, transparent); }
@@ -164,7 +201,7 @@
 .lg-token-danger { color: var(--console-error-text); font-weight: 600; }
 .lg-highlight { padding: 0 1px; border-radius: 2px; background: color-mix(in srgb, var(--console-warning) 32%, transparent); color: var(--console-ink); }
 
-.lg-copy-button { display: inline-grid; align-self: start; place-items: center; width: 22px; height: 22px; padding: 0; border: 0; border-radius: 4px; background: transparent; color: var(--console-faint); font-size: 12px; opacity: 0; cursor: pointer; transition: opacity .12s ease; }
+.lg-copy-button { display: inline-grid; align-self: center; place-items: center; width: 24px; height: 22px; padding: 0; border: 0; border-radius: 4px; background: transparent; color: var(--console-faint); font-size: 12px; opacity: 0; cursor: pointer; transition: opacity .12s ease; }
 .lg-line:hover .lg-copy-button, .lg-copy-button:focus-visible { opacity: 1; }
 .lg-copy-button:hover { background: var(--console-selected); color: var(--console-ink); }
 .lg-copy-button:focus-visible { outline: 2px solid var(--console-focus); outline-offset: 1px; }
@@ -195,18 +232,19 @@
   .lg-line { padding: 6px 12px; border-bottom: 1px solid var(--console-border); }
   /* Two-line cards: time, direction, protocol/tag, user on the first line,
      the target and its error text below. */
-  .lg-line-compact { grid-template-columns: auto auto minmax(0, 1fr) 22px; column-gap: 8px; row-gap: 2px; padding: 6px 12px; }
+  .lg-line-compact { grid-template-columns: auto auto minmax(0, 1fr) 24px; column-gap: 8px; row-gap: 3px; padding: 6px 12px; }
   .lg-line-compact .lg-time { grid-column: 1; grid-row: 1; }
   .lg-line-compact .lg-dir { grid-column: 2; grid-row: 1; }
   .lg-line-compact .lg-proto { grid-column: 3; grid-row: 1; justify-self: start; }
   .lg-line-compact .lg-tag { display: none; }
   .lg-line-compact .lg-user { grid-column: 3; grid-row: 1; justify-self: end; max-width: 40%; }
-  .lg-line-compact .lg-address { grid-column: 1 / 4; grid-row: 2; }
-  .lg-line-compact .lg-error { grid-column: 1 / 4; grid-row: 3; }
-  .lg-line-compact .lg-error.is-empty { display: none; }
+  .lg-line-compact .lg-address { grid-column: 1 / 5; grid-row: 2; }
+  .lg-line-compact .lg-error-cell { grid-column: 1 / 5; grid-row: 3; }
+  .lg-line-compact .lg-error-cell.is-empty { display: none; }
   .lg-line-compact .lg-copy-button { grid-column: 4; grid-row: 1; align-self: start; }
+  .lg-error-copy { opacity: .88; }
   .lg-copy-button { opacity: .6; }
 }
 
 /* Protocol pill. */
-.lg-proto { justify-self: start; padding: 0 5px; border: 1px solid var(--console-border); border-radius: 4px; color: var(--console-muted); font-family: var(--app-font); font-size: 10.5px; font-weight: 600; line-height: 17px; }
+.lg-proto { justify-self: start; max-width: 100%; box-sizing: border-box; padding: 0 5px; border: 1px solid var(--console-border); border-radius: 4px; color: var(--console-muted); font-family: var(--app-font); font-size: 10.5px; font-weight: 600; line-height: 17px; }

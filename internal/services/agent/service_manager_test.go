@@ -240,7 +240,15 @@ func TestAppendOpenRCLoggingPreservesCustomSettings(t *testing.T) {
 
 func TestOpenRCSingboxServiceScriptIsValidShell(t *testing.T) {
 	script := openRCSingboxServiceScript("/usr/bin/sing-box")
-	for _, required := range []string{openRCManagedMarker, "supervise-daemon", `command="/usr/bin/sing-box"`, "check -C /etc/sing-box"} {
+	for _, required := range []string{
+		openRCManagedMarker,
+		"supervise-daemon",
+		`command="/usr/bin/sing-box"`,
+		`command_args="run --disable-color -D /var/lib/sing-box -C /etc/sing-box"`,
+		`check -D /var/lib/sing-box -C /etc/sing-box`,
+		`checkconfig()`,
+		`reload()`,
+	} {
 		if !strings.Contains(script, required) {
 			t.Fatalf("OpenRC service missing %q:\n%s", required, script)
 		}
@@ -249,6 +257,56 @@ func TestOpenRCSingboxServiceScriptIsValidShell(t *testing.T) {
 	cmd.Stdin = strings.NewReader(script)
 	if out, err := cmd.CombinedOutput(); err != nil {
 		t.Fatalf("OpenRC service shell syntax: %v: %s", err, out)
+	}
+}
+
+func TestEnsureOpenRCSingboxServiceUpgradesManagedScriptOnly(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "sing-box")
+
+	// Missing file is created with the latest managed OpenRC script.
+	if err := ensureOpenRCSingboxServiceAt(path, "/usr/bin/sing-box"); err != nil {
+		t.Fatal(err)
+	}
+	got, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := openRCSingboxServiceScript("/usr/bin/sing-box")
+	if string(got) != want {
+		t.Fatalf("created OpenRC script mismatch:\n%s", got)
+	}
+
+	// Outdated panel-managed script is upgraded in place.
+	stale := "#!/sbin/openrc-run\n# " + openRCManagedMarker + "\ncommand_args=\"run -C /etc/sing-box\"\n"
+	if err := os.WriteFile(path, []byte(stale), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := ensureOpenRCSingboxServiceAt(path, "/usr/bin/sing-box"); err != nil {
+		t.Fatal(err)
+	}
+	got, err = os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(got) != want {
+		t.Fatalf("stale managed OpenRC script was not upgraded:\n%s", got)
+	}
+
+	// Operator-authored script without the managed marker is preserved verbatim.
+	custom := "#!/sbin/openrc-run\n# custom service\n"
+	if err := os.WriteFile(path, []byte(custom), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := ensureOpenRCSingboxServiceAt(path, "/usr/bin/sing-box"); err != nil {
+		t.Fatal(err)
+	}
+	got, err = os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(got) != custom {
+		t.Fatalf("custom OpenRC script was overwritten:\n%s", got)
 	}
 }
 

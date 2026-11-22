@@ -80,7 +80,7 @@ const (
 
 // InstallMethod selects how the official package is fetched.
 const (
-	MethodScript = "script" // curl -fsSL https://sing-box.app/install.sh | sh
+	MethodScript = "script" // curl -fsSL https://sing-box.app/install.sh | sh (or official musl release on Alpine)
 	MethodAPT    = "apt"    // official deb.sagernet.org repo
 	MethodDNF    = "dnf"    // official rpm.sagernet.org repo
 )

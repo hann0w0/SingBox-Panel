@@ -46,13 +46,22 @@ func singboxBinary() string {
 var versionRe = regexp.MustCompile(`^[0-9][0-9A-Za-z.\-]*$`)
 
 // InstallSingbox installs the official sing-box using the requested method
-// (script | apt | dnf) and channel (stable | beta). It only ever invokes the
-// official installer/repositories documented by upstream.
+// (script | apt | dnf) and channel (stable | beta). It only ever invokes
+// the official installer/repositories documented by upstream (or official
+// GitHub musl releases on Alpine Linux where upstream .apk assets require
+// apk-tools v3).
 func InstallSingbox(ctx context.Context, channel, version, method string) (string, error) {
 	installer := singboxInstaller{
 		run:            run,
 		detectVersion:  DetectVersion,
 		prepareService: prepareSingboxService,
+		isAlpine:       isAlpineHost,
+		installAlpine:  installAlpineRelease,
+		serviceActive:  ServiceActive,
+		restartService: func(ctx context.Context) error {
+			_, err := ServiceAction(ctx, protocol.SvcRestart)
+			return err
+		},
 	}
 	return installer.install(ctx, channel, version, method)
 }
@@ -61,6 +70,10 @@ type singboxInstaller struct {
 	run            commandRunner
 	detectVersion  func(context.Context) (bool, string)
 	prepareService func(context.Context) error
+	isAlpine       func() bool
+	installAlpine  func(context.Context, string, string) (string, error)
+	serviceActive  func(context.Context) bool
+	restartService func(context.Context) error
 }
 
 func (i singboxInstaller) install(ctx context.Context, channel, version, method string) (string, error) {
@@ -76,15 +89,24 @@ func (i singboxInstaller) install(ctx context.Context, channel, version, method 
 	if version != "" && (method == protocol.MethodAPT || method == protocol.MethodDNF) {
 		return "", fmt.Errorf("specific sing-box versions require the script installation method")
 	}
+	alpine := i.isAlpine != nil && i.isAlpine()
+	wasActive := false
+	if alpine && i.serviceActive != nil {
+		wasActive = i.serviceActive(ctx)
+	}
 	var output string
 	var err error
 	switch method {
-	case "apt":
+	case protocol.MethodAPT:
 		output, err = i.installAPT(ctx, channel)
-	case "dnf":
+	case protocol.MethodDNF:
 		output, err = i.installDNF(ctx, channel)
-	case "script", "":
-		output, err = i.installScript(ctx, channel, version)
+	case protocol.MethodScript, "":
+		if alpine && i.installAlpine != nil {
+			output, err = i.installAlpine(ctx, channel, version)
+		} else {
+			output, err = i.installScript(ctx, channel, version)
+		}
 	default:
 		return "", fmt.Errorf("unknown install method %q", method)
 	}
@@ -107,6 +129,11 @@ func (i singboxInstaller) install(ctx context.Context, channel, version, method 
 	if i.prepareService != nil {
 		if err := i.prepareService(ctx); err != nil {
 			return output, fmt.Errorf("prepare sing-box service: %w", err)
+		}
+	}
+	if wasActive && i.restartService != nil {
+		if err := i.restartService(ctx); err != nil {
+			return output, fmt.Errorf("restart sing-box service after upgrade: %w", err)
 		}
 	}
 	return output, nil

@@ -104,7 +104,7 @@ elif command -v pacman >/dev/null 2>&1; then
     if pacman -Q "$pkg" >/dev/null 2>&1; then found=1; pacman -R --noconfirm "$pkg"; fi
   done
 elif command -v apk >/dev/null 2>&1; then
-  for pkg in sing-box-beta sing-box; do
+  for pkg in sing-box-openrc sing-box-beta sing-box; do
     if apk info -e "$pkg" >/dev/null 2>&1; then found=1; apk del "$pkg"; fi
   done
 elif command -v opkg >/dev/null 2>&1; then

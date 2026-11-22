@@ -20,8 +20,8 @@ panel:
 agents:
 	mkdir -p $(DIST)/agents
 	cp cmd/agent/VERSION $(DIST)/agents/VERSION 2>/dev/null || true
-	GOOS=linux GOARCH=amd64 go build -trimpath -buildvcs=false -ldflags "$(AGENT_LDFLAGS)" -o $(DIST)/agents/singbox-panel-agent-linux-amd64 ./cmd/agent
-	GOOS=linux GOARCH=arm64 go build -trimpath -buildvcs=false -ldflags "$(AGENT_LDFLAGS)" -o $(DIST)/agents/singbox-panel-agent-linux-arm64 ./cmd/agent
+	CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -trimpath -buildvcs=false -ldflags "$(AGENT_LDFLAGS)" -o $(DIST)/agents/singbox-panel-agent-linux-amd64 ./cmd/agent
+	CGO_ENABLED=0 GOOS=linux GOARCH=arm64 go build -trimpath -buildvcs=false -ldflags "$(AGENT_LDFLAGS)" -o $(DIST)/agents/singbox-panel-agent-linux-arm64 ./cmd/agent
 
 ## build the frontend into web/dist (served by the panel in production)
 web:

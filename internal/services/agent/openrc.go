@@ -134,16 +134,23 @@ func openRCLogPathFromConfig(raw string) string {
 }
 
 func ensureOpenRCSingboxService(binary string) error {
-	if _, err := os.Stat(openRCSingboxInit); err == nil {
-		return nil
+	return ensureOpenRCSingboxServiceAt(openRCSingboxInit, binary)
+}
+
+func ensureOpenRCSingboxServiceAt(path, binary string) error {
+	script := openRCSingboxServiceScript(binary)
+	existing, err := os.ReadFile(path)
+	if err == nil {
+		if !strings.Contains(string(existing), openRCManagedMarker) || string(existing) == script {
+			return nil
+		}
 	} else if !errors.Is(err, os.ErrNotExist) {
 		return fmt.Errorf("inspect OpenRC sing-box service: %w", err)
 	}
-	if err := os.MkdirAll(filepath.Dir(openRCSingboxInit), 0o755); err != nil {
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 		return fmt.Errorf("create OpenRC service directory: %w", err)
 	}
-	script := openRCSingboxServiceScript(binary)
-	if err := writeAtomicFile(openRCSingboxInit, []byte(script), 0o755); err != nil {
+	if err := writeAtomicFile(path, []byte(script), 0o755); err != nil {
 		return fmt.Errorf("write OpenRC sing-box service: %w", err)
 	}
 	return nil
@@ -155,7 +162,9 @@ func openRCSingboxServiceScript(binary string) string {
 description="sing-box service"
 supervisor="supervise-daemon"
 command=%q
-command_args="run --disable-color -C /etc/sing-box"
+command_args="run --disable-color -D /var/lib/sing-box -C /etc/sing-box"
+extra_commands="checkconfig"
+extra_started_commands="reload"
 respawn_delay=5
 respawn_max=0
 
@@ -163,8 +172,19 @@ depend() {
 	after net dns
 }
 
+checkconfig() {
+	checkpath -d -m 0755 /etc/sing-box /var/lib/sing-box
+	"$command" check -D /var/lib/sing-box -C /etc/sing-box
+}
+
 start_pre() {
-	"$command" check -C /etc/sing-box
+	checkconfig
+}
+
+reload() {
+	ebegin "Reloading $RC_SVCNAME"
+	checkconfig && $supervisor "$RC_SVCNAME" --signal HUP
+	eend $?
 }
 `, openRCManagedMarker, binary)
 }

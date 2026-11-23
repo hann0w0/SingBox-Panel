@@ -83,8 +83,8 @@ func TestRestoreReencryptsOneDriveSettingsForRuntimeKey(t *testing.T) {
 				t.Fatal(err)
 			}
 			for _, value := range []string{stored.EncryptedRefresh, stored.EncryptedPassphrase} {
-				if value != "" && !strings.HasPrefix(value, "v1:") {
-					t.Fatal("restored cloud secret was not encrypted")
+				if value != "" && !strings.HasPrefix(value, "v2:") {
+					t.Fatal("restored cloud secret was not encrypted with v2")
 				}
 			}
 			if err := restored.mutateOneDriveSettings(func(settings *oneDriveSettings) error {

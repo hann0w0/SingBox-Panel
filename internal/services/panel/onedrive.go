@@ -5,6 +5,7 @@ import (
 	"context"
 	"crypto/aes"
 	"crypto/cipher"
+	"crypto/hmac"
 	"crypto/rand"
 	"crypto/sha256"
 	"encoding/base64"
@@ -218,6 +219,8 @@ func (a *App) mutateOneDriveSettings(update func(*oneDriveSettings) error) error
 	return a.saveOneDriveSettings(settings)
 }
 
+const oneDriveSecretSaltSize = 16
+
 func (a *App) oneDriveSecretKey() ([]byte, error) {
 	if strings.TrimSpace(a.cfg.JWTSecret) == "" {
 		return nil, errors.New("OneDrive 加密需要已持久化的 jwt_secret")
@@ -226,8 +229,26 @@ func (a *App) oneDriveSecretKey() ([]byte, error) {
 	return key[:], nil
 }
 
+func (a *App) oneDriveSaltedSecretKey(salt []byte) ([]byte, error) {
+	if strings.TrimSpace(a.cfg.JWTSecret) == "" {
+		return nil, errors.New("OneDrive 加密需要已持久化的 jwt_secret")
+	}
+	// HKDF-SHA256 (extract + single 32-byte expand block) with per-record salt.
+	extract := hmac.New(sha256.New, salt)
+	extract.Write([]byte(a.cfg.JWTSecret))
+	prk := extract.Sum(nil)
+	expand := hmac.New(sha256.New, prk)
+	expand.Write([]byte("singbox-panel/onedrive/v2"))
+	expand.Write([]byte{1})
+	return expand.Sum(nil), nil
+}
+
 func (a *App) encryptOneDriveSecret(value string) (string, error) {
-	key, err := a.oneDriveSecretKey()
+	salt := make([]byte, oneDriveSecretSaltSize)
+	if _, err := io.ReadFull(rand.Reader, salt); err != nil {
+		return "", fmt.Errorf("生成 OneDrive 加密盐失败：%w", err)
+	}
+	key, err := a.oneDriveSaltedSecretKey(salt)
 	if err != nil {
 		return "", err
 	}
@@ -243,37 +264,64 @@ func (a *App) encryptOneDriveSecret(value string) (string, error) {
 	if _, err := io.ReadFull(rand.Reader, nonce); err != nil {
 		return "", fmt.Errorf("生成 OneDrive 加密随机数失败：%w", err)
 	}
-	sealed := gcm.Seal(nonce, nonce, []byte(value), nil)
-	return "v1:" + base64.RawURLEncoding.EncodeToString(sealed), nil
+	sealed := gcm.Seal(append(salt, nonce...), nonce, []byte(value), nil)
+	return "v2:" + base64.RawURLEncoding.EncodeToString(sealed), nil
 }
 
 func (a *App) decryptOneDriveSecret(value string) (string, error) {
-	if !strings.HasPrefix(value, "v1:") {
-		return value, nil
-	}
-	encoded := strings.TrimPrefix(value, "v1:")
-	sealed, err := base64.RawURLEncoding.DecodeString(encoded)
-	if err != nil {
+	switch {
+	case strings.HasPrefix(value, "v2:"):
+		encoded := strings.TrimPrefix(value, "v2:")
+		raw, err := base64.RawURLEncoding.DecodeString(encoded)
+		if err != nil || len(raw) < oneDriveSecretSaltSize {
+			return "", errors.New("OneDrive 授权数据损坏")
+		}
+		salt, sealed := raw[:oneDriveSecretSaltSize], raw[oneDriveSecretSaltSize:]
+		key, err := a.oneDriveSaltedSecretKey(salt)
+		if err != nil {
+			return "", err
+		}
+		block, err := aes.NewCipher(key)
+		if err != nil {
+			return "", fmt.Errorf("创建 OneDrive 解密器失败：%w", err)
+		}
+		gcm, err := cipher.NewGCM(block)
+		if err != nil || len(sealed) < gcm.NonceSize() {
+			return "", errors.New("OneDrive 授权数据损坏")
+		}
+		nonce, ciphertext := sealed[:gcm.NonceSize()], sealed[gcm.NonceSize():]
+		plain, err := gcm.Open(nil, nonce, ciphertext, nil)
+		if err != nil {
+			return "", errors.New("无法解密 OneDrive 授权，请重新连接")
+		}
+		return string(plain), nil
+	case strings.HasPrefix(value, "v1:"):
+		encoded := strings.TrimPrefix(value, "v1:")
+		sealed, err := base64.RawURLEncoding.DecodeString(encoded)
+		if err != nil {
+			return "", errors.New("OneDrive 授权数据损坏")
+		}
+		key, err := a.oneDriveSecretKey()
+		if err != nil {
+			return "", err
+		}
+		block, err := aes.NewCipher(key)
+		if err != nil {
+			return "", fmt.Errorf("创建 OneDrive 解密器失败：%w", err)
+		}
+		gcm, err := cipher.NewGCM(block)
+		if err != nil || len(sealed) < gcm.NonceSize() {
+			return "", errors.New("OneDrive 授权数据损坏")
+		}
+		nonce, ciphertext := sealed[:gcm.NonceSize()], sealed[gcm.NonceSize():]
+		plain, err := gcm.Open(nil, nonce, ciphertext, nil)
+		if err != nil {
+			return "", errors.New("无法解密 OneDrive 授权，请重新连接")
+		}
+		return string(plain), nil
+	default:
 		return "", errors.New("OneDrive 授权数据损坏")
 	}
-	key, err := a.oneDriveSecretKey()
-	if err != nil {
-		return "", err
-	}
-	block, err := aes.NewCipher(key)
-	if err != nil {
-		return "", fmt.Errorf("创建 OneDrive 解密器失败：%w", err)
-	}
-	gcm, err := cipher.NewGCM(block)
-	if err != nil || len(sealed) < gcm.NonceSize() {
-		return "", errors.New("OneDrive 授权数据损坏")
-	}
-	nonce, ciphertext := sealed[:gcm.NonceSize()], sealed[gcm.NonceSize():]
-	plain, err := gcm.Open(nil, nonce, ciphertext, nil)
-	if err != nil {
-		return "", errors.New("无法解密 OneDrive 授权，请重新连接")
-	}
-	return string(plain), nil
 }
 
 func oneDriveHTTPClient() *http.Client {
@@ -386,12 +434,6 @@ func (a *App) startOneDriveDeviceCode(ctx context.Context, clientID string) (one
 
 // GET /api/admin/maintenance/onedrive — status and data-only cloud backups.
 func (a *App) oneDriveStatus(c *gin.Context) {
-	unlockMaintenance, ok := a.tryMaintenanceRequest(c)
-	if !ok {
-		return
-	}
-	defer unlockMaintenance()
-
 	settings, err := a.loadOneDriveSettings()
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
@@ -423,12 +465,6 @@ func (a *App) oneDriveStatus(c *gin.Context) {
 
 // POST /api/admin/maintenance/onedrive/auth/start — begin device-code login.
 func (a *App) startOneDriveAuth(c *gin.Context) {
-	unlockMaintenance, ok := a.tryMaintenanceRequest(c)
-	if !ok {
-		return
-	}
-	defer unlockMaintenance()
-
 	a.pruneOneDrivePending(time.Now())
 	device, err := a.startOneDriveDeviceCode(c.Request.Context(), oneDriveOAuthClientID)
 	if err != nil {
@@ -460,12 +496,6 @@ func (a *App) startOneDriveAuth(c *gin.Context) {
 
 // POST /api/admin/maintenance/onedrive/auth/:sessionID/poll — poll device login.
 func (a *App) pollOneDriveAuth(c *gin.Context) {
-	unlockMaintenance, ok := a.tryMaintenanceRequest(c)
-	if !ok {
-		return
-	}
-	defer unlockMaintenance()
-
 	sessionID := c.Param("sessionID")
 	a.oneDriveMu.Lock()
 	session, ok := a.oneDrivePending[sessionID]
@@ -633,7 +663,7 @@ func validateOneDriveNextLink(next string) (string, error) {
 	return candidate.String(), nil
 }
 
-func (a *App) oneDriveFolderIDContext(ctx context.Context) (string, error) {
+func (a *App) findOneDriveFolderIDContext(ctx context.Context) (string, error) {
 	token, err := a.accessTokenOneDriveContext(ctx)
 	if err != nil {
 		return "", err
@@ -647,7 +677,19 @@ func (a *App) oneDriveFolderIDContext(ctx context.Context) (string, error) {
 	} else if err != nil && !strings.Contains(err.Error(), "HTTP 404") {
 		return "", err
 	}
+	return "", nil
+}
 
+func (a *App) oneDriveFolderIDContext(ctx context.Context) (string, error) {
+	id, err := a.findOneDriveFolderIDContext(ctx)
+	if err != nil || id != "" {
+		return id, err
+	}
+	token, err := a.accessTokenOneDriveContext(ctx)
+	if err != nil {
+		return "", err
+	}
+	folderEndpoint := oneDriveGraphBaseURL + "/me/drive/root:/" + url.PathEscape(oneDriveBackupFolder) + ":"
 	createEndpoint := oneDriveGraphBaseURL + "/me/drive/root/children"
 	var created oneDriveFile
 	err = oneDriveGraphJSON(ctx, http.MethodPost, createEndpoint, token, map[string]any{
@@ -660,6 +702,7 @@ func (a *App) oneDriveFolderIDContext(ctx context.Context) (string, error) {
 	}
 	// A concurrent request may have created the folder between GET and POST.
 	if err != nil && strings.Contains(err.Error(), "nameAlreadyExists") {
+		var folder oneDriveFile
 		if getErr := oneDriveGraphJSON(ctx, http.MethodGet, folderEndpoint, token, nil, &folder); getErr == nil && folder.Folder != nil {
 			return folder.ID, nil
 		}
@@ -673,9 +716,12 @@ func (a *App) oneDriveFolderIDContext(ctx context.Context) (string, error) {
 func (a *App) listOneDriveBackupsContext(ctx context.Context) ([]oneDriveFile, error) {
 	ctx, cancel := context.WithTimeout(ctx, oneDriveListTimeout)
 	defer cancel()
-	folderID, err := a.oneDriveFolderIDContext(ctx)
+	folderID, err := a.findOneDriveFolderIDContext(ctx)
 	if err != nil {
 		return nil, err
+	}
+	if folderID == "" {
+		return []oneDriveFile{}, nil
 	}
 	token, err := a.accessTokenOneDriveContext(ctx)
 	if err != nil {
@@ -828,22 +874,20 @@ func (a *App) uploadOneDriveBackup(archivePath string) error {
 
 // POST /api/admin/maintenance/onedrive/sync — create and upload one data-only archive.
 func (a *App) syncOneDriveBackup(c *gin.Context) {
-	if !a.tryMaintenanceLock() {
-		c.JSON(http.StatusConflict, gin.H{"error": "已有维护任务正在进行"})
-		return
-	}
-	releaseMaintenanceLock := true
-	defer func() {
-		if releaseMaintenanceLock {
-			a.selfUpdating.Unlock()
-		}
-	}()
 	if !a.oneDriveSyncMu.TryLock() {
 		c.JSON(http.StatusConflict, gin.H{"error": "已有 OneDrive 备份任务正在进行"})
 		return
 	}
 	defer a.oneDriveSyncMu.Unlock()
-	name, err := a.syncOneDriveBackupLockedContext(c.Request.Context())
+	if !a.tryMaintenanceLock() {
+		c.JSON(http.StatusConflict, gin.H{"error": "已有维护任务正在进行"})
+		return
+	}
+	releaseMaintenanceLock := func() { a.selfUpdating.Unlock() }
+	name, err := a.syncOneDriveBackupWithRelease(c.Request.Context(), &releaseMaintenanceLock)
+	if releaseMaintenanceLock != nil {
+		releaseMaintenanceLock()
+	}
 	if err != nil {
 		c.JSON(http.StatusBadGateway, gin.H{"error": err.Error()})
 		return
@@ -852,15 +896,30 @@ func (a *App) syncOneDriveBackup(c *gin.Context) {
 }
 
 func (a *App) syncOneDriveBackupLockedContext(ctx context.Context) (string, error) {
+	return a.syncOneDriveBackupWithRelease(ctx, nil)
+}
+
+func (a *App) syncOneDriveBackupWithRelease(ctx context.Context, releaseMaintenanceLock *func()) (string, error) {
+	releaseLocalLock := func() {
+		if releaseMaintenanceLock != nil && *releaseMaintenanceLock != nil {
+			fn := *releaseMaintenanceLock
+			*releaseMaintenanceLock = nil
+			fn()
+		}
+	}
 	settings, err := a.loadOneDriveSettings()
 	if err != nil {
+		releaseLocalLock()
 		return "", err
 	}
 	if settings.RefreshToken == "" {
+		releaseLocalLock()
 		return "", errors.New("请先连接 OneDrive")
 	}
 	attemptedAt := time.Now()
 	archivePath, _, cleanup, err := a.createBackupArchive()
+	// Local snapshot is complete; release global maintenance lock before long cloud I/O.
+	releaseLocalLock()
 	if err != nil {
 		a.recordOneDriveSyncFailure(attemptedAt, err)
 		return "", err
@@ -1075,12 +1134,6 @@ func (a *App) removeLegacyEncryptedOneDriveBackup(ctx context.Context) {
 
 // DELETE /api/admin/maintenance/onedrive/backups/:id
 func (a *App) deleteOneDriveBackup(c *gin.Context) {
-	unlockMaintenance, ok := a.tryMaintenanceRequest(c)
-	if !ok {
-		return
-	}
-	defer unlockMaintenance()
-
 	id := strings.TrimSpace(c.Param("id"))
 	if id == "" {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "备份 ID 为空"})
@@ -1138,16 +1191,19 @@ func (a *App) runOneDriveBackupScheduler(ctx context.Context) {
 					continue
 				}
 			}
-			if !a.tryMaintenanceLock() {
-				continue
-			}
 			if !a.oneDriveSyncMu.TryLock() {
-				a.selfUpdating.Unlock()
 				continue
 			}
-			_, err = a.syncOneDriveBackupLockedContext(ctx)
+			if !a.tryMaintenanceLock() {
+				a.oneDriveSyncMu.Unlock()
+				continue
+			}
+			releaseMaintenanceLock := func() { a.selfUpdating.Unlock() }
+			_, err = a.syncOneDriveBackupWithRelease(ctx, &releaseMaintenanceLock)
+			if releaseMaintenanceLock != nil {
+				releaseMaintenanceLock()
+			}
 			a.oneDriveSyncMu.Unlock()
-			a.selfUpdating.Unlock()
 			if err != nil {
 				log.Printf("OneDrive 自动备份失败: %v", err)
 			}

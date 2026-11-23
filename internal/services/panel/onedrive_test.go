@@ -617,3 +617,67 @@ func testMaintenanceRouter(a *App) http.Handler {
 func serverURL(r *http.Request) string {
 	return "http://" + r.Host
 }
+
+func TestOneDriveSecretRejectsPlaintextAndUsesSaltedV2(t *testing.T) {
+	a := &App{cfg: config.PanelConfig{JWTSecret: "panel-secret-12345678901234567890"}}
+	if _, err := a.decryptOneDriveSecret("legacy-plaintext-token"); err == nil {
+		t.Fatal("plaintext secret must be rejected")
+	}
+	c1, err := a.encryptOneDriveSecret("secret-token")
+	if err != nil || !strings.HasPrefix(c1, "v2:") {
+		t.Fatalf("encryptOneDriveSecret = %q, err=%v", c1, err)
+	}
+	c2, err := a.encryptOneDriveSecret("secret-token")
+	if err != nil || c1 == c2 {
+		t.Fatalf("salted encryption produced identical ciphertexts: %q", c1)
+	}
+	got, err := a.decryptOneDriveSecret(c1)
+	if err != nil || got != "secret-token" {
+		t.Fatalf("decrypt v2 = %q, err=%v", got, err)
+	}
+}
+
+func TestOneDriveStatusIsReadOnlyAndDoesNotRequireMaintenanceLock(t *testing.T) {
+	oldOAuthURL, oldGraphURL := oneDriveOAuthBaseURL, oneDriveGraphBaseURL
+	defer func() {
+		oneDriveOAuthBaseURL = oldOAuthURL
+		oneDriveGraphBaseURL = oldGraphURL
+	}()
+
+	createdFolder := false
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.URL.Path == "/token":
+			_ = json.NewEncoder(w).Encode(oneDriveTokenResponse{AccessToken: "access-token", RefreshToken: "refresh-token"})
+		case r.Method == http.MethodGet && r.URL.Path == "/me/drive/root:/singbox-panel-backups:":
+			http.NotFound(w, r)
+		case r.Method == http.MethodPost && r.URL.Path == "/me/drive/root/children":
+			createdFolder = true
+			http.Error(w, "must not create folder on read-only status", http.StatusInternalServerError)
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer server.Close()
+	oneDriveOAuthBaseURL = server.URL
+	oneDriveGraphBaseURL = server.URL
+
+	a := &App{cfg: config.PanelConfig{JWTSecret: "panel-secret"}, db: testDB(t)}
+	if err := a.saveOneDriveSettings(oneDriveSettings{RefreshToken: "refresh-token", AutoSync: true}); err != nil {
+		t.Fatal(err)
+	}
+	// Hold global maintenance lock to prove oneDriveStatus is not blocked with 409.
+	a.selfUpdating.Lock()
+	defer a.selfUpdating.Unlock()
+
+	router := gin.New()
+	router.GET("/onedrive", a.oneDriveStatus)
+	recorder := httptest.NewRecorder()
+	router.ServeHTTP(recorder, httptest.NewRequest(http.MethodGet, "/onedrive", nil))
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("status = %d body = %s", recorder.Code, recorder.Body.String())
+	}
+	if createdFolder {
+		t.Fatal("read-only status query created remote backup folder")
+	}
+}

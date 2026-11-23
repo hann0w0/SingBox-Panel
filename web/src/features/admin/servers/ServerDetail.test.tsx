@@ -180,6 +180,7 @@ it('shows the apply-config button only when config_dirty is true and applies onc
     })
   mount()
   const applyButton = await screen.findByRole('button', { name: '应用配置' })
+  expect(applyButton.classList.contains('sd-apply-btn')).toBe(true)
   fireEvent.click(applyButton)
   await waitFor(() => expect(applyServerConfig).toHaveBeenCalledWith(1))
   await waitFor(() => expect(screen.queryByRole('button', { name: '应用配置' })).toBeNull())

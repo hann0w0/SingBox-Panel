@@ -42,6 +42,8 @@
   .sd-toolbar { align-items: stretch; flex-wrap: wrap; }
   .sd-toolbar .ui-pills-row { flex-basis: 100%; }
   .sd-toolbar-actions { width: 100%; flex-wrap: wrap; }
+  .sd-apply-btn { order: 1; }
+  .sd-overview { order: 2; flex-basis: 100%; }
   .sd-tab-actions { flex: 1 1 100%; margin-left: 0; }
   .sd-tab-actions .tr-actions,
   .sd-tab-actions .lg-toolbar { width: 100%; }

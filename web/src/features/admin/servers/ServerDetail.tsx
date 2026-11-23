@@ -1071,6 +1071,7 @@ export default function ServerDetail() {
           {section !== 'traffic' && section !== 'logs' && <>
             {server.config_dirty && (
               <Button
+                className="sd-apply-btn"
                 type="primary"
                 size="small"
                 loading={busy === 'apply-config'}

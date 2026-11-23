@@ -90,6 +90,9 @@ func (a *App) inboundOutboundClient(inboundID, consumerServerID uint) (singbox.C
 	if err := a.db.First(&srv, ib.ServerID).Error; err != nil {
 		return singbox.ClientNode{}, fmt.Errorf("来源节点所属服务器已被删除")
 	}
+	if consumerServerID != 0 && ib.ServerID == consumerServerID {
+		return singbox.ClientNode{}, fmt.Errorf("不能把节点自身作为出站")
+	}
 	if !ib.Enabled {
 		return singbox.ClientNode{}, fmt.Errorf("来源节点 %q 已停用", ib.Tag)
 	}
@@ -335,7 +338,7 @@ func routingIdentitiesForInbound(db *gorm.DB, srv *model.Server, inboundID uint)
 	}
 	identities := make([]singbox.ProxyUser, 0, len(consumers))
 	for _, consumer := range consumers {
-		if consumer == 0 {
+		if consumer == 0 || consumer == srv.ID {
 			continue
 		}
 		identity, err := routingOutboundIdentity(srv, inboundID, consumer)

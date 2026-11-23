@@ -321,3 +321,19 @@ func TestCustomNodeReferencedByOutboundCannotBeBatchDeletedOrSubscriptionDeleted
 		t.Fatalf("expected 409 when deleting subscription with referenced custom node, got %d: %s", subRec.Code, subRec.Body.String())
 	}
 }
+
+func TestOutboundImportRejectsSameServerSelfReference(t *testing.T) {
+	f := newNodeImportFixture(t)
+	if w := f.call(t, http.MethodPost, fmt.Sprint(f.source.ID), "preview", gin.H{
+		"source_kind": model.OutboundSourceInbound, "source_id": f.sourceIB.ID,
+	}); w.Code != http.StatusBadRequest || !strings.Contains(w.Body.String(), "不能把节点自身作为出站") {
+		t.Fatalf("same-server preview should fail with 400, got %d: %s", w.Code, w.Body.String())
+	}
+	if w := f.call(t, http.MethodPost, fmt.Sprint(f.source.ID), "outbounds", gin.H{
+		"tag": "self-loop", "type": "vless",
+		"settings":    gin.H{"server": "hk.example.com", "server_port": 443, "uuid": "11111111-2222-4333-8444-555555555555"},
+		"source_kind": model.OutboundSourceInbound, "source_id": f.sourceIB.ID,
+	}); w.Code != http.StatusBadRequest || !strings.Contains(w.Body.String(), "不能把节点自身作为出站") {
+		t.Fatalf("same-server create should fail with 400, got %d: %s", w.Code, w.Body.String())
+	}
+}

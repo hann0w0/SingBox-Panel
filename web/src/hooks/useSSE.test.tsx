@@ -106,4 +106,24 @@ describe('useSSE', () => {
     expect(fetchMock).toHaveBeenCalledTimes(2)
     hook.unmount()
   })
+
+  it.each([403, 404])('stops reconnecting on non-retryable HTTP %i responses', async (status) => {
+    vi.useFakeTimers()
+    const fetchMock = vi.mocked(fetch).mockResolvedValue({ status, ok: false, body: null } as Response)
+    const hook = renderHook(() => useSSE('/api/events', true, vi.fn()))
+
+    await act(async () => {
+      await Promise.resolve()
+      await Promise.resolve()
+    })
+    expect(fetchMock).toHaveBeenCalledTimes(1)
+
+    await act(async () => {
+      vi.advanceTimersByTime(60_000)
+      await Promise.resolve()
+    })
+    expect(fetchMock).toHaveBeenCalledTimes(1)
+    hook.unmount()
+    vi.useRealTimers()
+  })
 })

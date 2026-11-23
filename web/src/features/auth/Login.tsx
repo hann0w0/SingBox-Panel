@@ -1,14 +1,24 @@
 import { useState } from 'react'
 import { Button, Form, Input, message } from '../../components/kit'
-import { useNavigate } from 'react-router-dom'
+import { useLocation, useNavigate } from 'react-router-dom'
 import { errMsg, login } from '../../lib/api'
 import { useAuth } from '../../lib/store'
 import './Login.css'
 import logo from '../../assets/logo.svg'
 
+function resolvePostLoginPath(rawFrom: unknown, role: string): string {
+  const fallback = role === 'admin' ? '/admin/servers' : '/dashboard'
+  if (typeof rawFrom !== 'string') return fallback
+  const trimmed = rawFrom.trim()
+  if (!trimmed.startsWith('/') || trimmed.startsWith('//') || trimmed.startsWith('/login')) return fallback
+  if (role !== 'admin' && trimmed.startsWith('/admin')) return fallback
+  return trimmed
+}
+
 export default function Login() {
   const setAuth = useAuth((s) => s.setAuth)
   const nav = useNavigate()
+  const location = useLocation()
   const [loading, setLoading] = useState(false)
 
   const doLogin = async (v: { username: string; password: string }) => {
@@ -16,7 +26,8 @@ export default function Login() {
     try {
       const { token, user } = await login(v.username, v.password)
       setAuth(token, user)
-      nav(user.role === 'admin' ? '/admin/overview' : '/dashboard')
+      const from = (location.state as { from?: unknown } | null)?.from
+      nav(resolvePostLoginPath(from, user.role), { replace: true })
     } catch (e) {
       message.error(errMsg(e))
     } finally {

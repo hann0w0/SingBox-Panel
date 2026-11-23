@@ -1,6 +1,7 @@
-import { lazy, Suspense } from 'react'
+import { lazy, Suspense, useEffect, useState } from 'react'
 import { Navigate, Route, Routes, useLocation } from 'react-router-dom'
 import { useAuth } from './lib/store'
+import { errMsg, getMe } from './lib/api'
 import { DialogHost } from './components/kit/dialogs'
 import { ToastHost } from './components/kit/feedback'
 import { RouteErrorBoundary } from './components/RouteErrorBoundary'
@@ -28,7 +29,50 @@ function LegacyServerTab({ tab }: { tab: 'traffic' | 'logs' }) {
 
 function Protected({ children }: { children: JSX.Element }) {
   const token = useAuth((s) => s.token)
-  if (!token) return <Navigate to="/login" replace />
+  const user = useAuth((s) => s.user)
+  const setUser = useAuth((s) => s.setUser)
+  const location = useLocation()
+  const [hydrateError, setHydrateError] = useState<string | null>(null)
+  const [attempt, setAttempt] = useState(0)
+
+  useEffect(() => {
+    if (!token || user) return
+    const controller = new AbortController()
+    setHydrateError(null)
+    getMe(controller.signal)
+      .then((res) => {
+        if (!controller.signal.aborted) setUser(res.user)
+      })
+      .catch((err) => {
+        if (!controller.signal.aborted) setHydrateError(errMsg(err))
+      })
+    return () => controller.abort()
+  }, [token, user, setUser, attempt])
+
+  if (!token) {
+    const from = `${location.pathname}${location.search}${location.hash}`
+    return <Navigate to="/login" state={{ from }} replace />
+  }
+  if (!user) {
+    if (hydrateError) {
+      return (
+        <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: 12, minHeight: '50vh', padding: 24, textAlign: 'center' }}>
+          <div style={{ fontSize: 14, color: 'var(--console-muted)' }}>加载用户信息失败：{hydrateError}</div>
+          <button type="button" className="ui-btn ui-btn-default" onClick={() => setAttempt((n) => n + 1)}>重试</button>
+        </div>
+      )
+    }
+    return <PageFallback />
+  }
+  return children
+}
+
+function GuestOnly({ children }: { children: JSX.Element }) {
+  const token = useAuth((s) => s.token)
+  const user = useAuth((s) => s.user)
+  if (token) {
+    return <Navigate to={user?.role === 'admin' ? '/admin/servers' : '/dashboard'} replace />
+  }
   return children
 }
 
@@ -82,7 +126,7 @@ export default function App() {
       <RouteErrorBoundary resetKey={location.pathname}>
         <Suspense fallback={<PageFallback />}>
         <Routes>
-        <Route path="/login" element={<Login />} />
+        <Route path="/login" element={<GuestOnly><Login /></GuestOnly>} />
         <Route
           element={
             <Protected>

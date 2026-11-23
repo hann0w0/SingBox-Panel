@@ -148,6 +148,13 @@ export function useSSE(
           handleUnauthorized()
           return
         }
+        // Non-retryable 4xx responses (e.g. 403 forbidden, 404 not found) will
+        // not self-heal on reconnect; stop retrying immediately.
+        if (resp.status >= 400 && resp.status < 500 && resp.status !== 408 && resp.status !== 429) {
+          shouldReconnect = false
+          stopped = true
+          return
+        }
         if (!resp.ok || !resp.body) {
           return
         }

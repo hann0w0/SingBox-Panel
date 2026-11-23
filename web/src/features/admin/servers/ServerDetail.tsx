@@ -65,6 +65,7 @@ import { MODAL_MD } from '../../../components/kit/modal'
 import { formatProtocolLabel } from '../../../lib/protocols'
 import { useSSE, type SSEMessage } from '../../../hooks/useSSE'
 import { mergeServerLiveStatus, parseServerLiveStatus } from './liveServerStatus'
+import { parseServerId } from '../../../lib/serverNavigation'
 
 function ProtocolTag({ type }: { type: string }) {
   return <span className="ui-tag">{formatProtocolLabel(type) || type}</span>
@@ -76,24 +77,32 @@ type DetailSection = typeof DETAIL_SECTIONS[number]
 export default function ServerDetail() {
   const { id, section: sectionParam } = useParams()
   const navigate = useNavigate()
+  const validSection = !sectionParam || (DETAIL_SECTIONS as readonly string[]).includes(sectionParam)
   const section: DetailSection = (DETAIL_SECTIONS as readonly string[]).includes(sectionParam || '') ? sectionParam as DetailSection : 'inbounds'
-  const sid = Number(id)
+  const parsedSid = parseServerId(id)
+  const sid = parsedSid ?? 0
   const [server, setServer] = useState<Server | null>(null)
   const onSSEMessage = useCallback((msg: SSEMessage) => {
     const patch = parseServerLiveStatus(msg)
     if (!patch) return
     setServer((prev) => (prev && prev.id === patch.server_id ? mergeServerLiveStatus(prev, patch) : prev))
   }, [])
-  const liveEnabled = Number.isFinite(sid) && sid > 0 && section !== 'traffic' && section !== 'logs'
+  const liveEnabled = parsedSid !== null && section !== 'traffic' && section !== 'logs'
   useSSE(liveEnabled ? `/api/admin/servers/${sid}/traffic/live` : '', liveEnabled, onSSEMessage)
-  const [pageLoading, setPageLoading] = useState(true)
-  const [loadError, setLoadError] = useState<string | null>(null)
+  const [pageLoading, setPageLoading] = useState(parsedSid !== null)
+  const [loadError, setLoadError] = useState<string | null>(parsedSid === null ? '服务器不存在' : null)
   const [sectionError, setSectionError] = useState<string | null>(null)
   const [install, setInstall] = useState('')
   const [busy, setBusy] = useState('')
   const [formOpen, setFormOpen] = useState(false)
   useEffect(() => {
-    if (!formOpen) return
+    if (parsedSid !== null && !validSection) {
+      navigate(`/admin/servers/${parsedSid}/inbounds`, { replace: true })
+    }
+  }, [parsedSid, validSection, navigate])
+
+  useEffect(() => {
+    if (!formOpen || parsedSid === null) return
     const controller = new AbortController()
     const refresh = async () => {
       try {
@@ -184,7 +193,13 @@ export default function ServerDetail() {
   }
 
   const load = useCallback(async () => {
-    const targetSID = sid
+    if (parsedSid === null) {
+      setServer(null)
+      setPageLoading(false)
+      setLoadError('服务器不存在')
+      return
+    }
+    const targetSID = parsedSid
     if (currentSIDRef.current !== targetSID) return
     loadAbortRef.current?.abort()
     routeUsersAbortRef.current?.abort()
@@ -233,7 +248,7 @@ export default function ServerDetail() {
         setPageLoading(false)
       }
     }
-  }, [sid])
+  }, [parsedSid])
 
   const scheduleLoad = useCallback((delay: number) => {
     const targetSID = sid

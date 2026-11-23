@@ -32,14 +32,33 @@ http.interceptors.request.use((config) => {
   return config
 })
 
+function requestAuthHeader(config: { headers?: unknown } | undefined): string | undefined {
+  const headers = config?.headers as { get?: (k: string) => unknown; Authorization?: unknown; authorization?: unknown } | undefined
+  if (!headers) return undefined
+  const value = typeof headers.get === 'function' ? headers.get('Authorization') : (headers.Authorization ?? headers.authorization)
+  return typeof value === 'string' ? value : undefined
+}
+
 http.interceptors.response.use(
   (r) => r,
-  (err) => {
+  async (err) => {
+    if (axios.isAxiosError(err) && err.response?.data instanceof Blob) {
+      try {
+        const text = await err.response.data.text()
+        try {
+          err.response.data = JSON.parse(text)
+        } catch {
+          err.response.data = text
+        }
+      } catch {
+        // leave original blob if unreadable
+      }
+    }
     const token = useAuth.getState().token
     // An in-flight request can still carry the previous token after a password
     // change. Its late 401 must not revoke the newly issued session.
     if (err?.response?.status === 401 && token &&
-        err.config?.headers?.Authorization === `Bearer ${token}` &&
+        requestAuthHeader(err.config) === `Bearer ${token}` &&
         !location.pathname.startsWith('/login')) {
       useAuth.getState().logout()
       location.href = '/login'
@@ -51,7 +70,14 @@ http.interceptors.response.use(
 // 从 axios 错误中提取人类可读的错误信息，使用类型安全的 isAxiosError 守卫
 export function errMsg(e: unknown): string {
   if (axios.isAxiosError(e)) {
-    return e.response?.data?.error || e.response?.data?.output || e.message || '请求失败'
+    const data = e.response?.data
+    if (typeof data === 'string' && data.trim()) return data.trim()
+    if (data && typeof data === 'object') {
+      const obj = data as { error?: string; message?: string; msg?: string; output?: string }
+      const picked = obj.error || obj.message || obj.msg || obj.output
+      if (picked) return picked
+    }
+    return e.message || '请求失败'
   }
   return e instanceof Error ? e.message : '请求失败'
 }

@@ -124,26 +124,6 @@
   width: 100%;
 }
 
-.inbound-compact .inbound-port-pair {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) 24px minmax(0, 1fr);
-  align-items: start;
-  column-gap: 8px;
-}
-
-.inbound-compact .inbound-port-pair > * {
-  min-width: 0;
-}
-
-.inbound-compact .inbound-port-pair-sep {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  height: 36px;
-  margin-top: 24px;
-  color: var(--inbound-faint);
-}
-
 .inbound-compact .inbound-label-hint {
   display: inline-flex;
   align-items: center;

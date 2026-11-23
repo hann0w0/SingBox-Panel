@@ -832,10 +832,10 @@ export default function ServerDetail() {
             const clientPort = ib.settings?.client_port
             if (clientPort && clientPort > 0 && clientPort !== v) {
               return (
-                <Tooltip title={`连接端口 ${clientPort} ⇄ 服务端口 ${v}`}>
+                <Tooltip title={`连接端口 ${clientPort} / 监听端口 ${v}`}>
                   <span className="mono">
                     {clientPort}
-                    <span className="faint"> ⇄ </span>
+                    <span className="faint"> / </span>
                     <span className="muted">{v}</span>
                   </span>
                 </Tooltip>

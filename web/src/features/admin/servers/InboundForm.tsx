@@ -1,5 +1,5 @@
 import { useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from 'react'
-import { ArrowLeftRight, Info } from 'lucide-react'
+import { Info } from 'lucide-react'
 import { EditorModeToggle } from '../../../components/EditorModeToggle'
 import { JsonCodeEditor } from '../../../components/JsonCodeEditor'
 import { SchemaFieldList } from '../../../components/SchemaFormFields'
@@ -753,43 +753,38 @@ export default function InboundForm({
                 ]} placeholder={listenMode === 'ipv6' ? 'IPv6 不可用' : undefined} />
               </Form.Item>
               <TooltipProvider delayDuration={180}>
-                <div className="fm-full inbound-port-pair">
-                  <Form.Item
-                    name="client_port"
-                    label={(
-                      <span className="inbound-label-hint">
-                        连接端口
-                        <Tooltip title="客户端订阅与节点链接使用的端口，留空则与服务端口一致">
-                          <Info className="inbound-hint-icon" aria-hidden="true" />
-                        </Tooltip>
-                      </span>
-                    )}
-                  >
-                    <InputNumber
-                      precision={0}
-                      min={1}
-                      max={65535}
-                      placeholder={listenPort ? String(listenPort) : '同服务端口'}
-                      className="mono"
-                    />
-                  </Form.Item>
-                  <span className="inbound-port-pair-sep" aria-hidden="true">
-                    <ArrowLeftRight size={14} strokeWidth={1.75} />
-                  </span>
-                  <Form.Item
-                    name="listen_port"
-                    label={(
-                      <span className="inbound-label-hint">
-                        服务端口
-                        <Tooltip title="服务端 sing-box 实际监听运行的端口">
-                          <Info className="inbound-hint-icon" aria-hidden="true" />
-                        </Tooltip>
-                      </span>
-                    )}
-                  >
-                    <InputNumber precision={0} min={1} max={65535} className="mono" />
-                  </Form.Item>
-                </div>
+                <Form.Item
+                  name="client_port"
+                  label={(
+                    <span className="inbound-label-hint">
+                      连接端口
+                      <Tooltip title="客户端订阅与节点链接使用的端口，留空则与监听端口一致">
+                        <Info className="inbound-hint-icon" aria-hidden="true" />
+                      </Tooltip>
+                    </span>
+                  )}
+                >
+                  <InputNumber
+                    precision={0}
+                    min={1}
+                    max={65535}
+                    placeholder={listenPort ? String(listenPort) : '同监听端口'}
+                    className="mono"
+                  />
+                </Form.Item>
+                <Form.Item
+                  name="listen_port"
+                  label={(
+                    <span className="inbound-label-hint">
+                      监听端口
+                      <Tooltip title="服务端 sing-box 实际监听运行的端口">
+                        <Info className="inbound-hint-icon" aria-hidden="true" />
+                      </Tooltip>
+                    </span>
+                  )}
+                >
+                  <InputNumber precision={0} min={1} max={65535} className="mono" />
+                </Form.Item>
               </TooltipProvider>
             </>
           )}

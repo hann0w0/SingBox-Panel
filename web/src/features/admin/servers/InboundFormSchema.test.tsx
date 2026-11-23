@@ -172,7 +172,7 @@ describe('InboundForm JSON Schema integration', () => {
     render(<InboundForm serverId={1} inbound={null} open onClose={vi.fn()} onSaved={vi.fn()} />)
 
     fireEvent.change(screen.getByLabelText('连接端口'), { target: { value: '443' } })
-    fireEvent.change(screen.getByLabelText('服务端口'), { target: { value: '1443' } })
+    fireEvent.change(screen.getByLabelText('监听端口'), { target: { value: '1443' } })
 
     // Switching to JSON shows native sing-box listen_port without panel-only client_port.
     fireEvent.click(screen.getByRole('radio', { name: 'JSON' }))
@@ -184,7 +184,7 @@ describe('InboundForm JSON Schema integration', () => {
     // Returning to form preserves client_port=443.
     fireEvent.click(screen.getByRole('radio', { name: 'Form' }))
     expect((screen.getByLabelText('连接端口') as HTMLInputElement).value).toBe('443')
-    expect((screen.getByLabelText('服务端口') as HTMLInputElement).value).toBe('1443')
+    expect((screen.getByLabelText('监听端口') as HTMLInputElement).value).toBe('1443')
 
     fireEvent.click(screen.getByRole('button', { name: '保存' }))
     await waitFor(() => expect(createInbound).toHaveBeenCalledOnce())

@@ -395,12 +395,18 @@ func (a *App) validateRule(db *gorm.DB, serverID uint, raw json.RawMessage, outb
 		if outbound == "block" || outbound == "reject" || outbound == "sniff" || outbound == "hijack-dns" || outbound == "resolve" || outbound == "route-options" {
 			return fmt.Errorf("路由动作必须选择可用出站")
 		}
+		if !ruleHasMatch(rule) {
+			return fmt.Errorf("路由规则至少需要一个匹配条件，如需兜底请修改默认出站")
+		}
 	case "reject":
 		if outbound != "block" && outbound != "reject" {
 			return fmt.Errorf("拒绝动作的目标出站必须为 block")
 		}
 		if rule.Method != "" && rule.Method != "default" && rule.Method != "drop" && rule.Method != "reply" {
 			return fmt.Errorf("拒绝方式只能是 default、drop 或 reply")
+		}
+		if !ruleHasMatch(rule) {
+			return fmt.Errorf("拒绝规则至少需要一个匹配条件")
 		}
 	case "sniff", "hijack-dns", "resolve", "route-options":
 		if outbound != action {

@@ -201,4 +201,31 @@ describe('RuleForm JSON Schema integration', () => {
       port: [9928],
     })
   })
+
+  it('rejects empty match conditions for route rules in both form and JSON modes', async () => {
+    render(
+      <RuleForm
+        serverId={1}
+        rule={null}
+        outboundTags={['direct', 'proxy-hk']}
+        inboundTags={['vless-in']}
+        open
+        onClose={vi.fn()}
+        onSaved={vi.fn()}
+      />,
+    )
+
+    fireEvent.click(screen.getByRole('combobox', { name: '目标出站' }))
+    fireEvent.click(await screen.findByRole('option', { name: 'direct' }))
+    fireEvent.click(screen.getByRole('button', { name: '保存' }))
+    expect(await screen.findByText(/路由规则至少需要一个匹配条件/)).toBeTruthy()
+    expect(createRule).not.toHaveBeenCalled()
+
+    fireEvent.click(screen.getByRole('radio', { name: 'JSON' }))
+    const editor = await screen.findByLabelText('rule.json')
+    fireEvent.change(editor, { target: { value: JSON.stringify({ action: 'route', outbound: 'direct' }) } })
+    fireEvent.click(screen.getByRole('button', { name: '保存' }))
+    expect(await screen.findByText(/路由规则至少需要一个匹配条件/)).toBeTruthy()
+    expect(createRule).not.toHaveBeenCalled()
+  })
 })

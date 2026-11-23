@@ -403,11 +403,40 @@ type ruleReq struct {
 	Enabled  *bool           `json:"enabled"`
 }
 
+var nonMatchRuleExtraKeys = map[string]bool{
+	"strategy":                    true,
+	"server":                      true,
+	"timeout":                     true,
+	"override_address":            true,
+	"override_port":               true,
+	"disable_cache":               true,
+	"rewrite_ttl":                 true,
+	"client_subnet":               true,
+	"udp_disable_domain_unmapping": true,
+	"udp_connect":                 true,
+	"udp_timeout":                 true,
+	"tls_fragment":                true,
+	"tls_fragment_fallback_delay": true,
+	"tls_record_fragment":         true,
+	"invert":                      true,
+}
+
 func ruleHasMatch(r singbox.RuleInput) bool {
-	return len(r.Inbound) > 0 || len(r.Domain) > 0 || len(r.DomainSuffix) > 0 ||
+	if len(r.AuthUser) > 0 || len(r.Inbound) > 0 || len(r.Domain) > 0 || len(r.DomainSuffix) > 0 ||
 		len(r.DomainKeyword) > 0 || len(r.IPCIDR) > 0 || len(r.SourceIPCIDR) > 0 ||
-		len(r.Port) > 0 || len(r.Protocol) > 0 || r.Network != "" || len(r.RuleSet) > 0 ||
-		len(r.Extra) > 0
+		len(r.Port) > 0 || len(r.Protocol) > 0 || r.Network != "" || len(r.RuleSet) > 0 {
+		return true
+	}
+	for k, v := range r.Extra {
+		if nonMatchRuleExtraKeys[k] || v == nil || v == "" || v == false {
+			continue
+		}
+		if list, ok := v.([]any); ok && len(list) == 0 {
+			continue
+		}
+		return true
+	}
+	return false
 }
 
 func (a *App) createRule(c *gin.Context) {

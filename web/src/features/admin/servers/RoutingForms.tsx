@@ -809,6 +809,63 @@ function matchToConditionRows(match: RuleMatch, act: string, nextId: () => strin
   return rows
 }
 
+const NON_MATCH_RULE_KEYS = new Set([
+  'action',
+  'method',
+  'outbound',
+  'sniffer',
+  'strategy',
+  'server',
+  'timeout',
+  'override_address',
+  'override_port',
+  'disable_cache',
+  'rewrite_ttl',
+  'client_subnet',
+  'udp_disable_domain_unmapping',
+  'udp_connect',
+  'udp_timeout',
+  'tls_fragment',
+  'tls_fragment_fallback_delay',
+  'tls_record_fragment',
+  'invert',
+  'rule_set_ip_cidr_match_source',
+])
+
+function ruleMatchHasCondition(match: RuleMatch): boolean {
+  for (const [k, v] of Object.entries(match)) {
+    if (NON_MATCH_RULE_KEYS.has(k) || v === undefined || v === null || v === '' || v === false) continue
+    if (Array.isArray(v) && v.length === 0) continue
+    return true
+  }
+  return false
+}
+
+function summarizeRuleMatch(match: RuleMatch): string[] {
+  const chips: string[] = []
+  if (match.auth_user?.length) chips.push(`用户 ×${match.auth_user.length}`)
+  if (match.inbound?.length) chips.push(`入站: ${match.inbound.join(', ')}`)
+  if (match.rule_set?.length) chips.push(`规则集: ${match.rule_set.join(', ')}`)
+  if (match.domain?.length) chips.push(`域名 ×${match.domain.length}`)
+  if (match.domain_suffix?.length) chips.push(`后缀 ×${match.domain_suffix.length}`)
+  if (match.domain_keyword?.length) chips.push(`关键词 ×${match.domain_keyword.length}`)
+  if (match.domain_regex?.length) chips.push(`正则 ×${match.domain_regex.length}`)
+  if (match.ip_cidr?.length) chips.push(`IP ×${match.ip_cidr.length}`)
+  if (match.source_ip_cidr?.length) chips.push(`源 IP ×${match.source_ip_cidr.length}`)
+  if (match.port?.length) chips.push(`端口: ${match.port.join(', ')}`)
+  if (match.port_range?.length) chips.push(`端口段 ×${match.port_range.length}`)
+  if (match.protocol?.length) chips.push(`协议: ${match.protocol.join(', ')}`)
+  if (match.network) chips.push(`传输: ${match.network}`)
+  if (match.ip_is_private) chips.push('私有 IP')
+  for (const [k, v] of Object.entries(match)) {
+    if (NON_MATCH_RULE_KEYS.has(k) || STANDARD_RULE_MATCH_KEYS.has(k)) continue
+    if (v === undefined || v === null || v === '' || v === false) continue
+    if (Array.isArray(v) && v.length === 0) continue
+    chips.push(Array.isArray(v) ? `${k} ×${v.length}` : `${k}: ${String(v)}`)
+  }
+  return chips
+}
+
 function validateConditionRows(rows: ConditionRow[]): string | null {
   for (const row of rows) {
     if (row.field === 'port') {
@@ -994,8 +1051,14 @@ export function RuleForm({
   const nextRowId = () => `cond-${++rowSeqRef.current}`
   const action = Form.useWatch('action', form) || 'route'
   const showConditions = action === 'route' || action === 'reject' || action === 'resolve' || action === 'route-options'
+  const requiresCondition = action === 'route' || action === 'reject'
 
   const schemaProps = useMemo(() => schemas.route_rule.properties ?? {}, [schemas.route_rule])
+  const previewSummary = useMemo(() => {
+    if (!showConditions) return []
+    const built = buildRulePayload({ action }, conditions, extraMatch, schemaProps)
+    return summarizeRuleMatch(built.match)
+  }, [action, conditions, extraMatch, schemaProps, showConditions])
   const advancedSchemaProps = useMemo(() => {
     const candidates: Record<string, JSONSchema> = {}
     for (const [k, v] of Object.entries(schemaProps)) {
@@ -1125,6 +1188,11 @@ export function RuleForm({
           return
         }
         const built = nativeJsonToRulePayload(parsed)
+        const act = built.match.action || 'route'
+        if ((act === 'route' || act === 'reject') && !ruleMatchHasCondition(built.match)) {
+          setJsonError(act === 'route' ? '路由规则至少需要一个匹配条件，如需兜底请修改默认出站' : '拒绝规则至少需要一个匹配条件')
+          return
+        }
         match = built.match
         targetOutbound = built.outbound
       } else {
@@ -1142,6 +1210,11 @@ export function RuleForm({
         }
         if (session !== submitSessionRef.current) return
         const built = buildRulePayload(v, conditions, extraMatch, schemaProps)
+        const act = built.match.action || 'route'
+        if ((act === 'route' || act === 'reject') && !ruleMatchHasCondition(built.match)) {
+          setConditionError(act === 'route' ? '路由规则至少需要一个匹配条件，如需兜底请修改默认出站' : '拒绝规则至少需要一个匹配条件')
+          return
+        }
         match = built.match
         targetOutbound = built.outbound
       }
@@ -1400,7 +1473,7 @@ export function RuleForm({
               {conditionError && <Alert type="error" showIcon message={conditionError} />}
               {conditions.length === 0 ? (
                 <div className="rounded-[7px] border border-dashed border-[var(--inbound-line-strong)] px-3 py-2.5 text-[13px] text-muted-foreground">
-                  未设置条件，将匹配全部流量
+                  {requiresCondition ? '请至少添加一个匹配条件（如需兜底请修改服务器默认出站）' : '未设置条件，将作用于全部流量'}
                 </div>
               ) : (
                 conditions.map((row) => (
@@ -1435,6 +1508,16 @@ export function RuleForm({
                     />
                   </div>
                 ))
+              )}
+              {previewSummary.length > 0 && (
+                <div className="flex flex-wrap items-center gap-1.5 rounded-[7px] border border-[var(--inbound-line)] bg-muted/30 px-3 py-2 text-[12px] text-muted-foreground">
+                  <span className="font-medium text-foreground">匹配摘要：</span>
+                  {previewSummary.map((chip) => (
+                    <span key={chip} className="rounded border border-[var(--inbound-line)] bg-background px-1.5 py-0.5 text-foreground">
+                      {chip}
+                    </span>
+                  ))}
+                </div>
               )}
             </div>
           </FormGroup>

@@ -251,3 +251,21 @@ func TestSingboxInstallerDispatchesAlpineAndRestartsActiveService(t *testing.T) 
 		t.Fatalf("alpine=%v prepared=%v restarted=%v out=%q", alpineCalled, prepared, restarted, out)
 	}
 }
+
+func TestAlpineArchiveVerifiesDigestAndRejectsEscapingSymlink(t *testing.T) {
+	if got := parseSHA256Digest("sha256:" + strings.Repeat("a", 64)); got != strings.Repeat("a", 64) {
+		t.Fatalf("parseSHA256Digest = %q", got)
+	}
+	if got := parseSHA256Digest("sha256:not-hex"); got != "" {
+		t.Fatalf("invalid digest accepted: %q", got)
+	}
+
+	src := t.TempDir()
+	dst := t.TempDir()
+	if err := os.Symlink("/etc/passwd", filepath.Join(src, "escape")); err != nil {
+		t.Fatal(err)
+	}
+	if err := copyDirTree(src, dst, false); err == nil || !strings.Contains(err.Error(), "pointing outside") {
+		t.Fatalf("escaping symlink should be rejected, got %v", err)
+	}
+}

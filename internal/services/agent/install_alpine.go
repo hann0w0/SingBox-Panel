@@ -4,6 +4,8 @@ import (
 	"archive/tar"
 	"compress/gzip"
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -13,16 +15,24 @@ import (
 	"path/filepath"
 	"runtime"
 	"strings"
+	"time"
 
 	"github.com/hann0w0/singbox-panel/internal/domain/protocol"
 )
 
 const (
-	singboxStateDir             = "/var/lib/sing-box"
-	defaultGitHubAPIBaseURL     = "https://api.github.com"
-	defaultGitHubDownloadBase   = "https://github.com"
-	maxSingboxBinaryBytes       = 256 << 20
-	maxGitHubReleasePayloadSize = 4 << 20
+	singboxStateDir                   = "/var/lib/sing-box"
+	defaultGitHubAPIBaseURL           = "https://api.github.com"
+	defaultGitHubDownloadBase         = "https://github.com"
+	maxSingboxBinaryBytes             = 256 << 20
+	maxAlpineArchiveCompressedBytes   = 256 << 20
+	maxAlpineArchiveDecompressedBytes = 512 << 20
+	maxAlpineArchiveEntries           = 1024
+	maxAlpineBackupBytes              = 256 << 20
+	maxAlpineBackupFiles              = 4096
+	maxGitHubReleasePayloadSize       = 4 << 20
+	alpineReleaseQueryTimeout         = 30 * time.Second
+	alpineArchiveDownloadTimeout      = 3 * time.Minute
 )
 
 var errReleaseAssetNotFound = errors.New("release asset not found")
@@ -30,6 +40,12 @@ var errReleaseAssetNotFound = errors.New("release asset not found")
 type githubReleaseAsset struct {
 	Name               string `json:"name"`
 	BrowserDownloadURL string `json:"browser_download_url"`
+	Digest             string `json:"digest"`
+}
+
+type alpineReleaseCandidate struct {
+	url            string
+	expectedSHA256 string
 }
 
 type githubReleasePayload struct {
@@ -64,9 +80,16 @@ func isAlpineHost() bool {
 	return !commandExists("dpkg") && !commandExists("rpm") && !commandExists("pacman")
 }
 
+func defaultAlpineHTTPClient() *http.Client {
+	transport := http.DefaultTransport.(*http.Transport).Clone()
+	transport.TLSHandshakeTimeout = 15 * time.Second
+	transport.ResponseHeaderTimeout = 30 * time.Second
+	return &http.Client{Transport: transport}
+}
+
 func installAlpineRelease(ctx context.Context, channel, version string) (string, error) {
 	installer := alpineReleaseInstaller{
-		httpClient:      &http.Client{},
+		httpClient:      defaultAlpineHTTPClient(),
 		apiBaseURL:      defaultGitHubAPIBaseURL,
 		downloadBaseURL: defaultGitHubDownloadBase,
 		goarch:          runtime.GOARCH,
@@ -96,7 +119,7 @@ func (a alpineReleaseInstaller) client() *http.Client {
 	if a.httpClient != nil {
 		return a.httpClient
 	}
-	return &http.Client{}
+	return defaultAlpineHTTPClient()
 }
 
 func (a alpineReleaseInstaller) install(ctx context.Context, channel, version string) (string, error) {
@@ -105,10 +128,12 @@ func (a alpineReleaseInstaller) install(ctx context.Context, channel, version st
 		return "", err
 	}
 	var logLines []string
-	var candidates []string
+	var candidates []alpineReleaseCandidate
 	targetVersion := version
 	if targetVersion == "" {
-		rel, err := a.resolveLatestRelease(ctx, channel)
+		queryCtx, cancel := context.WithTimeout(ctx, alpineReleaseQueryTimeout)
+		rel, err := a.resolveLatestRelease(queryCtx, channel)
+		cancel()
 		if err != nil {
 			return "", err
 		}
@@ -116,10 +141,12 @@ func (a alpineReleaseInstaller) install(ctx context.Context, channel, version st
 		if targetVersion == "" || !versionRe.MatchString(targetVersion) {
 			return "", fmt.Errorf("unexpected sing-box release version %q", rel.TagName)
 		}
-		candidates = selectAlpineAssetURLs(rel.Assets, targetVersion, arch)
+		candidates = selectAlpineAssetCandidates(rel.Assets, targetVersion, arch)
 	}
 	if len(candidates) == 0 {
-		candidates = alpineReleaseDownloadURLs(a.downloadBaseURL, targetVersion, arch)
+		for _, u := range alpineReleaseDownloadURLs(a.downloadBaseURL, targetVersion, arch) {
+			candidates = append(candidates, alpineReleaseCandidate{url: u})
+		}
 	}
 
 	tmpDir, err := os.MkdirTemp("", "singbox-alpine-install-*")
@@ -131,11 +158,13 @@ func (a alpineReleaseInstaller) install(ctx context.Context, channel, version st
 	stagedBin := filepath.Join(tmpDir, "sing-box")
 	var downloadedURL string
 	var downloadErr error
-	for _, url := range candidates {
-		logLines = append(logLines, "Downloading "+url)
-		downloadErr = a.downloadAndExtractBinary(ctx, url, stagedBin)
+	for _, candidate := range candidates {
+		logLines = append(logLines, "Downloading "+candidate.url)
+		dlCtx, cancel := context.WithTimeout(ctx, alpineArchiveDownloadTimeout)
+		downloadErr = a.downloadAndExtractBinary(dlCtx, candidate.url, candidate.expectedSHA256, stagedBin)
+		cancel()
 		if downloadErr == nil {
-			downloadedURL = url
+			downloadedURL = candidate.url
 			break
 		}
 		if errors.Is(downloadErr, errReleaseAssetNotFound) {
@@ -248,18 +277,42 @@ func alpineReleaseAssetNames(version, arch string) []string {
 	}
 }
 
-func selectAlpineAssetURLs(assets []githubReleaseAsset, version, arch string) []string {
-	byName := make(map[string]string, len(assets))
+func parseSHA256Digest(raw string) string {
+	raw = strings.ToLower(strings.TrimSpace(raw))
+	if !strings.HasPrefix(raw, "sha256:") {
+		return ""
+	}
+	hexPart := strings.TrimPrefix(raw, "sha256:")
+	if b, err := hex.DecodeString(hexPart); err != nil || len(b) != sha256.Size {
+		return ""
+	}
+	return hexPart
+}
+
+func selectAlpineAssetCandidates(assets []githubReleaseAsset, version, arch string) []alpineReleaseCandidate {
+	byName := make(map[string]githubReleaseAsset, len(assets))
 	for _, asset := range assets {
 		if asset.Name != "" && asset.BrowserDownloadURL != "" {
-			byName[asset.Name] = asset.BrowserDownloadURL
+			byName[asset.Name] = asset
 		}
 	}
-	var urls []string
+	var out []alpineReleaseCandidate
 	for _, name := range alpineReleaseAssetNames(version, arch) {
-		if u, ok := byName[name]; ok {
-			urls = append(urls, u)
+		if asset, ok := byName[name]; ok {
+			out = append(out, alpineReleaseCandidate{
+				url:            asset.BrowserDownloadURL,
+				expectedSHA256: parseSHA256Digest(asset.Digest),
+			})
 		}
+	}
+	return out
+}
+
+func selectAlpineAssetURLs(assets []githubReleaseAsset, version, arch string) []string {
+	candidates := selectAlpineAssetCandidates(assets, version, arch)
+	urls := make([]string, 0, len(candidates))
+	for _, c := range candidates {
+		urls = append(urls, c.url)
 	}
 	return urls
 }
@@ -274,7 +327,38 @@ func alpineReleaseDownloadURLs(downloadBase, version, arch string) []string {
 	return urls
 }
 
-func (a alpineReleaseInstaller) downloadAndExtractBinary(ctx context.Context, url, dstPath string) error {
+type strictLimitReader struct {
+	r     io.Reader
+	limit int64
+	read  int64
+	err   error
+}
+
+func (l *strictLimitReader) Read(p []byte) (int, error) {
+	if l.read >= l.limit {
+		return 0, l.err
+	}
+	remaining := l.limit - l.read
+	if int64(len(p)) > remaining {
+		p = p[:remaining]
+	}
+	n, err := l.r.Read(p)
+	l.read += int64(n)
+	if err == nil && l.read >= l.limit {
+		// Peek one extra byte to detect overflow past exact limit.
+		var extra [1]byte
+		en, eerr := l.r.Read(extra[:])
+		if en > 0 {
+			return n, l.err
+		}
+		if eerr != nil && !errors.Is(eerr, io.EOF) {
+			return n, eerr
+		}
+	}
+	return n, err
+}
+
+func (a alpineReleaseInstaller) downloadAndExtractBinary(ctx context.Context, url, expectedSHA256, dstPath string) error {
 	req, err := a.newRequest(ctx, url)
 	if err != nil {
 		return fmt.Errorf("build download request: %w", err)
@@ -291,7 +375,30 @@ func (a alpineReleaseInstaller) downloadAndExtractBinary(ctx context.Context, ur
 		msg, _ := io.ReadAll(io.LimitReader(resp.Body, 512))
 		return fmt.Errorf("download sing-box archive: HTTP %d: %s", resp.StatusCode, strings.TrimSpace(string(msg)))
 	}
-	return extractSingboxFromTarGz(resp.Body, dstPath)
+	bounded := &strictLimitReader{
+		r:     resp.Body,
+		limit: maxAlpineArchiveCompressedBytes,
+		err:   fmt.Errorf("sing-box archive exceeds %d bytes", maxAlpineArchiveCompressedBytes),
+	}
+	if expectedSHA256 != "" {
+		h := sha256.New()
+		tee := io.TeeReader(bounded, h)
+		if err := extractSingboxFromTarGz(tee, dstPath); err != nil {
+			_ = os.Remove(dstPath)
+			return err
+		}
+		if _, err := io.Copy(io.Discard, tee); err != nil {
+			_ = os.Remove(dstPath)
+			return fmt.Errorf("read remaining sing-box archive for checksum: %w", err)
+		}
+		actual := hex.EncodeToString(h.Sum(nil))
+		if !strings.EqualFold(actual, expectedSHA256) {
+			_ = os.Remove(dstPath)
+			return fmt.Errorf("sing-box archive SHA256 mismatch: got %s, want %s", actual, expectedSHA256)
+		}
+		return nil
+	}
+	return extractSingboxFromTarGz(bounded, dstPath)
 }
 
 func extractSingboxFromTarGz(r io.Reader, dstPath string) error {
@@ -300,7 +407,13 @@ func extractSingboxFromTarGz(r io.Reader, dstPath string) error {
 		return fmt.Errorf("open sing-box gzip archive: %w", err)
 	}
 	defer gz.Close()
-	tr := tar.NewReader(gz)
+	decompressed := &strictLimitReader{
+		r:     gz,
+		limit: maxAlpineArchiveDecompressedBytes,
+		err:   fmt.Errorf("sing-box decompressed archive exceeds %d bytes", maxAlpineArchiveDecompressedBytes),
+	}
+	tr := tar.NewReader(decompressed)
+	entries := 0
 	for {
 		hdr, err := tr.Next()
 		if errors.Is(err, io.EOF) {
@@ -308,6 +421,10 @@ func extractSingboxFromTarGz(r io.Reader, dstPath string) error {
 		}
 		if err != nil {
 			return fmt.Errorf("read sing-box tar archive: %w", err)
+		}
+		entries++
+		if entries > maxAlpineArchiveEntries {
+			return fmt.Errorf("sing-box tar archive exceeds %d entries", maxAlpineArchiveEntries)
 		}
 		if hdr.Typeflag != tar.TypeReg || filepath.Base(hdr.Name) != "sing-box" {
 			continue
@@ -421,6 +538,9 @@ func restoreDirectoryMissing(backupDir, targetDir string) error {
 }
 
 func copyDirTree(srcDir, dstDir string, skipExisting bool) error {
+	cleanDstRoot := filepath.Clean(dstDir)
+	var totalBytes int64
+	var fileCount int
 	return filepath.WalkDir(srcDir, func(path string, d os.DirEntry, err error) error {
 		if err != nil {
 			return err
@@ -440,6 +560,10 @@ func copyDirTree(srcDir, dstDir string, skipExisting bool) error {
 		if d.IsDir() {
 			return os.MkdirAll(dst, info.Mode().Perm())
 		}
+		fileCount++
+		if fileCount > maxAlpineBackupFiles {
+			return fmt.Errorf("backup directory exceeds %d files", maxAlpineBackupFiles)
+		}
 		if d.Type()&os.ModeSymlink != 0 {
 			if skipExisting {
 				if _, lstatErr := os.Lstat(dst); lstatErr == nil {
@@ -449,6 +573,14 @@ func copyDirTree(srcDir, dstDir string, skipExisting bool) error {
 			linkTarget, err := os.Readlink(path)
 			if err != nil {
 				return err
+			}
+			resolved := linkTarget
+			if !filepath.IsAbs(resolved) {
+				resolved = filepath.Join(filepath.Dir(dst), linkTarget)
+			}
+			resolved = filepath.Clean(resolved)
+			if relTarget, err := filepath.Rel(cleanDstRoot, resolved); err != nil || relTarget == ".." || strings.HasPrefix(relTarget, ".."+string(os.PathSeparator)) {
+				return fmt.Errorf("refusing symlink %q pointing outside %q", rel, cleanDstRoot)
 			}
 			if err := os.MkdirAll(filepath.Dir(dst), 0o755); err != nil {
 				return err
@@ -467,25 +599,37 @@ func copyDirTree(srcDir, dstDir string, skipExisting bool) error {
 		if err := os.MkdirAll(filepath.Dir(dst), 0o755); err != nil {
 			return err
 		}
-		return copyRegularFile(path, dst, info.Mode().Perm())
+		written, err := copyRegularFileBounded(path, dst, info.Mode().Perm(), maxAlpineBackupBytes-totalBytes)
+		totalBytes += written
+		return err
 	})
 }
 
-func copyRegularFile(src, dst string, mode os.FileMode) error {
+func copyRegularFileBounded(src, dst string, mode os.FileMode, remaining int64) (int64, error) {
+	if remaining < 0 {
+		return 0, fmt.Errorf("backup exceeds %d-byte limit", maxAlpineBackupBytes)
+	}
 	in, err := os.Open(src)
 	if err != nil {
-		return err
+		return 0, err
 	}
 	defer in.Close()
 	out, err := os.OpenFile(dst, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, mode)
 	if err != nil {
-		return err
+		return 0, err
 	}
-	if _, err := io.Copy(out, in); err != nil {
+	n, err := io.Copy(out, io.LimitReader(in, remaining+1))
+	if err != nil {
 		out.Close()
-		return err
+		_ = os.Remove(dst)
+		return n, err
 	}
-	return out.Close()
+	if n > remaining {
+		out.Close()
+		_ = os.Remove(dst)
+		return n, fmt.Errorf("backup exceeds %d-byte limit", maxAlpineBackupBytes)
+	}
+	return n, out.Close()
 }
 
 func installExecutableAtomically(src, dst string) error {

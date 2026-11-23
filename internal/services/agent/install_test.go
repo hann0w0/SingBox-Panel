@@ -238,3 +238,44 @@ func TestPrepareSingboxServiceEnablesBootStart(t *testing.T) {
 		t.Fatal("sing-box service was not enabled at boot")
 	}
 }
+
+func TestInstallScriptHardensCurlFlagsAndValidatesPayload(t *testing.T) {
+	var curlArgs []string
+	installer := singboxInstaller{
+		run: func(_ context.Context, command string, args ...string) (string, error) {
+			if command == "curl" {
+				curlArgs = append([]string(nil), args...)
+				return "", os.WriteFile(args[2], []byte("#!/bin/sh\x00binary"), 0o600)
+			}
+			t.Fatal("binary payload must not be executed")
+			return "", nil
+		},
+		detectVersion: func(context.Context) (bool, string) { return true, "1.14.0" },
+	}
+	_, err := installer.install(context.Background(), protocol.ChannelStable, "", protocol.MethodScript)
+	if err == nil || !strings.Contains(err.Error(), "valid shell script") {
+		t.Fatalf("expected invalid script error, got %v", err)
+	}
+	joined := strings.Join(curlArgs, " ")
+	for _, want := range []string{"--proto =https", "--proto-redir =https", "--max-redirs 5", "--max-filesize"} {
+		if !strings.Contains(joined, want) {
+			t.Fatalf("curl args missing %q: %s", want, joined)
+		}
+	}
+
+	t.Setenv("SINGBOX_INSTALL_SCRIPT_SHA256", strings.Repeat("0", 64))
+	installer2 := singboxInstaller{
+		run: func(_ context.Context, command string, args ...string) (string, error) {
+			if command == "curl" {
+				return "", os.WriteFile(args[2], []byte("#!/bin/sh\nexit 0\n"), 0o600)
+			}
+			t.Fatal("mismatched pinned SHA256 must not execute script")
+			return "", nil
+		},
+		detectVersion: func(context.Context) (bool, string) { return true, "1.14.0" },
+	}
+	_, err = installer2.install(context.Background(), protocol.ChannelStable, "", protocol.MethodScript)
+	if err == nil || !strings.Contains(err.Error(), "SHA256 mismatch") {
+		t.Fatalf("expected SHA256 mismatch error, got %v", err)
+	}
+}

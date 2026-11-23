@@ -1,15 +1,21 @@
 package agent
 
 import (
+	"bytes"
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"fmt"
 	"os"
 	"os/exec"
 	"regexp"
 	"strings"
+	"unicode/utf8"
 
 	"github.com/hann0w0/singbox-panel/internal/domain/protocol"
 )
+
+const maxSingboxInstallScriptBytes = 1 << 20 // 1 MiB
 
 // Official sing-box paths and service name.
 const (
@@ -169,7 +175,14 @@ func (i singboxInstaller) installScript(ctx context.Context, channel, version st
 	if err := file.Close(); err != nil {
 		return "", err
 	}
-	output, err := i.run(ctx, "curl", "-fsSL", "--output", path, "https://sing-box.app/install.sh")
+	output, err := i.run(ctx, "curl", "-fsSL", "--output", path,
+		"--proto", "=https",
+		"--proto-redir", "=https",
+		"--max-redirs", "5",
+		"--max-filesize", fmt.Sprintf("%d", maxSingboxInstallScriptBytes),
+		"--connect-timeout", "15",
+		"--max-time", "60",
+		"https://sing-box.app/install.sh")
 	if err != nil {
 		return output, fmt.Errorf("download sing-box installer: %w", err)
 	}
@@ -180,6 +193,24 @@ func (i singboxInstaller) installScript(ctx context.Context, channel, version st
 	if info.Size() == 0 {
 		return output, fmt.Errorf("downloaded sing-box installer is empty")
 	}
+	if info.Size() > maxSingboxInstallScriptBytes {
+		return output, fmt.Errorf("downloaded sing-box installer exceeds %d bytes", maxSingboxInstallScriptBytes)
+	}
+	scriptBytes, err := os.ReadFile(path)
+	if err != nil {
+		return output, fmt.Errorf("read sing-box installer: %w", err)
+	}
+	if bytes.IndexByte(scriptBytes, 0) >= 0 || !utf8.Valid(scriptBytes) {
+		return output, fmt.Errorf("downloaded sing-box installer is not a valid shell script")
+	}
+	if pinned := strings.TrimSpace(os.Getenv("SINGBOX_INSTALL_SCRIPT_SHA256")); pinned != "" {
+		sum := sha256.Sum256(scriptBytes)
+		actual := hex.EncodeToString(sum[:])
+		if !strings.EqualFold(actual, pinned) {
+			return output, fmt.Errorf("sing-box installer SHA256 mismatch: got %s, want %s", actual, strings.ToLower(pinned))
+		}
+	}
+	_ = os.Chmod(path, 0o600)
 	args := []string{path}
 	if channel == protocol.ChannelBeta {
 		args = append(args, "--beta")

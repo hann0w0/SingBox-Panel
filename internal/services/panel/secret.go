@@ -36,9 +36,17 @@ func ResolveJWTSecret(cfg config.PanelConfig) (string, error) {
 	}
 	path := filepath.Join(dir, jwtSecretFile)
 
-	if b, err := os.ReadFile(path); err == nil {
-		if s := strings.TrimSpace(string(b)); s != "" {
-			return s, nil
+	if info, err := os.Lstat(path); err == nil {
+		if info.Mode()&os.ModeSymlink != 0 {
+			return "", fmt.Errorf("jwt secret path %q must not be a symlink", path)
+		}
+		if info.Mode().Perm()&0o077 != 0 {
+			_ = os.Chmod(path, 0o600)
+		}
+		if b, err := os.ReadFile(path); err == nil {
+			if s := strings.TrimSpace(string(b)); s != "" {
+				return s, nil
+			}
 		}
 	}
 
@@ -48,6 +56,9 @@ func ResolveJWTSecret(cfg config.PanelConfig) (string, error) {
 	}
 	if err := os.WriteFile(path, []byte(secret+"\n"), 0o600); err != nil {
 		return "", fmt.Errorf("persist jwt secret: %w", err)
+	}
+	if err := os.Chmod(path, 0o600); err != nil {
+		return "", fmt.Errorf("tighten jwt secret permissions: %w", err)
 	}
 	return secret, nil
 }

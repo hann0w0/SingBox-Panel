@@ -5,6 +5,7 @@ import (
 	"encoding/hex"
 	"fmt"
 	"io"
+	"log"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -157,14 +158,14 @@ func (a *App) handleAgentDownload(c *gin.Context) {
 	}
 	path := filepath.Join(a.cfg.AgentsDir, "singbox-panel-agent-linux-"+arch)
 	if _, err := os.Stat(path); err != nil {
-		c.String(http.StatusNotFound,
-			"agent binary not found: %s\nBuild agents first: make agents (or GOOS=linux GOARCH=%s go build -o %s ./cmd/agent)",
-			path, arch, path)
+		log.Printf("agent artifact missing (%s): %v", path, err)
+		c.String(http.StatusNotFound, "agent binary not found")
 		return
 	}
 	checksum, err := a.cachedFileChecksum(path)
 	if err != nil {
-		c.String(http.StatusInternalServerError, "checksum agent binary: %v", err)
+		log.Printf("checksum agent binary (%s): %v", path, err)
+		c.String(http.StatusInternalServerError, "failed to read agent binary checksum")
 		return
 	}
 	c.Header("X-SingBox-Panel-SHA256", checksum)
@@ -189,7 +190,8 @@ func (a *App) handleAgentChecksum(c *gin.Context) {
 			c.String(http.StatusNotFound, "agent binary not found")
 			return
 		}
-		c.String(http.StatusInternalServerError, "checksum agent binary: %v", err)
+		log.Printf("checksum agent binary (%s): %v", path, err)
+		c.String(http.StatusInternalServerError, "failed to read agent binary checksum")
 		return
 	}
 	c.Header("Cache-Control", "private, max-age=300, must-revalidate")

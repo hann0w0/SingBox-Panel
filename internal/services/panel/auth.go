@@ -10,9 +10,15 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/golang-jwt/jwt/v5"
+	"github.com/google/uuid"
 	"gorm.io/gorm"
 
 	"github.com/hann0w0/singbox-panel/internal/domain/model"
+)
+
+const (
+	jwtIssuer   = "singbox-panel"
+	jwtAudience = "singbox-panel-web"
 )
 
 // Claims is the JWT payload for panel sessions.
@@ -63,18 +69,26 @@ func isWeakSecret(secret string) bool {
 			return true
 		}
 	}
-	return false
+	distinct := make(map[rune]struct{}, len(secret))
+	for _, r := range secret {
+		distinct[r] = struct{}{}
+	}
+	return len(distinct) < 8
 }
 
 // Issue mints a signed token for a user.
 func (a *Auth) Issue(u *model.User, ttl time.Duration) (string, error) {
+	now := time.Now()
 	claims := Claims{
 		UID:  u.ID,
 		Role: u.Role,
 		Ver:  u.TokenVersion,
 		RegisteredClaims: jwt.RegisteredClaims{
-			ExpiresAt: jwt.NewNumericDate(time.Now().Add(ttl)),
-			IssuedAt:  jwt.NewNumericDate(time.Now()),
+			ID:        uuid.NewString(),
+			Issuer:    jwtIssuer,
+			Audience:  jwt.ClaimStrings{jwtAudience},
+			ExpiresAt: jwt.NewNumericDate(now.Add(ttl)),
+			IssuedAt:  jwt.NewNumericDate(now),
 		},
 	}
 	return jwt.NewWithClaims(jwt.SigningMethodHS256, claims).SignedString(a.secret)
@@ -87,7 +101,7 @@ func (a *Auth) parse(tokenStr string) (*Claims, error) {
 			return nil, errors.New("unexpected signing method")
 		}
 		return a.secret, nil
-	}, jwt.WithValidMethods([]string{jwt.SigningMethodHS256.Alg()}))
+	}, jwt.WithValidMethods([]string{jwt.SigningMethodHS256.Alg()}), jwt.WithIssuer(jwtIssuer), jwt.WithAudience(jwtAudience))
 	if err != nil {
 		return nil, err
 	}

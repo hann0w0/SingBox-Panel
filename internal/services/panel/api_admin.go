@@ -367,6 +367,47 @@ func (a *App) updateServer(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"ok": true})
 }
 
+func (a *App) rotateAgentToken(c *gin.Context) {
+	id, ok := uintParam(c, "id")
+	if !ok {
+		return
+	}
+	unlockOperation := a.lockServerOperation(id)
+	defer unlockOperation()
+	unlockConfig := func() {}
+	if a.orch != nil {
+		unlockConfig = a.orch.lockServer(id)
+	}
+	defer unlockConfig()
+
+	var srv model.Server
+	if err := a.db.First(&srv, id).Error; err != nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "server not found"})
+		return
+	}
+	newToken := randHex(24)
+	a.invalidateAgentInstallCodes(id)
+	if err := a.db.Model(&model.Server{}).Where("id = ?", id).Updates(map[string]any{
+		"agent_token":     newToken,
+		"config_revision": gorm.Expr("config_revision + 1"),
+	}).Error; err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+	if a.hub != nil {
+		disconnectCtx, cancelDisconnect := context.WithTimeout(context.Background(), 10*time.Second)
+		_ = a.hub.DisconnectAndWait(disconnectCtx, id)
+		cancelDisconnect()
+	}
+	if a.orch != nil {
+		a.reconcileNodeConsumers(id)
+	}
+	c.JSON(http.StatusOK, gin.H{
+		"ok":              true,
+		"install_command": a.newAgentInstallCommand(id),
+	})
+}
+
 func (a *App) deleteServer(c *gin.Context) {
 	id, ok := uintParam(c, "id")
 	if !ok {

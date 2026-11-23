@@ -7,6 +7,7 @@ import (
 	"encoding/binary"
 	"errors"
 	"net"
+	"net/netip"
 	"strconv"
 	"strings"
 	"syscall"
@@ -81,6 +82,11 @@ func probeDialer() net.Dialer {
 	}
 }
 
+var disallowedProbePrefixes = []netip.Prefix{
+	netip.MustParsePrefix("0.0.0.0/8"),
+	netip.MustParsePrefix("100.100.100.200/32"), // Alibaba Cloud metadata
+}
+
 func isDisallowedProbeHost(raw string) bool {
 	host := strings.TrimSuffix(strings.ToLower(strings.Trim(strings.TrimSpace(raw), "[]")), ".")
 	if zoneAt := strings.LastIndexByte(host, '%'); zoneAt >= 0 {
@@ -89,8 +95,17 @@ func isDisallowedProbeHost(raw string) bool {
 	if host == "localhost" || strings.HasSuffix(host, ".localhost") {
 		return true
 	}
-	if ip := net.ParseIP(host); ip != nil {
-		return ip.IsLoopback() || ip.IsUnspecified()
+	if addr, err := netip.ParseAddr(host); err == nil {
+		addr = addr.Unmap()
+		if addr.IsLoopback() || addr.IsUnspecified() || addr.IsLinkLocalUnicast() ||
+			addr.IsLinkLocalMulticast() || addr.IsMulticast() {
+			return true
+		}
+		for _, prefix := range disallowedProbePrefixes {
+			if prefix.Contains(addr) {
+				return true
+			}
+		}
 	}
 	return false
 }

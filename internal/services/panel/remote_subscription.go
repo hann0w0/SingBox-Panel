@@ -130,12 +130,53 @@ func validateRemoteSubscriptionURL(ctx context.Context, u *url.URL) error {
 	return requirePublicSubscriptionIPs(ips)
 }
 
+func isAmbiguousNumericHost(host string) bool {
+	if host == "" || strings.Contains(host, ":") {
+		return false
+	}
+	if _, err := netip.ParseAddr(host); err == nil {
+		return false
+	}
+	// RFC 3696 §2: valid public TLDs are never all-numeric or 0x-hex literals.
+	// Rejecting numeric/hex final labels blocks decimal (2130706433), octal
+	// (0177.0.0.1), hex (0x7f000001), and shorthand (127.1) IPv4 notations.
+	last := host
+	if dot := strings.LastIndexByte(host, '.'); dot >= 0 {
+		last = host[dot+1:]
+	}
+	if last == "" {
+		return true
+	}
+	if strings.HasPrefix(last, "0x") || strings.HasPrefix(last, "0X") {
+		hexPart := last[2:]
+		if len(hexPart) == 0 {
+			return true
+		}
+		for i := 0; i < len(hexPart); i++ {
+			c := hexPart[i]
+			if !((c >= '0' && c <= '9') || (c >= 'a' && c <= 'f') || (c >= 'A' && c <= 'F')) {
+				return false
+			}
+		}
+		return true
+	}
+	for i := 0; i < len(last); i++ {
+		if last[i] < '0' || last[i] > '9' {
+			return false
+		}
+	}
+	return true
+}
+
 func resolveSubscriptionHost(ctx context.Context, host string) ([]net.IP, error) {
 	if zoneAt := strings.LastIndexByte(host, '%'); zoneAt >= 0 {
 		host = host[:zoneAt]
 	}
-	if ip := net.ParseIP(host); ip != nil {
-		return []net.IP{ip}, nil
+	if addr, err := netip.ParseAddr(host); err == nil {
+		return []net.IP{addr.AsSlice()}, nil
+	}
+	if isAmbiguousNumericHost(host) {
+		return nil, errors.New("订阅地址包含非标准数字 IP 写法，已拒绝")
 	}
 	addrs, err := net.DefaultResolver.LookupIPAddr(ctx, host)
 	if err != nil {
@@ -180,7 +221,11 @@ func isSpecialUseSubscriptionIP(ip net.IP) bool {
 		netip.MustParsePrefix("198.51.100.0/24"),
 		netip.MustParsePrefix("203.0.113.0/24"),
 		netip.MustParsePrefix("240.0.0.0/4"),
+		netip.MustParsePrefix("64:ff9b::/96"),
+		netip.MustParsePrefix("64:ff9b:1::/48"),
+		netip.MustParsePrefix("100::/64"),
 		netip.MustParsePrefix("2001:db8::/32"),
+		netip.MustParsePrefix("fec0::/10"),
 	} {
 		if prefix.Contains(addr) {
 			return true

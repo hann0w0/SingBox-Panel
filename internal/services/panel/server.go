@@ -176,6 +176,7 @@ func (a *App) routes() *gin.Engine {
 		admin.PUT("/servers/order", a.updateServerOrder)
 		admin.GET("/servers/:id", a.getServer)
 		admin.PUT("/servers/:id", a.updateServer)
+		admin.POST("/servers/:id/rotate-agent-token", a.rotateAgentToken)
 		admin.DELETE("/servers/:id", a.deleteServer)
 		admin.POST("/servers/:id/install-singbox", a.installSingbox)
 		admin.POST("/servers/:id/uninstall-singbox", a.uninstallSingbox)

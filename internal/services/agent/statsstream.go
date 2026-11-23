@@ -29,7 +29,7 @@ import (
 
 const (
 	statsStreamMethod     = "/daemon.StartedService/SubscribeConnections"
-	statsStreamMaxFrame   = 64 << 20
+	statsStreamMaxFrame   = 8 << 20
 	statsStreamInterval   = time.Second
 	statsStreamMaxBackoff = 30 * time.Second
 	// statsStreamStableAfter resets the reconnect backoff once a stream has
@@ -262,9 +262,12 @@ func readGRPCWebFrame(r io.Reader) (payload []byte, trailer bool, err error) {
 	if length > statsStreamMaxFrame {
 		return nil, false, fmt.Errorf("grpc-web frame of %d bytes exceeds limit", length)
 	}
-	payload = make([]byte, length)
-	if _, err := io.ReadFull(r, payload); err != nil {
+	payload, err = io.ReadAll(io.LimitReader(r, int64(length)))
+	if err != nil {
 		return nil, false, err
+	}
+	if uint32(len(payload)) != length {
+		return nil, false, io.ErrUnexpectedEOF
 	}
 	return payload, flags&0x80 != 0, nil
 }

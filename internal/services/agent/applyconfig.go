@@ -493,12 +493,14 @@ func moveStrayConfigsAt(configDir string) (*strayMove, error) {
 			return nil, fmt.Errorf("move %s into disabled directory: %w", name, err)
 		}
 		moved.files = append(moved.files, movedFile{from: from, to: to})
-		if err := os.Chmod(to, 0o600); err != nil {
-			restoreErr := moved.restore()
-			if restoreErr != nil {
-				return nil, fmt.Errorf("secure moved config %s: %w; restore moved files: %v", name, err, restoreErr)
+		if e.Type()&os.ModeSymlink == 0 {
+			if err := os.Chmod(to, 0o600); err != nil {
+				restoreErr := moved.restore()
+				if restoreErr != nil {
+					return nil, fmt.Errorf("secure moved config %s: %w; restore moved files: %v", name, err, restoreErr)
+				}
+				return nil, fmt.Errorf("secure moved config %s: %w", name, err)
 			}
-			return nil, fmt.Errorf("secure moved config %s: %w", name, err)
 		}
 	}
 	return moved, nil
@@ -536,6 +538,16 @@ func copyFile(src, dst string) error {
 
 func secureKnownConfigFiles() error {
 	for _, path := range []string{ConfigFile, tmpConfigFile, bakConfigFile, origConfigFile} {
+		info, err := os.Lstat(path)
+		if err != nil {
+			if errors.Is(err, os.ErrNotExist) {
+				continue
+			}
+			return fmt.Errorf("lstat %s: %w", path, err)
+		}
+		if info.Mode()&os.ModeSymlink != 0 {
+			continue
+		}
 		if err := os.Chmod(path, 0o600); err != nil && !errors.Is(err, os.ErrNotExist) {
 			return fmt.Errorf("chmod %s: %w", path, err)
 		}

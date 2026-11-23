@@ -69,10 +69,14 @@ func readConfFile(path string) map[string]string {
 	out := map[string]string{}
 	f, err := os.Open(path)
 	if err != nil {
+		if !os.IsNotExist(err) {
+			log.Printf("agent: unable to read config file %s: %v", path, err)
+		}
 		return out
 	}
 	defer f.Close()
 	sc := bufio.NewScanner(f)
+	sc.Buffer(make([]byte, 0, 64*1024), 1<<20)
 	for sc.Scan() {
 		line := strings.TrimSpace(sc.Text())
 		if line == "" || strings.HasPrefix(line, "#") {
@@ -82,9 +86,26 @@ func readConfFile(path string) map[string]string {
 		if !ok {
 			continue
 		}
-		out[strings.ToUpper(strings.TrimSpace(k))] = strings.Trim(strings.TrimSpace(v), `"`)
+		out[strings.ToUpper(strings.TrimSpace(k))] = parseConfValue(v)
+	}
+	if err := sc.Err(); err != nil {
+		log.Printf("agent: error scanning config file %s: %v", path, err)
 	}
 	return out
+}
+
+func parseConfValue(raw string) string {
+	v := strings.TrimSpace(raw)
+	if len(v) >= 2 && ((v[0] == '"' && v[len(v)-1] == '"') || (v[0] == '\'' && v[len(v)-1] == '\'')) {
+		return v[1 : len(v)-1]
+	}
+	// Strip unquoted inline comments preceded by whitespace.
+	for i := 0; i < len(v); i++ {
+		if v[i] == '#' && (i == 0 || v[i-1] == ' ' || v[i-1] == '\t') {
+			return strings.TrimSpace(v[:i])
+		}
+	}
+	return v
 }
 
 func firstNonEmpty(vals ...string) string {

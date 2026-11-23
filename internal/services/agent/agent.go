@@ -35,6 +35,9 @@ type Agent struct {
 	trafficReportInFlight atomic.Bool
 	addressMu             sync.Mutex
 	addressProbeAt        time.Time
+	addressFailureAt      time.Time
+	addressCached         publicAddresses
+	addressInFlight       chan struct{}
 }
 
 // New builds an Agent and wires the client callbacks.
@@ -363,14 +366,60 @@ func (a *Agent) onCommand(ctx context.Context, env protocol.Envelope) protocol.C
 }
 
 func (a *Agent) publicAddresses(ctx context.Context, force bool) publicAddresses {
-	a.addressMu.Lock()
-	defer a.addressMu.Unlock()
-	if !force && time.Since(a.addressProbeAt) < 30*time.Second {
-		return publicAddresses{}
+	const (
+		probeRefreshInterval = 30 * time.Second
+		probeFailureCooldown = 5 * time.Second
+		statusCacheTTL       = 15 * time.Second
+	)
+	for {
+		a.addressMu.Lock()
+		now := time.Now()
+		if !force {
+			if !a.addressProbeAt.IsZero() && now.Sub(a.addressProbeAt) < probeRefreshInterval {
+				a.addressMu.Unlock()
+				return publicAddresses{}
+			}
+			if !a.addressFailureAt.IsZero() && now.Sub(a.addressFailureAt) < probeFailureCooldown {
+				a.addressMu.Unlock()
+				return publicAddresses{}
+			}
+		} else if !a.addressProbeAt.IsZero() && now.Sub(a.addressProbeAt) < statusCacheTTL {
+			cached := a.addressCached
+			a.addressMu.Unlock()
+			return cached
+		}
+		if wait := a.addressInFlight; wait != nil {
+			a.addressMu.Unlock()
+			select {
+			case <-wait:
+				continue
+			case <-ctx.Done():
+				return publicAddresses{}
+			}
+		}
+		done := make(chan struct{})
+		a.addressInFlight = done
+		a.addressMu.Unlock()
+
+		addresses := detectPublicAddresses(ctx)
+
+		a.addressMu.Lock()
+		if ctx.Err() == nil && (addresses.IPv4 != nil || addresses.IPv6 != nil) {
+			a.addressCached = addresses
+			if addresses.IPv4 != nil {
+				a.addressProbeAt = time.Now()
+				a.addressFailureAt = time.Time{}
+			} else {
+				a.addressFailureAt = time.Now()
+			}
+		} else {
+			a.addressFailureAt = time.Now()
+		}
+		a.addressInFlight = nil
+		close(done)
+		a.addressMu.Unlock()
+		return addresses
 	}
-	addresses := detectPublicAddresses(ctx)
-	a.addressProbeAt = time.Now()
-	return addresses
 }
 
 func addressValue(address *string) string {

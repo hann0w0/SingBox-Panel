@@ -10,6 +10,8 @@ import (
 	"os/exec"
 	"regexp"
 	"strings"
+	"sync"
+	"time"
 	"unicode/utf8"
 
 	"github.com/hann0w0/singbox-panel/internal/domain/protocol"
@@ -256,24 +258,54 @@ dnf install -y ` + pkgName(channel)
 	return i.run(ctx, "sh", "-c", script)
 }
 
+var (
+	versionCacheMu      sync.Mutex
+	versionCachePath    string
+	versionCacheSize    int64
+	versionCacheModTime time.Time
+	versionCacheValue   string
+)
+
 // DetectVersion reports whether the sing-box binary is present and its version.
 func DetectVersion(ctx context.Context) (installed bool, version string) {
 	bin := singboxBinary()
-	if _, err := os.Stat(bin); err != nil {
+	info, err := os.Stat(bin)
+	if err != nil {
+		versionCacheMu.Lock()
+		versionCachePath = ""
+		versionCacheValue = ""
+		versionCacheMu.Unlock()
 		return false, ""
 	}
-	if out, err := run(ctx, bin, "version", "-n"); err == nil && out != "" {
-		return true, firstLine(out)
+	versionCacheMu.Lock()
+	if versionCachePath == bin && versionCacheSize == info.Size() && versionCacheModTime.Equal(info.ModTime()) && versionCacheValue != "" {
+		cached := versionCacheValue
+		versionCacheMu.Unlock()
+		return true, cached
 	}
-	// Fallback for builds without `-n`: parse `sing-box version <X> ...`.
-	if out, err := run(ctx, bin, "version"); err == nil {
+	versionCacheMu.Unlock()
+
+	var detected string
+	if out, err := run(ctx, bin, "version", "-n"); err == nil && out != "" {
+		detected = firstLine(out)
+	} else if out, err := run(ctx, bin, "version"); err == nil {
+		// Fallback for builds without `-n`: parse `sing-box version <X> ...`.
 		fields := strings.Fields(firstLine(out))
 		if len(fields) >= 3 && fields[0] == "sing-box" && fields[1] == "version" {
-			return true, fields[2]
+			detected = fields[2]
+		} else {
+			detected = firstLine(out)
 		}
-		return true, firstLine(out)
 	}
-	return true, ""
+	if detected != "" {
+		versionCacheMu.Lock()
+		versionCachePath = bin
+		versionCacheSize = info.Size()
+		versionCacheModTime = info.ModTime()
+		versionCacheValue = detected
+		versionCacheMu.Unlock()
+	}
+	return true, detected
 }
 
 func firstLine(s string) string {

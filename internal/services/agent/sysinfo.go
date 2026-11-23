@@ -110,13 +110,37 @@ type SysInfo struct {
 	Uptime   int64
 }
 
+var (
+	staticSysInfoOnce sync.Once
+	staticSysHostname string
+	staticSysOS       string
+	staticSysKernel   string
+)
+
+func loadStaticSysInfo(ctx context.Context) (hostname, osName, kernel string) {
+	staticSysInfoOnce.Do(func() {
+		staticSysHostname, _ = os.Hostname()
+		staticSysOS = osPrettyName()
+		if raw, err := os.ReadFile("/proc/sys/kernel/osrelease"); err == nil {
+			staticSysKernel = strings.TrimSpace(string(raw))
+		}
+		if staticSysKernel == "" {
+			if out, err := run(ctx, "uname", "-r"); err == nil {
+				staticSysKernel = strings.TrimSpace(out)
+			}
+		}
+	})
+	return staticSysHostname, staticSysOS, staticSysKernel
+}
+
 // CollectSysInfo gathers host metrics (Linux /proc; degrades gracefully elsewhere).
 func CollectSysInfo(ctx context.Context) SysInfo {
-	si := SysInfo{Arch: runtime.GOARCH}
-	si.Hostname, _ = os.Hostname()
-	si.OS = osPrettyName()
-	if out, err := run(ctx, "uname", "-r"); err == nil {
-		si.Kernel = strings.TrimSpace(out)
+	hostname, osName, kernel := loadStaticSysInfo(ctx)
+	si := SysInfo{
+		Hostname: hostname,
+		OS:       osName,
+		Arch:     runtime.GOARCH,
+		Kernel:   kernel,
 	}
 	si.Load1 = loadAvg1()
 	si.MemUsed, si.MemTotal = memInfo()

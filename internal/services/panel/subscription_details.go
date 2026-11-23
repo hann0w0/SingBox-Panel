@@ -1,6 +1,7 @@
 package panel
 
 import (
+	"fmt"
 	"strconv"
 	"strings"
 
@@ -9,6 +10,7 @@ import (
 )
 
 type NodeDetail struct {
+	ID     string            `json:"id"`
 	Name   string            `json:"name"`
 	Type   string            `json:"type"`
 	Server string            `json:"server"`
@@ -27,6 +29,7 @@ func (a *App) userNodeDetails(user *model.User) ([]NodeDetail, error) {
 	for _, n := range nodes {
 		link, _ := singbox.BuildShareLink(n.clientNode())
 		out = append(out, NodeDetail{
+			ID:     fmt.Sprintf("%s:%d", n.orderType, n.orderID),
 			Name:   n.name,
 			Type:   n.typ,
 			Server: n.server,

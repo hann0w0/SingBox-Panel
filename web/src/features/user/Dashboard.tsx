@@ -24,7 +24,7 @@ import { showConfigApplyResult } from '../../lib/configApply'
 type RegionInfo = { geo: string; coord: [number, number]; label: string }
 type UserTab = 'nodes' | 'outbounds' | 'forwards'
 const REGIONS = regionData as unknown as Record<string, RegionInfo>
-const userNodeKey = (node: UserNode) => `${node.type}:${node.name}:${node.server}:${node.port}`
+const userNodeKey = (node: UserNode) => node.id || `${node.type}:${node.name}:${node.server}:${node.port}`
 const labelOf = (code: string): string => REGIONS[code]?.label || (code === 'Other' ? '其他' : code)
 
 function useDashboardRequest<T>(request: (signal: AbortSignal) => Promise<T>, initialData: T) {

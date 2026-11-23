@@ -3,6 +3,7 @@ package panel
 import (
 	"encoding/json"
 	"errors"
+	"log"
 	"net/http"
 	"strconv"
 
@@ -57,6 +58,7 @@ func (a *App) handleUserNodes(c *gin.Context) {
 	}
 	nodes, err := a.userNodeDetails(&u)
 	if err != nil {
+		log.Printf("user nodes: failed for user %d: %v", u.ID, err)
 		c.JSON(http.StatusServiceUnavailable, gin.H{"error": "暂时无法读取节点，请稍后重试"})
 		return
 	}

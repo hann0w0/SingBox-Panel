@@ -79,6 +79,7 @@ export const getMe = (signal?: AbortSignal) =>
     .then((r) => r.data)
 
 export interface UserNode {
+  id?: string
   name: string
   type: string
   server: string

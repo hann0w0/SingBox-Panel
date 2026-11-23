@@ -170,8 +170,12 @@ func TestAddressReportsUpdateExportsSubscriptionsAndListeners(t *testing.T) {
 	check(value4, value6)
 	empty := ""
 	hub.onHeartbeat(connection, protocol.HeartbeatEvt{PublicIPv6: &empty})
-	if _, err := app.gatherNodesWithError(&user); err == nil {
-		t.Fatal("missing IPv6 yielded partial subscription")
+	remaining, err := app.gatherNodesWithError(&user)
+	if err != nil {
+		t.Fatalf("broken IPv6 inbound should degrade gracefully when healthy IPv4 inbound exists: %v", err)
+	}
+	if len(remaining) != 1 || remaining[0].server != value4 {
+		t.Fatalf("expected only healthy IPv4 node %q after IPv6 loss, got %+v", value4, remaining)
 	}
 	if err := db.First(&server, server.ID).Error; err != nil {
 		t.Fatal(err)

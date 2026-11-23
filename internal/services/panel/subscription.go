@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log"
 	"net/http"
 	"sort"
 	"strconv"
@@ -67,6 +68,7 @@ func (a *App) handleSubscription(c *gin.Context) {
 
 	nodes, err := a.gatherNodesWithError(&user)
 	if err != nil {
+		log.Printf("subscription: failed to build nodes for user %d: %v", user.ID, err)
 		c.String(http.StatusServiceUnavailable, "subscription temporarily unavailable")
 		return
 	}
@@ -133,6 +135,13 @@ func (a *App) gatherNodes(user *model.User) []node {
 // empty subscription, which clients could cache as a node deletion.
 func (a *App) gatherNodesWithError(user *model.User) ([]node, error) {
 	var out []node
+	var firstInboundErr error
+	recordInboundErr := func(srv *model.Server, tag string, err error) {
+		log.Printf("subscription: skipping broken inbound %q on server %d (%s) for user %d: %v", tag, srv.ID, srv.Name, user.ID, err)
+		if firstInboundErr == nil {
+			firstInboundErr = err
+		}
+	}
 	if len(user.ServerIDs) > 0 {
 		var servers []model.Server
 		if err := a.db.Where("id IN ?", user.ServerIDs).Order("id").Find(&servers).Error; err != nil {
@@ -156,7 +165,8 @@ func (a *App) gatherNodesWithError(user *model.User) ([]node, error) {
 				var st singbox.InboundSettings
 				if len(ib.Settings) > 0 {
 					if err := json.Unmarshal(ib.Settings, &st); err != nil {
-						return nil, fmt.Errorf("inbound %q settings: %w", ib.Tag, err)
+						recordInboundErr(srv, ib.Tag, fmt.Errorf("inbound %q settings: %w", ib.Tag, err))
+						continue
 					}
 				}
 				host, err := inboundNodeAddress(srv, &st)
@@ -164,10 +174,12 @@ func (a *App) gatherNodesWithError(user *model.User) ([]node, error) {
 					continue
 				}
 				if err != nil {
-					return nil, fmt.Errorf("入站 %q: %w", ib.Tag, err)
+					recordInboundErr(srv, ib.Tag, fmt.Errorf("入站 %q: %w", ib.Tag, err))
+					continue
 				}
 				if err := st.ValidateMultiUser(string(ib.Type)); err != nil {
-					return nil, fmt.Errorf("inbound %q settings: %w", ib.Tag, err)
+					recordInboundErr(srv, ib.Tag, fmt.Errorf("inbound %q settings: %w", ib.Tag, err))
+					continue
 				}
 				var identity singbox.ProxyUser
 				if st.UseMultiUser(string(ib.Type)) {
@@ -228,7 +240,8 @@ func (a *App) gatherNodesWithError(user *model.User) ([]node, error) {
 					continue
 				}
 				if err != nil {
-					return nil, fmt.Errorf("转发入站 %q: %w", ib.Tag, err)
+					recordInboundErr(srv, ib.Tag, fmt.Errorf("转发入站 %q: %w", ib.Tag, err))
+					continue
 				}
 				st.SingleUser = false
 				st.MultiUser = true
@@ -266,8 +279,19 @@ func (a *App) gatherNodesWithError(user *model.User) ([]node, error) {
 			out = append(out, n)
 		}
 	}
+	if len(out) == 0 && firstInboundErr != nil {
+		return nil, firstInboundErr
+	}
 	applyUserNodeOrder(a.db, user.ID, out)
+	deduplicateNodeNames(out)
 	return out, nil
+}
+
+func deduplicateNodeNames(nodes []node) {
+	seen := make(map[string]int, len(nodes))
+	for i := range nodes {
+		nodes[i].name = uniqueName(seen, nodes[i].name)
+	}
 }
 
 // applyUserNodeOrder applies per-user custom node display names and performs a

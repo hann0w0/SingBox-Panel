@@ -516,6 +516,9 @@ func (o *Orchestrator) applyRawConfigUnlocked(ctx context.Context, serverID uint
 }
 
 func (o *Orchestrator) applyConfigCommand(raw []byte) (protocol.ApplyConfigCmd, error) {
+	if len(raw) > maxPanelAgentPayloadSize {
+		return protocol.ApplyConfigCmd{}, fmt.Errorf("生成的配置体积（%d 字节）超过下发上限（%d 字节），请精简配置后再试", len(raw), maxPanelAgentPayloadSize)
+	}
 	command := protocol.ApplyConfigCmd{Config: json.RawMessage(raw)}
 	var config struct {
 		Outbounds []struct {

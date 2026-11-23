@@ -30,7 +30,7 @@ const (
 	stableConnectionTime = 30 * time.Second
 	minReconnectBackoff  = time.Second
 	maxReconnectBackoff  = 30 * time.Second
-	maxAgentMessageSize  = 16 << 20
+	maxAgentMessageSize  = 18 << 20
 	maxSessionCommands   = 4
 	maxQueuedCommands    = 8
 )
@@ -54,11 +54,9 @@ type Client struct {
 	OnConnected    func()
 	OnDisconnected func()
 
-	// send is reused across reconnects, but every item is tagged with the
-	// WebSocket session that produced it. A new writer discards old-session
-	// leftovers, so command results and telemetry can never leak into a later
-	// connection. Non-blocking spontaneous events drop the newest sample when the
-	// queue is full; command results use trySend and wait for space or cancellation.
+	// send holds telemetry/log events; controlSend is prioritized for command
+	// results and heartbeats so bursty telemetry cannot starve or kill control.
+	controlSend   chan sessionEnvelope
 	send          chan sessionEnvelope
 	nextSession   atomic.Uint64
 	activeSession atomic.Uint64
@@ -88,6 +86,7 @@ func NewClient(panelURL, token string, insecure bool) *Client {
 		wsURL:             deriveWSURL(panelURL),
 		insecure:          insecure,
 		heartbeatInterval: 10 * time.Second,
+		controlSend:       make(chan sessionEnvelope, 64),
 		send:              make(chan sessionEnvelope, 256),
 	}
 	c.token.Store(token)
@@ -477,15 +476,16 @@ func (c *Client) readLoop(ctx context.Context, conn *websocket.Conn) error {
 				ID: env.ID, OK: false, Error: "agent command queue is full; retry later",
 			})
 			if err != nil {
-				return err
+				log.Printf("agent: encode command queue overflow reply for %s: %v", env.ID, err)
+				continue
 			}
 			session, _ := ctx.Value(clientSessionContextKey{}).(uint64)
 			select {
 			case <-ctx.Done():
 				return ctx.Err()
-			case c.send <- sessionEnvelope{session: session, env: out}:
+			case c.controlSend <- sessionEnvelope{session: session, env: out}:
 			default:
-				return errors.New("agent command result queue is full")
+				log.Printf("agent: control queue full; dropping overflow reply for command %s without disconnecting", env.ID)
 			}
 		}
 	}
@@ -494,26 +494,47 @@ func (c *Client) readLoop(ctx context.Context, conn *websocket.Conn) error {
 func (c *Client) writeLoop(ctx context.Context, conn *websocket.Conn, session uint64) {
 	ping := time.NewTicker(pingPeriod)
 	defer ping.Stop()
+	writeQueued := func(queued sessionEnvelope) bool {
+		if ctx.Err() != nil {
+			queued.complete(false)
+			return false
+		}
+		if queued.session != session {
+			queued.complete(false)
+			return true
+		}
+		_ = conn.SetWriteDeadline(time.Now().Add(writeWait))
+		if err := conn.WriteJSON(queued.env); err != nil {
+			queued.complete(false)
+			_ = conn.Close() // unblock readLoop
+			return false
+		}
+		queued.complete(true)
+		return true
+	}
 	for {
+		// Prioritize control frames (command results, heartbeats) over telemetry.
 		select {
 		case <-ctx.Done():
 			return
+		case queued := <-c.controlSend:
+			if !writeQueued(queued) {
+				return
+			}
+			continue
+		default:
+		}
+		select {
+		case <-ctx.Done():
+			return
+		case queued := <-c.controlSend:
+			if !writeQueued(queued) {
+				return
+			}
 		case queued := <-c.send:
-			if ctx.Err() != nil {
-				queued.complete(false)
+			if !writeQueued(queued) {
 				return
 			}
-			if queued.session != session {
-				queued.complete(false)
-				continue
-			}
-			_ = conn.SetWriteDeadline(time.Now().Add(writeWait))
-			if err := conn.WriteJSON(queued.env); err != nil {
-				queued.complete(false)
-				_ = conn.Close() // unblock readLoop
-				return
-			}
-			queued.complete(true)
 		case <-ping.C:
 			_ = conn.SetWriteDeadline(time.Now().Add(writeWait))
 			if err := conn.WriteMessage(websocket.PingMessage, nil); err != nil {
@@ -529,6 +550,8 @@ func (c *Client) writeLoop(ctx context.Context, conn *websocket.Conn, session ui
 func (c *Client) discardQueuedEvents() {
 	for {
 		select {
+		case queued := <-c.controlSend:
+			queued.complete(false)
 		case queued := <-c.send:
 			queued.complete(false)
 		default:
@@ -559,7 +582,7 @@ func (c *Client) trySend(ctx context.Context, env protocol.Envelope) {
 		return
 	}
 	select {
-	case c.send <- sessionEnvelope{session: session, env: env}:
+	case c.controlSend <- sessionEnvelope{session: session, env: env}:
 	case <-ctx.Done():
 	}
 }

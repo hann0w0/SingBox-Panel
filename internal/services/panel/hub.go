@@ -221,6 +221,11 @@ func (h *Hub) sendCommandToConnection(ctx context.Context, ac *agentConn, t prot
 	if err != nil {
 		return protocol.CommandResultEvt{}, err
 	}
+	if encoded, err := json.Marshal(env); err != nil {
+		return protocol.CommandResultEvt{}, err
+	} else if len(encoded) > maxPanelAgentMessageSize {
+		return protocol.CommandResultEvt{}, errors.New("下发命令体积超过 Agent 消息上限（16MB），请精简配置或规则后再试")
+	}
 
 	ch := make(chan protocol.CommandResultEvt, 1)
 	ac.mu.Lock()

@@ -131,3 +131,19 @@ func TestRestoreFileFromPreviousKeepsLiveWhenBackupMissing(t *testing.T) {
 		t.Fatalf("live binary changed after failed rollback: %q", raw)
 	}
 }
+
+func TestRenderAgentUpgradeScriptBindsExpectedSHAAndChecksOwnership(t *testing.T) {
+	const sha = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
+	rendered := renderAgentUpgradeScript(sha)
+	if !strings.Contains(rendered, `MY_EXPECTED_SHA="`+sha+`"`) || !strings.Contains(rendered, "owns_upgrade") {
+		t.Fatalf("rendered upgrade script missing ownership check: %s", rendered)
+	}
+	if strings.Contains(rendered, "__EXPECTED_SHA__") {
+		t.Fatal("placeholder was not replaced")
+	}
+	cmd := exec.Command("sh", "-n")
+	cmd.Stdin = strings.NewReader(rendered)
+	if out, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("rendered upgrade script shell syntax: %v: %s", err, out)
+	}
+}

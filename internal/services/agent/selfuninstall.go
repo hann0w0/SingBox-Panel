@@ -15,13 +15,21 @@ const (
 
 const selfUninstallScript = "#!/bin/sh\n" + agentTaskStartupScript + `sleep 5
 if [ "$SERVICE_MANAGER" = systemd ]; then
+  systemctl stop singbox-panel-agent-upgrade.service >/dev/null 2>&1 || true
   systemctl disable --now singbox-panel-agent.service >/dev/null 2>&1 || true
 else
+  if [ -f /run/singbox-panel-agent-upgrade.pid ]; then
+    UPGRADE_PID=$(cat /run/singbox-panel-agent-upgrade.pid 2>/dev/null || true)
+    if [ -n "$UPGRADE_PID" ]; then kill "$UPGRADE_PID" >/dev/null 2>&1 || true; fi
+  fi
   rc-service singbox-panel-agent stop >/dev/null 2>&1 || true
   rc-update del singbox-panel-agent default >/dev/null 2>&1 || true
 fi
-rm -f /usr/local/bin/singbox-panel-agent
-rm -rf /etc/singbox-panel-agent
+rm -f /run/singbox-panel-agent.expected-sha256 /run/singbox-panel-agent.ready
+rm -f /run/singbox-panel-agent-upgrade.sh /run/singbox-panel-agent-upgrade.pid
+rm -f /etc/systemd/system/singbox-panel-agent-upgrade.service
+rm -f /usr/local/bin/singbox-panel-agent /usr/local/bin/singbox-panel-agent.prev
+rm -rf /etc/singbox-panel-agent /var/lib/singbox-panel-agent
 rm -f /etc/systemd/system/singbox-panel-agent.service
 rm -f /etc/systemd/system/singbox-panel-agent-uninstall.service
 rm -f /etc/init.d/singbox-panel-agent

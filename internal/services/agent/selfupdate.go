@@ -13,7 +13,9 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"strconv"
 	"strings"
+	"syscall"
 	"time"
 )
 
@@ -38,6 +40,7 @@ const (
 const agentUpgradeScriptBody = "#!/bin/sh\n" + agentTaskStartupScript + `sleep 3
 READY=/run/singbox-panel-agent.ready
 EXPECTED=/run/singbox-panel-agent.expected-sha256
+MY_EXPECTED_SHA="__EXPECTED_SHA__"
 BIN=/usr/local/bin/singbox-panel-agent
 PREV=/usr/local/bin/singbox-panel-agent.prev
 STATUS=/var/lib/singbox-panel-agent/update-status
@@ -68,12 +71,23 @@ service_stop() {
   fi
 }
 
+owns_upgrade() {
+  expected_sha=$(cat "$EXPECTED" 2>/dev/null || true)
+  [ -n "$expected_sha" ] && [ "$expected_sha" = "$MY_EXPECTED_SHA" ]
+}
+
 mkdir -p /var/lib/singbox-panel-agent
+if ! owns_upgrade; then
+  exit 0
+fi
 rm -f "$READY"
 service_restart >/dev/null 2>&1 || true
 
 i=0
 while [ "$i" -lt 30 ]; do
+  if ! owns_upgrade; then
+    exit 0
+  fi
   expected_sha=$(cat "$EXPECTED" 2>/dev/null || true)
   ready_sha=$(sed -n '2p' "$READY" 2>/dev/null || true)
   if service_active && [ -n "$expected_sha" ] && [ "$ready_sha" = "$expected_sha" ]; then
@@ -88,6 +102,9 @@ while [ "$i" -lt 30 ]; do
   sleep 2
 done
 
+if ! owns_upgrade; then
+  exit 0
+fi
 printf 'rollback\n' > "$STATUS"
 service_stop
 if [ -x "$PREV" ]; then
@@ -103,6 +120,10 @@ rm -f /etc/systemd/system/singbox-panel-agent-upgrade.service
 rm -f /run/singbox-panel-agent-upgrade.sh "$EXPECTED" "$PIDFILE"
 if [ "$SERVICE_MANAGER" = systemd ]; then systemctl daemon-reload >/dev/null 2>&1 || true; fi
 `
+
+func renderAgentUpgradeScript(expectedSHA string) string {
+	return strings.ReplaceAll(agentUpgradeScriptBody, "__EXPECTED_SHA__", expectedSHA)
+}
 
 const agentUpgradeUnitBody = `[Unit]
 Description=Upgrade SingBox Panel Agent with automatic rollback
@@ -199,6 +220,9 @@ func SelfUpdate(ctx context.Context, panelURL, token string, insecure bool) (str
 	if current, err := fileSHA256(agentBinary); err == nil && current == actual {
 		return fmt.Sprintf("Agent 已是最新版本（%s）", version), nil
 	}
+	if upgradeWatchdogActive(ctx) {
+		return "", errors.New("已有 Agent 升级守护进程正在运行，请等待当前升级完成后重试")
+	}
 
 	if _, err := os.Stat(agentBinary); err != nil {
 		return "", fmt.Errorf("当前 Agent 二进制不存在: %w", err)
@@ -221,7 +245,7 @@ func SelfUpdate(ctx context.Context, panelURL, token string, insecure bool) (str
 		}
 		return "", fmt.Errorf("写入 Agent 就绪校验失败，已恢复旧 Agent: %w", err)
 	}
-	if err := scheduleAgentUpgrade(ctx); err != nil {
+	if err := scheduleAgentUpgrade(ctx, actual); err != nil {
 		_ = os.Remove(agentExpectedSHAFile)
 		rollbackErr := restorePreviousAgent()
 		if rollbackErr != nil {
@@ -267,12 +291,42 @@ func validateAgentBinary(ctx context.Context, path string) (string, error) {
 	return strings.TrimSpace(strings.TrimPrefix(firstLine(out), "singbox-panel-agent ")), nil
 }
 
-func scheduleAgentUpgrade(ctx context.Context) error {
+func upgradeWatchdogActive(ctx context.Context) bool {
+	if pidFileAlive(agentUpgradePIDFile) {
+		return true
+	}
+	manager, err := currentServiceManager()
+	if err != nil {
+		return false
+	}
+	if manager.Kind() == serviceKindSystemd {
+		checkCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
+		defer cancel()
+		if _, err := run(checkCtx, "systemctl", "is-active", "--quiet", agentUpgradeUnitName); err == nil {
+			return true
+		}
+	}
+	return false
+}
+
+func pidFileAlive(path string) bool {
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		return false
+	}
+	pid, err := strconv.Atoi(strings.TrimSpace(string(raw)))
+	if err != nil || pid <= 1 {
+		return false
+	}
+	return syscall.Kill(pid, 0) == nil
+}
+
+func scheduleAgentUpgrade(ctx context.Context, expectedSHA string) error {
 	manager, err := currentServiceManager()
 	if err != nil {
 		return err
 	}
-	if err := writeAtomicFile(agentUpgradeScript, []byte(agentUpgradeScriptBody), 0o700); err != nil {
+	if err := writeAtomicFile(agentUpgradeScript, []byte(renderAgentUpgradeScript(expectedSHA)), 0o700); err != nil {
 		return fmt.Errorf("prepare Agent upgrade script: %w", err)
 	}
 	switch manager.Kind() {

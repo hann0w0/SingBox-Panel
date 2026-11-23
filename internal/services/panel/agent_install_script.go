@@ -260,6 +260,17 @@ if service_active; then WAS_ACTIVE=1; fi
 if service_enabled; then WAS_ENABLED=1; fi
 TRANSACTION_STARTED=1
 
+# Stop any lingering self-update watchdog before replacing the Agent binary
+# so an older upgrade transaction cannot roll back or stop this installation.
+if [ "$SERVICE_MANAGER" = systemd ]; then
+  systemctl stop singbox-panel-agent-upgrade.service >/dev/null 2>&1 || true
+  rm -f /etc/systemd/system/singbox-panel-agent-upgrade.service
+elif [ -f /run/singbox-panel-agent-upgrade.pid ]; then
+  UPGRADE_PID="$(cat /run/singbox-panel-agent-upgrade.pid 2>/dev/null || true)"
+  if [ -n "$UPGRADE_PID" ]; then kill "$UPGRADE_PID" >/dev/null 2>&1 || true; fi
+fi
+rm -f /run/singbox-panel-agent-upgrade.sh /run/singbox-panel-agent-upgrade.pid
+
 printf '%s\n' "$ACTUAL" > "$EXPECTED_READY"
 chmod 644 "$EXPECTED_READY"
 mv -f "$TMP" "$BIN"

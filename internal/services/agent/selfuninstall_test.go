@@ -9,9 +9,13 @@ import (
 func TestSelfUninstallScriptCleansAgentButKeepsSingbox(t *testing.T) {
 	for _, path := range []string{
 		"/usr/local/bin/singbox-panel-agent",
+		"/usr/local/bin/singbox-panel-agent.prev",
 		"/etc/singbox-panel-agent",
+		"/var/lib/singbox-panel-agent",
 		"/etc/systemd/system/singbox-panel-agent.service",
+		"/etc/systemd/system/singbox-panel-agent-upgrade.service",
 		"/etc/systemd/system/singbox-panel-agent-uninstall.service",
+		"/run/singbox-panel-agent-upgrade.pid",
 		"/etc/init.d/singbox-panel-agent",
 		"rc-update del singbox-panel-agent default",
 	} {

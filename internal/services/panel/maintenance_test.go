@@ -2,7 +2,6 @@ package panel
 
 import (
 	"archive/tar"
-	"bytes"
 	"compress/gzip"
 	"crypto/sha256"
 	"encoding/hex"
@@ -94,7 +93,7 @@ func TestLaunchSwapPassesScriptFileToSystemd(t *testing.T) {
 	argsPath := filepath.Join(root, "args")
 	writeExecutable(t, filepath.Join(root, "systemd-run"), "#!/bin/sh\nprintf '%s\\n' \"$@\" > "+shellQuote(argsPath)+"\n")
 	t.Setenv("PATH", root+":"+os.Getenv("PATH"))
-	if err := launchSwap("new-bin", "new-web", "new-agents", root, "web", "agents", "http://127.0.0.1/ready", "lock", "db", "rollback-db"); err != nil {
+	if err := launchSwap("new-bin", root, "http://127.0.0.1/ready", "lock", "db", "rollback-db"); err != nil {
 		t.Fatal(err)
 	}
 	args, err := os.ReadFile(argsPath)
@@ -260,8 +259,8 @@ func TestShellQuoteNeutralizesInjection(t *testing.T) {
 
 func TestSwapScriptSyntaxAndRollbackGuards(t *testing.T) {
 	script := buildSwapScript(
-		"/opt/panel/bin", "/opt/panel/stage/new-bin", "/opt/panel/stage/web", "/opt/panel/stage/agents",
-		"/opt/panel/stage", "/opt/panel/web", "/opt/panel/agents", "http://127.0.0.1:32334/api/ready",
+		"/opt/panel/bin", "/opt/panel/stage/new-bin",
+		"/opt/panel/stage", "http://127.0.0.1:32334/api/ready",
 		"/opt/panel/.update/.active", "/opt/panel/data/panel.db", "/opt/panel/stage/database.rollback",
 	)
 	cmd := exec.Command("/bin/sh", "-n")
@@ -284,135 +283,25 @@ func TestSwapScriptSyntaxAndRollbackGuards(t *testing.T) {
 	}
 }
 
-func TestManagedUpdatePathsRejectEscapesAndOverlaps(t *testing.T) {
-	root := t.TempDir()
-	for _, dir := range []string{"data", updateSubdir, "web", "agents"} {
-		if err := os.MkdirAll(filepath.Join(root, dir), 0o755); err != nil {
-			t.Fatal(err)
-		}
-	}
-	outside := t.TempDir()
-	if err := os.Symlink(outside, filepath.Join(root, "escape")); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := managedUpdatePath(filepath.Join(root, "escape"), root); err == nil {
-		t.Fatal("managedUpdatePath accepted a symlink escaping the install directory")
-	}
-	if err := validateManagedUpdateTargets(root, filepath.Join(root, updateSubdir), filepath.Join(root, "web"), filepath.Join(root, "web", "agents")); err == nil {
-		t.Fatal("nested frontend and Agent directories were accepted")
-	}
-	if err := validateManagedUpdateTargets(root, filepath.Join(root, updateSubdir), filepath.Join(root, "data", "web"), filepath.Join(root, "agents")); err == nil {
-		t.Fatal("a frontend directory inside data was accepted")
-	}
-	if err := validateManagedUpdateTargets(root, filepath.Join(root, updateSubdir), filepath.Join(root, "web"), filepath.Join(root, updateSubdir, "agents")); err == nil {
-		t.Fatal("an Agent directory inside the update staging area was accepted")
-	}
-}
-
-func TestExtractUpdateArchiveRejectsUnsafeOrCorruptInput(t *testing.T) {
-	tests := []struct {
-		name  string
-		write func(*testing.T, *tar.Writer)
-	}{
-		{
-			name: "path traversal",
-			write: func(t *testing.T, tw *tar.Writer) {
-				writeUpdateTarEntry(t, tw, &tar.Header{Name: "../escape", Mode: 0o644, Size: 1, Typeflag: tar.TypeReg}, []byte("x"))
-			},
-		},
-		{
-			name: "symbolic link",
-			write: func(t *testing.T, tw *tar.Writer) {
-				writeUpdateTarEntry(t, tw, &tar.Header{Name: "link", Linkname: "/etc/passwd", Mode: 0o777, Typeflag: tar.TypeSymlink}, nil)
-			},
-		},
-		{
-			name: "normalized duplicate",
-			write: func(t *testing.T, tw *tar.Writer) {
-				writeUpdateTarEntry(t, tw, &tar.Header{Name: "asset", Mode: 0o644, Size: 1, Typeflag: tar.TypeReg}, []byte("a"))
-				writeUpdateTarEntry(t, tw, &tar.Header{Name: "./asset", Mode: 0o644, Size: 1, Typeflag: tar.TypeReg}, []byte("b"))
-			},
-		},
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			archive := createUpdateArchive(t, tt.write)
-			if err := extractUpdateArchive(archive, filepath.Join(t.TempDir(), "out")); err == nil {
-				t.Fatalf("extractUpdateArchive accepted %s", tt.name)
-			}
-		})
-	}
-
-	valid := createUpdateArchive(t, func(t *testing.T, tw *tar.Writer) {
-		writeUpdateTarEntry(t, tw, &tar.Header{Name: "index.html", Mode: 0o644, Size: 2, Typeflag: tar.TypeReg}, []byte("ok"))
-	})
-	raw, err := os.ReadFile(valid)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(raw) < 16 {
-		t.Fatal("test archive unexpectedly short")
-	}
-	truncated := filepath.Join(t.TempDir(), "truncated.tar.gz")
-	if err := os.WriteFile(truncated, raw[:len(raw)-8], 0o600); err != nil {
-		t.Fatal(err)
-	}
-	if err := extractUpdateArchive(truncated, filepath.Join(t.TempDir(), "out")); err == nil {
-		t.Fatal("extractUpdateArchive accepted a truncated gzip stream")
-	}
-}
-
-func TestExtractUpdateArchiveValidBundle(t *testing.T) {
-	archive := createUpdateArchive(t, func(t *testing.T, tw *tar.Writer) {
-		writeUpdateTarEntry(t, tw, &tar.Header{Name: "bin/agent", Mode: 0o755, Size: 5, Typeflag: tar.TypeReg}, []byte("agent"))
-	})
-	destination := filepath.Join(t.TempDir(), "out")
-	if err := extractUpdateArchive(archive, destination); err != nil {
-		t.Fatal(err)
-	}
-	got, err := os.ReadFile(filepath.Join(destination, "bin", "agent"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	if string(got) != "agent" {
-		t.Fatalf("extracted content = %q", got)
-	}
-	info, err := os.Stat(filepath.Join(destination, "bin", "agent"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	if info.Mode().Perm() != 0o755 {
-		t.Fatalf("extracted mode = %o, want 755", info.Mode().Perm())
-	}
-}
-
 func TestSwapScriptRestoresAllComponentsAndDatabaseMode(t *testing.T) {
 	root := t.TempDir()
 	stage := filepath.Join(root, "stage")
 	liveBin := filepath.Join(root, "panel")
 	stagedBin := filepath.Join(stage, "panel.new")
-	webDir := filepath.Join(root, "web")
-	agentsDir := filepath.Join(root, "agents")
-	stagedWeb := filepath.Join(stage, "web.new")
-	stagedAgents := filepath.Join(stage, "agents.new")
 	dbPath := filepath.Join(root, "data", "panel.db")
 	rollbackDB := filepath.Join(stage, "database.rollback")
 	lockPath := filepath.Join(root, "update.lock")
-	for _, dir := range []string{stage, webDir, agentsDir, stagedWeb, stagedAgents, filepath.Dir(dbPath)} {
+	for _, dir := range []string{stage, filepath.Dir(dbPath)} {
 		if err := os.MkdirAll(dir, 0o755); err != nil {
 			t.Fatal(err)
 		}
 	}
 	for path, content := range map[string]string{
-		liveBin:                              "old-binary",
-		stagedBin:                            "new-binary",
-		filepath.Join(webDir, "asset"):       "old-web",
-		filepath.Join(agentsDir, "agent"):    "old-agent",
-		filepath.Join(stagedWeb, "asset"):    "new-web",
-		filepath.Join(stagedAgents, "agent"): "new-agent",
-		dbPath:                               "old-database",
-		rollbackDB:                           "too-early-snapshot",
-		lockPath:                             "locked",
+		liveBin:    "old-binary",
+		stagedBin:  "new-binary",
+		dbPath:     "old-database",
+		rollbackDB: "too-early-snapshot",
+		lockPath:   "locked",
 	} {
 		if err := os.WriteFile(path, []byte(content), 0o600); err != nil {
 			t.Fatal(err)
@@ -448,18 +337,16 @@ exit 0
 	writeExecutable(t, filepath.Join(fakeBin, "curl"), "#!/bin/sh\nexit 1\n")
 	writeExecutable(t, filepath.Join(fakeBin, "wget"), "#!/bin/sh\nexit 1\n")
 
-	script := buildSwapScript(liveBin, stagedBin, stagedWeb, stagedAgents, stage, webDir, agentsDir, "http://127.0.0.1/ready", lockPath, dbPath, rollbackDB)
+	script := buildSwapScript(liveBin, stagedBin, stage, "http://127.0.0.1/ready", lockPath, dbPath, rollbackDB)
 	cmd := exec.Command("/bin/sh", "-c", script)
 	cmd.Env = append(os.Environ(), "PATH="+fakeBin+":/usr/local/bin:/usr/bin:/bin")
 	if out, err := cmd.CombinedOutput(); err == nil {
 		t.Fatalf("swap script unexpectedly succeeded: %s", out)
 	}
 	for path, want := range map[string]string{
-		liveBin:                           "old-binary",
-		filepath.Join(webDir, "asset"):    "old-web",
-		filepath.Join(agentsDir, "agent"): "old-agent",
-		dbPath:                            "old-database-with-last-write",
-		dbPath + "-wal":                   "committed-wal",
+		liveBin:         "old-binary",
+		dbPath:          "old-database-with-last-write",
+		dbPath + "-wal": "committed-wal",
 	} {
 		got, err := os.ReadFile(path)
 		if err != nil {
@@ -591,20 +478,16 @@ func TestSwapScriptEarlyFailurePartialSnapshotAndSuccessOutcomes(t *testing.T) {
 			root := t.TempDir()
 			stage := filepath.Join(root, "stage")
 			liveBin, stagedBin := filepath.Join(root, "panel"), filepath.Join(stage, "panel.new")
-			webDir, agentsDir := filepath.Join(root, "web"), filepath.Join(root, "agents")
-			stagedWeb, stagedAgents := filepath.Join(stage, "web.new"), filepath.Join(stage, "agents.new")
 			dbPath := filepath.Join(root, "data", "panel.db")
 			rollbackDB, lockPath := filepath.Join(stage, "database.rollback"), filepath.Join(root, ".active")
 			fakeBin := filepath.Join(root, "fake-bin")
-			for _, dir := range []string{stage, webDir, agentsDir, stagedWeb, stagedAgents, filepath.Dir(dbPath), fakeBin} {
+			for _, dir := range []string{stage, filepath.Dir(dbPath), fakeBin} {
 				if err := os.MkdirAll(dir, 0o755); err != nil {
 					t.Fatal(err)
 				}
 			}
 			for path, content := range map[string]string{
 				liveBin: "old-binary", stagedBin: "new-binary", dbPath: "old-database", dbPath + "-wal": "old-wal", lockPath: "active",
-				filepath.Join(webDir, "asset"): "old-web", filepath.Join(agentsDir, "agent"): "old-agent",
-				filepath.Join(stagedWeb, "asset"): "new-web", filepath.Join(stagedAgents, "agent"): "new-agent",
 			} {
 				if err := os.WriteFile(path, []byte(content), 0o600); err != nil {
 					t.Fatal(err)
@@ -625,7 +508,7 @@ func TestSwapScriptEarlyFailurePartialSnapshotAndSuccessOutcomes(t *testing.T) {
 			for _, command := range []string{"sleep", "curl", "wget"} {
 				writeExecutable(t, filepath.Join(fakeBin, command), "#!/bin/sh\nexit 0\n")
 			}
-			script := buildSwapScript(liveBin, stagedBin, stagedWeb, stagedAgents, stage, webDir, agentsDir,
+			script := buildSwapScript(liveBin, stagedBin, stage,
 				"http://127.0.0.1/ready", lockPath, dbPath, rollbackDB)
 			cmd := exec.Command("/bin/sh", "-c", script)
 			cmd.Env = append(os.Environ(), "PATH="+fakeBin+":/usr/local/bin:/usr/bin:/bin")
@@ -811,37 +694,6 @@ func keys(m map[string]bool) []string {
 		out = append(out, k)
 	}
 	return out
-}
-
-func createUpdateArchive(t *testing.T, write func(*testing.T, *tar.Writer)) string {
-	t.Helper()
-	var raw bytes.Buffer
-	gz := gzip.NewWriter(&raw)
-	tw := tar.NewWriter(gz)
-	write(t, tw)
-	if err := tw.Close(); err != nil {
-		t.Fatal(err)
-	}
-	if err := gz.Close(); err != nil {
-		t.Fatal(err)
-	}
-	path := filepath.Join(t.TempDir(), "bundle.tar.gz")
-	if err := os.WriteFile(path, raw.Bytes(), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	return path
-}
-
-func writeUpdateTarEntry(t *testing.T, tw *tar.Writer, hdr *tar.Header, body []byte) {
-	t.Helper()
-	if err := tw.WriteHeader(hdr); err != nil {
-		t.Fatal(err)
-	}
-	if len(body) > 0 {
-		if _, err := tw.Write(body); err != nil {
-			t.Fatal(err)
-		}
-	}
 }
 
 func writeExecutable(t *testing.T, path, contents string) {

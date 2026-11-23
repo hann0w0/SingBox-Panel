@@ -14,15 +14,19 @@ import (
 func TestMaintenanceReleasesListsOnlyInstallableReleases(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	bin := "singbox-panel-linux-" + runtime.GOARCH
-	full := func(tag string) string {
-		return fmt.Sprintf(`[{"name":%q},{"name":"singbox-panel-web-%s.tar.gz"},{"name":"singbox-panel-agents-%s.tar.gz"}]`, bin, tag, tag)
+	singleBinary := func() string {
+		return fmt.Sprintf(`[{"name":%q},{"name":"checksums.txt"}]`, bin)
+	}
+	legacySplit := func(tag string) string {
+		return fmt.Sprintf(`[{"name":%q},{"name":"checksums.txt"},{"name":"singbox-panel-web-%s.tar.gz"},{"name":"singbox-panel-agents-%s.tar.gz"}]`, bin, tag, tag)
 	}
 	body := `[
-		{"tag_name":"v1.0.6","name":"v1.0.6","published_at":"2026-10-20T00:00:00Z","assets":` + full("v1.0.6") + `},
-		{"tag_name":"v1.0.5","name":"v1.0.5","assets":` + full("v1.0.5") + `},
-		{"tag_name":"v1.0.4","draft":true,"assets":` + full("v1.0.4") + `},
-		{"tag_name":"v1.0.3","assets":[{"name":"singbox-panel-web-v1.0.3.tar.gz"}]},
-		{"tag_name":"bad tag; rm","assets":` + full("bad") + `}
+		{"tag_name":"v1.0.18","name":"v1.0.18","published_at":"2026-11-24T00:00:00Z","assets":` + singleBinary() + `},
+		{"tag_name":"v1.0.17","name":"v1.0.17","assets":` + singleBinary() + `},
+		{"tag_name":"v1.0.16","name":"v1.0.16","assets":` + legacySplit("v1.0.16") + `},
+		{"tag_name":"v1.0.15","draft":true,"assets":` + singleBinary() + `},
+		{"tag_name":"v1.0.14","assets":[{"name":` + fmt.Sprintf("%q", bin) + `}]},
+		{"tag_name":"bad tag; rm","assets":` + singleBinary() + `}
 	]`
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { _, _ = w.Write([]byte(body)) }))
 	defer srv.Close()
@@ -39,7 +43,7 @@ func TestMaintenanceReleasesListsOnlyInstallableReleases(t *testing.T) {
 		panelReleaseListMu.Unlock()
 	})
 
-	a := &App{version: "v1.0.5"}
+	a := &App{version: "v1.0.17"}
 	w := httptest.NewRecorder()
 	c, _ := gin.CreateTestContext(w)
 	c.Request = httptest.NewRequest(http.MethodGet, "/api/admin/maintenance/releases?refresh=1", nil)
@@ -54,7 +58,7 @@ func TestMaintenanceReleasesListsOnlyInstallableReleases(t *testing.T) {
 	if err := json.Unmarshal(w.Body.Bytes(), &got); err != nil {
 		t.Fatal(err)
 	}
-	if len(got.Releases) != 2 || got.Releases[0].Version != "v1.0.6" || got.Releases[1].Version != "v1.0.5" {
+	if len(got.Releases) != 2 || got.Releases[0].Version != "v1.0.18" || got.Releases[1].Version != "v1.0.17" {
 		t.Fatalf("releases = %+v", got.Releases)
 	}
 	if got.Releases[0].Current || !got.Releases[1].Current {

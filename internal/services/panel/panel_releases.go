@@ -82,7 +82,12 @@ func installablePanelReleases(refresh bool) ([]panelReleaseInfo, error) {
 		for _, asset := range rel.Assets {
 			assets[asset.Name] = true
 		}
-		if !assets[binary] || !assets["singbox-panel-web-"+rel.TagName+".tar.gz"] || !assets["singbox-panel-agents-"+rel.TagName+".tar.gz"] {
+		// Only self-contained single-binary releases are installable via the
+		// single-binary self-updater; legacy split-bundle releases ship separate
+		// web/agents tarballs and cannot be swapped in as a bare binary.
+		if !assets[binary] || !assets["checksums.txt"] ||
+			assets["singbox-panel-web-"+rel.TagName+".tar.gz"] ||
+			assets["singbox-panel-agents-"+rel.TagName+".tar.gz"] {
 			continue
 		}
 		list = append(list, panelReleaseInfo{Version: rel.TagName, Name: rel.Name, PublishedAt: rel.PublishedAt, Prerelease: rel.Prerelease})

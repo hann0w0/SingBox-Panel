@@ -1,7 +1,10 @@
 package panel
 
 import (
+	"bytes"
 	"context"
+	"io"
+	"io/fs"
 	"log"
 	"mime"
 	"net/http"
@@ -15,6 +18,7 @@ import (
 	"github.com/gin-gonic/gin"
 	"gorm.io/gorm"
 
+	"github.com/hann0w0/singbox-panel/internal/assets"
 	"github.com/hann0w0/singbox-panel/internal/config"
 )
 
@@ -58,9 +62,11 @@ type App struct {
 	logSessions       map[uint]map[string]logSessionLease
 	logSessionLocks   keyedMutex[uint]
 	serverOperations  *keyedMutex[uint]
-	userAccessMu      sync.Mutex
-	ipLocationsOnce   sync.Once
-	ipLocations       *ipLocationService
+	userAccessMu     sync.Mutex
+	ipLocationsOnce  sync.Once
+	ipLocations      *ipLocationService
+	embeddedWebFS    fs.FS
+	embeddedAgentsFS fs.FS
 }
 
 // SetVersion records the running panel version (set from main via ldflags) so
@@ -295,13 +301,63 @@ func (a *App) handleReady(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"ok": true})
 }
 
-// webDir resolves the built frontend directory from config (or env override
-// applied at config-load time).
+// webDir resolves the fallback disk frontend directory from config (used only
+// when the binary does not carry embedded frontend assets, e.g. local dev/tests).
 func (a *App) webDir() string {
 	return a.cfg.WebDir
 }
 
+// frontendFS returns the embedded frontend filesystem when present, ensuring
+// single-binary builds always serve their own matching UI regardless of stale
+// web_dir values left in older panel.yaml files.
+func (a *App) frontendFS() fs.FS {
+	if a.embeddedWebFS != nil {
+		return a.embeddedWebFS
+	}
+	if fsys, ok := assets.WebFS(); ok {
+		return fsys
+	}
+	return nil
+}
+
+// agentsFS returns the embedded agent filesystem when present, along with
+// whether checksums may be cached globally.
+func (a *App) agentsFS() (fs.FS, bool) {
+	if a.embeddedAgentsFS != nil {
+		return a.embeddedAgentsFS, false
+	}
+	if fsys, ok := assets.AgentsFS(); ok {
+		return fsys, true
+	}
+	return nil, false
+}
+
+func serveFSFile(c *gin.Context, fsys fs.FS, name string) {
+	f, err := fsys.Open(name)
+	if err != nil {
+		c.Status(http.StatusNotFound)
+		return
+	}
+	defer f.Close()
+	info, err := f.Stat()
+	if err != nil || info.IsDir() {
+		c.Status(http.StatusNotFound)
+		return
+	}
+	if rs, ok := f.(io.ReadSeeker); ok {
+		http.ServeContent(c.Writer, c.Request, name, info.ModTime(), rs)
+		return
+	}
+	data, err := io.ReadAll(f)
+	if err != nil {
+		c.Status(http.StatusInternalServerError)
+		return
+	}
+	http.ServeContent(c.Writer, c.Request, name, info.ModTime(), bytes.NewReader(data))
+}
+
 func (a *App) mountFrontend(r *gin.Engine) {
+	fsys := a.frontendFS()
 	dir := a.webDir()
 
 	// Go's built-in MIME table has no entry for .webmanifest, so without this
@@ -312,10 +368,20 @@ func (a *App) mountFrontend(r *gin.Engine) {
 		log.Printf("cannot register webmanifest MIME type: %v", err)
 	}
 
-	for _, staticDir := range []string{"assets", "logos"} {
-		path := filepath.Join(dir, staticDir)
-		if dirExists(path) {
-			r.Static("/"+staticDir, path)
+	if fsys != nil {
+		for _, staticDir := range []string{"assets", "logos"} {
+			if info, err := fs.Stat(fsys, staticDir); err == nil && info.IsDir() {
+				if sub, err := fs.Sub(fsys, staticDir); err == nil {
+					r.StaticFS("/"+staticDir, http.FS(sub))
+				}
+			}
+		}
+	} else {
+		for _, staticDir := range []string{"assets", "logos"} {
+			path := filepath.Join(dir, staticDir)
+			if dirExists(path) {
+				r.Static("/"+staticDir, path)
+			}
 		}
 	}
 	// Root-level files live next to index.html in the built dist and must be
@@ -342,6 +408,22 @@ func (a *App) mountFrontend(r *gin.Engine) {
 		{name: "icon-maskable-512.png", cacheControl: "no-cache"},
 	}
 	for _, file := range rootFiles {
+		file := file
+		if fsys != nil {
+			info, err := fs.Stat(fsys, file.name)
+			if err != nil || info.IsDir() {
+				continue
+			}
+			serve := func(c *gin.Context) {
+				if file.cacheControl != "" {
+					c.Header("Cache-Control", file.cacheControl)
+				}
+				serveFSFile(c, fsys, file.name)
+			}
+			r.GET("/"+file.name, serve)
+			r.HEAD("/"+file.name, serve)
+			continue
+		}
 		path := filepath.Join(dir, file.name)
 		if !fileExists(path) {
 			continue
@@ -364,6 +446,15 @@ func (a *App) mountFrontend(r *gin.Engine) {
 		if strings.HasPrefix(c.Request.URL.Path, "/api") {
 			c.JSON(http.StatusNotFound, gin.H{"error": "not found"})
 			return
+		}
+		if fsys != nil {
+			if info, err := fs.Stat(fsys, "index.html"); err == nil && !info.IsDir() {
+				c.Header("Cache-Control", "no-store, no-cache, must-revalidate, max-age=0")
+				c.Header("Pragma", "no-cache")
+				c.Header("Expires", "0")
+				serveFSFile(c, fsys, "index.html")
+				return
+			}
 		}
 		index := filepath.Join(dir, "index.html")
 		if fileExists(index) {

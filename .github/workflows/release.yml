@@ -59,55 +59,62 @@ jobs:
           npm run typecheck
           npm run build
 
-      - name: Build panel binaries (amd64 + arm64)
+      - name: Build single-binary panel releases (amd64 + arm64)
         env:
           VERSION: ${{ env.RELEASE_TAG }}
           CGO_ENABLED: 0
         run: |
-          mkdir -p dist/panel dist/agents
+          mkdir -p dist/panel
           commit="$(git rev-parse HEAD)"
-
-          echo "==> panel linux/amd64 (${VERSION})"
-          GOOS=linux GOARCH=amd64 go build \
-            -ldflags "-s -w -X main.version=${VERSION} -X main.commit=${commit}" \
-            -o dist/panel/singbox-panel-linux-amd64 \
-            ./cmd/panel
-
-          echo "==> panel linux/arm64 (${VERSION})"
-          GOOS=linux GOARCH=arm64 go build \
-            -ldflags "-s -w -X main.version=${VERSION} -X main.commit=${commit}" \
-            -o dist/panel/singbox-panel-linux-arm64 \
-            ./cmd/panel
 
           AGENT_VER="$(cat cmd/agent/VERSION)"
           test "$AGENT_VER" = "$VERSION" || { echo 'Panel and Agent release versions must match' >&2; exit 1; }
-          echo "${AGENT_VER}" > dist/agents/VERSION
+
+          # Stage compiled frontend and both Linux Agent binaries for go:embed.
+          find internal/assets/web internal/assets/agents -mindepth 1 ! -name '.gitkeep' -delete
+          cp -R web/dist/. internal/assets/web/
+          echo "${AGENT_VER}" > internal/assets/agents/VERSION
+
           echo "==> agent linux/amd64 (${AGENT_VER})"
           GOOS=linux GOARCH=amd64 go build \
             -trimpath -buildvcs=false \
             -ldflags "-s -w -X main.version=${AGENT_VER}" \
-            -o dist/agents/singbox-panel-agent-linux-amd64 \
+            -o internal/assets/agents/singbox-panel-agent-linux-amd64 \
             ./cmd/agent
 
           echo "==> agent linux/arm64 (${AGENT_VER})"
           GOOS=linux GOARCH=arm64 go build \
             -trimpath -buildvcs=false \
             -ldflags "-s -w -X main.version=${AGENT_VER}" \
-            -o dist/agents/singbox-panel-agent-linux-arm64 \
+            -o internal/assets/agents/singbox-panel-agent-linux-arm64 \
             ./cmd/agent
+
+          test -f internal/assets/web/index.html
+          test -f internal/assets/agents/singbox-panel-agent-linux-amd64
+          test -f internal/assets/agents/singbox-panel-agent-linux-arm64
+
+          echo "==> panel linux/amd64 (${VERSION})"
+          GOOS=linux GOARCH=amd64 go build \
+            -trimpath -buildvcs=false \
+            -ldflags "-s -w -X main.version=${VERSION} -X main.commit=${commit}" \
+            -o dist/panel/singbox-panel-linux-amd64 \
+            ./cmd/panel
+
+          echo "==> panel linux/arm64 (${VERSION})"
+          GOOS=linux GOARCH=arm64 go build \
+            -trimpath -buildvcs=false \
+            -ldflags "-s -w -X main.version=${VERSION} -X main.commit=${commit}" \
+            -o dist/panel/singbox-panel-linux-arm64 \
+            ./cmd/panel
 
       # 打包必须全部先于校验和计算，否则漏进 checksums.txt 的产物在安装时
       # 会静默跳过校验。
-      - name: Package tarballs
+      - name: Prepare deployment files
         run: |
           cp install.sh dist/install.sh
           cp compose.yaml dist/compose.yaml
           image="ghcr.io/${GITHUB_REPOSITORY,,}:${RELEASE_TAG}"
           sed "s|^PANEL_IMAGE=.*|PANEL_IMAGE=${image}|" .env.example > dist/panel.env.example
-          tar -czf "dist/singbox-panel-agents-${RELEASE_TAG}.tar.gz" \
-            -C dist/agents .
-          tar -czf "dist/singbox-panel-web-${RELEASE_TAG}.tar.gz" \
-            -C web/dist .
 
       - name: Compute checksums
         run: |
@@ -116,8 +123,6 @@ jobs:
             panel/singbox-panel-linux-amd64 \
             panel/singbox-panel-linux-arm64 \
             install.sh compose.yaml panel.env.example \
-            "singbox-panel-agents-${RELEASE_TAG}.tar.gz" \
-            "singbox-panel-web-${RELEASE_TAG}.tar.gz" \
             | sed 's#panel/##' > checksums.txt
           cat checksums.txt
 
@@ -130,8 +135,6 @@ jobs:
             dist/install.sh
             dist/compose.yaml
             dist/panel.env.example
-            dist/singbox-panel-agents-${{ env.RELEASE_TAG }}.tar.gz
-            dist/singbox-panel-web-${{ env.RELEASE_TAG }}.tar.gz
             dist/checksums.txt
 
       - name: Create / update GitHub Release and upload assets
@@ -169,8 +172,6 @@ jobs:
           files: |
             dist/panel/singbox-panel-linux-amd64
             dist/panel/singbox-panel-linux-arm64
-            dist/singbox-panel-agents-${{ env.RELEASE_TAG }}.tar.gz
-            dist/singbox-panel-web-${{ env.RELEASE_TAG }}.tar.gz
             dist/checksums.txt
             dist/install.sh
             dist/compose.yaml

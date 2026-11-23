@@ -12,23 +12,23 @@ COPY go.mod go.sum ./
 RUN go mod download
 COPY cmd/ ./cmd/
 COPY internal/ ./internal/
+COPY --from=web /src/web/dist/ ./internal/assets/web/
 ARG TARGETOS
 ARG TARGETARCH
 ARG VERSION=dev
 ARG COMMIT
+# Every panel embeds both Linux Agent architectures and the compiled frontend so
+# the runtime image only ships a single self-contained binary.
 RUN --mount=type=cache,target=/root/.cache/go-build \
-    CGO_ENABLED=0 GOOS=${TARGETOS:-linux} GOARCH=${TARGETARCH} \
-    go build -trimpath -buildvcs=false -ldflags "-s -w -X main.version=${VERSION} -X main.commit=${COMMIT}" \
-    -o /out/singbox-panel ./cmd/panel
-# Every panel serves both architectures, regardless of its own architecture.
-# Agents still install as native systemd services on their target VPSes.
-RUN --mount=type=cache,target=/root/.cache/go-build \
-    mkdir -p /out/agents && cp cmd/agent/VERSION /out/agents/VERSION && \
+    cp cmd/agent/VERSION internal/assets/agents/VERSION && \
     for arch in amd64 arm64; do \
       CGO_ENABLED=0 GOOS=linux GOARCH=$arch go build -trimpath -buildvcs=false \
         -ldflags "-s -w -X main.version=$(cat cmd/agent/VERSION)" \
-        -o /out/agents/singbox-panel-agent-linux-$arch ./cmd/agent || exit 1; \
-    done
+        -o internal/assets/agents/singbox-panel-agent-linux-$arch ./cmd/agent || exit 1; \
+    done && \
+    CGO_ENABLED=0 GOOS=${TARGETOS:-linux} GOARCH=${TARGETARCH} \
+    go build -trimpath -buildvcs=false -ldflags "-s -w -X main.version=${VERSION} -X main.commit=${COMMIT}" \
+    -o /out/singbox-panel ./cmd/panel
 
 FROM alpine:3.23 AS runtime
 RUN apk add --no-cache ca-certificates && \
@@ -36,12 +36,8 @@ RUN apk add --no-cache ca-certificates && \
     mkdir -p /app/data && chown 10001:10001 /app/data
 WORKDIR /app
 COPY --from=backend /out/singbox-panel /usr/local/bin/singbox-panel
-COPY --from=backend /out/agents/ /app/agents/
-COPY --from=web /src/web/dist/ /app/web/
 ENV SINGBOX_PANEL_DEPLOYMENT=docker \
     SINGBOX_PANEL_LISTEN=:8080 \
-    SINGBOX_PANEL_WEB_DIR=/app/web \
-    SINGBOX_PANEL_AGENTS_DIR=/app/agents \
     SINGBOX_PANEL_DB_DSN=/app/data/singbox-panel.db
 USER 10001:10001
 VOLUME ["/app/data"]

@@ -14,6 +14,7 @@ import (
 	"github.com/gin-gonic/gin"
 	"gorm.io/gorm"
 
+	"github.com/hann0w0/singbox-panel/internal/assets"
 	"github.com/hann0w0/singbox-panel/internal/domain/model"
 	"github.com/hann0w0/singbox-panel/internal/domain/protocol"
 )
@@ -192,6 +193,11 @@ type serverUpdateReq struct {
 // the VERSION file placed beside the served agent binaries, so upgrading the
 // panel alone no longer wrongly flags every node as having an agent update.
 func (a *App) latestAgentVersion() string {
+	if fsys, _ := a.agentsFS(); fsys != nil {
+		if v, ok := assets.AgentVersionFromFS(fsys); ok {
+			return v
+		}
+	}
 	if a.cfg.AgentsDir != "" {
 		verPath := filepath.Join(a.cfg.AgentsDir, "VERSION")
 		if data, err := os.ReadFile(verPath); err == nil {

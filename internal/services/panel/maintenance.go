@@ -640,8 +640,6 @@ func (a *App) selfUpdate(c *gin.Context) {
 		return
 	}
 	assetName := "singbox-panel-linux-" + arch
-	webAssetName := "singbox-panel-web-" + target + ".tar.gz"
-	agentAssetName := "singbox-panel-agents-" + target + ".tar.gz"
 	base := "https://github.com/" + githubRepo + "/releases/download/" + target
 
 	// Stage and validate the complete release before touching any live file.
@@ -720,8 +718,6 @@ func (a *App) selfUpdate(c *gin.Context) {
 		}
 	}()
 	stagedBin := filepath.Join(stageDir, assetName)
-	stagedWebArchive := filepath.Join(stageDir, webAssetName)
-	stagedAgentArchive := filepath.Join(stageDir, agentAssetName)
 	rollbackDB := filepath.Join(stageDir, "database.rollback")
 	dbPath, _ := a.sqliteDBPath()
 
@@ -730,17 +726,13 @@ func (a *App) selfUpdate(c *gin.Context) {
 		c.JSON(http.StatusBadGateway, gin.H{"error": err.Error()})
 		return
 	}
-	for _, asset := range []struct{ name, path string }{
-		{assetName, stagedBin}, {webAssetName, stagedWebArchive}, {agentAssetName, stagedAgentArchive},
-	} {
-		if err := downloadFileLimit(base+"/"+asset.name, asset.path, maxUpdateAsset); err != nil {
-			c.JSON(http.StatusBadGateway, gin.H{"error": "下载 " + asset.name + " 失败：" + err.Error()})
-			return
-		}
-		if err := verifyReleaseChecksumManifest(checksumManifest, asset.path, asset.name); err != nil {
-			c.JSON(http.StatusBadGateway, gin.H{"error": err.Error()})
-			return
-		}
+	if err := downloadFileLimit(base+"/"+assetName, stagedBin, maxUpdateAsset); err != nil {
+		c.JSON(http.StatusBadGateway, gin.H{"error": "下载 " + assetName + " 失败：" + err.Error()})
+		return
+	}
+	if err := verifyReleaseChecksumManifest(checksumManifest, stagedBin, assetName); err != nil {
+		c.JSON(http.StatusBadGateway, gin.H{"error": err.Error()})
+		return
 	}
 	if err := os.Chmod(stagedBin, 0o755); err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "设置可执行权限失败：" + err.Error()})
@@ -761,38 +753,8 @@ func (a *App) selfUpdate(c *gin.Context) {
 		c.JSON(http.StatusConflict, gin.H{"error": "目标版本 " + target + " 无法使用当前数据库，已取消安装（当前面板未受影响）：" + probeErr.Error()})
 		return
 	}
-	stagedWebDir := filepath.Join(stageDir, "web")
-	stagedAgentsDir := filepath.Join(stageDir, "agents")
-	if err := extractUpdateArchive(stagedWebArchive, stagedWebDir); err != nil {
-		c.JSON(http.StatusBadGateway, gin.H{"error": "解压前端失败：" + err.Error()})
-		return
-	}
-	if err := extractUpdateArchive(stagedAgentArchive, stagedAgentsDir); err != nil {
-		c.JSON(http.StatusBadGateway, gin.H{"error": "解压 Agent 包失败：" + err.Error()})
-		return
-	}
-	if !fileExists(filepath.Join(stagedWebDir, "index.html")) ||
-		!fileExists(filepath.Join(stagedAgentsDir, "singbox-panel-agent-linux-amd64")) ||
-		!fileExists(filepath.Join(stagedAgentsDir, "singbox-panel-agent-linux-arm64")) {
-		c.JSON(http.StatusBadGateway, gin.H{"error": "Release 前端或 Agent 包内容不完整"})
-		return
-	}
 	if dbPath == "" {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "仅文件型 SQLite 部署支持面板内更新"})
-		return
-	}
-	webDir, err := managedUpdatePath(a.cfg.WebDir, installDir)
-	if err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "前端目录不支持面板内更新：" + err.Error()})
-		return
-	}
-	agentsDir, err := managedUpdatePath(a.cfg.AgentsDir, installDir)
-	if err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "Agent 目录不支持面板内更新：" + err.Error()})
-		return
-	}
-	if err := validateManagedUpdateTargets(installDir, updateRoot, webDir, agentsDir); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "更新目录配置不安全：" + err.Error()})
 		return
 	}
 	readyURL, err := panelReadyURL(a.cfg.Listen)
@@ -801,15 +763,15 @@ func (a *App) selfUpdate(c *gin.Context) {
 		return
 	}
 
-	// Detach one transactional binary+web+Agent swap. The helper retains every
-	// old component and restores all of them if startup/readiness fails.
+	// Detach one transactional binary swap. The helper retains the previous
+	// binary and database snapshot and restores both if startup/readiness fails.
 	operation := panelUpdateOperation{ID: filepath.Base(stageDir), Status: "running"}
 	operationPath := filepath.Join(updateRoot, "result.json")
 	if err := writePanelUpdateOperation(operationPath, operation); err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "保存更新状态失败：" + err.Error()})
 		return
 	}
-	if err := launchSwap(stagedBin, stagedWebDir, stagedAgentsDir, stageDir, webDir, agentsDir, readyURL, updateLockPath, dbPath, rollbackDB); err != nil {
+	if err := launchSwap(stagedBin, stageDir, readyURL, updateLockPath, dbPath, rollbackDB); err != nil {
 		operation.Status = "failed"
 		_ = writePanelUpdateOperation(operationPath, operation)
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "启动更新任务失败：" + err.Error()})
@@ -823,7 +785,7 @@ func (a *App) selfUpdate(c *gin.Context) {
 	releaseMaintenanceLock = false
 	go a.releaseMaintenanceAfterDetachedUpdate(updateLockPath)
 
-	msg := "已开始完整更新到 " + target + "，后端、前端和 Agent 包将一起切换并自动验证。"
+	msg := "已开始更新到 " + target + "，主程序将自动切换并验证。"
 	if rollbackBackup != "" {
 		msg = "已备份当前数据到 " + rollbackBackup + "，开始安装 " + target + "。"
 	}
@@ -954,87 +916,6 @@ func sha256File(path string) (string, error) {
 	return hex.EncodeToString(h.Sum(nil)), nil
 }
 
-func managedUpdatePath(path, installDir string) (string, error) {
-	path = strings.TrimSpace(path)
-	if path == "" {
-		return "", fmt.Errorf("目录为空")
-	}
-	if !filepath.IsAbs(path) {
-		path = filepath.Join(installDir, path)
-	}
-	path = filepath.Clean(path)
-	root := filepath.Clean(installDir)
-	resolvedRoot, err := resolvePathForContainment(root)
-	if err != nil {
-		return "", fmt.Errorf("解析安装目录失败：%w", err)
-	}
-	resolvedPath, err := resolvePathForContainment(path)
-	if err != nil {
-		return "", fmt.Errorf("解析目标目录失败：%w", err)
-	}
-	rel, err := filepath.Rel(resolvedRoot, resolvedPath)
-	if err != nil || rel == "." || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
-		return "", fmt.Errorf("目录必须位于安装目录 %s 内", resolvedRoot)
-	}
-	return path, nil
-}
-
-func resolvePathForContainment(path string) (string, error) {
-	resolved, err := filepath.EvalSymlinks(path)
-	if err == nil {
-		return filepath.Clean(resolved), nil
-	}
-	if !errors.Is(err, os.ErrNotExist) {
-		return "", err
-	}
-	resolvedParent, parentErr := filepath.EvalSymlinks(filepath.Dir(path))
-	if parentErr != nil {
-		return "", parentErr
-	}
-	return filepath.Join(resolvedParent, filepath.Base(path)), nil
-}
-
-func pathsOverlap(a, b string) bool {
-	a = filepath.Clean(a)
-	b = filepath.Clean(b)
-	if a == b {
-		return true
-	}
-	relAB, errAB := filepath.Rel(a, b)
-	relBA, errBA := filepath.Rel(b, a)
-	inside := func(rel string, err error) bool {
-		return err == nil && rel != "." && rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator))
-	}
-	return inside(relAB, errAB) || inside(relBA, errBA)
-}
-
-func validateManagedUpdateTargets(installDir, updateRoot, webDir, agentsDir string) error {
-	resolvedWeb, err := resolvePathForContainment(webDir)
-	if err != nil {
-		return err
-	}
-	resolvedAgents, err := resolvePathForContainment(agentsDir)
-	if err != nil {
-		return err
-	}
-	if pathsOverlap(resolvedWeb, resolvedAgents) {
-		return errors.New("前端目录与 Agent 目录不能相同或互相包含")
-	}
-	for label, protected := range map[string]string{
-		"数据目录": filepath.Join(installDir, "data"),
-		"更新目录": updateRoot,
-	} {
-		resolvedProtected, resolveErr := resolvePathForContainment(protected)
-		if resolveErr != nil {
-			return resolveErr
-		}
-		if pathsOverlap(resolvedWeb, resolvedProtected) || pathsOverlap(resolvedAgents, resolvedProtected) {
-			return fmt.Errorf("前端或 Agent 目录与%s重叠", label)
-		}
-	}
-	return nil
-}
-
 func panelReadyURL(listen string) (string, error) {
 	host, port, err := net.SplitHostPort(strings.TrimSpace(listen))
 	if err != nil {
@@ -1048,97 +929,6 @@ func panelReadyURL(listen string) (string, error) {
 		host = "::1"
 	}
 	return (&url.URL{Scheme: "http", Host: net.JoinHostPort(host, port), Path: "/api/ready"}).String(), nil
-}
-
-func extractUpdateArchive(archivePath, destination string) error {
-	f, err := os.Open(archivePath)
-	if err != nil {
-		return err
-	}
-	defer f.Close()
-	gz, err := gzip.NewReader(f)
-	if err != nil {
-		return err
-	}
-	defer gz.Close()
-	if err := os.MkdirAll(destination, 0o755); err != nil {
-		return err
-	}
-	limited := &io.LimitedReader{R: gz, N: maxUpdateAsset + 1}
-	tr := tar.NewReader(limited)
-	seen := make(map[string]bool)
-	var total int64
-	entries := 0
-	for {
-		hdr, err := tr.Next()
-		if err == io.EOF {
-			break
-		}
-		if err != nil {
-			return err
-		}
-		entries++
-		if entries > 20_000 {
-			return fmt.Errorf("归档条目过多")
-		}
-		name := filepath.Clean(strings.TrimPrefix(hdr.Name, "./"))
-		if name == "." || name == "" {
-			continue
-		}
-		if filepath.IsAbs(name) || name == ".." || strings.HasPrefix(name, ".."+string(filepath.Separator)) {
-			return fmt.Errorf("归档包含不安全路径 %q", hdr.Name)
-		}
-		target := filepath.Join(destination, name)
-		rel, err := filepath.Rel(destination, target)
-		if err != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
-			return fmt.Errorf("归档路径越界 %q", hdr.Name)
-		}
-		if seen[target] {
-			return fmt.Errorf("归档包含重复路径 %q", hdr.Name)
-		}
-		seen[target] = true
-		switch hdr.Typeflag {
-		case tar.TypeDir:
-			if err := os.MkdirAll(target, 0o755); err != nil {
-				return err
-			}
-		case tar.TypeReg:
-			if hdr.Size < 0 || hdr.Size > maxUpdateAsset-total {
-				return fmt.Errorf("归档解压后超过大小限制")
-			}
-			total += hdr.Size
-			if err := os.MkdirAll(filepath.Dir(target), 0o755); err != nil {
-				return err
-			}
-			mode := os.FileMode(0o644)
-			if hdr.Mode&0o111 != 0 {
-				mode = 0o755
-			}
-			out, err := os.OpenFile(target, os.O_WRONLY|os.O_CREATE|os.O_EXCL, mode)
-			if err != nil {
-				return err
-			}
-			_, copyErr := io.CopyN(out, tr, hdr.Size)
-			closeErr := out.Close()
-			if copyErr != nil {
-				return copyErr
-			}
-			if closeErr != nil {
-				return closeErr
-			}
-		default:
-			return fmt.Errorf("归档包含不支持的条目类型 %d", hdr.Typeflag)
-		}
-	}
-	// tar stops at its end marker. Drain gzip so checksum/truncation errors and
-	// oversized decompressed tails cannot be hidden after an otherwise valid tar.
-	if _, err := io.Copy(io.Discard, limited); err != nil {
-		return err
-	}
-	if limited.N <= 0 {
-		return fmt.Errorf("归档解压后超过大小限制")
-	}
-	return nil
 }
 
 // runDatabaseProbe executes the staged binary's --check-database mode against the
@@ -1166,11 +956,11 @@ func runDatabaseProbe(binary, cfgPath, stageDir string) error {
 	return nil
 }
 
-// launchSwap runs a complete release swap in a transient root unit. It keeps
-// the old binary, frontend, and Agent bundle together and restores all three
-// unless the restarted panel passes /api/ready.
-func launchSwap(stagedBin, stagedWebDir, stagedAgentsDir, stageDir, webDir, agentsDir, readyURL, lockPath, dbPath, rollbackDB string) error {
-	script := buildSwapScript(panelBinaryPath(), stagedBin, stagedWebDir, stagedAgentsDir, stageDir, webDir, agentsDir, readyURL, lockPath, dbPath, rollbackDB)
+// launchSwap runs a single-binary release swap in a transient root unit. It
+// keeps the previous binary and SQLite snapshot and restores both unless the
+// restarted panel passes /api/ready.
+func launchSwap(stagedBin, stageDir, readyURL, lockPath, dbPath, rollbackDB string) error {
+	script := buildSwapScript(panelBinaryPath(), stagedBin, stageDir, readyURL, lockPath, dbPath, rollbackDB)
 	// Pass a file rather than shell source through systemd: ExecStart expands
 	// dollar expressions before sh can assign the script's local variables.
 	scriptPath := filepath.Join(stageDir, "swap.sh")
@@ -1190,30 +980,22 @@ func launchSwap(stagedBin, stagedWebDir, stagedAgentsDir, stageDir, webDir, agen
 	return nil
 }
 
-func buildSwapScript(liveBin, stagedBin, stagedWebDir, stagedAgentsDir, stageDir, webDir, agentsDir, readyURL, lockPath, dbPath, rollbackDB string) string {
+func buildSwapScript(liveBin, stagedBin, stageDir, readyURL, lockPath, dbPath, rollbackDB string) string {
 	return fmt.Sprintf(`set -u
 umask 077
 sleep 2
 STAGE=%[1]s
 ROLLBACK="$STAGE/rollback"
 BIN=%[2]s
-WEB=%[3]s
-AGENTS=%[4]s
-NEWBIN=%[5]s
-NEWWEB=%[6]s
-NEWAGENTS=%[7]s
-SERVICE=%[8]s
-READY=%[9]s
-LOCK=%[10]s
-DB=%[11]s
-ROLLBACK_DB=%[12]s
+NEWBIN=%[3]s
+SERVICE=%[4]s
+READY=%[5]s
+LOCK=%[6]s
+DB=%[7]s
+ROLLBACK_DB=%[8]s
 RESULT="$STAGE/../result.json"
 OPERATION=${STAGE##*/}
 RESULT_RECORDED=0
-WEB_MOVED=0
-AGENTS_MOVED=0
-NEW_WEB_INSTALLED=0
-NEW_AGENTS_INSTALLED=0
 SNAPSHOT_READY=0
 ROLLBACK_FAILED=0
 
@@ -1239,22 +1021,6 @@ rollback_update() {
     return 1
   fi
   rm -f -- "$BIN.new" || ROLLBACK_FAILED=1
-  if [ "$NEW_WEB_INSTALLED" -eq 1 ]; then rm -rf -- "$WEB" || ROLLBACK_FAILED=1; fi
-  if [ "$NEW_AGENTS_INSTALLED" -eq 1 ]; then rm -rf -- "$AGENTS" || ROLLBACK_FAILED=1; fi
-  if [ "$WEB_MOVED" -eq 1 ]; then
-    if [ -e "$ROLLBACK/web" ]; then
-      mkdir -p "$(dirname "$WEB")" && mv "$ROLLBACK/web" "$WEB" || ROLLBACK_FAILED=1
-    else
-      ROLLBACK_FAILED=1
-    fi
-  fi
-  if [ "$AGENTS_MOVED" -eq 1 ]; then
-    if [ -e "$ROLLBACK/agents" ]; then
-      mkdir -p "$(dirname "$AGENTS")" && mv "$ROLLBACK/agents" "$AGENTS" || ROLLBACK_FAILED=1
-    else
-      ROLLBACK_FAILED=1
-    fi
-  fi
   if [ -f "$ROLLBACK/panel" ]; then
     install -m 0755 "$ROLLBACK/panel" "$BIN" || ROLLBACK_FAILED=1
   else
@@ -1296,13 +1062,6 @@ perform_update() {
     fi
   done
   SNAPSHOT_READY=1
-  if [ -e "$WEB" ]; then mv "$WEB" "$ROLLBACK/web" || return 1; WEB_MOVED=1; fi
-  if [ -e "$AGENTS" ]; then mv "$AGENTS" "$ROLLBACK/agents" || return 1; AGENTS_MOVED=1; fi
-  mkdir -p "$(dirname "$WEB")" "$(dirname "$AGENTS")" || return 1
-  mv "$NEWWEB" "$WEB" || return 1
-  NEW_WEB_INSTALLED=1
-  mv "$NEWAGENTS" "$AGENTS" || return 1
-  NEW_AGENTS_INSTALLED=1
   install -m 0755 "$NEWBIN" "$BIN.new" || return 1
   mv -f "$BIN.new" "$BIN" || return 1
   systemctl restart "$SERVICE" || return 1
@@ -1334,8 +1093,7 @@ while [ "$i" -lt 30 ]; do
 done
 if rollback_update; then report_result rolled_back && rm -rf -- "$STAGE"; fi
 exit 1`,
-		shellQuote(stageDir), shellQuote(liveBin), shellQuote(webDir), shellQuote(agentsDir),
-		shellQuote(stagedBin), shellQuote(stagedWebDir), shellQuote(stagedAgentsDir),
+		shellQuote(stageDir), shellQuote(liveBin), shellQuote(stagedBin),
 		shellQuote(serviceUnitName), shellQuote(readyURL), shellQuote(lockPath), shellQuote(dbPath), shellQuote(rollbackDB))
 }
 

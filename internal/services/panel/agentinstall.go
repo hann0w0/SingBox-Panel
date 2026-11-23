@@ -1,10 +1,13 @@
 package panel
 
 import (
+	"bytes"
 	"crypto/sha256"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"io"
+	"io/fs"
 	"log"
 	"net/http"
 	"os"
@@ -14,6 +17,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 
+	"github.com/hann0w0/singbox-panel/internal/assets"
 	"github.com/hann0w0/singbox-panel/internal/domain/model"
 )
 
@@ -156,6 +160,46 @@ func (a *App) handleAgentDownload(c *gin.Context) {
 		c.String(http.StatusBadRequest, "unsupported arch %q", arch)
 		return
 	}
+	if fsys, cacheable := a.agentsFS(); fsys != nil {
+		name := "singbox-panel-agent-linux-" + arch
+		checksum, err := assets.AgentChecksumFromFS(fsys, arch, cacheable)
+		if err != nil {
+			if errors.Is(err, fs.ErrNotExist) {
+				c.String(http.StatusNotFound, "agent binary not found")
+				return
+			}
+			log.Printf("checksum embedded agent binary (%s): %v", name, err)
+			c.String(http.StatusInternalServerError, "failed to read agent binary checksum")
+			return
+		}
+		f, err := fsys.Open(name)
+		if err != nil {
+			c.String(http.StatusNotFound, "agent binary not found")
+			return
+		}
+		defer f.Close()
+		info, err := f.Stat()
+		if err != nil {
+			c.String(http.StatusInternalServerError, "failed to read agent binary")
+			return
+		}
+		c.Header("X-SingBox-Panel-SHA256", checksum)
+		c.Header("ETag", `"sha256-`+checksum+`"`)
+		c.Header("Cache-Control", "private, max-age=300, must-revalidate")
+		c.Header("Content-Disposition", `attachment; filename="singbox-panel-agent"`)
+		c.Header("Content-Type", "application/octet-stream")
+		if rs, ok := f.(io.ReadSeeker); ok {
+			http.ServeContent(c.Writer, c.Request, "singbox-panel-agent", info.ModTime(), rs)
+			return
+		}
+		data, err := io.ReadAll(f)
+		if err != nil {
+			c.String(http.StatusInternalServerError, "failed to read agent binary")
+			return
+		}
+		http.ServeContent(c.Writer, c.Request, "singbox-panel-agent", info.ModTime(), bytes.NewReader(data))
+		return
+	}
 	path := filepath.Join(a.cfg.AgentsDir, "singbox-panel-agent-linux-"+arch)
 	if _, err := os.Stat(path); err != nil {
 		log.Printf("agent artifact missing (%s): %v", path, err)
@@ -181,6 +225,21 @@ func (a *App) handleAgentChecksum(c *gin.Context) {
 	arch := c.Query("arch")
 	if arch != "amd64" && arch != "arm64" {
 		c.String(http.StatusBadRequest, "unsupported arch %q", arch)
+		return
+	}
+	if fsys, cacheable := a.agentsFS(); fsys != nil {
+		checksum, err := assets.AgentChecksumFromFS(fsys, arch, cacheable)
+		if err != nil {
+			if errors.Is(err, fs.ErrNotExist) {
+				c.String(http.StatusNotFound, "agent binary not found")
+				return
+			}
+			log.Printf("checksum embedded agent binary (%s): %v", arch, err)
+			c.String(http.StatusInternalServerError, "failed to read agent binary checksum")
+			return
+		}
+		c.Header("Cache-Control", "private, max-age=300, must-revalidate")
+		c.String(http.StatusOK, "%s\n", checksum)
 		return
 	}
 	path := filepath.Join(a.cfg.AgentsDir, "singbox-panel-agent-linux-"+arch)

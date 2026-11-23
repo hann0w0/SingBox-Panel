@@ -825,48 +825,6 @@ verify_checksums_attestation() {
   info "Verified SLSA build provenance for checksums.txt"
 }
 
-validate_release_archive() {
-  local archive="$1"
-  local names_file=""
-  local verbose_file=""
-  local name=""
-  local listing=""
-  local entries=0
-  local uncompressed_size=""
-  names_file="$(make_temp)" || return 1
-  verbose_file="$(make_temp)" || {
-    rm -f -- "$names_file"
-    return 1
-  }
-  if ! tar -tzf "$archive" > "$names_file" || ! tar -tvzf "$archive" > "$verbose_file"; then
-    rm -f -- "$names_file" "$verbose_file"
-    return 1
-  fi
-  while IFS= read -r name; do
-    entries=$((entries + 1))
-    (( entries <= 20000 )) || { rm -f -- "$names_file" "$verbose_file"; return 1; }
-    name="${name#./}"
-    [[ -z "$name" ]] && continue
-    case "$name" in
-      /*|..|../*|*/../*|*/..|*\\*) rm -f -- "$names_file" "$verbose_file"; return 1 ;;
-    esac
-    [[ "$name" != *[[:cntrl:]]* ]] || { rm -f -- "$names_file" "$verbose_file"; return 1; }
-  done < "$names_file"
-  while IFS= read -r listing; do
-    case "${listing:0:1}" in
-      -|d) ;;
-      *) rm -f -- "$names_file" "$verbose_file"; return 1 ;;
-    esac
-  done < "$verbose_file"
-  uncompressed_size="$(gzip -cd -- "$archive" | wc -c | tr -d ' ')" || {
-    rm -f -- "$names_file" "$verbose_file"
-    return 1
-  }
-  rm -f -- "$names_file" "$verbose_file"
-  [[ "$uncompressed_size" =~ ^[0-9]+$ ]] || return 1
-  (( uncompressed_size <= 536870912 ))
-}
-
 yaml_double_quote() {
   local value="$1"
   value="${value//\\/\\\\}"
@@ -878,7 +836,7 @@ yaml_double_quote() {
 write_panel_config() {
   local config_temp=""
   local listen_yaml="" base_url_yaml="" secret_yaml=""
-  local agents_yaml="" web_yaml="" dsn_yaml="" admin_yaml="" password_yaml=""
+  local dsn_yaml="" admin_yaml="" password_yaml=""
   # mktemp already creates the file 0600; the explicit chmod after the rename
   # is what guarantees the final mode. No umask change, so nothing leaks into
   # the rest of the run.
@@ -886,8 +844,6 @@ write_panel_config() {
   listen_yaml="$(yaml_double_quote "127.0.0.1:${PANEL_PORT}")"
   base_url_yaml="$(yaml_double_quote "$BASE_URL")"
   secret_yaml="$(yaml_double_quote "$JWT_SECRET")"
-  agents_yaml="$(yaml_double_quote "$INSTALL_REAL/dist/agents")"
-  web_yaml="$(yaml_double_quote "$INSTALL_REAL/web/dist")"
   dsn_yaml="$(yaml_double_quote "$INSTALL_REAL/data/singbox-panel.db")"
   admin_yaml="$(yaml_double_quote "$ADMIN_USERNAME")"
   password_yaml="$(yaml_double_quote "$ADMIN_PASSWORD")"
@@ -900,9 +856,6 @@ environment: "production"
 listen: ${listen_yaml}
 base_url: ${base_url_yaml}
 jwt_secret: ${secret_yaml}
-
-agents_dir: ${agents_yaml}
-web_dir: ${web_yaml}
 
 database:
   driver: sqlite
@@ -920,6 +873,47 @@ EOF
   mv -f -- "$config_temp" "$PANEL_CONFIG" || return 1
   chown root:root "$PANEL_CONFIG" || return 1
   chmod 600 "$PANEL_CONFIG" || return 1
+}
+
+# Remove obsolete default agents_dir/web_dir lines from legacy installs so the
+# upgraded config reflects the single-binary layout without touching custom paths.
+prune_legacy_panel_asset_config() {
+  [[ -f "$PANEL_CONFIG" ]] || return 0
+  local config_temp=""
+  config_temp="$(mktemp "$INSTALL_REAL/panel.yaml.XXXXXX")" || return 1
+  if ! SB_INSTALL_REAL="$INSTALL_REAL" SB_INSTALL_DIR="${INSTALL_DIR%/}" awk '
+    function unquote(v) {
+      sub(/^[[:space:]]+/, "", v)
+      sub(/[[:space:]]+$/, "", v)
+      if ((substr(v, 1, 1) == "\"" && substr(v, length(v), 1) == "\"") ||
+          (substr(v, 1, 1) == "'"'"'" && substr(v, length(v), 1) == "'"'"'")) {
+        v = substr(v, 2, length(v) - 2)
+      }
+      return v
+    }
+    function is_legacy_path(v, root) {
+      if (root == "") return 0
+      return (v == root "/dist/agents" || v == root "/web/dist" ||
+              v == root "/agents" || v == root "/web")
+    }
+    /^(agents_dir|web_dir)[[:space:]]*:/ {
+      val = $0
+      sub(/^[^:]+:[[:space:]]*/, "", val)
+      val = unquote(val)
+      if (is_legacy_path(val, ENVIRON["SB_INSTALL_REAL"]) ||
+          is_legacy_path(val, ENVIRON["SB_INSTALL_DIR"])) {
+        next
+      }
+    }
+    { print }
+  ' "$PANEL_CONFIG" > "$config_temp"; then
+    rm -f -- "$config_temp"
+    return 1
+  fi
+  chown root:root "$config_temp" && chmod 600 "$config_temp" && mv -f -- "$config_temp" "$PANEL_CONFIG" || {
+    rm -f -- "$config_temp"
+    return 1
+  }
 }
 
 # Explicit endpoint overrides must be persisted without replacing unrelated
@@ -966,12 +960,18 @@ prepare_binary_permissions() {
     chown root:root "$PANEL_CONFIG" || return 1
     chmod 600 "$PANEL_CONFIG" || return 1
   fi
-  chown -R root:root "$INSTALL_REAL/dist" "$INSTALL_REAL/web" || return 1
-  find "$INSTALL_REAL/dist" "$INSTALL_REAL/web" -type d -exec chmod 755 {} + || return 1
-  find "$INSTALL_REAL/web" -type f -exec chmod 644 {} + || return 1
-  if [[ -d "$INSTALL_REAL/dist/agents" ]]; then
-    find "$INSTALL_REAL/dist/agents" -type f -exec chmod 644 {} + || return 1
-    find "$INSTALL_REAL/dist/agents" -type f -name 'singbox-panel-agent-linux-*' -exec chmod 755 {} + || return 1
+  if [[ -d "$INSTALL_REAL/dist" ]]; then
+    chown -R root:root "$INSTALL_REAL/dist" || return 1
+    find "$INSTALL_REAL/dist" -type d -exec chmod 755 {} + || return 1
+    if [[ -d "$INSTALL_REAL/dist/agents" ]]; then
+      find "$INSTALL_REAL/dist/agents" -type f -exec chmod 644 {} + || return 1
+      find "$INSTALL_REAL/dist/agents" -type f -name 'singbox-panel-agent-linux-*' -exec chmod 755 {} + || return 1
+    fi
+  fi
+  if [[ -d "$INSTALL_REAL/web" ]]; then
+    chown -R root:root "$INSTALL_REAL/web" || return 1
+    find "$INSTALL_REAL/web" -type d -exec chmod 755 {} + || return 1
+    find "$INSTALL_REAL/web" -type f -exec chmod 644 {} + || return 1
   fi
 }
 
@@ -1042,20 +1042,15 @@ EOF
 install_binary_panel() {
   local arch=""
   local binary_temp=""
-  local agents_temp=""
-  local web_temp=""
   local checksums_temp=""
-  local asset_stage=""
   local rollback_dir=""
   local had_previous_binary=0
-  local had_previous_agents=0
+  local had_previous_dist=0
   local had_previous_web=0
   local had_previous_unit=0
   local had_previous_config=0
   local service_enabled_by_install=0
   local data_snapshot_ready=0
-  local agents_name=""
-  local web_name=""
 
   ensure_private_tmp
   arch="$(release_arch)"
@@ -1070,13 +1065,10 @@ install_binary_panel() {
     die "GitHub returned an invalid release tag: $PANEL_VERSION"
   info "Installing $PANEL_VERSION for linux/$arch"
 
-  agents_name="singbox-panel-agents-${PANEL_VERSION}.tar.gz"
-  web_name="singbox-panel-web-${PANEL_VERSION}.tar.gz"
-
   install -d -m 755 "$INSTALL_DIR"
   INSTALL_REAL="$(cd -- "$INSTALL_DIR" && pwd -P)"
   PANEL_CONFIG="$INSTALL_REAL/panel.yaml"
-  install -d -m 700 "$INSTALL_REAL/data" "$INSTALL_REAL/dist" "$INSTALL_REAL/web"
+  install -d -m 700 "$INSTALL_REAL/data"
 
   checksums_temp="$(make_temp)"
   TEMP_FILES+=("$checksums_temp")
@@ -1089,32 +1081,8 @@ install_binary_panel() {
   fi
 
   binary_temp="$(make_temp)"
-  agents_temp="$(make_temp)"
-  web_temp="$(make_temp)"
-  TEMP_FILES+=("$binary_temp" "$agents_temp" "$web_temp")
+  TEMP_FILES+=("$binary_temp")
   download_release_asset "singbox-panel-linux-${arch}" "$binary_temp"
-  download_release_asset "$agents_name" "$agents_temp"
-  download_release_asset "$web_name" "$web_temp"
-
-  # Unpack away from the live tree. Nothing currently serving users is touched
-  # until every archive has been verified and fully extracted.
-  asset_stage="$(mktemp -d "$INSTALL_REAL/.assets.XXXXXX")"
-  TEMP_DIRS+=("$asset_stage")
-  install -d -m 755 "$asset_stage/agents" "$asset_stage/web"
-  validate_release_archive "$agents_temp" || die "$agents_name contains unsafe or oversized archive entries"
-  tar -xzf "$agents_temp" -C "$asset_stage/agents" || die "failed to extract $agents_name"
-  # A missing frontend still passes /api/health, so the panel would look fine
-  # while serving a blank page. Treat an unusable bundle as a failed install.
-  validate_release_archive "$web_temp" || die "$web_name contains unsafe or oversized archive entries"
-  tar -xzf "$web_temp" -C "$asset_stage/web" || die "failed to extract $web_name"
-  if [[ -n "$(find "$asset_stage/agents" "$asset_stage/web" ! -type f ! -type d -print -quit)" ]]; then
-    die "release archives created a link or special file"
-  fi
-  [[ -f "$asset_stage/web/index.html" ]] ||
-    die "$web_name did not contain index.html; the frontend bundle is unusable"
-  [[ -x "$asset_stage/agents/singbox-panel-agent-linux-amd64" &&
-     -x "$asset_stage/agents/singbox-panel-agent-linux-arm64" ]] ||
-    die "$agents_name did not contain both executable Agent binaries"
 
   rollback_dir="$(mktemp -d "$INSTALL_REAL/.rollback.XXXXXX")"
   TEMP_DIRS+=("$rollback_dir")
@@ -1151,12 +1119,19 @@ install_binary_panel() {
     info "Keeping the existing $PANEL_CONFIG (pass --configure to rewrite it)"
   fi
 
+  if [[ "$had_previous_config" -eq 1 && "$CONFIGURE" -eq 0 ]]; then
+    if ! prune_legacy_panel_asset_config; then
+      cp -p -- "$rollback_dir/config" "$PANEL_CONFIG" || true
+      die "failed to clean legacy web_dir/agents_dir entries in $PANEL_CONFIG"
+    fi
+  fi
+
   if [[ -f "$PANEL_BIN" ]]; then
     cp -p -- "$PANEL_BIN" "$rollback_dir/panel"
     had_previous_binary=1
   fi
-  if [[ -d "$INSTALL_REAL/dist/agents" ]]; then had_previous_agents=1; fi
-  if [[ -d "$INSTALL_REAL/web/dist" ]]; then had_previous_web=1; fi
+  if [[ -d "$INSTALL_REAL/dist" ]]; then had_previous_dist=1; fi
+  if [[ -d "$INSTALL_REAL/web" ]]; then had_previous_web=1; fi
   if [[ -f "$SERVICE_FILE" ]]; then
     cp -p -- "$SERVICE_FILE" "$rollback_dir/service"
     had_previous_unit=1
@@ -1185,30 +1160,28 @@ install_binary_panel() {
     die "failed to snapshot the database before replacing the release"
   fi
   data_snapshot_ready=1
-  if [[ "$had_previous_agents" -eq 1 ]] && ! mv -- "$INSTALL_REAL/dist/agents" "$rollback_dir/agents"; then
-    restore_previous_install_or_die "$rollback_dir" "$had_previous_binary" "$had_previous_agents" "$had_previous_web" "$had_previous_unit" "$had_previous_config" "$data_snapshot_ready" "$service_enabled_by_install"
-    die "failed to stage the previous Agent bundle"
+
+  # Move legacy on-disk frontend and Agent directories into the rollback bundle
+  # so they are restored on failure and completely deleted once the single
+  # binary passes health checks.
+  if [[ "$had_previous_dist" -eq 1 ]] && ! mv -- "$INSTALL_REAL/dist" "$rollback_dir/dist"; then
+    restore_previous_install_or_die "$rollback_dir" "$had_previous_binary" "$had_previous_dist" "$had_previous_web" "$had_previous_unit" "$had_previous_config" "$data_snapshot_ready" "$service_enabled_by_install"
+    die "failed to stage legacy Agent directory for cleanup"
   fi
-  if [[ "$had_previous_web" -eq 1 ]] && ! mv -- "$INSTALL_REAL/web/dist" "$rollback_dir/web"; then
-    restore_previous_install_or_die "$rollback_dir" "$had_previous_binary" "$had_previous_agents" "$had_previous_web" "$had_previous_unit" "$had_previous_config" "$data_snapshot_ready" "$service_enabled_by_install"
-    die "failed to stage the previous frontend bundle"
+  if [[ "$had_previous_web" -eq 1 ]] && ! mv -- "$INSTALL_REAL/web" "$rollback_dir/web"; then
+    restore_previous_install_or_die "$rollback_dir" "$had_previous_binary" "$had_previous_dist" "$had_previous_web" "$had_previous_unit" "$had_previous_config" "$data_snapshot_ready" "$service_enabled_by_install"
+    die "failed to stage legacy frontend directory for cleanup"
   fi
-  if ! install -d -m 755 "$INSTALL_REAL/dist" "$INSTALL_REAL/web"; then
-    restore_previous_install_or_die "$rollback_dir" "$had_previous_binary" "$had_previous_agents" "$had_previous_web" "$had_previous_unit" "$had_previous_config" "$data_snapshot_ready" "$service_enabled_by_install"
-    die "failed to prepare release directories"
-  fi
-  if ! mv -- "$asset_stage/agents" "$INSTALL_REAL/dist/agents" ||
-     ! mv -- "$asset_stage/web" "$INSTALL_REAL/web/dist" ||
-     ! install -m 0755 "$binary_temp" "$PANEL_BIN"; then
-    restore_previous_install_or_die "$rollback_dir" "$had_previous_binary" "$had_previous_agents" "$had_previous_web" "$had_previous_unit" "$had_previous_config" "$data_snapshot_ready" "$service_enabled_by_install"
-    die "failed to install the complete release bundle"
+  if ! install -m 0755 "$binary_temp" "$PANEL_BIN"; then
+    restore_previous_install_or_die "$rollback_dir" "$had_previous_binary" "$had_previous_dist" "$had_previous_web" "$had_previous_unit" "$had_previous_config" "$data_snapshot_ready" "$service_enabled_by_install"
+    die "failed to install $PANEL_BIN"
   fi
   if ! prepare_binary_permissions; then
-    restore_previous_install_or_die "$rollback_dir" "$had_previous_binary" "$had_previous_agents" "$had_previous_web" "$had_previous_unit" "$had_previous_config" "$data_snapshot_ready" "$service_enabled_by_install"
+    restore_previous_install_or_die "$rollback_dir" "$had_previous_binary" "$had_previous_dist" "$had_previous_web" "$had_previous_unit" "$had_previous_config" "$data_snapshot_ready" "$service_enabled_by_install"
     die "failed to apply secure file permissions"
   fi
   if ! write_service_unit; then
-    restore_previous_install_or_die "$rollback_dir" "$had_previous_binary" "$had_previous_agents" "$had_previous_web" "$had_previous_unit" "$had_previous_config" "$data_snapshot_ready" "$service_enabled_by_install"
+    restore_previous_install_or_die "$rollback_dir" "$had_previous_binary" "$had_previous_dist" "$had_previous_web" "$had_previous_unit" "$had_previous_config" "$data_snapshot_ready" "$service_enabled_by_install"
     die "failed to install the systemd service unit"
   fi
   if systemctl enable "$SERVICE_NAME" >/dev/null 2>&1; then
@@ -1217,23 +1190,23 @@ install_binary_panel() {
 
   info "Starting $SERVICE_NAME"
   if ! systemctl restart "$SERVICE_NAME"; then
-    restore_previous_install_or_die "$rollback_dir" "$had_previous_binary" "$had_previous_agents" "$had_previous_web" "$had_previous_unit" "$had_previous_config" "$data_snapshot_ready" "$service_enabled_by_install"
+    restore_previous_install_or_die "$rollback_dir" "$had_previous_binary" "$had_previous_dist" "$had_previous_web" "$had_previous_unit" "$had_previous_config" "$data_snapshot_ready" "$service_enabled_by_install"
     die "failed to start $SERVICE_NAME"
   fi
 
   if ! wait_for_health; then
     printf 'Error: the panel did not become healthy in 60 seconds. Recent logs follow:\n' >&2
     journalctl -u "$SERVICE_NAME" -n 100 --no-pager >&2 2>/dev/null || true
-    restore_previous_install_or_die "$rollback_dir" "$had_previous_binary" "$had_previous_agents" "$had_previous_web" "$had_previous_unit" "$had_previous_config" "$data_snapshot_ready" "$service_enabled_by_install"
+    restore_previous_install_or_die "$rollback_dir" "$had_previous_binary" "$had_previous_dist" "$had_previous_web" "$had_previous_unit" "$had_previous_config" "$data_snapshot_ready" "$service_enabled_by_install"
     die "installation failed; see the logs above"
   fi
 
   if ! clear_binary_bootstrap_password || ! systemctl restart "$SERVICE_NAME" || ! wait_for_health; then
-    restore_previous_install_or_die "$rollback_dir" "$had_previous_binary" "$had_previous_agents" "$had_previous_web" "$had_previous_unit" "$had_previous_config" "$data_snapshot_ready" "$service_enabled_by_install"
+    restore_previous_install_or_die "$rollback_dir" "$had_previous_binary" "$had_previous_dist" "$had_previous_web" "$had_previous_unit" "$had_previous_config" "$data_snapshot_ready" "$service_enabled_by_install"
     die "failed to remove the one-time administrator password; the previous installation was restored"
   fi
   BOOTSTRAP_PASSWORD_WRITTEN=0
-  rm -rf -- "$rollback_dir" "$asset_stage"
+  rm -rf -- "$rollback_dir"
   info "SingBox Panel is healthy"
   print_binary_summary
 }
@@ -1241,7 +1214,7 @@ install_binary_panel() {
 restore_previous_install() {
   local rollback_dir="$1"
   local had_binary="$2"
-  local had_agents="$3"
+  local had_dist="$3"
   local had_web="$4"
   local had_unit="$5"
   local had_config="$6"
@@ -1250,27 +1223,21 @@ restore_previous_install() {
   local failed=0
   printf 'Restoring the previous panel release\n' >&2
   systemctl stop "$SERVICE_NAME" >/dev/null 2>&1 || true
-  if [[ -d "$rollback_dir/agents" ]]; then
-    if ! rm -rf -- "$INSTALL_REAL/dist/agents" ||
-       ! install -d -m 755 "$INSTALL_REAL/dist" ||
-       ! mv -- "$rollback_dir/agents" "$INSTALL_REAL/dist/agents"; then
+  if [[ -d "$rollback_dir/dist" ]]; then
+    if ! rm -rf -- "$INSTALL_REAL/dist" ||
+       ! mv -- "$rollback_dir/dist" "$INSTALL_REAL/dist"; then
       failed=1
     fi
-  elif [[ "$had_agents" -eq 1 ]]; then
+  elif [[ "$had_dist" -eq 1 ]]; then
     failed=1
-  elif [[ "$had_agents" -eq 0 ]]; then
-    rm -rf -- "$INSTALL_REAL/dist/agents" || failed=1
   fi
   if [[ -d "$rollback_dir/web" ]]; then
-    if ! rm -rf -- "$INSTALL_REAL/web/dist" ||
-       ! install -d -m 755 "$INSTALL_REAL/web" ||
-       ! mv -- "$rollback_dir/web" "$INSTALL_REAL/web/dist"; then
+    if ! rm -rf -- "$INSTALL_REAL/web" ||
+       ! mv -- "$rollback_dir/web" "$INSTALL_REAL/web"; then
       failed=1
     fi
   elif [[ "$had_web" -eq 1 ]]; then
     failed=1
-  elif [[ "$had_web" -eq 0 ]]; then
-    rm -rf -- "$INSTALL_REAL/web/dist" || failed=1
   fi
   if [[ "$had_binary" -eq 1 && -f "$rollback_dir/panel" ]]; then
     install -m 0755 "$rollback_dir/panel" "$PANEL_BIN" || failed=1

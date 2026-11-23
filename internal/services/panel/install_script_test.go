@@ -1,9 +1,7 @@
 package panel
 
 import (
-	"archive/tar"
 	"bytes"
-	"compress/gzip"
 	"crypto/sha256"
 	"fmt"
 	"os"
@@ -130,39 +128,6 @@ func TestBinaryInstallerHelpAndEarlyExitCleanup(t *testing.T) {
 	}
 }
 
-func writeTarGzFixture(t *testing.T, path string, entries map[string]struct {
-	mode int64
-	body []byte
-}) []byte {
-	t.Helper()
-	var buf bytes.Buffer
-	gw := gzip.NewWriter(&buf)
-	tw := tar.NewWriter(gw)
-	for name, entry := range entries {
-		if err := tw.WriteHeader(&tar.Header{
-			Name: name,
-			Mode: entry.mode,
-			Size: int64(len(entry.body)),
-		}); err != nil {
-			t.Fatal(err)
-		}
-		if _, err := tw.Write(entry.body); err != nil {
-			t.Fatal(err)
-		}
-	}
-	if err := tw.Close(); err != nil {
-		t.Fatal(err)
-	}
-	if err := gw.Close(); err != nil {
-		t.Fatal(err)
-	}
-	data := buf.Bytes()
-	if err := os.WriteFile(path, data, 0o644); err != nil {
-		t.Fatal(err)
-	}
-	return data
-}
-
 func TestBinaryInstallerUninstallAndInstallSuccessPaths(t *testing.T) {
 	if _, err := exec.LookPath("bash"); err != nil {
 		t.Skip("bash is required to execute install.sh")
@@ -199,33 +164,15 @@ func TestBinaryInstallerUninstallAndInstallSuccessPaths(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	// Build verifiable release fixtures.
-	version := "v1.0.13"
+	// Build verifiable single-binary release fixtures.
+	version := "v1.0.17"
 	binaryBytes := []byte("#!/bin/sh\nexit 0\n")
 	binaryPath := filepath.Join(fixtureDir, "singbox-panel-linux-amd64")
 	if err := os.WriteFile(binaryPath, binaryBytes, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	agentsTarBytes := writeTarGzFixture(t, filepath.Join(fixtureDir, "singbox-panel-agents-"+version+".tar.gz"), map[string]struct {
-		mode int64
-		body []byte
-	}{
-		"singbox-panel-agent-linux-amd64": {mode: 0o755, body: []byte("amd64-agent")},
-		"singbox-panel-agent-linux-arm64": {mode: 0o755, body: []byte("arm64-agent")},
-	})
-	webTarBytes := writeTarGzFixture(t, filepath.Join(fixtureDir, "singbox-panel-web-"+version+".tar.gz"), map[string]struct {
-		mode int64
-		body []byte
-	}{
-		"index.html": {mode: 0o644, body: []byte("<html>ok</html>")},
-	})
 
-	sum := func(name string, data []byte) string {
-		return fmt.Sprintf("%x  %s\n", sha256.Sum256(data), name)
-	}
-	checksums := sum("singbox-panel-linux-amd64", binaryBytes) +
-		sum("singbox-panel-agents-"+version+".tar.gz", agentsTarBytes) +
-		sum("singbox-panel-web-"+version+".tar.gz", webTarBytes)
+	checksums := fmt.Sprintf("%x  %s\n", sha256.Sum256(binaryBytes), "singbox-panel-linux-amd64")
 	if err := os.WriteFile(filepath.Join(fixtureDir, "checksums.txt"), []byte(checksums), 0o644); err != nil {
 		t.Fatal(err)
 	}
@@ -299,22 +246,78 @@ esac
 	if _, err := os.Stat(serviceFile); err != nil {
 		t.Fatalf("expected systemd unit at %s: %v", serviceFile, err)
 	}
-	if _, err := os.Stat(filepath.Join(installDir, "web", "dist", "index.html")); err != nil {
-		t.Fatalf("expected frontend bundle: %v", err)
+	if _, err := os.Stat(filepath.Join(installDir, "web")); !os.IsNotExist(err) {
+		t.Fatalf("single-binary install must not create legacy web directory: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(installDir, "dist")); !os.IsNotExist(err) {
+		t.Fatalf("single-binary install must not create legacy dist directory: %v", err)
+	}
+	cfgBytes, err := os.ReadFile(filepath.Join(installDir, "panel.yaml"))
+	if err != nil {
+		t.Fatalf("read panel.yaml: %v", err)
+	}
+	if strings.Contains(string(cfgBytes), "web_dir:") || strings.Contains(string(cfgBytes), "agents_dir:") {
+		t.Fatalf("fresh single-binary config must not include web_dir/agents_dir: %s", cfgBytes)
 	}
 	if leftover, err := filepath.Glob(filepath.Join(tmpDir, "singbox-panel*")); err != nil || len(leftover) > 0 {
 		t.Fatalf("expected temp files cleaned up, found %v (err=%v)", leftover, err)
 	}
-	for _, pattern := range []string{filepath.Join(installDir, ".assets.*"), filepath.Join(installDir, ".rollback.*")} {
-		if leftover, err := filepath.Glob(pattern); err != nil || len(leftover) > 0 {
-			t.Fatalf("expected staging/rollback dirs (%s) cleaned up, found %v (err=%v)", pattern, leftover, err)
-		}
+	if leftover, err := filepath.Glob(filepath.Join(installDir, ".rollback.*")); err != nil || len(leftover) > 0 {
+		t.Fatalf("expected rollback dirs cleaned up, found %v (err=%v)", leftover, err)
 	}
 
-	// 2. Non-purge uninstall path (keeps data/ and panel.yaml, TEMP_FILES/TEMP_DIRS empty).
+	// 1b. Legacy upgrade removes leftover web/ and dist/ directories and prunes
+	// default web_dir/agents_dir lines while preserving database and custom keys.
+	if err := os.MkdirAll(filepath.Join(installDir, "web", "dist"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(installDir, "web", "dist", "index.html"), []byte("old-web"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Join(installDir, "dist", "agents"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(installDir, "dist", "agents", "singbox-panel-agent-linux-amd64"), []byte("old-agent"), 0o755); err != nil {
+		t.Fatal(err)
+	}
 	if err := os.WriteFile(filepath.Join(installDir, "data", "keep.db"), []byte("db"), 0o600); err != nil {
 		t.Fatal(err)
 	}
+	realInstallDir, err := filepath.EvalSymlinks(installDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	legacyCfg := string(cfgBytes) +
+		fmt.Sprintf("agents_dir: %q\nweb_dir: %q\n", filepath.Join(realInstallDir, "dist", "agents"), filepath.Join(realInstallDir, "web", "dist"))
+	if err := os.WriteFile(filepath.Join(installDir, "panel.yaml"), []byte(legacyCfg), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	stdout, _ = runSandboxed(
+		"--install-dir", installDir,
+		"--version", version,
+		"--non-interactive",
+	)
+	if !strings.Contains(stdout, "Installation complete.") {
+		t.Fatalf("upgrade output missing completion summary: %s", stdout)
+	}
+	if _, err := os.Stat(filepath.Join(installDir, "web")); !os.IsNotExist(err) {
+		t.Fatalf("legacy web directory survived upgrade: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(installDir, "dist")); !os.IsNotExist(err) {
+		t.Fatalf("legacy dist/agents directory survived upgrade: %v", err)
+	}
+	upgradedCfg, err := os.ReadFile(filepath.Join(installDir, "panel.yaml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(upgradedCfg), "web_dir:") || strings.Contains(string(upgradedCfg), "agents_dir:") {
+		t.Fatalf("legacy default web_dir/agents_dir lines survived upgrade: %s", upgradedCfg)
+	}
+	if _, err := os.Stat(filepath.Join(installDir, "data", "keep.db")); err != nil {
+		t.Fatalf("upgrade must preserve database: %v", err)
+	}
+
+	// 2. Non-purge uninstall path (keeps data/ and panel.yaml, TEMP_FILES/TEMP_DIRS empty).
 	stdout, _ = runSandboxed("--install-dir", installDir, "--uninstall", "--yes")
 	if !strings.Contains(stdout, "SingBox Panel uninstalled.") {
 		t.Fatalf("uninstall output missing summary: %s", stdout)

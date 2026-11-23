@@ -1,6 +1,10 @@
 # build output
 /dist/
 /web/dist/
+/internal/assets/web/*
+!/internal/assets/web/.gitkeep
+/internal/assets/agents/*
+!/internal/assets/agents/.gitkeep
 /agent
 /panel
 /singbox-panel

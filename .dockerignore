@@ -6,6 +6,10 @@
 !cmd/**
 !internal/
 !internal/**
+internal/assets/web/*
+!internal/assets/web/.gitkeep
+internal/assets/agents/*
+!internal/assets/agents/.gitkeep
 !web/
 !web/**
 web/node_modules

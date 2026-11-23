@@ -1,8 +1,10 @@
 import { useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from 'react'
+import { ArrowLeftRight, Info } from 'lucide-react'
 import { EditorModeToggle } from '../../../components/EditorModeToggle'
 import { JsonCodeEditor } from '../../../components/JsonCodeEditor'
 import { SchemaFieldList } from '../../../components/SchemaFormFields'
-import { Alert, Button, Form, Input, InputNumber, Modal, Segmented, Select, Space, Switch, type FormInstance } from '../../../components/kit'
+import { Alert, Button, Form, Input, InputNumber, Modal, Segmented, Select, Space, Switch, Tooltip, type FormInstance } from '../../../components/kit'
+import { TooltipProvider } from '../../../components/ui/tooltip'
 import { createInbound, updateInbound } from '../../../lib/api'
 import { applyWithToast } from '../../../lib/configApply'
 import {
@@ -155,6 +157,7 @@ export function toForm(ib: Inbound | null): FormVals {
     return {
       type: 'shadowsocks',
       listen_port: randomPort(),
+      client_port: undefined,
       listen_mode: 'all',
       enabled: true,
       flow: 'xtls-rprx-vision',
@@ -193,6 +196,7 @@ export function toForm(ib: Inbound | null): FormVals {
     type: ib.type,
     tag: ib.tag,
     listen_port: ib.listen_port,
+    client_port: s.client_port || undefined,
     listen_mode: s.ipv6_only ? 'ipv6' : s.listen === '0.0.0.0' ? 'ipv4' : s.listen === '127.0.0.1' || s.listen === '::1' ? 'local' : 'all',
     enabled: ib.enabled,
     // Keep invalid ChaCha opt-ins visible until the administrator fixes them.
@@ -271,6 +275,16 @@ export function assembleSettings(
   }
   if (extraRaw && typeof extraRaw.listen === 'string' && extraRaw.listen !== base.raw?.listen) {
     s.listen = extraRaw.listen
+  }
+  if (type === 'tun') {
+    delete s.client_port
+  } else {
+    const clientPort = Number(v.client_port)
+    if (Number.isInteger(clientPort) && clientPort >= 1 && clientPort <= 65535) {
+      s.client_port = clientPort
+    } else {
+      delete s.client_port
+    }
   }
 
   // Multi-user is explicit and capability-gated. Snell and legacy
@@ -489,6 +503,7 @@ export default function InboundForm({
   const invalidSSMultiUser = type === 'shadowsocks' && method === SS2022_CHACHA_METHOD && requestedMultiUser
   const guardEnabled = !!Form.useWatch('guard_enabled', form)
   const listenMode = Form.useWatch('listen_mode', form)
+  const listenPort = Form.useWatch('listen_port', form)
   const maxEarlyData = Form.useWatch('max_early_data', form)
   const earlyDataHeader = Form.useWatch('early_data_header', form)
 
@@ -808,12 +823,48 @@ export default function InboundForm({
                   ...(ipv6Available ? [{ value: 'ipv6', label: 'IPv6' }] : []),
                 ]} placeholder={listenMode === 'ipv6' ? 'IPv6 不可用' : undefined} />
               </Form.Item>
-              <Form.Item name="listen_port" label="端口">
-                <InputNumber precision={0} min={1} max={65535} className="mono" />
-              </Form.Item>
+              <TooltipProvider delayDuration={180}>
+                <div className="fm-full inbound-port-pair">
+                  <Form.Item
+                    name="client_port"
+                    label={(
+                      <span className="inbound-label-hint">
+                        连接端口
+                        <Tooltip title="客户端订阅与节点链接使用的端口，留空则与服务端口一致">
+                          <Info className="inbound-hint-icon" aria-hidden="true" />
+                        </Tooltip>
+                      </span>
+                    )}
+                  >
+                    <InputNumber
+                      precision={0}
+                      min={1}
+                      max={65535}
+                      placeholder={listenPort ? String(listenPort) : '同服务端口'}
+                      className="mono"
+                    />
+                  </Form.Item>
+                  <span className="inbound-port-pair-sep" aria-hidden="true">
+                    <ArrowLeftRight size={14} strokeWidth={1.75} />
+                  </span>
+                  <Form.Item
+                    name="listen_port"
+                    label={(
+                      <span className="inbound-label-hint">
+                        服务端口
+                        <Tooltip title="服务端 sing-box 实际监听运行的端口">
+                          <Info className="inbound-hint-icon" aria-hidden="true" />
+                        </Tooltip>
+                      </span>
+                    )}
+                  >
+                    <InputNumber precision={0} min={1} max={65535} className="mono" />
+                  </Form.Item>
+                </div>
+              </TooltipProvider>
             </>
           )}
-          <Form.Item name="tag" label="标签">
+          <Form.Item name="tag" label="标签" className={type !== 'tun' ? 'fm-full' : undefined}>
             <Input />
           </Form.Item>
           {type === 'shadowsocks' && (

@@ -167,4 +167,29 @@ describe('InboundForm JSON Schema integration', () => {
     expect(validateObjectBySchema(DEFAULT_INBOUND_SCHEMA, { type: 'mixed', listen_port: 70000 })).toContain('不能大于 65535')
     expect(validateObjectBySchema(DEFAULT_INBOUND_SCHEMA, { type: 'mixed', listen_port: 1080, set_system_proxy: false })).toBeNull()
   })
+
+  it('submits separate connection and service ports and preserves client_port across JSON mode', async () => {
+    render(<InboundForm serverId={1} inbound={null} open onClose={vi.fn()} onSaved={vi.fn()} />)
+
+    fireEvent.change(screen.getByLabelText('连接端口'), { target: { value: '443' } })
+    fireEvent.change(screen.getByLabelText('服务端口'), { target: { value: '1443' } })
+
+    // Switching to JSON shows native sing-box listen_port without panel-only client_port.
+    fireEvent.click(screen.getByRole('radio', { name: 'JSON' }))
+    const editor = screen.getByLabelText('inbound.json') as HTMLTextAreaElement
+    const native = JSON.parse(editor.value)
+    expect(native.listen_port).toBe(1443)
+    expect(native.client_port).toBeUndefined()
+
+    // Returning to form preserves client_port=443.
+    fireEvent.click(screen.getByRole('radio', { name: 'Form' }))
+    expect((screen.getByLabelText('连接端口') as HTMLInputElement).value).toBe('443')
+    expect((screen.getByLabelText('服务端口') as HTMLInputElement).value).toBe('1443')
+
+    fireEvent.click(screen.getByRole('button', { name: '保存' }))
+    await waitFor(() => expect(createInbound).toHaveBeenCalledOnce())
+    const body = vi.mocked(createInbound).mock.calls[0][1]
+    expect(body.listen_port).toBe(1443)
+    expect(body.settings?.client_port).toBe(443)
+  })
 })

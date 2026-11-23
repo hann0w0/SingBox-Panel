@@ -10,6 +10,7 @@ import {
   Space,
   Switch,
   Table,
+  Tooltip,
   Typography,
   message,
 } from '../../../components/kit'
@@ -824,7 +825,25 @@ export default function ServerDetail() {
       columns={[
         { title: '标签', dataIndex: 'tag', render: (v: string) => <span className="sd-strong">{v}</span> },
         { title: '协议', dataIndex: 'type', render: (v: string) => <ProtocolTag type={v} /> },
-        { title: '端口', dataIndex: 'listen_port', render: (v: number) => (v > 0 ? <span className="mono">{v}</span> : <span className="faint">—</span>) },
+        {
+          title: '端口',
+          dataIndex: 'listen_port',
+          render: (v: number, ib: Inbound) => {
+            const clientPort = ib.settings?.client_port
+            if (clientPort && clientPort > 0 && clientPort !== v) {
+              return (
+                <Tooltip title={`连接端口 ${clientPort} ⇄ 服务端口 ${v}`}>
+                  <span className="mono">
+                    {clientPort}
+                    <span className="faint"> ⇄ </span>
+                    <span className="muted">{v}</span>
+                  </span>
+                </Tooltip>
+              )
+            }
+            return v > 0 ? <span className="mono">{v}</span> : <span className="faint">—</span>
+          },
+        },
         { title: '用户', render: (_, ib: Inbound) => <span className="muted">{ib.settings?.multi_user ? '多用户' : '单用户'}</span> },
         { title: '', width: 88, align: 'right', render: (_, ib: Inbound) => rowActions(() => { setEditing(ib); setFormOpen(true) }, () => onDeleteInbound(ib), `入站 ${ib.tag}`) },
       ]}

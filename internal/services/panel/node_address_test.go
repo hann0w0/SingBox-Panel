@@ -220,3 +220,111 @@ func TestAddressChangeRebuildsDependentOutbound(t *testing.T) {
 		t.Fatalf("missing address silently used stale snapshot: %v", err)
 	}
 }
+
+func TestInboundClientPortMultiplexes443AcrossSubscriptionsAndExports(t *testing.T) {
+	db := testDB(t)
+	server := model.Server{
+		Name:       "edge-hk",
+		Address:    "edge.example.com",
+		PublicIP:   "203.0.113.10",
+		AgentToken: "test-client-port",
+	}
+	if err := db.Create(&server).Error; err != nil {
+		t.Fatal(err)
+	}
+	hub := NewHub(db)
+	app := &App{db: db, hub: hub, orch: NewOrchestrator(db, hub)}
+
+	vlessSettings := singbox.InboundSettings{
+		Listen:     "127.0.0.1",
+		ClientPort: 443,
+		SingleUser: true,
+		UUID:       "11111111-2222-4333-8444-555555555555",
+		TLS: singbox.TLSSettings{
+			Enabled:    true,
+			ServerName: "vless.example.com",
+			ACMEDomain: "vless.example.com",
+		},
+	}
+	trojanSettings := singbox.InboundSettings{
+		Listen:     "::",
+		ClientPort: 443,
+		SingleUser: true,
+		Password:   "trojan-secret",
+		TLS: singbox.TLSSettings{
+			Enabled:    true,
+			ServerName: "trojan.example.com",
+			ACMEDomain: "trojan.example.com",
+		},
+	}
+
+	if err := app.validateInboundConfiguration(db, server.ID, 0, "vless-in", "vless", 1443, vlessSettings); err != nil {
+		t.Fatalf("vless validation failed: %v", err)
+	}
+	vlessRaw, _ := json.Marshal(vlessSettings)
+	vlessIB := model.Inbound{ServerID: server.ID, Tag: "vless-in", Type: model.InboundVLESS, ListenPort: 1443, Enabled: true, Settings: vlessRaw}
+	if err := db.Create(&vlessIB).Error; err != nil {
+		t.Fatal(err)
+	}
+
+	// Sharing client_port=443 across multiple protocols on distinct listen_ports is valid.
+	if err := app.validateInboundConfiguration(db, server.ID, 0, "trojan-in", "trojan", 2443, trojanSettings); err != nil {
+		t.Fatalf("trojan sharing client_port=443 rejected: %v", err)
+	}
+	trojanRaw, _ := json.Marshal(trojanSettings)
+	trojanIB := model.Inbound{ServerID: server.ID, Tag: "trojan-in", Type: model.InboundTrojan, ListenPort: 2443, Enabled: true, Settings: trojanRaw}
+	if err := db.Create(&trojanIB).Error; err != nil {
+		t.Fatal(err)
+	}
+
+	// Subscriptions advertise 443 for both protocols, including the 127.0.0.1 listener.
+	user := model.User{ServerIDs: []uint{server.ID}}
+	nodes, err := app.gatherNodesWithError(&user)
+	if err != nil {
+		t.Fatalf("gatherNodesWithError: %v", err)
+	}
+	if len(nodes) != 2 {
+		t.Fatalf("got %d subscription nodes, want 2: %+v", len(nodes), nodes)
+	}
+	for _, n := range nodes {
+		if n.server != "edge.example.com" || n.port != 443 {
+			t.Fatalf("node %s exported %s:%d, want edge.example.com:443", n.tag, n.server, n.port)
+		}
+	}
+
+	// Admin single-server node format export also advertises 443.
+	router := gin.New()
+	router.GET("/servers/:id/export", app.serverNodeFormats)
+	rec := httptest.NewRecorder()
+	router.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, fmt.Sprintf("/servers/%d/export", server.ID), nil))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("export status=%d body=%s", rec.Code, rec.Body.String())
+	}
+	var exported struct {
+		URI string `json:"uri"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &exported); err != nil {
+		t.Fatalf("decode export: %v", err)
+	}
+	if !strings.Contains(exported.URI, "@edge.example.com:443") || strings.Contains(exported.URI, ":1443") || strings.Contains(exported.URI, ":2443") {
+		t.Fatalf("unexpected exported URIs: %s", exported.URI)
+	}
+
+	// Cross-server outbound import dials client_port 443.
+	client, err := app.inboundOutboundClient(vlessIB.ID, 99)
+	if err != nil || client.Server != "edge.example.com" || client.ServerPort != 443 {
+		t.Fatalf("inboundOutboundClient = %+v err=%v", client, err)
+	}
+
+	// Server sing-box config still binds the actual service ports 1443 and 2443.
+	cfg, err := app.orch.BuildServerConfig(&server)
+	if err != nil {
+		t.Fatalf("BuildServerConfig: %v", err)
+	}
+	if !strings.Contains(string(cfg), `"listen_port": 1443`) || !strings.Contains(string(cfg), `"listen_port": 2443`) {
+		t.Fatalf("server config lost service listen ports: %s", cfg)
+	}
+	if strings.Contains(string(cfg), "client_port") {
+		t.Fatalf("server config leaked client_port: %s", cfg)
+	}
+}

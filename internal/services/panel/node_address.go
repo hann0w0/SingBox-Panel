@@ -31,13 +31,40 @@ func setServerAddressAvailability(server *model.Server) {
 	_, server.IPv6Available = publicAddress(server.PublicIPv6, true)
 }
 
+func serverPublicNodeAddress(server *model.Server) (string, error) {
+	host, err := normalizeNodeAddress(server.Address)
+	if err != nil {
+		return "", err
+	}
+	if host == "" || isLoopbackOrUnspecifiedHost(host) {
+		host, _ = publicAddress(server.PublicIP, false)
+	}
+	if host == "" {
+		host, _ = publicAddress(server.PublicIPv6, true)
+	}
+	if host == "" || isLoopbackOrUnspecifiedHost(host) {
+		return "", fmt.Errorf("服务器 %q 没有可用的公网连接地址", server.Name)
+	}
+	return host, nil
+}
+
 func inboundNodeAddress(server *model.Server, settings *singbox.InboundSettings) (string, error) {
 	listen, err := netip.ParseAddr(settings.ListenAddress())
 	if err != nil {
 		return "", fmt.Errorf("无效的入站监听地址")
 	}
 	if listen.IsLoopback() {
-		return "", errLocalInbound
+		// Loopback listeners stay local unless an explicit public client port
+		// is configured (e.g. local Nginx SNI router on 443 -> 127.0.0.1:1443).
+		if settings.ClientPort <= 0 {
+			return "", errLocalInbound
+		}
+		host, err := serverPublicNodeAddress(server)
+		if err != nil {
+			return "", err
+		}
+		preserveNodeTLSName(server.Address, host, settings)
+		return host, nil
 	}
 	if !listen.IsUnspecified() {
 		if host, ok := publicAddress(listen.String(), listen.Is6()); ok {
@@ -63,18 +90,9 @@ func inboundNodeAddress(server *model.Server, settings *singbox.InboundSettings)
 			return "", fmt.Errorf("服务器 %q 尚无有效的公网 IPv4，请检查 Agent 或填写 IPv4 地址", server.Name)
 		}
 	} else {
-		host, err = normalizeNodeAddress(server.Address)
+		host, err = serverPublicNodeAddress(server)
 		if err != nil {
 			return "", err
-		}
-		if host == "" || isLoopbackOrUnspecifiedHost(host) {
-			host, _ = publicAddress(server.PublicIP, false)
-		}
-		if host == "" {
-			host, _ = publicAddress(server.PublicIPv6, true)
-		}
-		if host == "" || isLoopbackOrUnspecifiedHost(host) {
-			return "", fmt.Errorf("服务器 %q 没有可用的公网连接地址", server.Name)
 		}
 	}
 	preserveNodeTLSName(server.Address, host, settings)

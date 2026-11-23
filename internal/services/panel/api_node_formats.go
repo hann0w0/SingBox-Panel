@@ -128,7 +128,7 @@ func (a *App) serverNodeFormats(c *gin.Context) {
 		nodes = append(nodes, node{
 			tag:      ib.Tag,
 			server:   hosts[ib.ID],
-			port:     ib.ListenPort,
+			port:     st.EffectiveClientPort(ib.ListenPort),
 			typ:      string(ib.Type),
 			settings: st,
 			user:     identity,

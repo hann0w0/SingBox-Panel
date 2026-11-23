@@ -49,7 +49,7 @@ import type { CustomNode, CustomNodeSubscription, NameRewriteRule, UserNodeOrder
 import type { Inbound, Server } from '../../../lib/types'
 import { RegionFlag, regionCodeFromFlag, removeRegionFlag } from '../../../components/RegionFlag'
 import { nodeTypeLabel, protocolOf } from './nodeLabels'
-import { inboundConnectionHost } from '../../../lib/nodeAddress'
+import { inboundConnectionHost, inboundConnectionPort } from '../../../lib/nodeAddress'
 import { SHADOWSOCKS_METHODS } from '../../../lib/util'
 import { RequestState } from '../../../components/RequestState'
 import { buildCustomNodeParams } from '../../../lib/customNodeForm'
@@ -230,7 +230,7 @@ export function UserAccessEditor({ userId, onStateChange }: {
         name: inbound.tag || nodeTypeLabel[inbound.type] || inbound.type,
         serverId: server.id,
         serverName: server.name,
-        detail: `${inboundConnectionHost(server, inbound.settings) || '-'}:${inbound.listen_port}`,
+        detail: `${inboundConnectionHost(server, inbound.settings) || '-'}:${inboundConnectionPort(inbound)}`,
         protocol: inbound.type,
         enabled: inbound.enabled,
       })),

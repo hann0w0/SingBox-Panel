@@ -234,6 +234,11 @@ func (t TLSSettings) ClientInsecure() bool {
 type InboundSettings struct {
 	Listen   string `json:"listen,omitempty"`
 	IPv6Only bool   `json:"ipv6_only,omitempty"`
+	// ClientPort is an optional public connection port advertised in client
+	// subscriptions, share links, and cross-server outbounds while sing-box
+	// continues listening on model.Inbound.ListenPort (e.g. Nginx SNI routing
+	// or port-forwarding 443 -> 1443). Zero means use ListenPort.
+	ClientPort int `json:"client_port,omitempty"`
 	// shadowsocks
 	Method      string `json:"method,omitempty"`        // e.g. 2022-blake3-aes-128-gcm
 	SSServerPSK string `json:"ss_server_psk,omitempty"` // top-level server PSK (base64), generated on create
@@ -343,6 +348,16 @@ func SupportsMultiUser(typ string, s InboundSettings) bool {
 // UseMultiUser is true only for an explicit opt-in on a capable protocol.
 func (s InboundSettings) UseMultiUser(typ string) bool {
 	return s.MultiUser && SupportsMultiUser(typ, s)
+}
+
+// EffectiveClientPort returns the port clients should dial (subscriptions,
+// node exports, and cross-server outbounds), falling back to listenPort when
+// no separate client port is configured.
+func (s InboundSettings) EffectiveClientPort(listenPort int) int {
+	if s.ClientPort > 0 {
+		return s.ClientPort
+	}
+	return listenPort
 }
 
 // ValidateMultiUser runs before shared-credential normalization so invalid
@@ -788,6 +803,12 @@ func (t TLSSettings) validateInbound() error {
 func (s InboundSettings) Validate(typ string) error {
 	if err := s.validateListen(); err != nil {
 		return err
+	}
+	if s.ClientPort < 0 || s.ClientPort > 65535 {
+		return fmt.Errorf("连接端口必须在 1-65535 之间")
+	}
+	if typ == "tun" && s.ClientPort != 0 {
+		return fmt.Errorf("tun 入站不支持设置连接端口")
 	}
 	if err := s.ValidateMultiUser(typ); err != nil {
 		return err

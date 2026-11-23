@@ -89,6 +89,18 @@ describe('inbound form round trip', () => {
     const saved = assembleSettings({ username: 'alice', password: 'example-password' }, { username: '', password: '', multi_user: true }, 'socks')
     expect(saved).toMatchObject({ multi_user: false, single_user: true, username: '', password: '' })
   })
+
+  it('round-trips a separate subscription client_port without leaking into tun', () => {
+    const saved = assembleSettings(inbound.settings, { ...toForm(inbound), client_port: 443 }, inbound.type)
+    expect(saved.client_port).toBe(443)
+    expect(toForm({ ...inbound, settings: saved }).client_port).toBe(443)
+
+    const cleared = assembleSettings(saved, { ...toForm({ ...inbound, settings: saved }), client_port: undefined }, inbound.type)
+    expect(cleared.client_port).toBeUndefined()
+
+    const tunSaved = assembleSettings(saved, { ...toForm({ ...inbound, settings: saved }), client_port: 443 }, 'tun')
+    expect(tunSaved.client_port).toBeUndefined()
+  })
 })
 
 const realityInbound = {

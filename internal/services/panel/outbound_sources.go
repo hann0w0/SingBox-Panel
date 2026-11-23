@@ -132,7 +132,7 @@ func (a *App) inboundOutboundClient(inboundID, consumerServerID uint) (singbox.C
 	return singbox.ClientNode{
 		Name:       formatNodeDisplayName(srv.Name, ib.Tag, string(ib.Type)),
 		Server:     host,
-		ServerPort: ib.ListenPort,
+		ServerPort: st.EffectiveClientPort(ib.ListenPort),
 		Type:       string(ib.Type),
 		Settings:   st,
 		User:       identity,

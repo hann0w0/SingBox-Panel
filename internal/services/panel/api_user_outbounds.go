@@ -73,7 +73,7 @@ func (a *App) listUserInbounds(c *gin.Context) {
 		}
 		out = append(out, UserInboundOption{
 			ID: inbound.ID, ServerID: inbound.ServerID, ServerName: names[inbound.ServerID],
-			Tag: inbound.Tag, Type: string(inbound.Type), Port: inbound.ListenPort,
+			Tag: inbound.Tag, Type: string(inbound.Type), Port: st.EffectiveClientPort(inbound.ListenPort),
 			MultiUser: st.UseMultiUser(string(inbound.Type)),
 		})
 	}

@@ -36,8 +36,8 @@ func TestParseDropsDanglingRouteTargets(t *testing.T) {
 	if len(got.Rules) != 1 || got.Rules[0].Outbound != "hk-out" {
 		t.Errorf("rules = %+v, want only the hk-out rule", got.Rules)
 	}
-	if len(got.Skipped) != 2 {
-		t.Errorf("Skipped = %v, want 2 entries warning about final and the dns rule", got.Skipped)
+	if len(got.Skipped) != 4 {
+		t.Errorf("Skipped = %v, want 4 entries warning about skipped outbounds, final, and the dns rule", got.Skipped)
 	}
 
 	// The surviving model must generate a config with no dangling tags.
@@ -384,5 +384,40 @@ func TestParseOutboundKeepsBetaPluginAndTUICFields(t *testing.T) {
 	}
 	if got.Outbounds[1].Settings.TUICUDPRelayMode != "quic" {
 		t.Fatalf("TUIC udp_relay_mode = %q", got.Outbounds[1].Settings.TUICUDPRelayMode)
+	}
+}
+
+func TestParseReportsMultiUserInboundAndUnsupportedRuleSkipped(t *testing.T) {
+	raw := []byte(`{
+	  "inbounds":[
+	    {"type":"vless","tag":"multi-in","listen_port":443,"users":[
+	      {"name":"alice","uuid":"11111111-1111-1111-1111-111111111111"},
+	      {"name":"bob","uuid":"22222222-2222-2222-2222-222222222222"}
+	    ]}
+	  ],
+	  "outbounds":[
+	    {"type":"direct","tag":"direct"},
+	    {"type":"wireguard","tag":"wg-out","server":"1.2.3.4","server_port":51820}
+	  ],
+	  "route":{
+	    "rules":[
+	      {"action":"future-action","domain":["example.com"]},
+	      {"domain":["ok.example"],"outbound":"direct"}
+	    ],
+	    "final":"direct"
+	  }
+	}`)
+	got, err := ParseServerConfig(raw)
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	if len(got.Inbounds) != 1 || got.Inbounds[0].UserCount != 2 {
+		t.Fatalf("unexpected inbounds: %+v", got.Inbounds)
+	}
+	joined := strings.Join(got.Skipped, "\n")
+	for _, want := range []string{"multi-in", "wg-out", "future-action"} {
+		if !strings.Contains(joined, want) {
+			t.Errorf("Skipped missing %q: %v", want, got.Skipped)
+		}
 	}
 }

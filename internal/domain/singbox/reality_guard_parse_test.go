@@ -148,3 +148,107 @@ func TestParseRealityMaxTimeDifferenceWithoutGuard(t *testing.T) {
 		t.Fatalf("REALITY time difference was lost: %+v, %v", parsed, err)
 	}
 }
+
+func TestParseRealityGuardSlidingWindowAndIsolation(t *testing.T) {
+	t.Run("guard preceded by unrelated inbound rule and followed by ordinary direct inbound rule", func(t *testing.T) {
+		var root map[string]any
+		if err := json.Unmarshal([]byte(realityGuardParseFixture), &root); err != nil {
+			t.Fatal(err)
+		}
+		root["inbounds"] = append(mSlice(root, "inbounds"),
+			map[string]any{"type": "socks", "tag": "other-in", "listen_port": float64(1080)},
+			map[string]any{"type": "direct", "tag": "plain-direct", "listen": "::", "listen_port": float64(20000)},
+		)
+		route := mMap(root, "route")
+		orig := mSlice(route, "rules")
+		route["rules"] = append(
+			[]any{map[string]any{"inbound": []any{"other-in"}, "outbound": "direct"}},
+			append(orig,
+				map[string]any{"inbound": []any{"plain-direct"}, "outbound": "direct"},
+				map[string]any{"domain": []any{"example.com"}, "outbound": "direct"},
+				map[string]any{"domain": []any{"example.org"}, "outbound": "direct"},
+			)...,
+		)
+		raw, err := json.Marshal(root)
+		if err != nil {
+			t.Fatal(err)
+		}
+		parsed, err := ParseServerConfig(raw)
+		if err != nil {
+			t.Fatal(err)
+		}
+		foundGuard := false
+		for _, in := range parsed.Inbounds {
+			if in.Tag == "reality-in" && in.Settings.RealityGuardEnabled() && in.ListenPort == 31735 {
+				foundGuard = true
+			}
+		}
+		if !foundGuard {
+			t.Fatalf("valid reality guard was not recognized: %+v", parsed.Inbounds)
+		}
+	})
+
+	t.Run("guard preceded by catch-all route rule is not collapsed", func(t *testing.T) {
+		var root map[string]any
+		if err := json.Unmarshal([]byte(realityGuardParseFixture), &root); err != nil {
+			t.Fatal(err)
+		}
+		route := mMap(root, "route")
+		route["rules"] = append(
+			[]any{map[string]any{"domain": []any{"example.com"}, "outbound": "direct"}},
+			mSlice(route, "rules")...,
+		)
+		raw, err := json.Marshal(root)
+		if err != nil {
+			t.Fatal(err)
+		}
+		parsed, err := ParseServerConfig(raw)
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, in := range parsed.Inbounds {
+			if in.Settings.RealityGuardEnabled() {
+				t.Fatalf("guard preceded by catch-all rule should not be collapsed: %+v", in)
+			}
+		}
+	})
+
+	t.Run("second broken guard does not discard first valid guard", func(t *testing.T) {
+		var root map[string]any
+		if err := json.Unmarshal([]byte(realityGuardParseFixture), &root); err != nil {
+			t.Fatal(err)
+		}
+		root["inbounds"] = append(mSlice(root, "inbounds"),
+			map[string]any{"type": "direct", "tag": "bad-guard", "listen": "::", "listen_port": float64(31835), "network": "tcp", "override_address": "127.0.0.1", "override_port": float64(31836), "udp_fragment": true},
+			map[string]any{"type": "vless", "tag": "bad-reality", "listen": "127.0.0.1", "listen_port": float64(31836),
+				"users": []any{map[string]any{"uuid": "12345678-1234-1234-1234-123456789012"}},
+				"tls": map[string]any{"enabled": true, "server_name": "music.apple.com", "reality": map[string]any{"enabled": true, "handshake": map[string]any{"server": "music.apple.com", "server_port": float64(443)}, "private_key": "UuMBgl7MXTPx9inmQp2UC7Jcnwc6XYbwDNebonM-FCc", "short_id": []any{"abcd"}}}},
+		)
+		route := mMap(root, "route")
+		route["rules"] = append(mSlice(route, "rules"),
+			map[string]any{"inbound": []any{"bad-guard"}, "action": "sniff", "sniffer": []any{"tls"}, "timeout": "300ms"},
+			map[string]any{"inbound": []any{"bad-guard"}, "domain": []any{"music.apple.com"}, "action": "route", "outbound": "direct"},
+			map[string]any{"inbound": []any{"bad-guard"}, "action": "reject", "method": "drop"},
+		)
+		raw, err := json.Marshal(root)
+		if err != nil {
+			t.Fatal(err)
+		}
+		parsed, err := ParseServerConfig(raw)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var firstOK, secondCollapsed bool
+		for _, in := range parsed.Inbounds {
+			if in.Tag == "reality-in" && in.Settings.RealityGuardEnabled() {
+				firstOK = true
+			}
+			if in.Tag == "bad-reality" && in.Settings.RealityGuardEnabled() {
+				secondCollapsed = true
+			}
+		}
+		if !firstOK || secondCollapsed {
+			t.Fatalf("firstOK=%v secondCollapsed=%v inbounds=%+v", firstOK, secondCollapsed, parsed.Inbounds)
+		}
+	})
+}

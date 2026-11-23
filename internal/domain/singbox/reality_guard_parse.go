@@ -152,6 +152,67 @@ func guardAllowNames(rule map[string]any, tag string, port int) ([]string, bool)
 	return guardStringArray(match["domain"])
 }
 
+func ruleCanInterceptGuard(rule any, tag string) bool {
+	m, ok := rule.(map[string]any)
+	if !ok {
+		return true
+	}
+	if guardReferences(m, map[string]bool{tag: true}) {
+		return true
+	}
+	// Rules scoped exclusively to other inbounds cannot intercept traffic
+	// arriving on the public direct guard inbound.
+	if inboundTags, ok := guardStringArray(m["inbound"]); ok && len(inboundTags) > 0 {
+		return false
+	}
+	// Non-terminal metadata actions before a guard do not divert/drop traffic,
+	// whereas catch-all route/reject/logical rules without an inbound filter can.
+	action := mStr(m, "action")
+	switch action {
+	case "sniff", "resolve", "route-options", "hijack-dns":
+		return false
+	default:
+		return true
+	}
+}
+
+func validateRealityGuardCandidate(root map[string]any, inbounds []any, rules []any, guard realityGuardImport) bool {
+	protectedTags := map[string]bool{guard.tag: true, mStr(inbounds[guard.targetIndex].(map[string]any), "tag"): true}
+	for index, rule := range rules {
+		if index >= guard.ruleIndex && index < guard.ruleIndex+3 {
+			continue
+		}
+		// The original VLESS tag survives the merge and remains a valid
+		// target of ordinary user routing. The public gate tag disappears
+		// from the panel's rule model and must have no extra references.
+		if guardReferences(rule, map[string]bool{guard.tag: true}) {
+			return false
+		}
+	}
+	// Other raw inbound/dial settings can reference tags as well. Do not
+	// silently redirect such a reference when collapsing this pair.
+	for index, inbound := range inbounds {
+		if index != guard.directIndex && index != guard.targetIndex && guardReferences(inbound, protectedTags) {
+			return false
+		}
+		other := inbound.(map[string]any)
+		if index != guard.directIndex && guardPort(other, "override_port") == guard.internalPort {
+			return false
+		}
+	}
+	for key, value := range root {
+		if key != "inbounds" && key != "route" && guardReferences(value, protectedTags) {
+			return false
+		}
+	}
+	for key, value := range mMap(root, "route") {
+		if key != "rules" && guardReferences(value, protectedTags) {
+			return false
+		}
+	}
+	return true
+}
+
 func findRealityGuardImports(root map[string]any) []realityGuardImport {
 	inbounds := mSlice(root, "inbounds")
 	rules := mSlice(mMap(root, "route"), "rules")
@@ -169,11 +230,17 @@ func findRealityGuardImports(root map[string]any) []realityGuardImport {
 	}
 	var found []realityGuardImport
 	used := map[int]bool{}
-	for start := 0; start+2 < len(rules); start += 3 {
-		sniff, _ := rules[start].(map[string]any)
+	guardRuleIndexes := map[int]bool{}
+	for start := 0; start+2 < len(rules); {
+		sniff, ok := rules[start].(map[string]any)
+		if !ok {
+			start++
+			continue
+		}
 		inboundTags, ok := guardStringArray(sniff["inbound"])
 		if !ok || len(inboundTags) != 1 {
-			break
+			start++
+			continue
 		}
 		tag := inboundTags[0]
 		directIndex := -1
@@ -184,14 +251,16 @@ func findRealityGuardImports(root map[string]any) []realityGuardImport {
 			}
 		}
 		if directIndex < 0 {
-			break
+			start++
+			continue
 		}
 		direct := inbounds[directIndex].(map[string]any)
 		publicPort, internalPort := guardPort(direct, "listen_port"), guardPort(direct, "override_port")
 		if tag == "" || tags[tag] != 1 || publicPort == 0 || internalPort == 0 || publicPort == internalPort || ports[publicPort] != 1 || ports[internalPort] != 1 ||
 			!guardOnlyKeys(direct, "type", "tag", "listen", "listen_port", "network", "override_address", "override_port") ||
 			(InboundSettings{Listen: mStr(direct, "listen")}).validateListen() != nil || mStr(direct, "network") != "tcp" || mStr(direct, "override_address") != "127.0.0.1" {
-			return nil
+			start++
+			continue
 		}
 		targetIndex := -1
 		for index, value := range inbounds {
@@ -201,62 +270,52 @@ func findRealityGuardImports(root map[string]any) []realityGuardImport {
 			}
 		}
 		if targetIndex < 0 || used[targetIndex] || !guardTargetSupported(inbounds[targetIndex].(map[string]any)) {
-			return nil
+			start++
+			continue
 		}
 		target := inbounds[targetIndex].(map[string]any)
 		if tags[mStr(target, "tag")] != 1 || used[directIndex] ||
 			!guardOnlyKeys(sniff, "inbound", "action", "sniffer", "timeout") || mStr(sniff, "action") != "sniff" ||
 			!guardSame(sniff["sniffer"], []string{"tls"}) || mStr(sniff, "timeout") == "" {
-			return nil
+			start++
+			continue
 		}
 		allow, _ := rules[start+1].(map[string]any)
 		names, ok := guardAllowNames(allow, tag, internalPort)
 		if !ok || !guardSame(rules[start+2], map[string]any{"inbound": []string{tag}, "action": "reject", "method": "drop"}) {
-			return nil
+			start++
+			continue
 		}
 		parsed, _ := parseInbound(target)
 		parsed.Settings.TLS.Reality.Guard = &RealityGuardSettings{Enabled: true, InternalPort: internalPort, Tag: tag, SniffTimeout: mStr(sniff, "timeout"), ServerNames: names}
 		if parsed.Settings.TLS.Reality.PublicKey == "" || parsed.Settings.Validate("vless") != nil {
-			return nil
+			start++
+			continue
 		}
-		found = append(found, realityGuardImport{directIndex: directIndex, targetIndex: targetIndex, ruleIndex: start,
-			publicPort: publicPort, internalPort: internalPort, tag: tag, timeout: mStr(sniff, "timeout"), serverNames: names})
-		used[directIndex], used[targetIndex] = true, true
-	}
-	for _, guard := range found {
-		protectedTags := map[string]bool{guard.tag: true, mStr(inbounds[guard.targetIndex].(map[string]any), "tag"): true}
-		for index, rule := range rules {
-			if index >= guard.ruleIndex && index < guard.ruleIndex+3 {
+		intercepted := false
+		for i := 0; i < start; i++ {
+			if guardRuleIndexes[i] {
 				continue
 			}
-			// The original VLESS tag survives the merge and remains a valid
-			// target of ordinary user routing. The public gate tag disappears
-			// from the panel's rule model and must have no extra references.
-			if guardReferences(rule, map[string]bool{guard.tag: true}) {
-				return nil
+			if ruleCanInterceptGuard(rules[i], tag) {
+				intercepted = true
+				break
 			}
 		}
-		// Other raw inbound/dial settings can reference tags as well. Do not
-		// silently redirect such a reference when collapsing this pair.
-		for index, inbound := range inbounds {
-			if index != guard.directIndex && index != guard.targetIndex && guardReferences(inbound, protectedTags) {
-				return nil
-			}
-			other := inbound.(map[string]any)
-			if index != guard.directIndex && guardPort(other, "override_port") == guard.internalPort {
-				return nil
-			}
+		if intercepted {
+			start++
+			continue
 		}
-		for key, value := range root {
-			if key != "inbounds" && key != "route" && guardReferences(value, protectedTags) {
-				return nil
-			}
+		candidate := realityGuardImport{directIndex: directIndex, targetIndex: targetIndex, ruleIndex: start,
+			publicPort: publicPort, internalPort: internalPort, tag: tag, timeout: mStr(sniff, "timeout"), serverNames: names}
+		if !validateRealityGuardCandidate(root, inbounds, rules, candidate) {
+			start++
+			continue
 		}
-		for key, value := range mMap(root, "route") {
-			if key != "rules" && guardReferences(value, protectedTags) {
-				return nil
-			}
-		}
+		found = append(found, candidate)
+		used[directIndex], used[targetIndex] = true, true
+		guardRuleIndexes[start], guardRuleIndexes[start+1], guardRuleIndexes[start+2] = true, true, true
+		start += 3
 	}
 	return found
 }

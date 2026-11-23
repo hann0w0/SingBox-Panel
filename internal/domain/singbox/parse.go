@@ -341,6 +341,16 @@ func extractInboundRaw(m map[string]any, singleUser bool) map[string]any {
 	return raw
 }
 
+// isPanelManagedBuiltinOutbound reports outbound types/tags that the panel
+// manages directly as built-ins and never reports as skipped during import.
+func isPanelManagedBuiltinOutbound(typ, tag string) bool {
+	switch typ {
+	case "direct", "block":
+		return true
+	}
+	return tag == "direct"
+}
+
 // builtinOutbounds are outbound types/tags the panel manages itself and never
 // imports as landing targets.
 func isBuiltinOutbound(typ, tag string) bool {
@@ -558,17 +568,25 @@ func ParseServerConfig(raw []byte) (*ParsedConfig, error) {
 			}
 			in.Settings.Raw = nil
 		}
+		if in.UserCount > 1 && in.Type != "snell" {
+			out.Skipped = append(out.Skipped, fmt.Sprintf("入站 %s: 含 %d 个手写用户凭证，导入不会自动映射为面板账号（未修改凭证前由覆盖层保留原列表，如需多用户管理请手动开启多用户模式并分配用户）", in.Tag, in.UserCount))
+		}
 		out.Inbounds = append(out.Inbounds, in)
 	}
 
-	for _, e := range mSlice(root, "outbounds") {
+	for index, e := range mSlice(root, "outbounds") {
 		m, ok := e.(map[string]any)
 		if !ok {
+			out.Skipped = append(out.Skipped, fmt.Sprintf("出站 #%d: 条目不是有效对象", index+1))
 			continue
 		}
 		ob, ok := parseOutbound(m)
 		if !ok {
-			continue // builtin (direct/block/...) or unsupported: silently ignored
+			typ, tag := mStr(m, "type"), mStr(m, "tag")
+			if !isPanelManagedBuiltinOutbound(typ, tag) {
+				out.Skipped = append(out.Skipped, fmt.Sprintf("出站 %s: 面板不支持的类型 %s", tag, typ))
+			}
+			continue
 		}
 		out.Outbounds = append(out.Outbounds, ob)
 	}
@@ -583,6 +601,7 @@ func ParseServerConfig(raw []byte) (*ParsedConfig, error) {
 			}
 			m, ok := e.(map[string]any)
 			if !ok {
+				out.Skipped = append(out.Skipped, fmt.Sprintf("路由规则 #%d: 条目不是有效对象", index+1))
 				continue
 			}
 			if IsLoopbackGuardRule(m) {
@@ -591,6 +610,12 @@ func ParseServerConfig(raw []byte) (*ParsedConfig, error) {
 			if r, ok := parseRule(m); ok {
 				r.SourceIndex = index
 				out.Rules = append(out.Rules, r)
+			} else {
+				action := mStr(m, "action")
+				if action == "" {
+					action = "route"
+				}
+				out.Skipped = append(out.Skipped, fmt.Sprintf("路由规则 #%d: 面板不支持的规则动作 %q 或缺少目标出站", index+1, action))
 			}
 		}
 		httpClients := taggedObjects(root, "http_clients")

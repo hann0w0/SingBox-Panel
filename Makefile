@@ -31,7 +31,7 @@ tidy:
 	go mod tidy
 
 test:
-	go test ./...
+	go test -race ./...
 
 clean:
 	rm -rf $(DIST) web/dist

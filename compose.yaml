@@ -1,8 +1,10 @@
 services:
   panel:
-    image: ${PANEL_IMAGE:-ghcr.io/hann0w0/singbox-panel:latest}
+    image: ${PANEL_IMAGE:-ghcr.io/hann0w0/singbox-panel:v1.0.15}
     restart: unless-stopped
     stop_grace_period: 30s
+    pids_limit: 256
+    mem_limit: 512m
     ports:
       # Put an HTTPS reverse proxy on this host in front of the panel.
       - "${PANEL_BIND:-127.0.0.1}:${PANEL_PORT:-32334}:8080"

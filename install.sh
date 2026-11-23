@@ -38,13 +38,21 @@ ASSUME_YES=0
 INTERACTIVE=0
 PROMPT_FD=0
 PRESERVED_ROLLBACK_DIR=""
+PRIVATE_TMP_DIR=""
+LOCK_FILE=""
+LOCK_DIR=""
+LOCK_HELD=0
 TEMP_FILES=()
 TEMP_DIRS=()
 JWT_SECRET=""
 INSTALL_REAL=""
 PANEL_CONFIG=""
 CONFIG_WRITTEN=0
+BOOTSTRAP_PASSWORD_WRITTEN=0
 BOOTSTRAP_ADMIN_PASSWORD=""
+VERIFY_ATTESTATION="${SINGBOX_PANEL_VERIFY_ATTESTATION:-0}"
+PASSWORD_STDIN=0
+PASSWORD_FILE=""
 CURL_DOWNLOAD_ARGS=(--fail --silent --show-error --location --connect-timeout 10 --max-time 300 --retry 3 --retry-delay 2 --retry-connrefused)
 
 usage() {
@@ -62,10 +70,13 @@ Options:
   --yes                   Skip the uninstall confirmation prompt
   --port PORT             Local reverse-proxy port (default: 32334)
   --admin USERNAME        Initial administrator username (default: admin)
-  --password PASSWORD     Initial administrator password
+  --password PASSWORD     Initial administrator password (deprecated; exposes password in ps)
+  --password-stdin        Read initial administrator password from stdin
+  --password-file PATH    Read initial administrator password from a file
   --install-dir PATH      Installation directory (default: /opt/singbox-panel)
   --base-url DOMAIN       Required panel/Agent domain (HTTPS)
   --version VERSION       Release tag to install (default: latest)
+  --verify-attestation    Verify checksums.txt SLSA provenance via GitHub CLI (gh)
   --configure             Prompt for settings even when already installed
   --non-interactive       Do not prompt; generate a password when omitted
   -h, --help              Show this help
@@ -73,7 +84,8 @@ Options:
 Environment variable equivalents:
   SINGBOX_PANEL_MODE, SINGBOX_PANEL_PORT, SINGBOX_PANEL_ADMIN,
   SINGBOX_PANEL_ADMIN_PASSWORD, SINGBOX_PANEL_INSTALL_DIR,
-  SINGBOX_PANEL_BASE_URL, SINGBOX_PANEL_VERSION
+  SINGBOX_PANEL_BASE_URL, SINGBOX_PANEL_VERSION,
+  SINGBOX_PANEL_VERIFY_ATTESTATION
 
 The installer downloads the release binary to /usr/local/bin and runs it under
 systemd. Data and configuration live in the installation directory.
@@ -102,6 +114,14 @@ info() {
 cleanup() {
   local temp_file=""
   local temp_dir=""
+  # Never leave a plaintext bootstrap password behind if installation is aborted
+  # after panel.yaml was written but before healthcheck scrubbing completed.
+  if [[ "$BOOTSTRAP_PASSWORD_WRITTEN" -eq 1 && -n "$PANEL_CONFIG" && -f "$PANEL_CONFIG" ]]; then
+    if declare -F clear_binary_bootstrap_password >/dev/null 2>&1; then
+      clear_binary_bootstrap_password >/dev/null 2>&1 || true
+    fi
+    BOOTSTRAP_PASSWORD_WRITTEN=0
+  fi
   if (( ${#TEMP_FILES[@]} > 0 )); then
     for temp_file in "${TEMP_FILES[@]}"; do
       [[ -n "$temp_file" ]] && rm -f -- "$temp_file"
@@ -114,15 +134,40 @@ cleanup() {
       fi
     done
   fi
+  if [[ -n "$PRIVATE_TMP_DIR" && -d "$PRIVATE_TMP_DIR" ]]; then
+    rm -rf -- "$PRIVATE_TMP_DIR"
+  fi
+  if [[ "$LOCK_HELD" -eq 1 ]]; then
+    if [[ -n "$LOCK_DIR" ]]; then
+      rm -rf -- "$LOCK_DIR"
+    fi
+    if [[ -n "$LOCK_FILE" ]]; then
+      exec 9>&- 2>/dev/null || true
+    fi
+    LOCK_HELD=0
+  fi
 }
 trap cleanup EXIT
+trap 'exit 130' INT
+trap 'exit 143' TERM
+
+# Ignore untrusted caller-supplied TMPDIR (e.g. via sudo -E) and create a
+# private 0700 workspace under /tmp for all installer temporary files.
+ensure_private_tmp() {
+  if [[ -n "$PRIVATE_TMP_DIR" && -d "$PRIVATE_TMP_DIR" ]]; then
+    return 0
+  fi
+  PRIVATE_TMP_DIR="$(mktemp -d "/tmp/singbox-panel-tmp.XXXXXX")" || die "unable to create a private temporary directory"
+  chmod 700 "$PRIVATE_TMP_DIR" || die "unable to secure temporary directory"
+}
 
 # mktemp templates must end in the X run: a trailing suffix is kept verbatim by
 # GNU coreutils (which then errors) and returned unsubstituted by BSD mktemp.
 # Callers that need an extension should rename after the fact.
 make_temp() {
   local temp_file=""
-  temp_file="$(mktemp "${TMPDIR:-/tmp}/singbox-panel.XXXXXX")" || die "unable to create a temporary file"
+  [[ -n "$PRIVATE_TMP_DIR" && -d "$PRIVATE_TMP_DIR" ]] || die "private temporary directory not initialized"
+  temp_file="$(mktemp "${PRIVATE_TMP_DIR}/singbox-panel.XXXXXX")" || die "unable to create a temporary file"
   # Command substitution runs this function in a subshell, so mutating the
   # parent TEMP_FILES array here would be misleading. Every caller records the
   # returned path explicitly after assignment.
@@ -166,7 +211,19 @@ while [[ $# -gt 0 ]]; do
       ;;
     --password)
       need_value "$@"
+      printf 'Warning: --password exposes the password in process listings; prefer --password-stdin, --password-file, or SINGBOX_PANEL_ADMIN_PASSWORD\n' >&2
       ADMIN_PASSWORD="$2"
+      PASSWORD_PROVIDED=1
+      shift 2
+      ;;
+    --password-stdin)
+      PASSWORD_STDIN=1
+      PASSWORD_PROVIDED=1
+      shift
+      ;;
+    --password-file)
+      need_value "$@"
+      PASSWORD_FILE="$2"
       PASSWORD_PROVIDED=1
       shift 2
       ;;
@@ -185,6 +242,10 @@ while [[ $# -gt 0 ]]; do
       need_value "$@"
       PANEL_VERSION="$2"
       shift 2
+      ;;
+    --verify-attestation)
+      VERIFY_ATTESTATION=1
+      shift
       ;;
     --configure)
       CONFIGURE=1
@@ -205,6 +266,18 @@ while [[ $# -gt 0 ]]; do
 done
 
 [[ ${EUID:-$(id -u)} -eq 0 ]] || die "run this installer as root (for example: sudo ./install.sh)"
+
+if [[ "$PASSWORD_STDIN" -eq 1 && -n "$PASSWORD_FILE" ]]; then
+  die "--password-stdin and --password-file cannot be combined"
+fi
+if [[ "$PASSWORD_STDIN" -eq 1 ]]; then
+  IFS= read -r ADMIN_PASSWORD || [[ -n "$ADMIN_PASSWORD" ]] || die "failed to read administrator password from stdin"
+  ADMIN_PASSWORD="${ADMIN_PASSWORD%$'\r'}"
+elif [[ -n "$PASSWORD_FILE" ]]; then
+  [[ -r "$PASSWORD_FILE" ]] || die "cannot read password file: $PASSWORD_FILE"
+  IFS= read -r ADMIN_PASSWORD < "$PASSWORD_FILE" || [[ -n "$ADMIN_PASSWORD" ]] || die "password file is empty: $PASSWORD_FILE"
+  ADMIN_PASSWORD="${ADMIN_PASSWORD%$'\r'}"
+fi
 
 # A curl | bash pipeline uses stdin for the script itself, but still has a
 # controlling terminal. Open /dev/tty separately so streamed installs can ask
@@ -281,6 +354,46 @@ validate_install_dir() {
   esac
 }
 
+acquire_install_lock() {
+  local lock_base="/tmp"
+  if [[ -d /run && -w /run ]]; then
+    lock_base="/run"
+  fi
+  local dir_hash=""
+  dir_hash="$(printf '%s' "$INSTALL_DIR" | cksum | awk '{print $1}')"
+  if command -v flock >/dev/null 2>&1; then
+    LOCK_FILE="${lock_base}/singbox-panel-install-${dir_hash}.lock"
+    exec 9>"$LOCK_FILE" || die "unable to open installer lock file: $LOCK_FILE"
+    flock -n 9 || die "another SingBox Panel install/uninstall process is already running"
+    LOCK_HELD=1
+  else
+    LOCK_DIR="${lock_base}/singbox-panel-install-${dir_hash}.lock.d"
+    if ! mkdir "$LOCK_DIR" 2>/dev/null; then
+      local existing_pid=""
+      existing_pid="$(cat "$LOCK_DIR/pid" 2>/dev/null || true)"
+      if [[ -n "$existing_pid" ]] && kill -0 "$existing_pid" 2>/dev/null; then
+        die "another SingBox Panel install/uninstall process (PID $existing_pid) is already running"
+      fi
+      rm -rf -- "$LOCK_DIR"
+      mkdir "$LOCK_DIR" 2>/dev/null || die "another SingBox Panel install/uninstall process is already running"
+    fi
+    chmod 700 "$LOCK_DIR" 2>/dev/null || true
+    printf '%s\n' "$$" > "$LOCK_DIR/pid"
+    LOCK_HELD=1
+  fi
+
+  # Also serialize against an in-progress panel self-update detached helper.
+  local active_update_marker="$INSTALL_DIR/.update/.active"
+  if [[ -f "$active_update_marker" ]]; then
+    local now_ts="" marker_ts=""
+    now_ts="$(date +%s)"
+    marker_ts="$(stat -c %Y "$active_update_marker" 2>/dev/null || stat -f %m "$active_update_marker" 2>/dev/null || printf '0')"
+    if [[ "$marker_ts" =~ ^[0-9]+$ ]] && (( now_ts - marker_ts <= 1800 )); then
+      die "a panel self-update is currently in progress ($active_update_marker); wait for it to finish before running install.sh"
+    fi
+  fi
+}
+
 confirm_uninstall() {
   [[ "$ASSUME_YES" -eq 1 ]] && return
   if [[ "$INTERACTIVE" -eq 1 ]]; then
@@ -346,11 +459,24 @@ uninstall_binary_panel() {
   if [[ -f "$INSTALL_DIR/panel.yaml" ]]; then
     printf '  Configuration:  kept at %s/panel.yaml\n' "$INSTALL_DIR"
   fi
-  printf 'Run the install command again to restore the panel.\n'
+  if [[ -d "$INSTALL_DIR/backups" ]]; then
+    printf '  Backups:        kept at %s/backups\n' "$INSTALL_DIR"
+  fi
+  if [[ -d "$INSTALL_DIR/.update" ]]; then
+    printf '  Update state:   kept at %s/.update\n' "$INSTALL_DIR"
+  fi
+  local rollback_match=""
+  for rollback_match in "$INSTALL_DIR"/.rollback.*; do
+    if [[ -e "$rollback_match" ]]; then
+      printf '  Rollback dir:   kept at %s\n' "$rollback_match"
+    fi
+  done
+  printf 'Run the install command again to restore the panel (or re-run with --uninstall --purge to remove all kept files).\n'
 }
 
 uninstall_singbox_panel() {
   validate_install_dir
+  acquire_install_lock
   confirm_uninstall
   uninstall_binary_panel
 }
@@ -468,6 +594,7 @@ read_yaml_nested() {
 # Normalize and vet the install directory before anything is read from it:
 # the existing panel.yaml supplies credentials and the JWT secret below.
 validate_install_dir
+acquire_install_lock
 PANEL_CONFIG="$INSTALL_DIR/panel.yaml"
 EXISTING_INSTALL=0
 
@@ -532,8 +659,9 @@ if [[ "$INTERACTIVE" -eq 1 && ( "$EXISTING_INSTALL" -eq 0 || "$CONFIGURE" -eq 1 
   ADMIN_USERNAME="$(prompt_value "管理员账号" "$ADMIN_USERNAME")"
 
   if [[ -z "$ADMIN_PASSWORD" ]]; then
-    printf '管理员密码（明文显示，留空自动生成）: ' >&"$PROMPT_FD"
-    read -r -u "$PROMPT_FD" ADMIN_PASSWORD
+    printf '管理员密码（不回显，留空自动生成）: ' >&"$PROMPT_FD"
+    read -rs -u "$PROMPT_FD" ADMIN_PASSWORD
+    printf '\n' >&"$PROMPT_FD"
   fi
 
   printf '\n提示：安装完成后，请将该域名反向代理到 http://127.0.0.1:%s。\n' "$PANEL_PORT" >&"$PROMPT_FD"
@@ -684,6 +812,19 @@ download_release_asset() {
   info "Verified $asset_name"
 }
 
+verify_checksums_attestation() {
+  local checksums_path="$1"
+  case "$VERIFY_ATTESTATION" in
+    1|true|yes|require) ;;
+    *) return 0 ;;
+  esac
+  command -v gh >/dev/null 2>&1 ||
+    die "--verify-attestation requires the GitHub CLI (gh) to verify SLSA build provenance"
+  gh attestation verify "$checksums_path" --repo "$GITHUB_REPO" >/dev/null ||
+    die "SLSA build provenance verification failed for checksums.txt"
+  info "Verified SLSA build provenance for checksums.txt"
+}
+
 validate_release_archive() {
   local archive="$1"
   local names_file=""
@@ -692,8 +833,8 @@ validate_release_archive() {
   local listing=""
   local entries=0
   local uncompressed_size=""
-  names_file="$(mktemp "${TMPDIR:-/tmp}/singbox-panel-archive-names.XXXXXX")" || return 1
-  verbose_file="$(mktemp "${TMPDIR:-/tmp}/singbox-panel-archive-types.XXXXXX")" || {
+  names_file="$(make_temp)" || return 1
+  verbose_file="$(make_temp)" || {
     rm -f -- "$names_file"
     return 1
   }
@@ -878,10 +1019,17 @@ UMask=0077
 # panel.yaml. Privileged maintenance is delegated to short-lived systemd units.
 NoNewPrivileges=true
 PrivateTmp=true
+PrivateDevices=true
 ProtectSystem=full
 ProtectHome=true
 ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectKernelLogs=true
 ProtectControlGroups=true
+ProtectClock=true
+LockPersonality=true
+RestrictRealtime=true
+RestrictSUIDSGID=true
 ReadWritePaths=${INSTALL_REAL}/data ${INSTALL_REAL}/.update ${PANEL_CONFIG}
 
 [Install]
@@ -909,6 +1057,7 @@ install_binary_panel() {
   local agents_name=""
   local web_name=""
 
+  ensure_private_tmp
   arch="$(release_arch)"
 
   if [[ -z "$PANEL_VERSION" ]]; then
@@ -933,6 +1082,7 @@ install_binary_panel() {
   TEMP_FILES+=("$checksums_temp")
   if curl "${CURL_DOWNLOAD_ARGS[@]}" "https://github.com/${GITHUB_REPO}/releases/download/${PANEL_VERSION}/checksums.txt" \
     -o "$checksums_temp"; then
+    verify_checksums_attestation "$checksums_temp"
     CHECKSUMS_FILE="$checksums_temp"
   else
     die "unable to download checksums.txt for $PANEL_VERSION; refusing to install unverified assets"
@@ -988,6 +1138,7 @@ install_binary_panel() {
       die "failed to write $PANEL_CONFIG"
     fi
     CONFIG_WRITTEN=1
+    [[ -n "$ADMIN_PASSWORD" ]] && BOOTSTRAP_PASSWORD_WRITTEN=1
     info "Wrote $PANEL_CONFIG"
   elif [[ "$PORT_PROVIDED" -eq 1 || "$BASE_URL_PROVIDED" -eq 1 ]]; then
     if ! update_panel_endpoint_config; then
@@ -1081,6 +1232,7 @@ install_binary_panel() {
     restore_previous_install_or_die "$rollback_dir" "$had_previous_binary" "$had_previous_agents" "$had_previous_web" "$had_previous_unit" "$had_previous_config" "$data_snapshot_ready" "$service_enabled_by_install"
     die "failed to remove the one-time administrator password; the previous installation was restored"
   fi
+  BOOTSTRAP_PASSWORD_WRITTEN=0
   rm -rf -- "$rollback_dir" "$asset_stage"
   info "SingBox Panel is healthy"
   print_binary_summary

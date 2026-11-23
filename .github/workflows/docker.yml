@@ -50,9 +50,10 @@ jobs:
       - name: Verify source for manual publication
         if: github.event_name == 'workflow_dispatch'
         run: |
-          go test ./...
+          go test -race ./...
           go vet ./...
           npm ci --prefix web
+          npm audit --prefix web --omit=dev --audit-level=high
           npm test --prefix web
           npm run typecheck --prefix web
           npm run build --prefix web
@@ -87,6 +88,8 @@ jobs:
           context: .
           platforms: linux/amd64,linux/arm64
           push: true
+          provenance: mode=max
+          sbom: true
           tags: ${{ steps.meta.outputs.tags }}
           build-args: |
             VERSION=${{ steps.meta.outputs.version }}

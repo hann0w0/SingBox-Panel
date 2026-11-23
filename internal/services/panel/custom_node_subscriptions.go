@@ -142,6 +142,9 @@ func (m *customNodeSubscriptionManager) syncDue(parent context.Context) {
 	for i := range sources {
 		source := sources[i]
 		interval := time.Duration(normalizeCustomNodeSubscriptionInterval(source.UpdateIntervalMinutes)) * time.Minute
+		if source.LastSyncStatus == model.SubscriptionSyncFailed && interval > 30*time.Minute {
+			interval = 30 * time.Minute
+		}
 		if source.LastSyncAt != nil && now.Sub(*source.LastSyncAt) < interval {
 			continue
 		}

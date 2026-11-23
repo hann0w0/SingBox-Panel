@@ -814,6 +814,10 @@ func parseLinkLines(raw []byte) (SubscriptionParseResult, error) {
 			result.Skipped = append(result.Skipped, ImportIssue{Input: truncateImportInput(line), SourceName: shareLinkSourceName(line), Error: err.Error()})
 			continue
 		}
+		if err := cn.Settings.ValidateClientOutbound(cn.Type); err != nil {
+			result.Skipped = append(result.Skipped, ImportIssue{Input: truncateImportInput(line), SourceName: shareLinkSourceName(line), Error: err.Error()})
+			continue
+		}
 		if cn.Name == "" {
 			cn.Name = fmt.Sprintf("%s %s:%d", cn.Type, cn.Server, cn.ServerPort)
 		}

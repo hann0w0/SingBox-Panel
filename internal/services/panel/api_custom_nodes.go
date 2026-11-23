@@ -302,9 +302,22 @@ func (a *App) updateCustomNode(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
+	nextGroup := trimRunes(strings.TrimSpace(req.Group), 64)
+	nextName := node.Name
+	if strings.TrimSpace(req.Name) != "" {
+		nextName = strings.TrimSpace(req.Name)
+	}
+	if node.SubscriptionID != nil {
+		if nextName != node.Name || req.Link != node.Link || req.Protocol != node.Protocol ||
+			req.Address != node.Address || req.Port != node.Port || nextGroup != node.Group ||
+			(req.SortOrder != nil && *req.SortOrder != node.SortOrder) {
+			c.JSON(http.StatusConflict, gin.H{"error": "该节点由外部订阅托管，无法修改节点本身配置（下次同步会被覆盖），仅支持调整可见用户范围"})
+			return
+		}
+	}
 	columns := []string{"Link", "Protocol", "Address", "Port", "Params", "Group"}
 	if strings.TrimSpace(req.Name) != "" {
-		node.Name = strings.TrimSpace(req.Name)
+		node.Name = nextName
 		columns = append(columns, "Name")
 	}
 	// The admin UI always sends the complete node definition, so every field is
@@ -315,7 +328,7 @@ func (a *App) updateCustomNode(c *gin.Context) {
 	node.Port = req.Port
 	node.Params = model.JSONText(req.Params)
 	// Group is overwritten too: an empty value clears the previous grouping.
-	node.Group = trimRunes(strings.TrimSpace(req.Group), 64)
+	node.Group = nextGroup
 	audienceProvided := req.AllUsers != nil || req.UserIDs != nil || req.ExcludedUserIDs != nil
 	// Same safe default as create: without an explicit all_users the node is not
 	// broadcast to every account (empty user_ids = nobody, per the documented

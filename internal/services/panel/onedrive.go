@@ -465,6 +465,14 @@ func (a *App) oneDriveStatus(c *gin.Context) {
 
 // POST /api/admin/maintenance/onedrive/auth/start — begin device-code login.
 func (a *App) startOneDriveAuth(c *gin.Context) {
+	// Reject starting cloud auth while a local/detached panel update or restore
+	// is active, without holding the global maintenance lock during the OAuth
+	// HTTP request.
+	unlock, ok := a.tryMaintenanceRequest(c)
+	if !ok {
+		return
+	}
+	unlock()
 	a.pruneOneDrivePending(time.Now())
 	device, err := a.startOneDriveDeviceCode(c.Request.Context(), oneDriveOAuthClientID)
 	if err != nil {

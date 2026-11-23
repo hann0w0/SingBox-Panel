@@ -503,17 +503,37 @@ func (a *App) createUserForward(c *gin.Context) {
 		return
 	}
 	var inbound model.Inbound
-	inboundQuery := a.db.Where("server_id IN ? AND tag = ? AND enabled = ?", normalizedIDs(u.ServerIDs), req.InboundTag, true)
+	inboundQuery := a.db.Where("server_id IN ? AND tag = ? AND enabled = ?", normalizedIDs(u.ServerIDs), req.InboundTag, true).Order("server_id, id")
 	if req.InboundServerID != 0 {
 		if !u.HasServer(req.InboundServerID) {
 			c.JSON(http.StatusForbidden, gin.H{"error": "没有该服务器的访问权限"})
 			return
 		}
-		inboundQuery = inboundQuery.Where("server_id = ?", req.InboundServerID)
-	}
-	if err := inboundQuery.First(&inbound).Error; err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "入口节点不存在或未启用"})
-		return
+		if err := inboundQuery.Where("server_id = ?", req.InboundServerID).First(&inbound).Error; err != nil {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "入口节点不存在或未启用"})
+			return
+		}
+	} else {
+		var candidates []model.Inbound
+		if err := inboundQuery.Find(&candidates).Error; err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+			return
+		}
+		var accessible []model.Inbound
+		for _, candidate := range candidates {
+			if u.HasInbound(candidate.ServerID, candidate.ID) {
+				accessible = append(accessible, candidate)
+			}
+		}
+		if len(accessible) == 0 {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "入口节点不存在或未启用"})
+			return
+		}
+		if len(accessible) > 1 {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "多个服务器存在同名入口节点，请明确指定 inbound_server_id"})
+			return
+		}
+		inbound = accessible[0]
 	}
 	unlockOperation := a.lockServerOperation(inbound.ServerID)
 	defer unlockOperation()

@@ -147,17 +147,36 @@ func TestSubscriptionManagedCustomNodeCanBeUpdatedAndDeleted(t *testing.T) {
 	router.PUT("/custom-nodes/:id", app.updateCustomNode)
 	router.DELETE("/custom-nodes/:id", app.deleteCustomNode)
 
-	payload, err := json.Marshal(map[string]any{
+	nodePath := "/custom-nodes/" + strconv.FormatUint(uint64(node.ID), 10)
+	// Modifying managed fields on a subscription-owned node must be rejected so
+	// changes are not silently overwritten on the next subscription sync.
+	managedPayload, err := json.Marshal(map[string]any{
 		"name": "新名称", "link": "socks5://127.0.0.1:2080",
 		"all_users": false, "user_ids": []uint{user.ID},
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	nodePath := "/custom-nodes/" + strconv.FormatUint(uint64(node.ID), 10)
-	req := httptest.NewRequest(http.MethodPut, nodePath, bytes.NewReader(payload))
+	req := httptest.NewRequest(http.MethodPut, nodePath, bytes.NewReader(managedPayload))
 	req.Header.Set("Content-Type", "application/json")
 	w := httptest.NewRecorder()
+	router.ServeHTTP(w, req)
+	if w.Code != http.StatusConflict {
+		t.Fatalf("managed field edit status = %d; want 409 body=%s", w.Code, w.Body.String())
+	}
+
+	// Updating only the audience (visible users) on a subscription-owned node
+	// must succeed and preserve subscription ownership.
+	payload, err := json.Marshal(map[string]any{
+		"name": node.Name, "link": node.Link,
+		"all_users": false, "user_ids": []uint{user.ID},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	req = httptest.NewRequest(http.MethodPut, nodePath, bytes.NewReader(payload))
+	req.Header.Set("Content-Type", "application/json")
+	w = httptest.NewRecorder()
 	router.ServeHTTP(w, req)
 	if w.Code != http.StatusOK {
 		t.Fatalf("update status = %d body=%s", w.Code, w.Body.String())
@@ -166,7 +185,7 @@ func TestSubscriptionManagedCustomNodeCanBeUpdatedAndDeleted(t *testing.T) {
 	if err := db.First(&updated, node.ID).Error; err != nil {
 		t.Fatal(err)
 	}
-	if updated.Name != "新名称" || updated.Link != "socks5://127.0.0.1:2080" {
+	if updated.Name != node.Name || updated.Link != node.Link {
 		t.Fatalf("updated node = %+v", updated)
 	}
 	if len(updated.UserIDs) != 1 || updated.UserIDs[0] != user.ID {

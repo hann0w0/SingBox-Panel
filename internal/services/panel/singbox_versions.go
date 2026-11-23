@@ -2,6 +2,7 @@ package panel
 
 import (
 	"encoding/json"
+	"io"
 	"net/http"
 	"strconv"
 	"strings"
@@ -19,12 +20,17 @@ type SingboxLatestReleases struct {
 	Beta   string `json:"beta"`
 }
 
-const singboxReleaseCacheTTL = time.Hour
+const (
+	singboxReleaseCacheTTL    = time.Hour
+	singboxReleaseNegativeTTL = time.Minute
+	maxSingboxReleaseRespSize = 2 << 20
+)
 
 var (
 	sbReleaseURL       = "https://api.github.com/repos/SagerNet/sing-box/releases?per_page=15"
 	sbReleaseCache     SingboxLatestReleases
 	sbReleaseCacheTime time.Time
+	sbReleaseFailTime  time.Time
 	sbReleaseMutex     sync.RWMutex
 )
 
@@ -40,7 +46,8 @@ func invalidateSingboxReleaseCache() {
 
 func getLatestSingboxReleases() SingboxLatestReleases {
 	sbReleaseMutex.RLock()
-	if time.Since(sbReleaseCacheTime) < singboxReleaseCacheTTL && (sbReleaseCache.Stable != "" || sbReleaseCache.Beta != "") {
+	if (time.Since(sbReleaseCacheTime) < singboxReleaseCacheTTL && (sbReleaseCache.Stable != "" || sbReleaseCache.Beta != "")) ||
+		(!sbReleaseFailTime.IsZero() && time.Since(sbReleaseFailTime) < singboxReleaseNegativeTTL) {
 		defer sbReleaseMutex.RUnlock()
 		return sbReleaseCache
 	}
@@ -49,13 +56,15 @@ func getLatestSingboxReleases() SingboxLatestReleases {
 	sbReleaseMutex.Lock()
 	defer sbReleaseMutex.Unlock()
 
-	if time.Since(sbReleaseCacheTime) < singboxReleaseCacheTTL && (sbReleaseCache.Stable != "" || sbReleaseCache.Beta != "") {
+	if (time.Since(sbReleaseCacheTime) < singboxReleaseCacheTTL && (sbReleaseCache.Stable != "" || sbReleaseCache.Beta != "")) ||
+		(!sbReleaseFailTime.IsZero() && time.Since(sbReleaseFailTime) < singboxReleaseNegativeTTL) {
 		return sbReleaseCache
 	}
 
 	client := &http.Client{Timeout: 5 * time.Second}
 	req, err := http.NewRequest("GET", sbReleaseURL, nil)
 	if err != nil {
+		sbReleaseFailTime = time.Now()
 		return sbReleaseCache
 	}
 	req.Header.Set("User-Agent", "singbox-panel")
@@ -65,12 +74,14 @@ func getLatestSingboxReleases() SingboxLatestReleases {
 		if resp != nil {
 			resp.Body.Close()
 		}
+		sbReleaseFailTime = time.Now()
 		return sbReleaseCache
 	}
 	defer resp.Body.Close()
 
 	var releases []githubRelease
-	if err := json.NewDecoder(resp.Body).Decode(&releases); err != nil {
+	if err := json.NewDecoder(io.LimitReader(resp.Body, maxSingboxReleaseRespSize)).Decode(&releases); err != nil {
+		sbReleaseFailTime = time.Now()
 		return sbReleaseCache
 	}
 
@@ -94,6 +105,9 @@ func getLatestSingboxReleases() SingboxLatestReleases {
 	if stable != "" || beta != "" {
 		sbReleaseCache = SingboxLatestReleases{Stable: stable, Beta: beta}
 		sbReleaseCacheTime = time.Now()
+		sbReleaseFailTime = time.Time{}
+	} else {
+		sbReleaseFailTime = time.Now()
 	}
 	return sbReleaseCache
 }

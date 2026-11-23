@@ -68,7 +68,7 @@ func mergeConfigValue(original, before, after any) any {
 // Object arrays with a shared identity can grow or reorder without losing
 // custom members on existing entries. Scalar arrays remain a single form field.
 func mergeConfigObjectList(source, before, after []any) ([]any, bool) {
-	for _, key := range []string{"tag", "name", "id", "username"} {
+	for _, key := range []string{"tag", "name", "id", "username", "uuid"} {
 		ids := func(values []any) ([]string, bool) {
 			var result []string
 			seen := make(map[string]bool)

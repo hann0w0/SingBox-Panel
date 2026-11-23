@@ -17,12 +17,13 @@ const (
 )
 
 var (
-	errUsernameRequired = errors.New("username cannot be empty")
-	errUsernameTooLong  = errors.New("username must not exceed 191 bytes")
-	errUsernameControl  = errors.New("username cannot contain control characters")
-	errUsernameReserved = errors.New("username is reserved")
-	errPasswordRequired = errors.New("password cannot be empty")
-	errPasswordTooLong  = errors.New("password must not exceed 72 bytes")
+	errUsernameRequired    = errors.New("username cannot be empty")
+	errUsernameInvalidUTF8 = errors.New("username must be valid UTF-8")
+	errUsernameTooLong     = errors.New("username must not exceed 191 bytes")
+	errUsernameControl     = errors.New("username cannot contain control characters")
+	errUsernameReserved    = errors.New("username is reserved")
+	errPasswordRequired    = errors.New("password cannot be empty")
+	errPasswordTooLong     = errors.New("password must not exceed 72 bytes")
 )
 
 func normalizeUsername(value string) string {
@@ -34,7 +35,10 @@ func validateUsername(value string) (string, string, error) {
 	if display == "" {
 		return "", "", errUsernameRequired
 	}
-	if !utf8.ValidString(display) || len(display) > maxUsernameBytes {
+	if !utf8.ValidString(display) {
+		return "", "", errUsernameInvalidUTF8
+	}
+	if len(display) > maxUsernameBytes {
 		return "", "", errUsernameTooLong
 	}
 	for _, r := range display {

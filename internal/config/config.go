@@ -2,7 +2,10 @@
 package config
 
 import (
+	"bytes"
+	"errors"
 	"fmt"
+	"io"
 	"net/netip"
 	"net/url"
 	"os"
@@ -112,7 +115,9 @@ func Load(path string) (PanelConfig, error) {
 		if err != nil {
 			return cfg, fmt.Errorf("read config: %w", err)
 		}
-		if err := yaml.Unmarshal(raw, &cfg); err != nil {
+		dec := yaml.NewDecoder(bytes.NewReader(raw))
+		dec.KnownFields(true)
+		if err := dec.Decode(&cfg); err != nil && !errors.Is(err, io.EOF) {
 			return cfg, fmt.Errorf("parse config: %w", err)
 		}
 	}
@@ -142,7 +147,7 @@ func applyEnv(cfg *PanelConfig) error {
 	if v := firstEnv("LISTEN", "SINGBOX_PANEL_LISTEN"); v != "" {
 		cfg.Listen = v
 	}
-	if v := firstEnv("WEB", "BASE_URL", "SINGBOX_PANEL_BASE_URL"); v != "" {
+	if v := firstEnv("SINGBOX_PANEL_BASE_URL", "BASE_URL", "WEB"); v != "" {
 		cfg.BaseURL = v
 	}
 	if v := firstEnv("JWT_SECRET", "SINGBOX_PANEL_JWT_SECRET"); v != "" {

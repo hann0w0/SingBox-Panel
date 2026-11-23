@@ -3,6 +3,7 @@ package panel
 import (
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 	"runtime"
 	"strings"
@@ -52,14 +53,23 @@ func installablePanelReleases(refresh bool) ([]panelReleaseInfo, error) {
 	}
 	resp, err := httpGetGitHub(panelReleaseListURL, 8*time.Second)
 	if err != nil {
+		if panelReleaseListCache != nil {
+			return panelReleaseListCache, nil
+		}
 		return nil, fmt.Errorf("访问 GitHub 失败：%w", err)
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
+		if panelReleaseListCache != nil {
+			return panelReleaseListCache, nil
+		}
 		return nil, fmt.Errorf("GitHub 返回 %d", resp.StatusCode)
 	}
 	var releases []githubReleaseDetail
-	if err := json.NewDecoder(resp.Body).Decode(&releases); err != nil {
+	if err := json.NewDecoder(io.LimitReader(resp.Body, 4<<20)).Decode(&releases); err != nil {
+		if panelReleaseListCache != nil {
+			return panelReleaseListCache, nil
+		}
 		return nil, fmt.Errorf("解析 Release 失败：%w", err)
 	}
 	binary := "singbox-panel-linux-" + runtime.GOARCH

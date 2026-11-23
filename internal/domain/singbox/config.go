@@ -36,7 +36,7 @@ type ServerConfigInput struct {
 	// ProjectionOnly renders partially modelled inputs for a raw-config overlay.
 	// The complete merged file is still checked by sing-box before activation.
 	ProjectionOnly bool
-	// LogLevel defaults to "warn".
+	// LogLevel defaults to "info".
 	LogLevel string
 	Inbounds []InboundInput
 
@@ -94,8 +94,40 @@ type experimentalOut struct {
 // project's sing-box 1.14 baseline (also accepted by 1.15). The output is validated on the VPS by `sing-box check`
 // before being applied.
 func BuildServerConfig(in ServerConfigInput) ([]byte, error) {
-	if err := ValidateRealityGuardLayout(in.Inbounds); err != nil && !in.ProjectionOnly {
-		return nil, err
+	if !in.ProjectionOnly {
+		if err := ValidateRealityGuardLayout(in.Inbounds); err != nil {
+			return nil, err
+		}
+		if in.StatsController != "" && in.StatsSecret == "" {
+			return nil, fmt.Errorf("stats controller %q requires a non-empty stats secret", in.StatsController)
+		}
+		seenInbounds := make(map[string]bool, len(in.Inbounds))
+		for _, ib := range in.Inbounds {
+			if ib.Tag != "" {
+				if seenInbounds[ib.Tag] {
+					return nil, fmt.Errorf("duplicate inbound tag %q", ib.Tag)
+				}
+				seenInbounds[ib.Tag] = true
+			}
+		}
+		seenOutbounds := make(map[string]bool, len(in.Outbounds))
+		for _, o := range in.Outbounds {
+			if o.Tag != "" {
+				if seenOutbounds[o.Tag] {
+					return nil, fmt.Errorf("duplicate outbound tag %q", o.Tag)
+				}
+				seenOutbounds[o.Tag] = true
+			}
+		}
+		seenRuleSets := make(map[string]bool, len(in.RuleSets))
+		for _, rs := range in.RuleSets {
+			if rs.Tag != "" {
+				if seenRuleSets[rs.Tag] {
+					return nil, fmt.Errorf("duplicate rule_set tag %q", rs.Tag)
+				}
+				seenRuleSets[rs.Tag] = true
+			}
+		}
 	}
 	inbounds := make([]json.RawMessage, 0, len(in.Inbounds))
 	var guardRules []map[string]any

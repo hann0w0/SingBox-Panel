@@ -171,19 +171,7 @@ func BuildClientOutbound(n ClientNode) (json.RawMessage, error) {
 		if tls != nil {
 			base["tls"] = tls
 		}
-		if n.Settings.ObfsPassword != "" && (n.Settings.ObfsType == "" || n.Settings.ObfsType == "salamander" || n.Settings.ObfsType == "gecko") {
-			obfs := map[string]any{"type": n.Settings.ObfsType, "password": n.Settings.ObfsPassword}
-			if obfs["type"] == "" {
-				obfs["type"] = "salamander"
-			}
-			if n.Settings.ObfsType == "gecko" {
-				if n.Settings.GeckoMinPacketSize > 0 {
-					obfs["min_packet_size"] = n.Settings.GeckoMinPacketSize
-				}
-				if n.Settings.GeckoMaxPacketSize > 0 {
-					obfs["max_packet_size"] = n.Settings.GeckoMaxPacketSize
-				}
-			}
+		if obfs := buildHysteria2Obfs(n.Settings); obfs != nil {
 			base["obfs"] = obfs
 		}
 		if n.Settings.UpMbps > 0 {

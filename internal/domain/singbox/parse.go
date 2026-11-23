@@ -136,9 +136,15 @@ func firstUser(m map[string]any) map[string]any {
 
 // parseTLS recovers TLSSettings from an inbound/outbound tls object.
 func parseTLS(t map[string]any) TLSSettings {
+	out, _ := parseTLSWithWarnings(t)
+	return out
+}
+
+func parseTLSWithWarnings(t map[string]any) (TLSSettings, []string) {
 	if t == nil {
-		return TLSSettings{}
+		return TLSSettings{}, nil
 	}
+	var warnings []string
 	out := TLSSettings{
 		Enabled:         mBool(t, "enabled"),
 		ServerName:      mStr(t, "server_name"),
@@ -169,6 +175,9 @@ func parseTLS(t map[string]any) TLSSettings {
 	if acme != nil {
 		if d := mStrSlice(acme, "domain"); len(d) > 0 {
 			out.ACMEDomain = d[0]
+			if len(d) > 1 {
+				warnings = append(warnings, fmt.Sprintf("ACME 配置了 %d 个域名，面板仅导入首个域名 %s（其余 %d 个未导入）", len(d), d[0], len(d)-1))
+			}
 		}
 		out.ACMEEmail = mStr(acme, "email")
 	}
@@ -179,7 +188,11 @@ func parseTLS(t map[string]any) TLSSettings {
 			if raw, err := base64.RawURLEncoding.DecodeString(privateKey); err == nil {
 				if key, err := ecdh.X25519().NewPrivateKey(raw); err == nil {
 					publicKey = base64.RawURLEncoding.EncodeToString(key.PublicKey().Bytes())
+				} else {
+					warnings = append(warnings, "REALITY private_key 不是有效的 X25519 私钥，未能自动推导 public_key")
 				}
+			} else {
+				warnings = append(warnings, "REALITY private_key Base64URL 解码失败，未能自动推导 public_key")
 			}
 		}
 		out.Reality = RealitySettings{
@@ -194,7 +207,7 @@ func parseTLS(t map[string]any) TLSSettings {
 			out.Reality.HandshakeServerPort = mInt(h, "server_port")
 		}
 	}
-	return out
+	return out, warnings
 }
 
 func parseTransport(t map[string]any) TransportSettings {
@@ -570,6 +583,11 @@ func ParseServerConfig(raw []byte) (*ParsedConfig, error) {
 		}
 		if in.UserCount > 1 && in.Type != "snell" {
 			out.Skipped = append(out.Skipped, fmt.Sprintf("入站 %s: 含 %d 个手写用户凭证，导入不会自动映射为面板账号（未修改凭证前由覆盖层保留原列表，如需多用户管理请手动开启多用户模式并分配用户）", in.Tag, in.UserCount))
+		}
+		if _, tlsWarnings := parseTLSWithWarnings(mMap(m, "tls")); len(tlsWarnings) > 0 {
+			for _, w := range tlsWarnings {
+				out.Skipped = append(out.Skipped, fmt.Sprintf("入站 %s: %s", in.Tag, w))
+			}
 		}
 		out.Inbounds = append(out.Inbounds, in)
 	}

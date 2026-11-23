@@ -487,10 +487,25 @@ func (s InboundSettings) ValidateServerOutbound(typ string) error {
 	return s.validateOutbound(typ, true)
 }
 
+func validSS2022OutboundKey(method, raw string) bool {
+	if raw == "" {
+		return true
+	}
+	for _, part := range strings.Split(raw, ":") {
+		if !ValidSS2022Key(method, part) {
+			return false
+		}
+	}
+	return true
+}
+
 func (s InboundSettings) validateOutbound(typ string, allowExtendedTransport bool) error {
 	if typ != "snell" {
 		if err := s.validateProtocol(typ, allowExtendedTransport); err != nil {
 			return err
+		}
+		if typ == "shadowsocks" && IsSS2022(s.Method) && !validSS2022OutboundKey(s.Method, s.SSServerPSK) {
+			return fmt.Errorf("shadowsocks: %s requires %d-byte base64 key(s)", s.Method, SS2022KeyLen(s.Method))
 		}
 		if s.TLS.Reality.Enabled && strings.TrimSpace(s.TLS.Reality.PublicKey) == "" {
 			return fmt.Errorf("%s: REALITY public key is required", typ)

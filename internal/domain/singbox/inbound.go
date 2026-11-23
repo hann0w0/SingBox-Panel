@@ -155,6 +155,25 @@ func buildTransport(t TransportSettings) *v2rayTransport {
 	return out
 }
 
+func buildHysteria2Obfs(s InboundSettings) map[string]any {
+	if s.ObfsPassword == "" || (s.ObfsType != "" && s.ObfsType != "salamander" && s.ObfsType != "gecko") {
+		return nil
+	}
+	obfs := map[string]any{"type": s.ObfsType, "password": s.ObfsPassword}
+	if obfs["type"] == "" {
+		obfs["type"] = "salamander"
+	}
+	if s.ObfsType == "gecko" {
+		if s.GeckoMinPacketSize > 0 {
+			obfs["min_packet_size"] = s.GeckoMinPacketSize
+		}
+		if s.GeckoMaxPacketSize > 0 {
+			obfs["max_packet_size"] = s.GeckoMaxPacketSize
+		}
+	}
+	return obfs
+}
+
 // BuildInbound renders a single inbound object as official config JSON.
 func BuildInbound(in InboundInput) (json.RawMessage, error) {
 	if err := in.Settings.Validate(in.Type); err != nil && !in.ProjectionOnly {
@@ -235,7 +254,9 @@ func BuildInbound(in InboundInput) (json.RawMessage, error) {
 			users = append(users, map[string]any{"name": u.Name, "password": u.Password})
 		}
 		m["users"] = users
-		m["tls"] = tls // required (validate enforced)
+		if tls != nil {
+			m["tls"] = tls
+		}
 		if in.Settings.TrojanFallback != nil {
 			m["fallback"] = map[string]any{
 				"server":      in.Settings.TrojanFallback.Server,
@@ -273,7 +294,9 @@ func BuildInbound(in InboundInput) (json.RawMessage, error) {
 			users = append(users, map[string]any{"name": u.Name, "password": u.Password})
 		}
 		m["users"] = users
-		m["tls"] = tls // required
+		if tls != nil {
+			m["tls"] = tls
+		}
 		if in.Settings.UpMbps > 0 {
 			m["up_mbps"] = in.Settings.UpMbps
 		}
@@ -285,19 +308,7 @@ func BuildInbound(in InboundInput) (json.RawMessage, error) {
 		}
 		// Keep legacy rows with only obfs_password as salamander. Gecko also
 		// carries its optional packet-size bounds in the same object.
-		if in.Settings.ObfsPassword != "" && (in.Settings.ObfsType == "" || in.Settings.ObfsType == "salamander" || in.Settings.ObfsType == "gecko") {
-			obfs := map[string]any{"type": in.Settings.ObfsType, "password": in.Settings.ObfsPassword}
-			if obfs["type"] == "" {
-				obfs["type"] = "salamander"
-			}
-			if in.Settings.ObfsType == "gecko" {
-				if in.Settings.GeckoMinPacketSize > 0 {
-					obfs["min_packet_size"] = in.Settings.GeckoMinPacketSize
-				}
-				if in.Settings.GeckoMaxPacketSize > 0 {
-					obfs["max_packet_size"] = in.Settings.GeckoMaxPacketSize
-				}
-			}
+		if obfs := buildHysteria2Obfs(in.Settings); obfs != nil {
 			m["obfs"] = obfs
 		}
 		// NOTE: hysteria2 is QUIC and has no v2ray transport field. Emitting
@@ -310,7 +321,9 @@ func BuildInbound(in InboundInput) (json.RawMessage, error) {
 			users = append(users, map[string]any{"name": u.Name, "uuid": u.UUID, "password": u.Password})
 		}
 		m["users"] = users
-		m["tls"] = tls // required
+		if tls != nil {
+			m["tls"] = tls
+		}
 		cc := in.Settings.CongestionControl
 		if cc == "" {
 			cc = "cubic"
@@ -326,7 +339,9 @@ func BuildInbound(in InboundInput) (json.RawMessage, error) {
 			users = append(users, map[string]any{"username": u.Name, "password": u.Password})
 		}
 		m["users"] = users
-		m["tls"] = tls // required
+		if tls != nil {
+			m["tls"] = tls
+		}
 
 	case "hysteria": // Hysteria v1
 		users := make([]map[string]any, 0, len(eff))
@@ -334,7 +349,9 @@ func BuildInbound(in InboundInput) (json.RawMessage, error) {
 			users = append(users, map[string]any{"name": u.Name, "auth_str": u.Password})
 		}
 		m["users"] = users
-		m["tls"] = tls // required
+		if tls != nil {
+			m["tls"] = tls
+		}
 		up, down := HysteriaBandwidth(in.Settings)
 		m["up_mbps"] = up
 		m["down_mbps"] = down
@@ -368,7 +385,9 @@ func BuildInbound(in InboundInput) (json.RawMessage, error) {
 			users = append(users, map[string]any{"name": u.Name, "password": u.Password})
 		}
 		m["users"] = users
-		m["tls"] = tls // required
+		if tls != nil {
+			m["tls"] = tls
+		}
 
 	case "snell": // requires sing-box 1.14+ on the node
 		m["version"] = in.Settings.SnellVersion

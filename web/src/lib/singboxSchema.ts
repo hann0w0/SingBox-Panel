@@ -696,7 +696,6 @@ export function inboundSettingsToNativeJson(
         ...(settings.tls.reality.short_id?.length ? { short_id: settings.tls.reality.short_id } : {}),
         ...(settings.tls.reality.max_time_difference ? { max_time_difference: settings.tls.reality.max_time_difference } : {}),
       }
-      delete nextReality.guard
       delete nextReality.public_key
       tlsObj.reality = nextReality
     } else {
@@ -808,7 +807,6 @@ export function nativeJsonToInboundSettings(prev: InboundSettings, rawObj: Recor
           ...(prev.tls?.reality?.public_key ? { public_key: prev.tls.reality.public_key } : {}),
           ...(Array.isArray(r.short_id) ? { short_id: r.short_id.map(String) } : {}),
           ...(typeof r.max_time_difference === 'string' ? { max_time_difference: r.max_time_difference } : {}),
-          ...(prev.tls?.reality?.guard ? { guard: prev.tls.reality.guard } : {}),
         }
       }
     }

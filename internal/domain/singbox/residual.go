@@ -137,19 +137,9 @@ func ExtractResidual(raw []byte, parsed *ParsedConfig) (Residual, error) {
 	for _, in := range parsed.Inbounds {
 		knownInbound[in.Tag] = true
 	}
-	// REALITY gate inbounds are panel-generated (see findRealityGuardImports), so
-	// they are neither unknown nor user-owned: skip them entirely.
-	guardInboundIndex := make(map[int]bool)
-	for _, guard := range findRealityGuardImports(root) {
-		guardInboundIndex[guard.directIndex] = true
-		guardInboundIndex[guard.targetIndex] = true
-	}
-	for index, entry := range mSlice(root, "inbounds") {
+	for _, entry := range mSlice(root, "inbounds") {
 		m, ok := entry.(map[string]any)
 		if !ok {
-			continue
-		}
-		if guardInboundIndex[index] {
 			continue
 		}
 		tag := mStr(m, "tag")
@@ -239,20 +229,10 @@ func NormalizeSingleUserName(raw []byte) ([]byte, bool) {
 	if err := json.Unmarshal(raw, &root); err != nil {
 		return nil, false
 	}
-	// A REALITY gate's inner inbound carries an identity the panel does not
-	// regenerate, so its user name is a real difference, not a naming variant.
-	guardInboundIndex := make(map[int]bool)
-	for _, guard := range findRealityGuardImports(root) {
-		guardInboundIndex[guard.directIndex] = true
-		guardInboundIndex[guard.targetIndex] = true
-	}
 	changed := false
-	for index, entry := range mSlice(root, "inbounds") {
+	for _, entry := range mSlice(root, "inbounds") {
 		in, ok := entry.(map[string]any)
 		if !ok {
-			continue
-		}
-		if guardInboundIndex[index] {
 			continue
 		}
 		users := mSlice(in, "users")

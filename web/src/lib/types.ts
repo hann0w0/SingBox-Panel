@@ -168,18 +168,6 @@ export interface RealitySettings {
   public_key?: string
   short_id?: string[]
   max_time_difference?: string
-  guard?: RealityGuardSettings
-}
-
-// RealityGuardSettings describes the optional front SNI filter: the public
-// port runs a sniffing `direct` inbound that only relays allowlisted SNI
-// handshakes to the real VLESS listener on 127.0.0.1:<internal_port>.
-export interface RealityGuardSettings {
-  enabled?: boolean
-  internal_port?: number
-  sniff_timeout?: string
-  server_names?: string[]
-  tag?: string
 }
 
 export interface TLSSettings {

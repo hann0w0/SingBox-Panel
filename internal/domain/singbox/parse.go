@@ -537,23 +537,8 @@ func ParseServerConfig(raw []byte) (*ParsedConfig, error) {
 			out.LogLevel = level
 		}
 	}
-	guards := findRealityGuardImports(root)
-	guardTargets := make(map[int]realityGuardImport, len(guards))
-	guardInbounds := make(map[int]bool, len(guards))
-	guardRules := make(map[int]bool, len(guards)*3)
-	for _, guard := range guards {
-		guardTargets[guard.targetIndex] = guard
-		guardInbounds[guard.directIndex] = true
-		for i := guard.ruleIndex; i < guard.ruleIndex+3; i++ {
-			guardRules[i] = true
-		}
-	}
-
 	providers := taggedObjects(root, "certificate_providers")
-	for index, e := range mSlice(root, "inbounds") {
-		if guardInbounds[index] {
-			continue
-		}
+	for _, e := range mSlice(root, "inbounds") {
 		m, ok := e.(map[string]any)
 		if !ok {
 			continue
@@ -569,17 +554,6 @@ func ParseServerConfig(raw []byte) (*ParsedConfig, error) {
 		if in.ListenPort == 0 && in.Type != "tun" {
 			out.Skipped = append(out.Skipped, fmt.Sprintf("入站 %s: 缺少 listen_port", in.Tag))
 			continue
-		}
-		if guard, ok := guardTargets[index]; ok {
-			in.ListenPort = guard.publicPort
-			publicInbound, _ := mSlice(root, "inbounds")[guard.directIndex].(map[string]any)
-			in.Settings.Listen = mStr(publicInbound, "listen")
-			in.Settings.IPv6Only = specificIPv6(in.Settings.Listen)
-			in.Settings.TLS.Reality.Guard = &RealityGuardSettings{
-				Enabled: true, InternalPort: guard.internalPort,
-				SniffTimeout: guard.timeout, ServerNames: guard.serverNames, Tag: guard.tag,
-			}
-			in.Settings.Raw = nil
 		}
 		if in.UserCount > 1 && in.Type != "snell" {
 			out.Skipped = append(out.Skipped, fmt.Sprintf("入站 %s: 含 %d 个手写用户凭证，导入不会自动映射为面板账号（未修改凭证前由覆盖层保留原列表，如需多用户管理请手动开启多用户模式并分配用户）", in.Tag, in.UserCount))
@@ -614,9 +588,6 @@ func ParseServerConfig(raw []byte) (*ParsedConfig, error) {
 			out.Final = f
 		}
 		for index, e := range mSlice(route, "rules") {
-			if guardRules[index] {
-				continue
-			}
 			m, ok := e.(map[string]any)
 			if !ok {
 				out.Skipped = append(out.Skipped, fmt.Sprintf("路由规则 #%d: 条目不是有效对象", index+1))

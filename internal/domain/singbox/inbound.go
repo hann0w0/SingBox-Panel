@@ -200,13 +200,6 @@ func BuildInbound(in InboundInput) (json.RawMessage, error) {
 			m["listen_port"] = in.ListenPort
 		}
 	}
-	if in.Settings.RealityGuardEnabled() {
-		if in.ListenPort == in.Settings.TLS.Reality.Guard.InternalPort {
-			return nil, fmt.Errorf("REALITY 内部端口不能与公网端口相同")
-		}
-		m["listen"] = "127.0.0.1"
-		m["listen_port"] = in.Settings.TLS.Reality.Guard.InternalPort
-	}
 	tls := buildTLS(in.Settings.TLS)
 	tr := buildTransport(in.Settings.Transport)
 

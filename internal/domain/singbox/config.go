@@ -95,9 +95,6 @@ type experimentalOut struct {
 // before being applied.
 func BuildServerConfig(in ServerConfigInput) ([]byte, error) {
 	if !in.ProjectionOnly {
-		if err := ValidateRealityGuardLayout(in.Inbounds); err != nil {
-			return nil, err
-		}
 		if in.StatsController != "" && in.StatsSecret == "" {
 			return nil, fmt.Errorf("stats controller %q requires a non-empty stats secret", in.StatsController)
 		}
@@ -130,29 +127,11 @@ func BuildServerConfig(in ServerConfigInput) ([]byte, error) {
 		}
 	}
 	inbounds := make([]json.RawMessage, 0, len(in.Inbounds))
-	var guardRules []map[string]any
 	for _, ib := range in.Inbounds {
 		ib.ProjectionOnly = in.ProjectionOnly
-		if ib.Settings.RealityGuardEnabled() && !in.ProjectionOnly {
-			for _, address := range []string{in.StatsController, in.StatsAPI} {
-				_, portText, _ := net.SplitHostPort(address)
-				port, _ := strconv.Atoi(portText)
-				if port == ib.Settings.TLS.Reality.Guard.InternalPort || port == ib.ListenPort {
-					return nil, fmt.Errorf("REALITY 入站 %q 与统计服务端口冲突", ib.Tag)
-				}
-			}
-		}
 		raw, err := BuildInbound(ib)
 		if err != nil {
 			return nil, fmt.Errorf("inbound %q: %w", ib.Tag, err)
-		}
-		if ib.Settings.RealityGuardEnabled() {
-			guard, err := json.Marshal(buildRealityGuardInbound(ib))
-			if err != nil {
-				return nil, err
-			}
-			inbounds = append(inbounds, guard)
-			guardRules = append(guardRules, buildRealityGuardRules(ib)...)
 		}
 		inbounds = append(inbounds, raw)
 	}
@@ -187,10 +166,7 @@ func BuildServerConfig(in ServerConfigInput) ([]byte, error) {
 	// Route rules: keep it minimal. Only add a sniff rule when some rule matches
 	// on a domain (which requires sniffing); a plain inbound/ip/port relay needs
 	// none of it.
-	// Gate traffic must reach only its own local VLESS listener before the
-	// general loopback protection. The terminal reject isolates all other
-	// gate traffic from user rules and the global sniff fallback.
-	rules := append([]map[string]any{}, guardRules...)
+	rules := []map[string]any{}
 	if needsAutoSniff(in.Rules) {
 		rules = append(rules, map[string]any{"action": "sniff"})
 	}

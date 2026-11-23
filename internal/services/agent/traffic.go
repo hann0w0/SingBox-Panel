@@ -24,17 +24,11 @@ import (
 const maxTrafficResponseSize = 16 << 20
 
 type trafficSampler struct {
-	mu                   sync.Mutex
-	buckets              map[int64]*collectedTrafficBucket
-	accountingSession    string
-	reportSequence       uint64
-	report               *protocol.TrafficReport
-	connectionAccounting bool
-	statsStreamAvailable bool
-	nodeHaveSample       bool
-	nodeStartedAt        time.Time
-	nodeCounted          [2]uint64
-	nodeWindow           [2]uint64
+	mu                sync.Mutex
+	buckets           map[int64]*collectedTrafficBucket
+	accountingSession string
+	reportSequence    uint64
+	report            *protocol.TrafficReport
 
 	endpoint     string
 	lastUpload   uint64
@@ -71,9 +65,8 @@ type trafficSampler struct {
 }
 
 type localTrafficConfig struct {
-	Endpoint      string
-	Secret        string
-	GuardInbounds map[string]bool
+	Endpoint string
+	Secret   string
 }
 
 type clashTrafficResponse struct {
@@ -172,9 +165,8 @@ func parseLocalTrafficConfig(raw []byte) (localTrafficConfig, error) {
 		}
 	}
 	return localTrafficConfig{
-		Endpoint:      (&url.URL{Scheme: "http", Host: net.JoinHostPort(host, port), Path: "/connections"}).String(),
-		Secret:        root.Experimental.ClashAPI.Secret,
-		GuardInbounds: parseRealityGuardInbounds(raw),
+		Endpoint: (&url.URL{Scheme: "http", Host: net.JoinHostPort(host, port), Path: "/connections"}).String(),
+		Secret:   root.Experimental.ClashAPI.Secret,
 	}, nil
 }
 
@@ -285,7 +277,7 @@ func (s *trafficSampler) poll(ctx context.Context) {
 		return
 	}
 
-	s.ingestWithLayoutAt(cfg.Endpoint, counters, cfg.GuardInbounds, requestedAt, time.Now())
+	s.ingestAt(cfg.Endpoint, counters, requestedAt, time.Now())
 }
 
 // ingest folds one /connections response into the sampler state.
@@ -297,25 +289,16 @@ func (s *trafficSampler) ingest(endpoint string, counters clashTrafficResponse, 
 // first seen after that moment (from the connection stream) cannot be in the
 // response and must not be treated as closed.
 func (s *trafficSampler) ingestAt(endpoint string, counters clashTrafficResponse, requestedAt, now time.Time) {
-	s.ingestWithLayoutAt(endpoint, counters, nil, requestedAt, now)
-}
-
-func (s *trafficSampler) ingestWithLayoutAt(endpoint string, counters clashTrafficResponse, guards map[string]bool, requestedAt, now time.Time) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	s.activateConnectionAccounting(guards)
 	if s.endpoint != "" && s.endpoint != endpoint {
 		// A different controller is a different sing-box instance view; node
 		// totals restart. Connection ids are global UUIDs, so the ledger and
 		// unsent deltas stay valid.
 		s.haveSample = false
-		s.nodeHaveSample = false
 	}
 	if !s.haveSample {
 		s.startedAt = now
-	}
-	if s.connectionAccounting && !s.nodeHaveSample {
-		s.nodeStartedAt = now
 	}
 
 	uploadRate := uint64(0)
@@ -323,7 +306,7 @@ func (s *trafficSampler) ingestWithLayoutAt(endpoint string, counters clashTraff
 	sampleSeconds := 1.0
 	if s.haveSample && s.endpoint == endpoint && now.After(s.lastSample) {
 		sampleSeconds = now.Sub(s.lastSample).Seconds()
-		if sampleSeconds > 0 && !s.connectionAccounting {
+		if sampleSeconds > 0 {
 			uploadRate = uint64(float64(counterDelta(counters.UploadTotal, s.lastUpload)) / sampleSeconds)
 			downloadRate = uint64(float64(counterDelta(counters.DownloadTotal, s.lastDownload)) / sampleSeconds)
 		}
@@ -332,7 +315,7 @@ func (s *trafficSampler) ingestWithLayoutAt(endpoint string, counters clashTraff
 		sampleSeconds = 1
 	}
 	b := s.bucket(now)
-	if s.haveSample && !s.connectionAccounting {
+	if s.haveSample {
 		b.Upload += counterDelta(counters.UploadTotal, s.lastUpload)
 		b.Download += counterDelta(counters.DownloadTotal, s.lastDownload)
 	}
@@ -352,16 +335,10 @@ func (s *trafficSampler) ingestWithLayoutAt(endpoint string, counters clashTraff
 		if !connection.Start.IsZero() {
 			baseline = connection.Start.Before(s.startedAt)
 		}
-		inboundType, _, _ := strings.Cut(connection.Metadata.Type, "/")
-		s.observeConnectionFrom(connection.ID, parseInboundTag(connection.Metadata.Type), inboundType, "",
-			[2]uint64{connection.Upload, connection.Download}, baseline, connection.Start, now, guards)
+		s.observeConnection(connection.ID, parseInboundTag(connection.Metadata.Type), "",
+			[2]uint64{connection.Upload, connection.Download}, baseline, now)
 	}
 	s.closeMissing(present, requestedAt)
-	if s.connectionAccounting {
-		uploadRate = uint64(float64(s.nodeWindow[0]) / sampleSeconds)
-		downloadRate = uint64(float64(s.nodeWindow[1]) / sampleSeconds)
-		s.nodeWindow = [2]uint64{}
-	}
 	b.UploadRate = max(b.UploadRate, uploadRate)
 	b.DownloadRate = max(b.DownloadRate, downloadRate)
 	// A port's rate is the sum of all its connections over this sample window
@@ -389,9 +366,6 @@ func (s *trafficSampler) ingestWithLayoutAt(endpoint string, counters clashTraff
 	s.lastDownload = counters.DownloadTotal
 	s.lastSample = now
 	s.haveSample = true
-	if s.connectionAccounting {
-		s.nodeHaveSample = true
-	}
 	s.available = true
 	s.uploadRate = uploadRate
 	s.downloadRate = downloadRate
@@ -409,13 +383,12 @@ func (s *trafficSampler) ingestWithLayoutAt(endpoint string, counters clashTraff
 func (s *trafficSampler) snapshot() *protocol.TrafficSnapshot {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if !s.trafficAvailable() {
+	if !s.available || !s.haveSample {
 		return nil
 	}
-	upload, download := s.nodeTotals()
 	snapshot := &protocol.TrafficSnapshot{
-		UploadTotal:      upload,
-		DownloadTotal:    download,
+		UploadTotal:      s.lastUpload,
+		DownloadTotal:    s.lastDownload,
 		UploadRate:       s.uploadRate,
 		DownloadRate:     s.downloadRate,
 		TCPConnections:   s.tcpConnections,
@@ -443,14 +416,13 @@ func (s *trafficSampler) snapshot() *protocol.TrafficSnapshot {
 func (s *trafficSampler) summarySnapshot() *protocol.TrafficSnapshot {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if !s.trafficAvailable() {
+	if !s.available || !s.haveSample {
 		return nil
 	}
-	upload, download := s.nodeTotals()
 	return &protocol.TrafficSnapshot{
 		AccountingVersion: 2,
-		UploadTotal:       upload,
-		DownloadTotal:     download,
+		UploadTotal:       s.lastUpload,
+		DownloadTotal:     s.lastDownload,
 		UploadRate:        s.uploadRate,
 		DownloadRate:      s.downloadRate,
 		TCPConnections:    s.tcpConnections,
@@ -463,7 +435,7 @@ func (s *trafficSampler) summarySnapshot() *protocol.TrafficSnapshot {
 func (s *trafficSampler) liveRates() (available bool, uploadRate, downloadRate uint64) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if !s.trafficAvailable() {
+	if !s.available || !s.haveSample {
 		return false, 0, 0
 	}
 	return true, s.uploadRate, s.downloadRate

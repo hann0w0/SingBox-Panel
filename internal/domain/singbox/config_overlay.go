@@ -54,11 +54,7 @@ func projectionObjects(p ConfigProjection) (map[string]json.RawMessage, map[stri
 		if i >= len(p.IDs["inbounds"]) {
 			return nil, nil, fmt.Errorf("missing inbound identity")
 		}
-		id := p.IDs["inbounds"][i]
-		identities["inbounds"][in.Tag] = id
-		if in.Settings.RealityGuardEnabled() {
-			identities["inbounds"][in.Settings.RealityGuardTag(in.Tag)] = "guard:" + id
-		}
+		identities["inbounds"][in.Tag] = p.IDs["inbounds"][i]
 	}
 	for i, ob := range p.Input.Outbounds {
 		if i >= len(p.IDs["outbounds"]) {
@@ -73,13 +69,6 @@ func projectionObjects(p ConfigProjection) (map[string]json.RawMessage, map[stri
 		identities["rule_set"][rs.Tag] = p.IDs["rule_set"][i]
 	}
 	var ruleIDs []string
-	for i, in := range p.Input.Inbounds {
-		if in.Settings.RealityGuardEnabled() {
-			for n := 0; n < 3; n++ {
-				ruleIDs = append(ruleIDs, fmt.Sprintf("guard:%s:%d", p.IDs["inbounds"][i], n))
-			}
-		}
-	}
 	var rules []json.RawMessage
 	if err := json.Unmarshal(configArray(root, "rules"), &rules); err != nil {
 		return nil, nil, err

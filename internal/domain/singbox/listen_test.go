@@ -27,44 +27,33 @@ func TestListenModesRoundTrip(t *testing.T) {
 		{"local", "127.0.0.1", false},
 		{"imported", "2001:db8::1", true},
 	} {
-		for _, guarded := range []bool{false, true} {
-			t.Run(mode.name+map[bool]string{false: "", true: "-guard"}[guarded], func(t *testing.T) {
-				inbound := InboundInput{Tag: "local", Type: "socks", ListenPort: 18081}
-				if guarded {
-					inbound = testGuardInbound()
-				}
-				inbound.Settings.Listen = mode.address
-				inbound.Settings.IPv6Only = mode.ipv6Only
-				raw, err := BuildServerConfig(ServerConfigInput{Inbounds: []InboundInput{inbound}})
-				if err != nil {
-					t.Fatal(err)
-				}
-				var root map[string]any
-				if err := json.Unmarshal(raw, &root); err != nil {
-					t.Fatal(err)
-				}
-				public := mSlice(root, "inbounds")[0].(map[string]any)
-				if mStr(public, "listen") != inbound.Settings.ListenAddress() {
-					t.Fatalf("wrong bind address: %s", raw)
-				}
-				if guarded && mStr(mSlice(root, "inbounds")[1].(map[string]any), "listen") != "127.0.0.1" {
-					t.Fatalf("internal listener is not loopback: %s", raw)
-				}
-				parsed, err := ParseServerConfig(raw)
-				if err != nil {
-					t.Fatal(err)
-				}
-				if len(parsed.Inbounds) != 1 || parsed.Inbounds[0].Settings.ListenAddress() != inbound.Settings.ListenAddress() || parsed.Inbounds[0].Settings.IPv6Only != mode.ipv6Only {
-					t.Fatalf("listen mode lost on import: %+v", parsed)
-				}
-				if len(parsed.Rules) != 0 {
-					t.Fatalf("generated rules leaked into user rules: %+v", parsed.Rules)
-				}
-				if parsed.Inbounds[0].Settings.RealityGuardEnabled() != guarded {
-					t.Fatal("guard lost on import")
-				}
-			})
-		}
+		t.Run(mode.name, func(t *testing.T) {
+			inbound := InboundInput{Tag: "local", Type: "socks", ListenPort: 18081}
+			inbound.Settings.Listen = mode.address
+			inbound.Settings.IPv6Only = mode.ipv6Only
+			raw, err := BuildServerConfig(ServerConfigInput{Inbounds: []InboundInput{inbound}})
+			if err != nil {
+				t.Fatal(err)
+			}
+			var root map[string]any
+			if err := json.Unmarshal(raw, &root); err != nil {
+				t.Fatal(err)
+			}
+			public := mSlice(root, "inbounds")[0].(map[string]any)
+			if mStr(public, "listen") != inbound.Settings.ListenAddress() {
+				t.Fatalf("wrong bind address: %s", raw)
+			}
+			parsed, err := ParseServerConfig(raw)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if len(parsed.Inbounds) != 1 || parsed.Inbounds[0].Settings.ListenAddress() != inbound.Settings.ListenAddress() || parsed.Inbounds[0].Settings.IPv6Only != mode.ipv6Only {
+				t.Fatalf("listen mode lost on import: %+v", parsed)
+			}
+			if len(parsed.Rules) != 0 {
+				t.Fatalf("generated rules leaked into user rules: %+v", parsed.Rules)
+			}
+		})
 	}
 }
 

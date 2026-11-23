@@ -186,14 +186,13 @@ type FallbackSettings struct {
 
 // RealitySettings configures REALITY (no real certificate required).
 type RealitySettings struct {
-	Enabled             bool                  `json:"enabled,omitempty"`
-	HandshakeServer     string                `json:"handshake_server,omitempty"`
-	HandshakeServerPort int                   `json:"handshake_server_port,omitempty"`
-	PrivateKey          string                `json:"private_key,omitempty"` // server side; from `generate reality-keypair`
-	PublicKey           string                `json:"public_key,omitempty"`  // client side; carried into share links
-	ShortID             []string              `json:"short_id,omitempty"`
-	MaxTimeDifference   string                `json:"max_time_difference,omitempty"`
-	Guard               *RealityGuardSettings `json:"guard,omitempty"`
+	Enabled             bool     `json:"enabled,omitempty"`
+	HandshakeServer     string   `json:"handshake_server,omitempty"`
+	HandshakeServerPort int      `json:"handshake_server_port,omitempty"`
+	PrivateKey          string   `json:"private_key,omitempty"` // server side; from `generate reality-keypair`
+	PublicKey           string   `json:"public_key,omitempty"`  // client side; carried into share links
+	ShortID             []string `json:"short_id,omitempty"`
+	MaxTimeDifference   string   `json:"max_time_difference,omitempty"`
 }
 
 // TLSSettings configures inbound TLS. Choose exactly one of: explicit cert
@@ -830,9 +829,6 @@ func (s InboundSettings) Validate(typ string) error {
 			return fmt.Errorf("socks: username and password must both be set or both be empty")
 		}
 	}
-	if err := s.validateRealityGuard(typ); err != nil {
-		return err
-	}
 	if value := s.TLS.Reality.MaxTimeDifference; s.TLS.Reality.Enabled && value != "" {
 		if duration, err := time.ParseDuration(value); err != nil || duration < 0 {
 			return fmt.Errorf("REALITY 时间差限制必须为非负时长，例如 1m")
@@ -875,7 +871,6 @@ func (s *InboundSettings) SyncFromRaw(typ string) {
 		if parsedTLS.Reality.PublicKey == "" {
 			parsedTLS.Reality.PublicKey = s.TLS.Reality.PublicKey
 		}
-		parsedTLS.Reality.Guard = s.TLS.Reality.Guard
 		s.TLS = parsedTLS
 	} else if _, explicitNoTLS := m["tls"]; explicitNoTLS {
 		s.TLS = TLSSettings{Fingerprint: s.TLS.Fingerprint}

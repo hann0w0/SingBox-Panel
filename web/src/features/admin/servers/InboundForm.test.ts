@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from 'vitest'
 import type { FormInstance } from '../../../components/kit'
 import type { Inbound } from '../../../lib/types'
-import { assembleSettings, scrollToFirstError, toForm, validateGuardServerNames, validateGuardTimeout } from './InboundForm'
+import { assembleSettings, scrollToFirstError, toForm, validateDuration } from './InboundForm'
 
 const inbound = {
   id: 1, server_id: 1, type: 'vmess', tag: 'example', listen_port: 8443, enabled: true, remark: '',
@@ -122,107 +122,29 @@ const realityInbound = {
   },
 } satisfies Inbound
 
-const guardValues = {
-  ...toForm(realityInbound),
-  guard_enabled: true,
-  guard_internal_port: 20123,
-  guard_sniff_timeout: '300ms',
-  guard_server_names: 'www.apple.com, cdn.example.com',
-  reality_max_time_difference: '1m',
-}
-
-describe('REALITY front SNI guard', () => {
-  it('round-trips the saved guard settings through the form', () => {
-    const saved = assembleSettings(realityInbound.settings, guardValues, 'vless')
-    expect(saved.tls?.reality?.guard).toEqual({
-      enabled: true,
-      internal_port: 20123,
-      sniff_timeout: '300ms',
-      server_names: ['www.apple.com', 'cdn.example.com'],
-    })
-    // Editing an unrelated field must keep the REALITY key material intact.
-    expect(saved.tls?.reality?.private_key).toBe('example-private-key')
-    expect(saved.tls?.reality?.max_time_difference).toBe('1m')
-
-    const reopened = toForm({ ...realityInbound, settings: JSON.parse(JSON.stringify(saved)) })
-    expect(reopened).toMatchObject({
-      guard_enabled: true,
-      guard_internal_port: 20123,
-      guard_sniff_timeout: '300ms',
-      guard_server_names: 'www.apple.com, cdn.example.com',
+describe('REALITY settings round trip', () => {
+  it('preserves a distinct imported SNI, key material, and allows clearing the time limit', () => {
+    const base = assembleSettings(realityInbound.settings, {
+      ...toForm(realityInbound),
+      tls_server_name: 'cdn.example.com',
       reality_max_time_difference: '1m',
-    })
-    expect(assembleSettings(saved, reopened, 'vless').tls?.reality?.guard).toEqual(saved.tls?.reality?.guard)
-  })
-
-  it('removes the guard when the switch is turned off', () => {
-    const item = { ...realityInbound, settings: assembleSettings(realityInbound.settings, guardValues, 'vless') }
-    expect(item.settings.tls?.reality?.guard).toBeDefined()
-    const saved = assembleSettings(item.settings, { ...toForm(item), guard_enabled: false }, 'vless')
-    expect(saved.tls?.reality?.guard).toBeUndefined()
-    expect(saved.tls?.reality?.enabled).toBe(true)
-    expect(saved.tls?.reality?.private_key).toBe('example-private-key')
-  })
-
-  it('preserves an imported guard tag without exposing it as a form field', () => {
-    const base = assembleSettings(realityInbound.settings, guardValues, 'vless')
-    base.tls!.reality!.guard!.tag = 'imported-filter'
-    const saved = assembleSettings(base, {
-      ...toForm({ ...realityInbound, settings: base }),
-      guard_server_names: ' www.apple.com ,cdn.example.com;  www.apple.com ',
     }, 'vless')
-    expect(saved.tls?.reality?.guard?.server_names).toEqual(['www.apple.com', 'cdn.example.com'])
-    expect(saved.tls?.reality?.guard?.tag).toBe('imported-filter')
-  })
+    expect(base.tls?.reality?.private_key).toBe('example-private-key')
+    expect(base.tls?.reality?.max_time_difference).toBe('1m')
 
-  it('keeps an enabled guard with empty whitelist so the backend follows the SNI', () => {
-    const saved = assembleSettings(realityInbound.settings, { ...guardValues, guard_server_names: '' }, 'vless')
-    expect(saved.tls?.reality?.guard?.enabled).toBe(true)
-    expect(saved.tls?.reality?.guard?.server_names).toBeUndefined()
-    expect(saved.tls?.reality?.guard?.tag).toBeUndefined()
-  })
-
-  it('preserves a distinct imported SNI and allows clearing the time limit', () => {
-    const base = assembleSettings(realityInbound.settings, { ...guardValues, tls_server_name: 'cdn.example.com' }, 'vless')
     const saved = assembleSettings(base, { ...toForm({ ...realityInbound, settings: base }), reality_max_time_difference: '' }, 'vless')
     expect(saved.tls?.server_name).toBe('cdn.example.com')
     expect(saved.tls?.reality?.handshake_server).toBe('www.apple.com')
     expect(saved.tls?.reality?.max_time_difference).toBeUndefined()
   })
 
-  it('omits an empty sniff timeout instead of storing an invalid duration', () => {
-    const saved = assembleSettings(realityInbound.settings, { ...guardValues, guard_sniff_timeout: ' ' }, 'vless')
-    expect(saved.tls?.reality?.guard?.sniff_timeout).toBeUndefined()
-  })
-
-  it('keeps the guard only for a VLESS TCP inbound', () => {
-    const ws = assembleSettings(realityInbound.settings, { ...guardValues, transport_type: 'ws' }, 'vless')
-    expect(ws.tls?.reality?.guard).toBeUndefined()
-    const vmess = assembleSettings({ ...realityInbound.settings }, guardValues, 'vmess')
-    expect(vmess.tls?.reality?.guard).toBeUndefined()
-    const plain = assembleSettings(realityInbound.settings, { ...guardValues, tls_mode: 'none' }, 'vless')
-    expect(plain.tls).toBeUndefined()
-  })
-})
-
-describe('REALITY guard validation', () => {
-  it('requires the subscription SNI in the whitelist', () => {
-    expect(validateGuardServerNames('www.apple.com, cdn.example.com', 'www.apple.com')).toBeUndefined()
-    expect(validateGuardServerNames('cdn.example.com', 'www.apple.com')).toContain('必须包含订阅域名')
-    expect(validateGuardServerNames('', 'www.apple.com')).toBeUndefined()
-  })
-
-  it('rejects wildcards, ports and IP literals like the server does', () => {
-    for (const value of ['*.example.com', 'www.apple.com:443', '1.2.3.4', 'bad-.example.com']) {
-      expect(validateGuardServerNames(value, 'www.apple.com')).toContain('必须是完整域名')
+  it('validates Go duration inputs for REALITY time difference', () => {
+    for (const value of ['300ms', '2m30s', '1.5s', '.5s', '+300ms', '1μs', '0', '']) {
+      expect(validateDuration(value, true)).toBeUndefined()
     }
-  })
-
-  it('accepts positive Go durations and rejects zero or malformed values', () => {
-    for (const value of ['300ms', '2m30s', '1.5s', '.5s', '+300ms', '1μs', '']) expect(validateGuardTimeout(value)).toBeUndefined()
-    expect(validateGuardTimeout('0ms')).toContain('大于 0')
-    expect(validateGuardTimeout('5')).toContain('请输入时长')
-    expect(validateGuardTimeout('-1s')).toContain('请输入时长')
+    expect(validateDuration('0ms')).toContain('大于 0')
+    expect(validateDuration('5')).toContain('请输入时长')
+    expect(validateDuration('-1s')).toContain('请输入时长')
   })
 })
 

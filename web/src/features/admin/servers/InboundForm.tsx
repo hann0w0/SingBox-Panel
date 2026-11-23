@@ -692,6 +692,9 @@ export default function InboundForm({
         const guardPort = settings.tls?.reality?.guard?.internal_port
         let listenPort: number = v.type === 'tun' ? Number(v.listen_port || 0) : (v.listen_port || randomPort())
         if (v.type !== 'tun' && !v.listen_port && listenPort === guardPort) listenPort = guardPort === 65535 ? 65534 : guardPort + 1
+        if (v.type !== 'tun' && !v.listen_port && listenPort > 0) {
+          form.setFieldValue('listen_port', listenPort)
+        }
         body = {
           type: v.type as InboundType,
           tag: v.tag,
@@ -864,7 +867,7 @@ export default function InboundForm({
             <Form.Item label="UUID" className="fm-full">
               <Space.Compact>
                 <Form.Item name="uuid" noStyle>
-                  <Input className="mono" />
+                  <Input className="mono" placeholder={inbound ? '留空保持当前凭据' : '留空自动生成'} />
                 </Form.Item>
                 <Button onClick={() => form.setFieldValue('uuid', randomUUID())}>随机</Button>
               </Space.Compact>
@@ -874,7 +877,7 @@ export default function InboundForm({
             <Form.Item label="密码" className="fm-full">
               <Space.Compact>
                 <Form.Item name="password" noStyle>
-                  <Input className="mono" />
+                  <Input className="mono" placeholder={inbound ? '留空保持当前凭据' : '留空自动生成'} />
                 </Form.Item>
                 <Button onClick={() => form.setFieldValue('password', randomHex(16))}>随机</Button>
               </Space.Compact>
@@ -897,7 +900,7 @@ export default function InboundForm({
                     },
                   }]}
                 >
-                  <Input className="mono" />
+                  <Input className="mono" placeholder={inbound ? '留空保持当前凭据' : '留空自动生成'} />
                 </Form.Item>
                 <Button
                   onClick={() =>
@@ -913,7 +916,7 @@ export default function InboundForm({
             <Form.Item label="PSK" className="fm-full">
               <Space.Compact>
                 <Form.Item name="snell_psk" noStyle>
-                  <Input className="mono" />
+                  <Input className="mono" placeholder={inbound ? '留空保持当前凭据' : '留空自动生成'} />
                 </Form.Item>
                 <Button onClick={() => form.setFieldValue('snell_psk', randomHex(16))}>生成</Button>
               </Space.Compact>

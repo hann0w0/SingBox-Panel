@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { Button, Form, Grid, Input, Modal, Segmented, Select, Typography, message } from '../../components/kit'
-import { ChevronRight, Plus, Trash2 } from 'lucide-react'
+import { ChevronRight, Eye, EyeOff, Plus, Trash2 } from 'lucide-react'
 import { QRCodeSVG } from 'qrcode.react'
 import {
   createUserForward, deleteUserForward, errMsg, getMe, getMyTraffic, getUserForwards,
@@ -27,9 +27,12 @@ const REGIONS = regionData as unknown as Record<string, RegionInfo>
 const userNodeKey = (node: UserNode) => node.id || `${node.type}:${node.name}:${node.server}:${node.port}`
 const labelOf = (code: string): string => REGIONS[code]?.label || (code === 'Other' ? '其他' : code)
 
-function useDashboardRequest<T>(request: (signal: AbortSignal) => Promise<T>, initialData: T) {
+const SENSITIVE_PARAM_KEYS = new Set(['UUID', '密码', 'Obfs密码', 'PSK', '认证', '公钥', 'Short ID'])
+const maskSecretValue = (val: string) => (val ? '••••••••' : '—')
+
+function useDashboardRequest<T>(request: (signal: AbortSignal) => Promise<T>, initialData: T, enabled = true) {
   const [data, setData] = useState(initialData)
-  const [loading, setLoading] = useState(true)
+  const [loading, setLoading] = useState(enabled)
   const [error, setError] = useState<string | null>(null)
   const requestRef = useRef<{ generation: number; controller?: AbortController }>({ generation: 0 })
   const reload = useCallback(() => {
@@ -50,12 +53,18 @@ function useDashboardRequest<T>(request: (signal: AbortSignal) => Promise<T>, in
       })
   }, [request])
   useEffect(() => {
+    if (!enabled) {
+      requestRef.current.generation++
+      requestRef.current.controller?.abort()
+      setLoading(false)
+      return
+    }
     reload()
     return () => {
       requestRef.current.generation++
       requestRef.current.controller?.abort()
     }
-  }, [reload])
+  }, [reload, enabled])
   return { data, setData, loading, error, reload }
 }
 
@@ -65,13 +74,15 @@ export default function Dashboard() {
   const setUser = useAuth((s) => s.setUser)
   const me = useDashboardRequest<Awaited<ReturnType<typeof getMe>> | null>(getMe, null)
   const user = me.data?.user
+  const forwardingEnabled = !!user?.forwarding_enabled
   const [tab, setTab] = useState<UserTab>('nodes')
   const [subUrl, setSubUrl] = useState('')
   const [resetSync, setResetSync] = useState<SubscriptionSyncResult>()
+  const [revealNodeSecrets, setRevealNodeSecrets] = useState(false)
   const nodeRequest = useDashboardRequest<UserNode[]>(getUserNodes, [])
-  const outboundRequest = useDashboardRequest<UserPrivateOutbound[]>(getUserOutbounds, [])
-  const inboundRequest = useDashboardRequest<UserInboundOption[]>(getUserInbounds, [])
-  const forwardRequest = useDashboardRequest<UserForward[]>(getUserForwards, [])
+  const outboundRequest = useDashboardRequest<UserPrivateOutbound[]>(getUserOutbounds, [], forwardingEnabled)
+  const inboundRequest = useDashboardRequest<UserInboundOption[]>(getUserInbounds, [], forwardingEnabled)
+  const forwardRequest = useDashboardRequest<UserForward[]>(getUserForwards, [], forwardingEnabled)
   const nodes = nodeRequest.data
   const outbounds = outboundRequest.data
   const inbounds = inboundRequest.data
@@ -96,9 +107,11 @@ export default function Dashboard() {
   const load = () => {
     me.reload()
     nodeRequest.reload()
-    outboundRequest.reload()
-    inboundRequest.reload()
-    forwardRequest.reload()
+    if (forwardingEnabled) {
+      outboundRequest.reload()
+      inboundRequest.reload()
+      forwardRequest.reload()
+    }
   }
   useEffect(() => {
     mounted.current = true
@@ -235,7 +248,54 @@ export default function Dashboard() {
             <Form.Item name="outbound" label="出站" rules={[{ required: true, message: '请选择出站' }]}><Select options={outbounds.map((item) => ({ value: item.id, label: item.tag }))} placeholder="选择出站" disabled={forwarding || (outboundRequest.loading && !outbounds.length)} /></Form.Item>
           </Form>
         </Modal>
-        <Modal title={selectedNode?.name} open={!!selectedNode} onCancel={() => setSelectedNode(null)} footer={<Button onClick={() => setSelectedNode(null)}>关闭</Button>} width={MODAL_MD}>{selectedNode && <div className="sub-detail">{selectedNode.link && <div className="sub-qr"><div className="sub-qr-box"><QRCodeSVG value={selectedNode.link} size={184} /></div><span className="ui-tag">{selectedNode.type}</span></div>}<div className="ui-card"><dl className="ui-kv sub-params">{Object.entries(selectedNode.params).map(([key, value]) => <div key={key}><dt>{key}</dt><dd><Typography.Text className="mono" copyable={{ text: value }}>{value}</Typography.Text></dd></div>)}</dl></div>{selectedNode.link && <div className="sub-link"><span className="sub-link-text mono">{selectedNode.link}</span><Typography.Text copyable={{ text: selectedNode.link, tooltips: ['复制链接', '已复制'] }} /></div>}</div>}</Modal>
+        <Modal
+          title={selectedNode?.name}
+          open={!!selectedNode}
+          onCancel={() => { setSelectedNode(null); setRevealNodeSecrets(false) }}
+          footer={
+            <div className="flex items-center justify-between gap-2 w-full">
+              <Button
+                size="small"
+                icon={revealNodeSecrets ? <EyeOff className="size-3.5" /> : <Eye className="size-3.5" />}
+                onClick={() => setRevealNodeSecrets((v) => !v)}
+              >
+                {revealNodeSecrets ? '隐藏凭据' : '显示凭据'}
+              </Button>
+              <Button onClick={() => { setSelectedNode(null); setRevealNodeSecrets(false) }}>关闭</Button>
+            </div>
+          }
+          width={MODAL_MD}
+        >
+          {selectedNode && (
+            <div className="sub-detail">
+              {selectedNode.link && (
+                <div className="sub-qr">
+                  <div className="sub-qr-box"><QRCodeSVG value={selectedNode.link} size={184} /></div>
+                  <span className="ui-tag">{selectedNode.type}</span>
+                </div>
+              )}
+              <div className="ui-card">
+                <dl className="ui-kv sub-params">
+                  {Object.entries(selectedNode.params).map(([key, value]) => {
+                    const masked = !revealNodeSecrets && SENSITIVE_PARAM_KEYS.has(key)
+                    return (
+                      <div key={key}>
+                        <dt>{key}</dt>
+                        <dd><Typography.Text className="mono" copyable={{ text: value }}>{masked ? maskSecretValue(value) : value}</Typography.Text></dd>
+                      </div>
+                    )
+                  })}
+                </dl>
+              </div>
+              {selectedNode.link && (
+                <div className="sub-link">
+                  <span className="sub-link-text mono">{revealNodeSecrets ? selectedNode.link : `${selectedNode.type}://••••••••`}</span>
+                  <Typography.Text copyable={{ text: selectedNode.link, tooltips: ['复制链接', '已复制'] }} />
+                </div>
+              )}
+            </div>
+          )}
+        </Modal>
       </div>
     </RequestState>
   )

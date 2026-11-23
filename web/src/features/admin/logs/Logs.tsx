@@ -349,6 +349,9 @@ export default function Logs({
     })
   }, [])
 
+  const serversRef = useRef(servers)
+  serversRef.current = servers
+
   const load = useCallback(async (quiet = false) => {
     if (!sid) return
     loadAbortRef.current?.abort()
@@ -375,7 +378,7 @@ export default function Logs({
       scrollToLatest()
       // Live tail is the default view; it only pauses when the stream fails
       // or the node goes offline.
-      const online = serverOnline ?? servers.find((s) => s.id === sid)?.online
+      const online = serverOnline ?? serversRef.current.find((s) => s.id === sid)?.online
       if (online !== false) setLive(true)
     } catch (e) {
       if (!quiet && !isCanceledRequest(e)) message.error(errMsg(e))
@@ -385,7 +388,7 @@ export default function Logs({
         if (!quiet) setLoading(false)
       }
     }
-  }, [lines, scrollToLatest, serverOnline, servers, sid])
+  }, [lines, scrollToLatest, serverOnline, sid])
 
   useEffect(() => () => {
     loadGenerationRef.current += 1
@@ -647,7 +650,7 @@ export default function Logs({
               <ChevronDown className="lg-level-chev" aria-hidden="true" />
             </button>
           </DropdownMenuTrigger>
-          <DropdownMenuContent align="start" className="lg-level-menu">
+          <DropdownMenuContent align="start" className="ui-dropdown-menu lg-level-menu">
             {SINGBOX_LOG_LEVELS.map((level) => {
               const selected = level === activeLogLevel
               return (

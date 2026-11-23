@@ -81,8 +81,11 @@ export default function RuleSetsPage() {
     setSaving(true)
     try {
       const values = await form.validateFields() as RuleSetBody
-      if (editing) await updateSharedRuleSet(editing.id, values)
-      else await createSharedRuleSet(values)
+      const payload: RuleSetBody = values.type === 'local'
+        ? { tag: values.tag, type: 'local', format: values.format, path: values.path }
+        : { tag: values.tag, type: 'remote', format: values.format, url: values.url, update_interval: values.update_interval }
+      if (editing) await updateSharedRuleSet(editing.id, payload)
+      else await createSharedRuleSet(payload)
       setOpen(false)
       load()
     } catch (cause) {
@@ -174,7 +177,10 @@ export default function RuleSetsPage() {
             <Segmented options={[{ value: 'binary', label: 'SRS' }, { value: 'source', label: 'JSON' }]} />
           </Form.Item>
           {rsType === 'remote' ? <>
-            <Form.Item name="url" label="URL" rules={[{ required: true, message: '请输入远程规则集下载 URL' }]}>
+            <Form.Item name="url" label="URL" rules={[
+              { required: true, whitespace: true, message: '请输入远程规则集下载 URL' },
+              { pattern: /^https?:\/\/\S+$/i, message: '请输入有效的 http(s):// 地址' },
+            ]}>
               <Input />
             </Form.Item>
             <Form.Item name="update_interval" label="更新间隔">

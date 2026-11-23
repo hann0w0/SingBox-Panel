@@ -763,7 +763,10 @@ export function CustomNodesPanel({ nodes, loading, error, onNodesChange }: {
             />
           </Form.Item>
           </FieldGroup>
-          <Form.Item name="url" label="订阅链接" rules={[{ required: true, whitespace: true, message: '请输入 HTTP(S) 订阅链接' }]}>
+          <Form.Item name="url" label="订阅链接" rules={[
+            { required: true, whitespace: true, message: '请输入 HTTP(S) 订阅链接' },
+            { pattern: /^https?:\/\/\S+$/i, message: '订阅链接必须以 http:// 或 https:// 开头' },
+          ]}>
             <Input.TextArea rows={2} spellCheck={false} />
           </Form.Item>
           </FieldGroup>

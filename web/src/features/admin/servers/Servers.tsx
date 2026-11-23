@@ -66,7 +66,7 @@ function ServerNetworkButton({ server }: { server: Server }) {
           icon={<Network />}
         />
       </PopoverTrigger>
-      <PopoverContent align="end" side="bottom" className="srv-net-popover">
+      <PopoverContent align="end" side="bottom" className="ui-popover srv-net-popover">
         <div className="srv-net-head">
           <strong>{server.name}</strong>
           <span className="ui-tag">{addressKind(server)}</span>
@@ -167,6 +167,9 @@ export default function Servers() {
     setSingboxModalOpen(true)
   }
 
+  const singboxBatchAbortRef = useRef<AbortController | null>(null)
+  useEffect(() => () => { singboxBatchAbortRef.current?.abort() }, [])
+
   const doUpdateSingbox = async () => {
     const values = await singboxForm.validateFields()
     const onlineServers = servers.filter((s) => s.online)
@@ -175,20 +178,44 @@ export default function Servers() {
       message.warning('没有在线节点可更新')
       return
     }
-    // Fire-and-forget: the per-node install blocks for minutes on the backend,
-    // so kick them all off concurrently and let them finish in the background
-    // instead of holding the UI. Report the aggregate result when they settle.
-    message.success(`已在后台向 ${onlineServers.length} 台在线节点下发 sing-box 更新，完成后会自动刷新`)
+    singboxBatchAbortRef.current?.abort()
+    const controller = new AbortController()
+    singboxBatchAbortRef.current = controller
+    message.info(`已开始向 ${onlineServers.length} 台在线节点下发 sing-box 更新，完成后会汇总结果`)
     setUpdatingSingbox(true)
-    const results = await Promise.allSettled(
-      onlineServers.map((s) => installSingbox(s.id, values)),
-    )
-    const failed = results.filter((r) => r.status === 'rejected').length
+    const failures: { name: string; error: string }[] = []
+    let succeeded = 0
+    const concurrency = Math.min(4, onlineServers.length)
+    let cursor = 0
+    const worker = async () => {
+      while (cursor < onlineServers.length && !controller.signal.aborted) {
+        const srv = onlineServers[cursor++]
+        try {
+          await installSingbox(srv.id, values, controller.signal)
+          succeeded += 1
+        } catch (err) {
+          if (isCanceledRequest(err)) return
+          failures.push({ name: srv.name, error: errMsg(err) })
+        }
+      }
+    }
+    await Promise.all(Array.from({ length: concurrency }, () => worker()))
+    if (controller.signal.aborted) return
+    singboxBatchAbortRef.current = null
     setUpdatingSingbox(false)
-    if (failed === 0) {
-      message.success('sing-box 更新完成')
+    if (failures.length === 0) {
+      message.success(`sing-box 更新完成（${succeeded} 台成功）`)
     } else {
-      message.warning(`sing-box 更新完成：${results.length - failed} 台成功，${failed} 台失败`)
+      Modal.warning({
+        title: `sing-box 更新完成：${succeeded} 台成功，${failures.length} 台失败`,
+        content: (
+          <ul className="space-y-1 text-sm">
+            {failures.map((item) => (
+              <li key={item.name}><strong>{item.name}</strong>：{item.error}</li>
+            ))}
+          </ul>
+        ),
+      })
     }
     load()
   }

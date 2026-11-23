@@ -49,7 +49,7 @@ export function UserAccountDialog({ user, onClose, onSaved }: {
       <Form.Item name="email" label="用户名" rules={[{ required: true }]}>
         <Input maxLength={191} autoComplete="off" />
       </Form.Item>
-      <Form.Item name="password" label={user ? '新密码' : '密码'} rules={user ? [{ max: 72 }] : [{ required: true, message: '请输入密码' }, { max: 72 }]}>
+      <Form.Item name="password" label={user ? '新密码' : '密码'} rules={user ? [{ min: 6, message: '密码至少 6 位' }, { max: 72 }] : [{ required: true, message: '请输入密码' }, { min: 6, message: '密码至少 6 位' }, { max: 72 }]}>
         <Input.Password placeholder={user ? '不修改' : undefined} autoComplete="new-password" />
       </Form.Item>
       <Form.Item name="forwarding_enabled" label="允许创建转发" valuePropName="checked">

@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"net/url"
 	"sort"
 	"strings"
 	"time"
@@ -806,6 +807,10 @@ func normalizeRuleSetReq(req *ruleSetReq) error {
 	}
 	if req.URL == "" {
 		return fmt.Errorf("远程规则集 URL 必填")
+	}
+	parsedURL, err := url.Parse(req.URL)
+	if err != nil || (parsedURL.Scheme != "http" && parsedURL.Scheme != "https") || parsedURL.Host == "" {
+		return fmt.Errorf("远程规则集 URL 必须是有效的 http(s):// 地址")
 	}
 	req.Path = ""
 	return nil

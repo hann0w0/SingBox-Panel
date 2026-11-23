@@ -193,21 +193,32 @@ interface ServerBody {
   remark?: string
   traffic_reset_day?: number
 }
+let serversMetaInFlight: Promise<{ servers: Server[]; latest_agent_version: string }> | null = null
+
+export const getServersMeta = (signal?: AbortSignal) => {
+  if (!signal && serversMetaInFlight) return serversMetaInFlight
+  const req = http.get<{ servers: Server[]; latest_agent_version: string }>('/api/admin/servers', { signal }).then((r) => r.data)
+  if (!signal) {
+    serversMetaInFlight = req.finally(() => { serversMetaInFlight = null })
+    return serversMetaInFlight
+  }
+  return req
+}
 export const listServers = (signal?: AbortSignal) =>
-  http.get<{ servers: Server[]; latest_agent_version: string }>('/api/admin/servers', { signal }).then((r) => r.data.servers)
-export const getServersMeta = (signal?: AbortSignal) =>
-  http.get<{ servers: Server[]; latest_agent_version: string }>('/api/admin/servers', { signal }).then((r) => r.data)
+  getServersMeta(signal).then((r) => r.servers)
 export const createServer = (body: ServerBody) =>
   http.post<{ server: Server; install_command: string; public_url: string }>('/api/admin/servers', body).then((r) => r.data)
 export const getServer = (id: number, signal?: AbortSignal) =>
   http.get<{ server: Server; install_command: string; public_url: string }>(`/api/admin/servers/${id}`, { signal }).then((r) => r.data)
 export const updateServer = (id: number, body: ServerBody) =>
   http.put(`/api/admin/servers/${id}`, body).then((r) => r.data)
+export const rotateAgentToken = (id: number) =>
+  http.post<{ ok: boolean; install_command: string }>(`/api/admin/servers/${id}/rotate-agent-token`).then((r) => r.data)
 export const updateServerOrder = (ids: number[]) =>
   http.put('/api/admin/servers/order', { ids }).then((r) => r.data)
 export const deleteServer = (id: number) => http.delete(`/api/admin/servers/${id}`).then((r) => r.data)
-export const installSingbox = (id: number, body: { channel?: string; version?: string; method?: string }) =>
-  http.post<{ ok: boolean; output: string }>(`/api/admin/servers/${id}/install-singbox`, body).then((r) => r.data)
+export const installSingbox = (id: number, body: { channel?: string; version?: string; method?: string }, signal?: AbortSignal) =>
+  http.post<{ ok: boolean; output: string }>(`/api/admin/servers/${id}/install-singbox`, body, { signal }).then((r) => r.data)
 export const uninstallSingbox = (id: number) =>
   http.post<{ ok: boolean; output: string }>(`/api/admin/servers/${id}/uninstall-singbox`).then((r) => r.data)
 export const uninstallAgent = (id: number) =>

@@ -2,7 +2,7 @@ const fs = require('fs')
 const c = require('i18n-iso-countries')
 c.registerLocale(require('i18n-iso-countries/langs/en.json'))
 c.registerLocale(require('i18n-iso-countries/langs/zh.json'))
-const geo = JSON.parse(fs.readFileSync('src/assets/world.json', 'utf8'))
+const geo = JSON.parse(fs.readFileSync('scripts/world.json', 'utf8'))
 
 // bbox center as a cheap centroid for scatter placement
 function bboxCenter(geom) {

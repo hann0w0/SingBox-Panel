@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
 import { Button, Modal, Select, Tooltip, Typography, message } from '../../../components/kit'
-import { Check, Copy, Eye } from 'lucide-react'
+import { Check, Copy, Eye, EyeOff } from 'lucide-react'
 import type { NodeFormats } from '../../../lib/api'
 import { errMsg, getNodeFormats } from '../../../lib/api'
 import { RequestState } from '../../../components/RequestState'
@@ -13,6 +13,8 @@ export function NodeFormatsExportModal({ serverId, open, onCancel }: { serverId:
     {open && <NodeExportSession key={serverId} serverId={serverId} />}
   </Modal>
 }
+
+const SENSITIVE_DETAIL_KEYS = new Set(['UUID', '密码', 'Obfs密码', 'PSK', '认证', '公钥', 'Short ID'])
 
 function NodeExportSession({ serverId }: { serverId: number }) {
   const [userId, setUserId] = useState(0)
@@ -59,6 +61,7 @@ function NodeExportSession({ serverId }: { serverId: number }) {
 export function NodeFormatsModalContent({ data }: { data: NodeFormats }) {
   const [copiedKey, setCopiedKey] = useState<string | null>(null)
   const [detailItem, setDetailItem] = useState<NodeFormats['items'][number] | null>(null)
+  const [revealSecrets, setRevealSecrets] = useState(false)
   const copiedTimerRef = useRef<number | null>(null)
   const mountedRef = useRef(true)
 
@@ -137,8 +140,19 @@ export function NodeFormatsModalContent({ data }: { data: NodeFormats }) {
         className="fm-modal"
         title={detailItem?.tag || detailItem?.name || '节点详情'}
         open={!!detailItem}
-        onCancel={() => setDetailItem(null)}
-        footer={<Button onClick={() => setDetailItem(null)}>关闭</Button>}
+        onCancel={() => { setDetailItem(null); setRevealSecrets(false) }}
+        footer={
+          <div className="flex items-center justify-between gap-2 w-full">
+            <Button
+              size="small"
+              icon={revealSecrets ? <EyeOff className="size-3.5" /> : <Eye className="size-3.5" />}
+              onClick={() => setRevealSecrets((v) => !v)}
+            >
+              {revealSecrets ? '隐藏凭据' : '显示凭据'}
+            </Button>
+            <Button onClick={() => { setDetailItem(null); setRevealSecrets(false) }}>关闭</Button>
+          </div>
+        }
         width={MODAL_MD}
       >
         {detailItem && (
@@ -147,12 +161,15 @@ export function NodeFormatsModalContent({ data }: { data: NodeFormats }) {
               <div><dt>地址</dt><dd><Typography.Text copyable>{detailItem.server || '—'}</Typography.Text></dd></div>
               <div><dt>端口</dt><dd><Typography.Text copyable>{String(detailItem.port)}</Typography.Text></dd></div>
               <div><dt>协议</dt><dd><span className="ui-tag">{detailItem.type}</span></dd></div>
-              {detailParams.map(([key, value]) => (
-                <div key={key}>
-                  <dt>{key}</dt>
-                  <dd><Typography.Text copyable={{ text: value }}>{value || '—'}</Typography.Text></dd>
-                </div>
-              ))}
+              {detailParams.map(([key, value]) => {
+                const masked = !revealSecrets && !!value && SENSITIVE_DETAIL_KEYS.has(key)
+                return (
+                  <div key={key}>
+                    <dt>{key}</dt>
+                    <dd><Typography.Text copyable={{ text: value }}>{masked ? '••••••••' : (value || '—')}</Typography.Text></dd>
+                  </div>
+                )
+              })}
             </dl>
           </div>
         )}

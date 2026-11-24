@@ -82,6 +82,10 @@ func (a *App) handleLogin(c *gin.Context) {
 		tooMany(c, wait)
 		return
 	}
+	if wait := a.login.retryAfterHard(pairKey, pairHardFails); wait > 0 {
+		tooMany(c, wait)
+		return
+	}
 
 	// Case-insensitive username match (the stored name preserves its case).
 	var u model.User
@@ -96,16 +100,19 @@ func (a *App) handleLogin(c *gin.Context) {
 		a.loginFailed(c, ipKey, pairKey, acctKey)
 		return
 	}
-	// Correct password: always accepted, even while the account key is throttled.
-	a.login.succeed(ipKey, pairKey, acctKey)
-	// Disabled or expired accounts must not get a session either. The panel UI
-	// refuses to disable an admin, so an admin landing here was disabled out of
-	// band (DB edit) — answer 403 with a clear reason instead of issuing a token
-	// that the auth middleware would reject on the very next request.
+	// Disabled or expired accounts must not get a session or reset rate-limit
+	// counters. The panel UI refuses to disable an admin, so an admin landing
+	// here was disabled out of band (DB edit) — answer 403 with a clear reason
+	// instead of issuing a token that the auth middleware would reject on the
+	// very next request.
 	if !userActive(&u) {
 		c.JSON(http.StatusForbidden, gin.H{"error": "账号已停用或已到期"})
 		return
 	}
+	// Clear only the caller|account and account counters: logging into a
+	// different valid account must not wipe ipKey failures accumulated while
+	// brute-forcing another account from the same source address.
+	a.login.succeed(pairKey, acctKey)
 	tok, err := a.auth.Issue(&u, sessionTTL)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "token error"})

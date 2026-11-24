@@ -36,6 +36,9 @@ type guardEntry struct {
 const (
 	// Attempts allowed before throttling kicks in.
 	freeAttempts = 5
+	// Failures for ONE (source address, account) pair before it is hard-blocked
+	// before password hashing, while still allowing recovery from a few typos.
+	pairHardFails = 10
 	// Failures from ONE source address before it is hard-blocked before any
 	// password work. Set high enough that a human mistyping never reaches it;
 	// its only job is to stop a single host burning CPU on bcrypt.
@@ -167,7 +170,11 @@ func clientIP(c *gin.Context) string {
 		host = c.Request.RemoteAddr
 	}
 	peer := net.ParseIP(host)
-	if trustedProxyPeer(peer) {
+	prefixes := getConfiguredTrustedProxies()
+	if val, ok := c.Get("singbox_panel_trusted_proxies"); ok {
+		prefixes, _ = val.([]netip.Prefix)
+	}
+	if trustedProxyPeerWithPrefixes(peer, prefixes) {
 		if forwarded := net.ParseIP(c.GetHeader("X-Real-IP")); forwarded != nil {
 			return forwarded.String()
 		}
@@ -178,21 +185,58 @@ func clientIP(c *gin.Context) string {
 	return host
 }
 
-// configuredTrustedProxies narrows which peers may set X-Real-IP. It is set
-// once from config in NewApp; nil keeps the private-network default.
-var configuredTrustedProxies []netip.Prefix
+func trustedProxiesMiddleware(prefixes []netip.Prefix) gin.HandlerFunc {
+	return func(c *gin.Context) {
+		c.Set("singbox_panel_trusted_proxies", prefixes)
+		c.Next()
+	}
+}
+
+// configuredTrustedProxies narrows which peers may set X-Real-IP. nil keeps the
+// private-network default; a non-nil empty slice trusts no proxy headers.
+var (
+	configuredTrustedProxiesMu sync.RWMutex
+	configuredTrustedProxies   []netip.Prefix
+)
+
+func setConfiguredTrustedProxies(prefixes []netip.Prefix) {
+	configuredTrustedProxiesMu.Lock()
+	defer configuredTrustedProxiesMu.Unlock()
+	if prefixes == nil {
+		configuredTrustedProxies = nil
+		return
+	}
+	cp := make([]netip.Prefix, len(prefixes))
+	copy(cp, prefixes)
+	configuredTrustedProxies = cp
+}
+
+func getConfiguredTrustedProxies() []netip.Prefix {
+	configuredTrustedProxiesMu.RLock()
+	defer configuredTrustedProxiesMu.RUnlock()
+	if configuredTrustedProxies == nil {
+		return nil
+	}
+	cp := make([]netip.Prefix, len(configuredTrustedProxies))
+	copy(cp, configuredTrustedProxies)
+	return cp
+}
 
 func trustedProxyPeer(ip net.IP) bool {
+	return trustedProxyPeerWithPrefixes(ip, getConfiguredTrustedProxies())
+}
+
+func trustedProxyPeerWithPrefixes(ip net.IP, prefixes []netip.Prefix) bool {
 	if ip == nil {
 		return false
 	}
-	if configuredTrustedProxies != nil {
+	if prefixes != nil {
 		addr, ok := netip.AddrFromSlice(ip)
 		if !ok {
 			return false
 		}
 		addr = addr.Unmap()
-		for _, prefix := range configuredTrustedProxies {
+		for _, prefix := range prefixes {
 			if prefix.Contains(addr) {
 				return true
 			}

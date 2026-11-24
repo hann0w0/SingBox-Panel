@@ -163,10 +163,12 @@ func applyEnv(cfg *PanelConfig) error {
 		cfg.Timezone = v
 	}
 	if v := firstEnv("SINGBOX_PANEL_TRUSTED_PROXIES"); v != "" {
-		cfg.TrustedProxies = nil
-		for _, item := range strings.Split(v, ",") {
-			if item = strings.TrimSpace(item); item != "" {
-				cfg.TrustedProxies = append(cfg.TrustedProxies, item)
+		cfg.TrustedProxies = []string{}
+		if !strings.EqualFold(strings.TrimSpace(v), "none") {
+			for _, item := range strings.Split(v, ",") {
+				if item = strings.TrimSpace(item); item != "" {
+					cfg.TrustedProxies = append(cfg.TrustedProxies, item)
+				}
 			}
 		}
 	}
@@ -279,12 +281,16 @@ func (cfg PanelConfig) Location() *time.Location {
 }
 
 // TrustedProxyPrefixes parses TrustedProxies. A bare address is a single-host
-// prefix. A nil result means "use the default private-network rule".
+// prefix. A nil result means "use the default private-network rule"; a non-nil
+// empty slice means "trust no X-Real-IP headers".
 func (cfg PanelConfig) TrustedProxyPrefixes() ([]netip.Prefix, error) {
-	var prefixes []netip.Prefix
+	if cfg.TrustedProxies == nil {
+		return nil, nil
+	}
+	prefixes := make([]netip.Prefix, 0, len(cfg.TrustedProxies))
 	for _, raw := range cfg.TrustedProxies {
 		raw = strings.TrimSpace(raw)
-		if raw == "" {
+		if raw == "" || strings.EqualFold(raw, "none") {
 			continue
 		}
 		if strings.Contains(raw, "/") {

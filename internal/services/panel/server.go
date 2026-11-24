@@ -8,6 +8,7 @@ import (
 	"log"
 	"mime"
 	"net/http"
+	"net/netip"
 	"net/url"
 	"os"
 	"path/filepath"
@@ -39,6 +40,7 @@ type App struct {
 	version             string
 	commit              string
 	cfgPath             string
+	trustedProxies      []netip.Prefix
 
 	// selfUpdating serializes panel self-update requests so two admins cannot
 	// launch competing binary swaps at once.
@@ -84,13 +86,16 @@ func (a *App) SetConfigPath(p string) { a.cfgPath = p }
 // NewApp wires the panel components and builds the router.
 func NewApp(cfg config.PanelConfig, db *gorm.DB) *App {
 	// Validate has already rejected malformed entries before NewApp runs.
-	if prefixes, err := cfg.TrustedProxyPrefixes(); err == nil && len(prefixes) > 0 {
-		configuredTrustedProxies = prefixes
+	var trustedPrefixes []netip.Prefix
+	if prefixes, err := cfg.TrustedProxyPrefixes(); err == nil {
+		trustedPrefixes = prefixes
+		setConfiguredTrustedProxies(prefixes)
 	}
 	hub := NewHub(db)
 	orch := NewOrchestrator(db, hub)
 	a := &App{
 		cfg:                 cfg,
+		trustedProxies:      trustedPrefixes,
 		db:                  db,
 		hub:                 hub,
 		auth:                NewAuth(cfg.JWTSecret, db),
@@ -137,7 +142,7 @@ func (a *App) routes() *gin.Engine {
 		gin.SetMode(gin.ReleaseMode)
 	}
 	r := gin.New()
-	r.Use(gin.Recovery(), requestIDMiddleware(), panelRequestLogger(a.cfg.Subscription.PathPrefix), securityHeadersMiddleware(a.cfg.BaseURL), corsMiddleware(a.cfg.BaseURL, a.cfg.Environment))
+	r.Use(gin.Recovery(), trustedProxiesMiddleware(a.trustedProxies), requestIDMiddleware(), panelRequestLogger(a.cfg.Subscription.PathPrefix), securityHeadersMiddleware(a.cfg.BaseURL), corsMiddleware(a.cfg.BaseURL, a.cfg.Environment))
 
 	// Public endpoints.
 	r.GET("/api/agent/install.sh", a.handleAgentInstallScript)

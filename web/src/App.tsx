@@ -71,7 +71,8 @@ function GuestOnly({ children }: { children: JSX.Element }) {
   const token = useAuth((s) => s.token)
   const user = useAuth((s) => s.user)
   if (token) {
-    return <Navigate to={user?.role === 'admin' ? '/admin/servers' : '/dashboard'} replace />
+    if (!user) return <Navigate to="/" replace />
+    return <Navigate to={user.role === 'admin' ? '/admin/servers' : '/dashboard'} replace />
   }
   return children
 }

@@ -2,8 +2,12 @@
 // the matching prefix; identical messages later in the stream remain visible.
 export class LogReplay {
   private offsets: number[] | null = null
+  private history: string[]
+  private buffered: string[] = []
 
-  constructor(private readonly history: string[]) {}
+  constructor(history: string[]) {
+    this.history = [...history]
+  }
 
   consume(lines: string[]): string[] {
     if (!this.history.length) return lines
@@ -13,18 +17,25 @@ export class LogReplay {
       if (this.offsets === null) {
         this.offsets = this.history.flatMap((value, index) => value === line ? [index] : [])
         if (!this.offsets.length) {
-          this.history.length = 0
+          this.history = []
           return [...result, ...lines.slice(i)]
         }
       }
       const matching = this.offsets.filter((offset) => line === this.history[offset])
       if (!matching.length) {
-        this.history.length = 0
-        result.push(line)
+        result.push(...this.buffered, line)
+        this.buffered = []
+        this.offsets = null
+        this.history = []
         continue
       }
+      this.buffered.push(line)
       this.offsets = matching.map((offset) => offset + 1)
-      if (this.offsets.includes(this.history.length)) this.history.length = 0
+      if (this.offsets.includes(this.history.length)) {
+        this.buffered = []
+        this.offsets = null
+        this.history = []
+      }
     }
     return result
   }

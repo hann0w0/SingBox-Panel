@@ -20,7 +20,11 @@ const IDLE_TIMEOUT_MS = 45_000
 // to perform a real navigation in unit tests.
 export const sseAuth = {
   redirectToLogin() {
-    if (!location.pathname.startsWith('/login')) location.href = '/login'
+    if (!location.pathname.startsWith('/login')) {
+      const from = `${location.pathname}${location.search}${location.hash}`
+      window.history.replaceState({ usr: { from } }, '', '/login')
+      window.dispatchEvent(new PopStateEvent('popstate'))
+    }
   },
 }
 
@@ -159,26 +163,29 @@ export function useSSE(
           return
         }
         watchActivity()
-        // A successful (re)connect resets the backoff ladder.
-        attempts = 0
         setConnected(true)
         const connectionReader = resp.body.getReader()
         reader = connectionReader
         const decoder = new TextDecoder()
+        let receivedChunk = false
 
         for (;;) {
           const { done, value } = await connectionReader.read()
           if (done) break
           if (stopped || connectionGeneration !== generation) return
+          if (!receivedChunk) {
+            receivedChunk = true
+            attempts = 0
+          }
           watchActivity()
           buffer += decoder.decode(value, { stream: true })
-          // SSE frames are separated by \n\n
-          const frames = buffer.split('\n\n')
+          // SSE frames are separated by \n\n or \r\n\r\n
+          const frames = buffer.split(/\r?\n\r?\n/)
           buffer = frames.pop() ?? ''
           for (const frame of frames) {
-            for (const line of frame.split('\n')) {
-              if (line.startsWith('data: ')) {
-                const raw = line.slice(6)
+            for (const line of frame.split(/\r?\n/)) {
+              if (line.startsWith('data:')) {
+                const raw = line.startsWith('data: ') ? line.slice(6) : line.slice(5)
                 try {
                   const msg = JSON.parse(raw) as SSEMessage
                   cbRef.current(msg)
@@ -213,9 +220,17 @@ export function useSSE(
 
     connect()
     document.addEventListener('visibilitychange', onVisibility)
+    const unsubscribeAuth = useAuth.subscribe((state, prev) => {
+      if (!stopped && state.token && state.token !== prev.token) {
+        clearRetry()
+        closeActiveConnection()
+        void connect()
+      }
+    })
 
     return () => {
       stopped = true
+      unsubscribeAuth()
       clearRetry()
       document.removeEventListener('visibilitychange', onVisibility)
       closeActiveConnection()

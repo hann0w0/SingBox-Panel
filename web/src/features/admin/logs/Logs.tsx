@@ -34,7 +34,7 @@ const MAX_LIVE_LINES = 2000
 const SINGBOX_LOG_LEVELS = ['trace', 'debug', 'info', 'warn', 'error', 'fatal', 'panic'] as const
 type SingboxLogLevel = typeof SINGBOX_LOG_LEVELS[number]
 
-type LogLevel = '' | 'TRACE' | 'DEBUG' | 'INFO' | 'WARN' | 'ERROR' | 'FATAL'
+type LogLevel = '' | 'TRACE' | 'DEBUG' | 'INFO' | 'WARN' | 'ERROR' | 'FATAL' | 'PANIC'
 type LogDirection = '' | 'inbound' | 'outbound'
 type DisplayMode = 'compact' | 'raw'
 
@@ -79,7 +79,7 @@ function parseLogLine(raw: string): ParsedLogLine {
   }
 
   let level: LogLevel = ''
-  const levelMatch = rest.match(/^(TRACE|DEBUG|INFO|WARN(?:ING)?|ERROR|FATAL)\s+/i)
+  const levelMatch = rest.match(/^(TRACE|DEBUG|INFO|WARN(?:ING)?|ERROR|FATAL|PANIC)\s+/i)
   if (levelMatch) {
     const value = levelMatch[1].toUpperCase()
     level = value.startsWith('WARN') ? 'WARN' : (value as LogLevel)
@@ -130,7 +130,7 @@ function parseLogLine(raw: string): ParsedLogLine {
 }
 
 function levelClass(level: LogLevel) {
-  if (level === 'FATAL') return 'error'
+  if (level === 'FATAL' || level === 'PANIC') return 'error'
   return level ? level.toLowerCase() : 'unknown'
 }
 
@@ -744,7 +744,7 @@ export default function Logs({
                 const compactMsg = compactMessage(line.message, line.direction)
                 const { address, detail } = splitAddress(compactMsg)
                 const tone = levelClass(line.level)
-                const isAlertTone = tone === 'warn' || tone === 'error' || tone === 'unknown'
+                const isAlertTone = tone === 'warn' || tone === 'error'
                 const hasErrorContent = Boolean(detail || isAlertTone)
                 const copyableErrorText = hasErrorContent ? (compactMsg.trim() || detail) : ''
                 const errorCopied = copiedErrorId === line.id
@@ -780,7 +780,7 @@ export default function Logs({
                             <span className="lg-error-content">
                               {isAlertTone ? (
                                 <>
-                                  <span className={`lg-badge lg-badge-${tone === 'unknown' ? 'error' : tone}`}>{line.level || 'INFO'}</span>
+                                  <span className={`lg-badge lg-badge-${tone}`}>{line.level}</span>
                                   {detail ? <span className="lg-error-text">{renderSemanticText(detail, keyword)}</span> : null}
                                 </>
                               ) : detail ? (

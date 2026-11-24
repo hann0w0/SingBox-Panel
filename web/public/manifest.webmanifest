@@ -21,7 +21,7 @@
   ],
   "shortcuts": [
     { "name": "服务器", "short_name": "服务器", "url": "/admin/servers" },
-    { "name": "流量", "short_name": "流量", "url": "/admin/traffic" },
-    { "name": "日志", "short_name": "日志", "url": "/admin/logs" }
+    { "name": "流量", "short_name": "流量", "url": "/admin/servers?view=traffic" },
+    { "name": "日志", "short_name": "日志", "url": "/admin/servers?view=logs" }
   ]
 }

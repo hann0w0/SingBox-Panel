@@ -24,3 +24,16 @@ describe('log follower replay', () => {
     expect(mergeLogSnapshot(['a', 'b'], ['new'])).toEqual(['a', 'b', 'new'])
   })
 })
+
+
+it('does not swallow a new prefix that merely matches history', () => {
+  const replay = new LogReplay(['disconnected', 'connected'])
+  expect(replay.consume(['disconnected', 'new-line'])).toEqual(['disconnected', 'new-line'])
+})
+
+it('does not mutate the caller history array', () => {
+  const history = ['a', 'b']
+  const replay = new LogReplay(history)
+  replay.consume(['a', 'c'])
+  expect(history).toEqual(['a', 'b'])
+})

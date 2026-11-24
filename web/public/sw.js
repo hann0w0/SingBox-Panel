@@ -13,11 +13,24 @@
  *    cached copy only answers when the backend is genuinely unreachable.
  * 4. Everything else (icons, manifest, logos) revalidates in the background.
  */
-const VERSION = 'v1'
+const VERSION = 'v2'
 const SHELL_CACHE = `sbp-shell-${VERSION}`
 const ASSET_CACHE = `sbp-assets-${VERSION}`
 const CURRENT_CACHES = [SHELL_CACHE, ASSET_CACHE]
 const SHELL_KEY = '/index.html'
+const MAX_ASSET_ENTRIES = 64
+const STATIC_ASSET_RE = /\.(?:png|svg|ico|webp|jpg|jpeg|woff2?|webmanifest)$/i
+
+function isKnownAppRoute(pathname) {
+  return (
+    pathname === '/' ||
+    pathname === '/index.html' ||
+    pathname === '/login' ||
+    pathname === '/dashboard' ||
+    pathname === '/admin' ||
+    pathname.startsWith('/admin/')
+  )
+}
 
 // Last-resort page when the panel is unreachable and no shell has been cached
 // yet (first run while offline). Kept inline: it must not need the network.
@@ -67,6 +80,7 @@ self.addEventListener('fetch', (event) => {
   if (url.pathname === '/api' || url.pathname.startsWith('/api/')) return
 
   if (request.mode === 'navigate') {
+    if (!isKnownAppRoute(url.pathname)) return
     event.respondWith(handleNavigation(request))
     return
   }
@@ -74,7 +88,10 @@ self.addEventListener('fetch', (event) => {
     event.respondWith(cacheFirst(ASSET_CACHE, request))
     return
   }
-  event.respondWith(staleWhileRevalidate(SHELL_CACHE, request))
+  // Never cache dynamic endpoints (such as custom subscription paths like /sub/<token>).
+  if (STATIC_ASSET_RE.test(url.pathname)) {
+    event.respondWith(staleWhileRevalidate(SHELL_CACHE, request))
+  }
 })
 
 async function handleNavigation(request) {
@@ -105,7 +122,13 @@ async function cacheFirst(cacheName, request) {
   if (cached) return cached
   try {
     const response = await fetch(request)
-    if (response.ok) await cache.put(request, response.clone())
+    if (response.ok) {
+      await cache.put(request, response.clone())
+      const keys = await cache.keys()
+      if (keys.length > MAX_ASSET_ENTRIES) {
+        await Promise.all(keys.slice(0, keys.length - MAX_ASSET_ENTRIES).map((key) => cache.delete(key)))
+      }
+    }
     return response
   } catch (error) {
     const retry = await cache.match(request)

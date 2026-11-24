@@ -145,6 +145,8 @@ type userOutboundReq struct {
 	Remark   *string         `json:"remark"`
 }
 
+const maxUserPrivateOutbounds = 200
+
 // importUserOutbound accepts a single URI or a subscription URL for one of the
 // caller's own outbounds. The URL fetch and parser are shared with the admin
 // import path, so protocol support and SSRF limits stay identical.
@@ -154,8 +156,8 @@ func (a *App) importUserOutbound(c *gin.Context) {
 		c.JSON(http.StatusNotFound, gin.H{"error": "user not found"})
 		return
 	}
-	if u.Role != model.RoleAdmin && !userActive(&u) {
-		c.JSON(http.StatusForbidden, gin.H{"error": "账号已停用或已到期"})
+	if u.Role != model.RoleAdmin && (!userActive(&u) || !u.ForwardingEnabled) {
+		c.JSON(http.StatusForbidden, gin.H{"error": "账号不可用或尚未开启转发权限"})
 		return
 	}
 	var req struct {
@@ -196,6 +198,10 @@ func (a *App) importUserOutbound(c *gin.Context) {
 			c.JSON(http.StatusBadRequest, gin.H{"error": "链接解析失败：" + err.Error()})
 			return
 		}
+		if client.Type == "http" && client.User.Username == "" && client.Settings.Username == "" && client.User.Password == "" && client.Settings.Password == "" {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "暂不支持无认证的 HTTP(S) 链接作为专属出站"})
+			return
+		}
 		nodes = []singbox.ImportedNode{{Name: client.Name, Link: uri, Protocol: client.Type, Address: client.Server, Port: client.ServerPort}}
 	}
 	if len(nodes) == 0 {
@@ -225,19 +231,33 @@ func (a *App) importUserOutbound(c *gin.Context) {
 		}
 		body.Tag = tag
 		prepared = append(prepared, body)
+		if len(prepared) > maxUserPrivateOutbounds {
+			c.JSON(http.StatusBadRequest, gin.H{"error": fmt.Sprintf("专属出站数量不能超过 %d 个", maxUserPrivateOutbounds)})
+			return
+		}
 	}
 	if len(prepared) == 0 {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "该订阅没有可转换为出站的节点"})
 		return
 	}
 	a.userAccessMu.Lock()
-	created := make([]model.Outbound, 0, len(prepared))
+	created := make([]UserPrivateOutbound, 0, len(prepared))
+	statusCode := http.StatusBadRequest
 	err := a.db.Transaction(func(tx *gorm.DB) error {
 		if err := tx.First(&u, currentUID(c)).Error; err != nil {
 			return err
 		}
-		if !userActive(&u) {
-			return fmt.Errorf("账号已停用或已到期")
+		if u.Role != model.RoleAdmin && (!userActive(&u) || !u.ForwardingEnabled) {
+			statusCode = http.StatusForbidden
+			return fmt.Errorf("账号不可用或尚未开启转发权限")
+		}
+		var existingCount int64
+		if err := tx.Model(&model.Outbound{}).Where("owner_user_id = ?", u.ID).Count(&existingCount).Error; err != nil {
+			statusCode = http.StatusInternalServerError
+			return err
+		}
+		if existingCount+int64(len(prepared)) > maxUserPrivateOutbounds {
+			return fmt.Errorf("专属出站数量不能超过 %d 个", maxUserPrivateOutbounds)
 		}
 		for _, body := range prepared {
 			tag, err := availablePrivateOutboundTag(tx, body.Tag)
@@ -248,16 +268,66 @@ func (a *App) importUserOutbound(c *gin.Context) {
 			if err := tx.Create(&outbound).Error; err != nil {
 				return err
 			}
-			created = append(created, outbound)
+			created = append(created, UserPrivateOutbound{
+				ID: outbound.ID, Tag: outbound.Tag, Type: outbound.Type, Remark: outbound.Remark,
+			})
 		}
 		return nil
 	})
 	a.userAccessMu.Unlock()
 	if err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		c.JSON(statusCode, gin.H{"error": err.Error()})
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"outbounds": created})
+}
+
+// deleteUserOutbound lets an account clean up an unused private exit without
+// administrator involvement. Referenced exits stay protected until the user
+// removes the forwarding node or routing rule that depends on them.
+func (a *App) deleteUserOutbound(c *gin.Context) {
+	oid, ok := uintParam(c, "outboundID")
+	if !ok {
+		return
+	}
+	a.userAccessMu.Lock()
+	defer a.userAccessMu.Unlock()
+	var u model.User
+	if err := a.db.First(&u, currentUID(c)).Error; err != nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "user not found"})
+		return
+	}
+	if u.Role != model.RoleAdmin && !userActive(&u) {
+		c.JSON(http.StatusForbidden, gin.H{"error": "账号已停用或已到期"})
+		return
+	}
+	var ob model.Outbound
+	if err := a.db.Where("id = ? AND owner_user_id = ? AND server_id = 0", oid, u.ID).First(&ob).Error; err != nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "专属出站不存在"})
+		return
+	}
+	var using int64
+	if err := a.db.Model(&model.UserForward{}).Where("outbound_id = ?", ob.ID).Count(&using).Error; err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+	if using > 0 {
+		c.JSON(http.StatusConflict, gin.H{"error": "该专属出站仍被转发节点使用，请先删除相关转发"})
+		return
+	}
+	if err := a.db.Model(&model.RouteRule{}).Where("outbound = ?", ob.Tag).Count(&using).Error; err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+	if using > 0 {
+		c.JSON(http.StatusConflict, gin.H{"error": "该专属出站仍被分流规则使用，请联系管理员处理"})
+		return
+	}
+	if err := a.db.Where("id = ? AND owner_user_id = ?", ob.ID, u.ID).Delete(&model.Outbound{}).Error; err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"ok": true})
 }
 
 // availablePrivateOutboundTag returns a tag that is unique across all stored
@@ -285,7 +355,19 @@ func availablePrivateOutboundTag(db *gorm.DB, tag string) (string, error) {
 		if count == 0 {
 			return tag, nil
 		}
-		tag = fmt.Sprintf("%s-%d", base, suffix)
+		tag = fmt.Sprintf("%s-%d", trimRunes(base, 58), suffix)
+	}
+	// Adding more than 98 identical tags is rare, but the account should still be
+	// able to import a subscription whose provider reuses one display name.
+	for attempt := 0; attempt < 16; attempt++ {
+		candidate := fmt.Sprintf("%s-%s", trimRunes(base, 56), randHex(3))
+		var count int64
+		if err := db.Model(&model.Outbound{}).Where("tag = ?", candidate).Count(&count).Error; err != nil {
+			return "", err
+		}
+		if count == 0 {
+			return candidate, nil
+		}
 	}
 	return "", fmt.Errorf("专属出站名称重复过多，请更换名称")
 }
@@ -327,9 +409,9 @@ func (a *App) validatePrivateOutbound(tag, typ string, raw json.RawMessage) erro
 		if st.Settings.Method == "" || (st.Password == "" && st.Settings.SSServerPSK == "") {
 			return fmt.Errorf("shadowsocks 加密方式和密码必填")
 		}
-	case "socks":
+	case "socks", "http":
 		if (strings.TrimSpace(st.Username) == "") != (st.Password == "") {
-			return fmt.Errorf("socks 用户名和密码必须同时填写或同时留空")
+			return fmt.Errorf("%s 用户名和密码必须同时填写或同时留空", typ)
 		}
 	case "snell":
 		if st.Password == "" && st.Settings.SnellPSK == "" {

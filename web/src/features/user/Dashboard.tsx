@@ -3,7 +3,7 @@ import { Button, Form, Grid, Input, Modal, Segmented, Select, Typography, messag
 import { ChevronRight, Eye, EyeOff, Plus, Trash2 } from 'lucide-react'
 import { QRCodeSVG } from 'qrcode.react'
 import {
-  createUserForward, deleteUserForward, errMsg, getMe, getMyTraffic, getUserForwards,
+  createUserForward, deleteUserForward, deleteUserOutbound, errMsg, getMe, getMyTraffic, getUserForwards,
   getUserInbounds, getUserNodes, getUserOutbounds, importUserOutbound, isCanceledRequest, resetSub,
 } from '../../lib/api'
 import type { SubscriptionSyncResult, UserForward, UserInboundOption, UserNode, UserPrivateOutbound } from '../../lib/api'
@@ -100,6 +100,7 @@ export default function Dashboard() {
   const [forwardForm] = Form.useForm<{ inbound: number; outbound: number }>()
   const [forwarding, setForwarding] = useState(false)
   const [actionID, setActionID] = useState<number | null>(null)
+  const [outboundActionID, setOutboundActionID] = useState<number | null>(null)
   const mounted = useRef(false)
   const importLock = useRef(false)
   const forwardLock = useRef(false)
@@ -203,6 +204,19 @@ export default function Dashboard() {
     },
   })
 
+  const removeOutbound = (row: UserPrivateOutbound) => Modal.confirm({
+    title: '删除出站', content: `确认删除「${row.tag}」？`, okText: '删除', okButtonProps: { danger: true },
+    onOk: async () => {
+      setOutboundActionID(row.id)
+      try {
+        await deleteUserOutbound(row.id)
+        if (!mounted.current) return
+        outboundRequest.reload()
+        message.success('已删除出站')
+      } finally { if (mounted.current) setOutboundActionID(null) }
+    },
+  })
+
   const renderNode = (n: UserNode, index = 0) => (
     <div onClick={() => setSelectedNode(n)} onKeyDown={(event) => { if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); setSelectedNode(n) } }} role="button" tabIndex={0} className={`sub-node${index === 0 ? ' is-first' : ''}`}>
       <RegionFlag code={n.region} size={15} fallback={false} />
@@ -232,7 +246,7 @@ export default function Dashboard() {
           { key: 'forwards', label: '转发', count: forwards.length, disabled: !user.forwarding_enabled },
         ]} />
         {(user.forwarding_enabled ? tab : 'nodes') === 'nodes' && <Section><RequestState loading={nodeRequest.loading} error={nodeRequest.error} hasData={nodes.length > 0} empty={!nodeRequest.loading && !nodeRequest.error && nodes.length === 0} emptyDescription="暂无节点" onRetry={nodeRequest.reload}><div className="ui-card sub-nodes">{nodes.length > 0 ? (isMobile || nodes.length > 50 ? <VirtualList className="sub-node-virtual" style={{ height: Math.min(nodes.length, isMobile ? 6 : 9) * 64, maxHeight: isMobile ? 384 : 576 }} items={nodes} getKey={userNodeKey} estimatedItemHeight={64} overscan={5} renderItem={renderNode} /> : nodes.map((n, i) => <div key={userNodeKey(n)}>{renderNode(n, i)}</div>)) : <div className="ui-empty">暂无节点</div>}</div></RequestState></Section>}
-        {user.forwarding_enabled && tab === 'outbounds' && <Section><RequestState loading={outboundRequest.loading} error={outboundRequest.error} hasData={outbounds.length > 0} empty={!outboundRequest.loading && !outboundRequest.error && outbounds.length === 0} emptyDescription="暂无出站" onRetry={outboundRequest.reload}><div className="ui-card sub-outbounds">{outbounds.map((outbound) => <div key={outbound.id} className="sub-outbound"><span className="sub-outbound-main"><strong>{outbound.tag}</strong>{outbound.remark && <small>{outbound.remark}</small>}</span><span className="ui-tag">{outbound.type}</span></div>)}</div></RequestState></Section>}
+        {user.forwarding_enabled && tab === 'outbounds' && <Section><RequestState loading={outboundRequest.loading} error={outboundRequest.error} hasData={outbounds.length > 0} empty={!outboundRequest.loading && !outboundRequest.error && outbounds.length === 0} emptyDescription="暂无出站" onRetry={outboundRequest.reload}><div className="ui-card sub-outbounds">{outbounds.map((outbound) => <div key={outbound.id} className="sub-outbound"><span className="sub-outbound-main"><strong>{outbound.tag}</strong>{outbound.remark && <small>{outbound.remark}</small>}</span><div className="flex items-center gap-1.5"><span className="ui-tag">{outbound.type}</span><Button size="small" type="text" icon={<Trash2 />} loading={outboundActionID === outbound.id} aria-label={`删除出站 ${outbound.tag}`} onClick={() => removeOutbound(outbound)} /></div></div>)}</div></RequestState></Section>}
         {user.forwarding_enabled && tab === 'forwards' && <Section><RequestState loading={forwardRequest.loading} error={forwardRequest.error} hasData={forwards.length > 0} empty={!forwardRequest.loading && !forwardRequest.error && forwards.length === 0} emptyDescription="暂无转发" onRetry={forwardRequest.reload}><div className="ui-card sub-outbounds">{forwards.map((row) => <div key={row.id} className="sub-outbound"><span className="sub-outbound-main"><strong>{row.node_name}</strong><small>{row.inbound_tag} → {row.outbound_tag} · {row.server_name}</small></span><Button size="small" type="text" icon={<Trash2 />} loading={actionID === row.id} aria-label={`删除转发 ${row.inbound_tag}`} onClick={() => removeForward(row)} /></div>)}</div></RequestState></Section>}
         <Modal title="添加出站" width={MODAL_SM} open={importOpen} onCancel={() => setImportOpen(false)} onOk={submitImport} confirmLoading={importing} okText="导入">
           <Form form={importForm} className="sub-form" onFinish={submitImport}>

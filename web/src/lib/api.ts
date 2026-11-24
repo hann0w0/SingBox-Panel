@@ -60,8 +60,10 @@ http.interceptors.response.use(
     if (err?.response?.status === 401 && token &&
         requestAuthHeader(err.config) === `Bearer ${token}` &&
         !location.pathname.startsWith('/login')) {
+      const from = `${location.pathname}${location.search}${location.hash}`
       useAuth.getState().logout()
-      location.href = '/login'
+      window.history.replaceState({ usr: { from } }, '', '/login')
+      window.dispatchEvent(new PopStateEvent('popstate'))
     }
     return Promise.reject(err)
   },
@@ -155,7 +157,9 @@ export const createUserForward = (body: { inbound_server_id: number; inbound_tag
 export const deleteUserForward = (id: number) =>
   http.delete<ConfigApplyResult>(`/api/user/forwards/${id}`).then((r) => r.data)
 export const importUserOutbound = (body: { uri?: string; url?: string; tag?: string }) =>
-  http.post<{ outbounds: Outbound[] }>('/api/user/outbounds/import', body).then((r) => r.data)
+  http.post<{ outbounds: UserPrivateOutbound[] }>('/api/user/outbounds/import', body).then((r) => r.data)
+export const deleteUserOutbound = (id: number) =>
+  http.delete<{ ok: boolean }>(`/api/user/outbounds/${id}`).then((r) => r.data)
 export const getMyTraffic = (range: UserTrafficRange = '24h', signal?: AbortSignal) =>
   http.get<UserTrafficSeries>('/api/user/traffic', { params: { range }, signal }).then((r) => r.data)
 

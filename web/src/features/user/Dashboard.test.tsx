@@ -2,7 +2,7 @@ import { StrictMode } from 'react'
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import Dashboard from './Dashboard'
-import { createUserForward, deleteUserForward, getMe, getMyTraffic, getSubscriptionSync, getUserForwards, getUserInbounds, getUserNodes, getUserOutbounds, importUserOutbound, resetSub } from '../../lib/api'
+import { createUserForward, deleteUserForward, deleteUserOutbound, getMe, getMyTraffic, getSubscriptionSync, getUserForwards, getUserInbounds, getUserNodes, getUserOutbounds, importUserOutbound, resetSub } from '../../lib/api'
 import type { UserForward, UserInboundOption, UserNode, UserPrivateOutbound } from '../../lib/api'
 import type { RouteRule, User, UserTrafficSeries } from '../../lib/types'
 import { useAuth } from '../../lib/store'
@@ -15,7 +15,7 @@ vi.mock('../../lib/api', async (importOriginal) => ({
   ...await importOriginal<typeof import('../../lib/api')>(),
   getMe: vi.fn(), getUserNodes: vi.fn(), getUserOutbounds: vi.fn(), getUserInbounds: vi.fn(), getUserForwards: vi.fn(),
   getMyTraffic: vi.fn(), resetSub: vi.fn(), getSubscriptionSync: vi.fn(),
-  createUserForward: vi.fn(), deleteUserForward: vi.fn(), importUserOutbound: vi.fn(),
+  createUserForward: vi.fn(), deleteUserForward: vi.fn(), deleteUserOutbound: vi.fn(), importUserOutbound: vi.fn(),
 }))
 vi.mock('../../lib/util', async (importOriginal) => ({
   ...await importOriginal<typeof import('../../lib/util')>(), copyToClipboard: vi.fn(),
@@ -394,5 +394,20 @@ describe('user subscription dashboard', () => {
     await act(async () => pending.resolve({ outbounds: [] }))
     expect(success).not.toHaveBeenCalled()
     expect(getUserOutbounds).toHaveBeenCalledTimes(1)
+  })
+
+  it('deletes a private outbound after confirmation and refreshes the list', async () => {
+    vi.mocked(getUserOutbounds).mockResolvedValueOnce([outbound]).mockResolvedValueOnce([])
+    vi.mocked(deleteUserOutbound).mockResolvedValue({ ok: true })
+    const success = vi.spyOn(message, 'success')
+    mount()
+    fireEvent.click(await screen.findByRole('tab', { name: /^出站/ }))
+    fireEvent.click(await screen.findByRole('button', { name: `删除出站 ${outbound.tag}` }))
+    const dialog = screen.getByRole('alertdialog')
+    fireEvent.click(within(dialog).getByRole('button', { name: '删除' }))
+    await waitFor(() => expect(screen.queryByRole('alertdialog')).toBeNull())
+    expect(deleteUserOutbound).toHaveBeenCalledWith(outbound.id)
+    expect(success).toHaveBeenCalledWith('已删除出站')
+    expect(getUserOutbounds).toHaveBeenCalledTimes(2)
   })
 })

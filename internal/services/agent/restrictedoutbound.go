@@ -104,7 +104,7 @@ func pinRestrictedOutbound(ctx context.Context, raw json.RawMessage, tag string,
 		return nil, fmt.Errorf("restricted outbound %q requires a supported proxy type", tag)
 	}
 	switch typ {
-	case "vless", "vmess", "trojan", "shadowsocks", "ss", "hysteria2", "tuic", "socks", "anytls", "snell":
+	case "vless", "vmess", "trojan", "shadowsocks", "ss", "hysteria2", "tuic", "socks", "http", "anytls", "snell":
 	default:
 		return nil, fmt.Errorf("restricted outbound %q has unsupported type %q", tag, typ)
 	}

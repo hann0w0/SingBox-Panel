@@ -123,7 +123,7 @@ func TestRestrictedOutboundRejectsEveryUnsafeLiteralAndDNSAnswer(t *testing.T) {
 }
 
 func TestRestrictedOutboundPreservesTLSIdentityAndSupportsPrivateTypes(t *testing.T) {
-	for _, typ := range []string{"vless", "vmess", "trojan", "shadowsocks", "ss", "hysteria2", "tuic", "socks", "anytls", "snell"} {
+	for _, typ := range []string{"vless", "vmess", "trojan", "shadowsocks", "ss", "hysteria2", "tuic", "socks", "http", "anytls", "snell"} {
 		t.Run(typ, func(t *testing.T) {
 			for _, setting := range []struct {
 				name string

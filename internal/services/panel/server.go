@@ -62,11 +62,11 @@ type App struct {
 	logSessions       map[uint]map[string]logSessionLease
 	logSessionLocks   keyedMutex[uint]
 	serverOperations  *keyedMutex[uint]
-	userAccessMu     sync.Mutex
-	ipLocationsOnce  sync.Once
-	ipLocations      *ipLocationService
-	embeddedWebFS    fs.FS
-	embeddedAgentsFS fs.FS
+	userAccessMu      sync.Mutex
+	ipLocationsOnce   sync.Once
+	ipLocations       *ipLocationService
+	embeddedWebFS     fs.FS
+	embeddedAgentsFS  fs.FS
 }
 
 // SetVersion records the running panel version (set from main via ldflags) so
@@ -164,6 +164,7 @@ func (a *App) routes() *gin.Engine {
 		user.POST("/user/forwards", a.createUserForward)
 		user.DELETE("/user/forwards/:forwardID", a.deleteUserForward)
 		user.POST("/user/outbounds/import", a.importUserOutbound)
+		user.DELETE("/user/outbounds/:outboundID", a.deleteUserOutbound)
 		user.GET("/user/subscription-sync", a.handleSubscriptionSync)
 		user.POST("/user/reset-sub", a.handleResetSub)
 		user.POST("/user/change-password", a.handleChangePassword)

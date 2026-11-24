@@ -438,6 +438,7 @@ func (a *App) updateUserAccess(c *gin.Context) {
 
 	unlockAudience := a.subscriptionManager().lockAudience()
 	defer unlockAudience()
+	var revokedForwardServers []uint
 	err := a.db.Transaction(func(tx *gorm.DB) error {
 		var inbounds []model.Inbound
 		if len(inboundIDs) > 0 {
@@ -491,6 +492,11 @@ func (a *App) updateUserAccess(c *gin.Context) {
 		if err := tx.Model(&user).Select("ServerIDs", "InboundIDs", "UpdatedAt").Updates(&user).Error; err != nil {
 			return err
 		}
+		var cleanupErr error
+		revokedForwardServers, cleanupErr = cleanupDisallowedUserForwards(tx, &user)
+		if cleanupErr != nil {
+			return cleanupErr
+		}
 		selectedCustomIDs := make(map[uint]bool, len(customNodeIDs))
 		for _, customID := range customNodeIDs {
 			selectedCustomIDs[customID] = true
@@ -528,7 +534,7 @@ func (a *App) updateUserAccess(c *gin.Context) {
 		if err := saveUserNodeOrder(tx, user.ID, order); err != nil {
 			return err
 		}
-		return queueProxyAccessSync(tx, oldServerIDs, user.ServerIDs)
+		return queueProxyAccessSync(tx, oldServerIDs, user.ServerIDs, revokedForwardServers)
 	})
 	if err != nil {
 		status := http.StatusInternalServerError
@@ -538,7 +544,7 @@ func (a *App) updateUserAccess(c *gin.Context) {
 		c.JSON(status, gin.H{"error": err.Error()})
 		return
 	}
-	a.refreshUserProxyAccess(oldServerIDs, user.ServerIDs)
+	a.refreshUserProxyAccess(oldServerIDs, user.ServerIDs, revokedForwardServers)
 	access, err := effectiveUserAccess(a.db, &user)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
@@ -853,6 +859,12 @@ func (a *App) updateUser(c *gin.Context) {
 				if err := deleteForwardState(tx, forwards); err != nil {
 					return err
 				}
+			} else if accessChanged {
+				revokedServers, cleanupErr := cleanupDisallowedUserForwards(tx, &u)
+				if cleanupErr != nil {
+					return cleanupErr
+				}
+				forwardingServers = append(forwardingServers, revokedServers...)
 			}
 			if err := queueProxyAccessSync(tx, oldServerIDs, u.ServerIDs, forwardingServers); err != nil {
 				return err
@@ -956,6 +968,11 @@ func (a *App) deleteUser(c *gin.Context) {
 				affectedServerIDs = append(affectedServerIDs, outbound.ServerID)
 			}
 		}
+		routeServers, err := cleanupDeletedUserRouteIdentities(tx, &u)
+		if err != nil {
+			return err
+		}
+		affectedServerIDs = append(affectedServerIDs, routeServers...)
 		if err := tx.Delete(&model.User{}, id).Error; err != nil {
 			return err
 		}

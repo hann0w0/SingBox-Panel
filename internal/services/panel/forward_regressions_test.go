@@ -289,3 +289,104 @@ func TestDerivedRulesAreManagedThroughForwardEndpoints(t *testing.T) {
 		t.Fatalf("derived rows prevented ordinary reorder: %d %s", response.Code, response.Body)
 	}
 }
+
+func TestAdminBlockAndSniffRulesPrecedeDerivedForwards(t *testing.T) {
+	fixture := newForwardFixture(t)
+	fixture.create(t)
+	mustCreate(t, fixture.db, &model.RouteRule{
+		ServerID: fixture.server.ID, Outbound: "sniff", Match: model.JSONText(`{"action":"sniff","inbound":["entry-in"]}`), Sort: 10, Enabled: true,
+	})
+	mustCreate(t, fixture.db, &model.RouteRule{
+		ServerID: fixture.server.ID, Outbound: "block", Match: model.JSONText(`{"action":"reject","ip_is_private":true}`), Sort: 20, Enabled: true,
+	})
+	mustCreate(t, fixture.db, &model.RouteRule{
+		ServerID: fixture.server.ID, Outbound: "direct", Match: model.JSONText(`{"inbound":["entry-in"]}`), Sort: 30, Enabled: true,
+	})
+	raw, err := fixture.app.orch.BuildServerConfig(&fixture.server)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var parsed struct {
+		Route struct {
+			Rules []struct {
+				Action   string `json:"action"`
+				Outbound string `json:"outbound"`
+			} `json:"rules"`
+		} `json:"route"`
+	}
+	if err := json.Unmarshal(raw, &parsed); err != nil {
+		t.Fatal(err)
+	}
+	sniffIdx, rejectIdx, forwardIdx, directIdx := -1, -1, -1, -1
+	for i, rule := range parsed.Route.Rules {
+		switch {
+		case rule.Action == "sniff" && sniffIdx < 0:
+			sniffIdx = i
+		case rule.Action == "reject" && rejectIdx < 0:
+			rejectIdx = i
+		case rule.Outbound == fixture.outbound.Tag && forwardIdx < 0:
+			forwardIdx = i
+		case rule.Outbound == "direct" && directIdx < 0:
+			directIdx = i
+		}
+	}
+	if sniffIdx < 0 || rejectIdx < 0 || forwardIdx < 0 || directIdx < 0 {
+		t.Fatalf("missing expected route rules: %+v", parsed.Route.Rules)
+	}
+	if !(sniffIdx < forwardIdx && rejectIdx < forwardIdx && forwardIdx < directIdx) {
+		t.Fatalf("unexpected rule order: sniff=%d reject=%d forward=%d direct=%d", sniffIdx, rejectIdx, forwardIdx, directIdx)
+	}
+}
+
+func TestAccessRevocationCleansForwardsAndUserDeleteCleansRouteIdentities(t *testing.T) {
+	fixture := newForwardFixture(t)
+	fixture.create(t)
+	fixture.router.PUT("/users/:id/access", fixture.app.updateUserAccess)
+	fixture.router.DELETE("/users/:id/outbounds/:outboundID", fixture.app.deleteAdminUserOutbound)
+	fixture.router.DELETE("/users/:id", fixture.app.deleteUser)
+
+	response := serveJSONRequest(t, fixture.router, http.MethodPut, fmt.Sprintf("/users/%d/access", fixture.user.ID), `{"server_ids":[],"inbound_ids":[],"custom_node_ids":[]}`)
+	if response.Code != http.StatusOK {
+		t.Fatalf("updateUserAccess: %d %s", response.Code, response.Body)
+	}
+	var forwardCount int64
+	fixture.db.Model(&model.UserForward{}).Where("user_id = ?", fixture.user.ID).Count(&forwardCount)
+	if forwardCount != 0 {
+		t.Fatalf("expected forward to be cleaned on access revocation, got %d", forwardCount)
+	}
+	response = serveJSONRequest(t, fixture.router, http.MethodDelete, fmt.Sprintf("/users/%d/outbounds/%d", fixture.user.ID, fixture.outbound.ID), "")
+	if response.Code != http.StatusOK {
+		t.Fatalf("deleteAdminUserOutbound after access revocation: %d %s", response.Code, response.Body)
+	}
+
+	other := model.User{Email: "bob", Role: model.RoleUser, Enabled: true, SubToken: "bob-sub", ProxyToken: "bob-seed"}
+	mustCreate(t, fixture.db, &other)
+	exclusiveRule := model.RouteRule{
+		ServerID: fixture.server.ID, Outbound: "direct", Enabled: true,
+		Match: model.JSONText(`{"auth_user":["` + proxyTrafficName(&fixture.user) + `"],"domain_suffix":["only-alice.example"]}`),
+	}
+	sharedRule := model.RouteRule{
+		ServerID: fixture.server.ID, Outbound: "direct", Enabled: true,
+		Match: model.JSONText(`{"auth_user":["` + proxyTrafficName(&fixture.user) + `","` + proxyTrafficName(&other) + `"],"domain_suffix":["shared.example"]}`),
+	}
+	mustCreate(t, fixture.db, &exclusiveRule)
+	mustCreate(t, fixture.db, &sharedRule)
+
+	response = serveJSONRequest(t, fixture.router, http.MethodDelete, fmt.Sprintf("/users/%d", fixture.user.ID), "")
+	if response.Code != http.StatusOK {
+		t.Fatalf("deleteUser: %d %s", response.Code, response.Body)
+	}
+	var count int64
+	fixture.db.Model(&model.RouteRule{}).Where("id = ?", exclusiveRule.ID).Count(&count)
+	if count != 0 {
+		t.Fatalf("exclusive user route survived account deletion")
+	}
+	var shared model.RouteRule
+	if err := fixture.db.First(&shared, sharedRule.ID).Error; err != nil {
+		t.Fatalf("shared rule disappeared: %v", err)
+	}
+	var match singbox.RuleInput
+	if json.Unmarshal(shared.Match, &match) != nil || len(match.AuthUser) != 1 || match.AuthUser[0] != proxyTrafficName(&other) {
+		t.Fatalf("shared rule not cleaned: %s", shared.Match)
+	}
+}

@@ -429,16 +429,16 @@
 }
 
 :root[data-console-theme='dark'] .ui-modal.inbound-compact .ui-modal-footer > .ui-btn-primary:not(.ui-btn-dangerous) {
-  border-color: var(--inbound-ink);
-  background: var(--inbound-ink);
-  color: var(--console-on-primary);
+  border-color: var(--inbound-line-strong);
+  background: transparent;
+  color: var(--inbound-ink);
   opacity: 1;
 }
 
 :root[data-console-theme='dark'] .ui-modal.inbound-compact .ui-modal-footer > .ui-btn-primary:not(.ui-btn-dangerous):hover {
-  border-color: var(--inbound-ink);
-  background: var(--inbound-ink);
-  opacity: .82;
+  border-color: var(--inbound-hover-line);
+  background: var(--inbound-hover);
+  opacity: 1;
 }
 
 :root[data-console-theme='dark'] .ui-modal.inbound-compact {

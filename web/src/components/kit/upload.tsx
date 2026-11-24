@@ -36,18 +36,16 @@ function Dragger({
   const id = useId()
   const receive = (files: FileList | null) => {
     if (disabled || !files) return
+    const accepted = Array.from(files)
+      .slice(0, maxCount)
+      .filter((file) => beforeUpload?.(file) !== false)
     onChange?.({
-      fileList: Array.from(files)
-        .slice(0, maxCount)
-        .map((file) => {
-          beforeUpload?.(file)
-          return {
-            uid: randomUUID(),
-            name: file.name,
-            size: file.size,
-            originFileObj: file,
-          }
-        }),
+      fileList: accepted.map((file) => ({
+        uid: randomUUID(),
+        name: file.name,
+        size: file.size,
+        originFileObj: file,
+      })),
     })
   }
   return (

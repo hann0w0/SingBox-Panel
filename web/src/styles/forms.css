@@ -72,7 +72,6 @@
 .fm-form .ui-space-compact { width: 100%; }
 
 /* ---------- Rule form ---------- */
-.fm-form .fm-actions.ui-segmented { width: 100%; }
 .fm-chips.ui-checkbox-group { display: flex; flex-wrap: wrap; gap: 8px; }
 .fm-chips .ui-checkbox-wrapper { position: relative; margin: 0; height: 32px; padding: 0 12px; display: inline-flex; align-items: center; border: 1px solid var(--console-border); border-radius: 6px; color: var(--console-muted); font-size: 13px; background: var(--console-container); transition: border-color .15s, color .15s, background-color .15s; }
 .fm-chips .ui-checkbox-wrapper::after { display: none; }
@@ -333,9 +332,9 @@
   padding: 7px 10px 7px 24px; border: 1px solid transparent; border-radius: 6px;
   background: transparent; color: inherit; text-align: left; cursor: pointer;
 }
-.fm-node-item:hover:not(:disabled) { background: var(--console-surface-hover, rgba(0, 0, 0, .04)); }
+.fm-node-item:hover:not(:disabled) { background: var(--console-hover); }
 .fm-node-item:focus-visible { outline: 2px solid var(--console-focus); outline-offset: -2px; }
-.fm-node-item.is-active { border-color: var(--console-border-strong); background: var(--console-surface-hover, rgba(0, 0, 0, .04)); }
+.fm-node-item.is-active { border-color: var(--console-border-strong); background: var(--console-hover); }
 .fm-node-item.is-disabled { cursor: not-allowed; opacity: .55; }
 .fm-node-item-main { display: flex; align-items: baseline; gap: 8px; min-width: 0; }
 .fm-node-item-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 13px; }

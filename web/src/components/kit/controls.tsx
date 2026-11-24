@@ -90,13 +90,20 @@ export const Button = forwardRef<HTMLButtonElement, ButtonProps>(
           href={disabled ? undefined : href}
           target={target}
           rel={rel}
+          aria-disabled={disabled || undefined}
           className={cn(
-            buttonVariants({ variant, size: 'default' }),
+            buttonVariants({ variant, size: size === 'small' ? 'sm' : size === 'large' ? 'lg' : 'default' }),
             'ui-btn',
+            `ui-btn-${type || 'default'}`,
+            (danger || type === 'danger') && 'ui-btn-dangerous',
+            size === 'small' && 'ui-btn-sm',
+            size === 'large' && 'ui-btn-lg',
+            !children && 'ui-btn-icon-only',
             className,
           )}
+          {...(props as React.AnchorHTMLAttributes<HTMLAnchorElement>)}
         >
-          {icon}
+          {icon && <span className="ui-btn-icon">{icon}</span>}
           {children}
         </a>
       )
@@ -327,6 +334,7 @@ export const InputNumber = forwardRef<
         style={undefined}
         ref={ref}
         type="number"
+        onWheel={(event) => event.currentTarget.blur()}
         step={props.step ?? (precision === 0 ? 1 : 'any')}
         className="ui-input-number-input h-auto border-0 shadow-none focus-visible:ring-0"
         value={value ?? ''}
@@ -548,7 +556,7 @@ export const Select = forwardRef<HTMLButtonElement, SelectProps>(
     const commandId = useId()
     const [search, setSearch] = useState('')
     const [internal, setInternal] = useState(defaultValue)
-    const current = value === undefined && !onChange ? internal : value
+    const current = value === undefined ? internal : value
     const selected = mode
       ? Array.isArray(current)
         ? current

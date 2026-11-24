@@ -270,11 +270,11 @@ function Confirmation({ entry }: { entry: Entry }) {
           )}
           <Button
             ref={confirmButton}
+            {...entry.okButtonProps}
             type="primary"
             danger={entry.okType === 'danger' || entry.okButtonProps?.danger}
             loading={busy}
             onClick={() => void run()}
-            {...entry.okButtonProps}
           >
             {entry.okText || (entry.kind === 'confirm' ? '确定' : '知道了')}
           </Button>

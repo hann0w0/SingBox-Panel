@@ -39,7 +39,7 @@ button:disabled { cursor: not-allowed; }
   border-color: color-mix(in srgb, var(--console-error) 75%, transparent);
   background: color-mix(in srgb, var(--console-error) 14%, transparent);
 }
-.ui-input, .ui-input-affix-wrapper, .ui-input-number, .ui-select-selector { width: 100%; min-width: 0; min-height: 36px; border: 1px solid var(--console-border-strong); border-radius: var(--app-radius-control); background: var(--console-container); color: var(--console-ink); box-shadow: none; outline: none; font-size: 13px; transition: border-color .12s; }
+.ui-input, .ui-input-affix-wrapper, .ui-input-number, .ui-select-selector { width: 100%; min-width: 0; min-height: 36px; border: 1px solid var(--console-border-strong); border-radius: var(--app-radius-control); background: var(--console-container); color: var(--console-ink); box-shadow: none; outline: none; font-size: 16px; transition: border-color .12s; }
 .ui-input { display: block; padding: 7px 11px; }
 input.ui-input { height: 36px; }
 .ui-input::placeholder, .ui-input-number-input::placeholder { color: var(--console-placeholder); }
@@ -57,7 +57,7 @@ input.ui-input-lg, .ui-input-affix-wrapper-lg { height: 40px; }
 .ui-input-number { display: inline-flex; }
 .ui-input-number-input { width: 100%; min-width: 0; padding: 7px 11px; background: transparent; border: none; outline: none; border-radius: inherit; }
 .ui-select { position: relative; display: inline-flex; min-width: 0; }
-.ui-select-selector { display: flex; align-items: center; justify-content: space-between; gap: 8px; text-align: left; padding: 7px 10px; }
+.ui-select-selector { display: flex; align-items: center; justify-content: space-between; gap: 8px; text-align: left; padding: 7px 32px 7px 10px; }
 .ui-select.ui-select-sm .ui-select-selector { min-height: 28px; padding: 3px 8px; font-size: 12.5px; }
 .ui-select-selection-item { display: flex; flex: 1; gap: 4px; flex-wrap: wrap; min-width: 0; overflow: hidden; }
 .ui-select-single .ui-select-selection-item { display: block; text-overflow: ellipsis; white-space: nowrap; }
@@ -99,12 +99,12 @@ input.ui-input-lg, .ui-input-affix-wrapper-lg { height: 40px; }
 .ui-form-item-extra { margin-top: 5px; color: var(--console-faint); font-size: 12px; }
 .ui-form-item-has-error :is(.ui-input,.ui-input-affix-wrapper,.ui-input-number,.ui-select-selector) { border-color: var(--console-error); }
 .ui-modal { display: flex; flex-direction: column; gap: 0; padding: 0; max-width: calc(100vw - 32px); max-height: min(calc(88 * var(--dvh)), 820px); border: 1px solid var(--console-border); border-radius: var(--radius-lg); background: var(--console-container); color: var(--console-ink); box-shadow: 0 12px 36px rgb(0 0 0 / 12%); overflow: hidden; }
-.ui-modal-header { flex: none; padding: 24px 48px 0 24px; text-align: left; }
+.ui-modal-header { flex: none; padding: 24px 48px 16px 24px; border-bottom: 1px solid var(--console-border); text-align: left; }
 .ui-modal .ui-modal-title { margin: 0; font-size: 16px; font-weight: 600; line-height: 24px; overflow-wrap: anywhere; }
 .ui-modal-body { min-height: 0; padding: 16px 24px 24px; overflow: auto; overscroll-behavior: contain; scrollbar-width: thin; }
 .ui-modal:has(.ui-modal-footer) .ui-modal-body { padding-bottom: 0; }
 .ui-modal-body pre { max-width: 100%; white-space: pre-wrap; overflow-wrap: anywhere; }
-.ui-modal-footer { display: flex; flex: none; align-items: center; justify-content: flex-end; flex-wrap: wrap; gap: 8px; padding: 24px; }
+.ui-modal-footer { display: flex; flex: none; align-items: center; justify-content: flex-end; flex-wrap: wrap; gap: 8px; padding: 20px 24px; border-top: 1px solid var(--console-border); }
 .ui-modal-footer > .ui-btn { min-width: 72px; }
 .ui-modal [data-slot='dialog-close'] { top: 20px; right: 20px; }
 .ui-confirm .ui-modal-header { padding-right: 20px; }
@@ -144,9 +144,9 @@ input.ui-input-lg, .ui-input-affix-wrapper-lg { height: 40px; }
 .ui-upload-file button { flex: none; }
 @media (max-width:767px) {
  .ui-modal { max-width: calc(100vw - 24px); }
- .ui-modal-header { padding: 20px 44px 0 18px; }
+ .ui-modal-header { padding: 20px 44px 16px 18px; }
  .ui-modal-body { padding: 14px 18px 20px; }
- .ui-modal-footer { padding: 20px 18px; }
+ .ui-modal-footer { padding: 20px 18px; border-top: 1px solid var(--console-border); }
 }
 @media (prefers-reduced-motion:reduce) { [data-slot*='dialog'], [data-slot*='popover'] { animation: none !important; transition: none !important; } }
 .ui-spin-container { position: relative; }

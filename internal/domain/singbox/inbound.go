@@ -463,26 +463,190 @@ func mergeInboundWithRaw(in InboundInput, overlay map[string]any) (map[string]an
 		return nil, err
 	}
 	base := deepCloneMap(in.Settings.Raw)
+	cleanStaleRawInboundUsers(base, in)
+	cleanStaleRawInboundProtocolFields(base, in)
+	cleanStaleRawInboundTLS(base, in.Settings.TLS, normalizedOverlay)
+	cleanStaleRawInboundTransport(base, in.Settings.Transport)
+	return deepMergeMaps(base, normalizedOverlay), nil
+}
+
+func cleanStaleRawInboundUsers(base map[string]any, in InboundInput) {
 	if !in.Settings.SingleUser || in.Type == "snell" {
 		delete(base, "users")
+		return
 	}
-	if in.Type == "vless" {
-		delete(base, "flow")
-	}
-	if !in.Settings.TLS.tlsEnabled() {
-		delete(base, "tls")
-	} else if tlsMap, ok := base["tls"].(map[string]any); ok {
-		if !in.Settings.TLS.Reality.Enabled {
-			delete(tlsMap, "reality")
+	switch in.Type {
+	case "socks", "http":
+		if in.Settings.Username == "" && in.Settings.Password == "" {
+			delete(base, "users")
 		}
-		if in.Settings.TLS.ACMEDomain == "" {
-			if cp, ok := tlsMap["certificate_provider"].(map[string]any); ok && mStr(cp, "type") == "acme" {
-				delete(tlsMap, "certificate_provider")
+	case "mixed":
+		if !in.Settings.UseMultiUser(in.Type) && in.Settings.Username == "" && in.Settings.Password == "" {
+			delete(base, "users")
+		}
+	case "shadowsocks":
+		delete(base, "users")
+	case "shadowtls":
+		if in.Settings.ShadowTLSVersion == 2 {
+			delete(base, "users")
+		}
+	}
+}
+
+func cleanStaleRawInboundProtocolFields(base map[string]any, in InboundInput) {
+	switch in.Type {
+	case "vless":
+		delete(base, "flow")
+	case "trojan":
+		if in.Settings.TrojanFallback == nil {
+			delete(base, "fallback")
+		}
+	case "hysteria2":
+		if in.Settings.UpMbps <= 0 {
+			delete(base, "up_mbps")
+		}
+		if in.Settings.DownMbps <= 0 {
+			delete(base, "down_mbps")
+		}
+		if !in.Settings.IgnoreClientBandwidth {
+			delete(base, "ignore_client_bandwidth")
+		}
+		if buildHysteria2Obfs(in.Settings) == nil {
+			delete(base, "obfs")
+		} else if obfsMap, ok := base["obfs"].(map[string]any); ok {
+			if in.Settings.ObfsType != "gecko" || in.Settings.GeckoMinPacketSize <= 0 {
+				delete(obfsMap, "min_packet_size")
+			}
+			if in.Settings.ObfsType != "gecko" || in.Settings.GeckoMaxPacketSize <= 0 {
+				delete(obfsMap, "max_packet_size")
 			}
 		}
+	case "hysteria":
+		if in.Settings.ObfsPassword == "" {
+			delete(base, "obfs")
+		}
+	case "shadowtls":
+		if in.Settings.ShadowTLSVersion == 0 || in.Settings.ShadowTLSVersion >= 3 {
+			delete(base, "password")
+		}
+	case "snell":
+		if in.Settings.SnellVersion != 5 || in.Settings.SnellObfsMode == "" || in.Settings.SnellObfsMode == "none" {
+			delete(base, "obfs_mode")
+		}
+		if in.Settings.SnellVersion != 6 || in.Settings.SnellMode == "" || in.Settings.SnellMode == "default" {
+			delete(base, "mode")
+		}
 	}
-	if tr := strings.ToLower(in.Settings.Transport.Type); tr == "" || tr == "tcp" {
+}
+
+func cleanStaleRawInboundTLS(base map[string]any, t TLSSettings, normalizedOverlay map[string]any) {
+	if !t.tlsEnabled() {
+		delete(base, "tls")
+		return
+	}
+	tlsMap, ok := base["tls"].(map[string]any)
+	if !ok {
+		return
+	}
+	overlayTLS, _ := normalizedOverlay["tls"].(map[string]any)
+	if mStr(overlayTLS, "server_name") == "" {
+		delete(tlsMap, "server_name")
+	}
+	if len(t.ALPN) == 0 {
+		delete(tlsMap, "alpn")
+	}
+	switch {
+	case t.Reality.Enabled:
+		delete(tlsMap, "certificate")
+		delete(tlsMap, "key")
+		delete(tlsMap, "certificate_path")
+		delete(tlsMap, "key_path")
+		delete(tlsMap, "certificate_provider")
+		delete(tlsMap, "acme")
+		if realityMap, ok := tlsMap["reality"].(map[string]any); ok {
+			if len(t.Reality.ShortID) == 0 {
+				delete(realityMap, "short_id")
+			}
+			if t.Reality.MaxTimeDifference == "" {
+				delete(realityMap, "max_time_difference")
+			}
+		}
+	case t.Certificate != "" && t.Key != "":
+		delete(tlsMap, "reality")
+		delete(tlsMap, "certificate_path")
+		delete(tlsMap, "key_path")
+		delete(tlsMap, "certificate_provider")
+		delete(tlsMap, "acme")
+	case t.ACMEDomain != "":
+		delete(tlsMap, "reality")
+		delete(tlsMap, "certificate")
+		delete(tlsMap, "key")
+		delete(tlsMap, "certificate_path")
+		delete(tlsMap, "key_path")
+		delete(tlsMap, "acme")
+		if cp, ok := tlsMap["certificate_provider"].(map[string]any); ok && mStr(cp, "type") == "acme" && t.ACMEEmail == "" {
+			delete(cp, "email")
+		}
+	default:
+		delete(tlsMap, "reality")
+		delete(tlsMap, "certificate")
+		delete(tlsMap, "key")
+		delete(tlsMap, "acme")
+		if cp, ok := tlsMap["certificate_provider"].(map[string]any); ok && mStr(cp, "type") == "acme" {
+			delete(tlsMap, "certificate_provider")
+		}
+		if t.CertificatePath == "" {
+			delete(tlsMap, "certificate_path")
+		}
+		if t.KeyPath == "" {
+			delete(tlsMap, "key_path")
+		}
+	}
+}
+
+func cleanStaleRawInboundTransport(base map[string]any, t TransportSettings) {
+	tr := strings.ToLower(t.Type)
+	if tr == "" || tr == "tcp" {
 		delete(base, "transport")
+		return
 	}
-	return deepMergeMaps(base, normalizedOverlay), nil
+	trMap, ok := base["transport"].(map[string]any)
+	if !ok {
+		return
+	}
+	if prevType := strings.ToLower(mStr(trMap, "type")); prevType != "" && prevType != tr {
+		delete(base, "transport")
+		return
+	}
+	if t.Path == "" {
+		delete(trMap, "path")
+	}
+	switch tr {
+	case "ws":
+		delete(trMap, "host")
+		delete(trMap, "early_data_header")
+		if transportHeaders(t, false) == nil {
+			delete(trMap, "headers")
+		}
+		if t.MaxEarlyData <= 0 {
+			delete(trMap, "max_early_data")
+		}
+		if t.EarlyDataHeader == "" {
+			delete(trMap, "early_data_header_name")
+		}
+	case "httpupgrade":
+		delete(trMap, "max_early_data")
+		delete(trMap, "early_data_header_name")
+		delete(trMap, "early_data_header")
+		if t.Host() == "" {
+			delete(trMap, "host")
+		}
+		if transportHeaders(t, true) == nil {
+			delete(trMap, "headers")
+		}
+	default:
+		if transportHeaders(t, false) == nil {
+			delete(trMap, "headers")
+		}
+	}
 }

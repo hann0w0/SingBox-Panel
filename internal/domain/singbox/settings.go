@@ -839,6 +839,17 @@ func (s InboundSettings) Validate(typ string) error {
 		if _, hasType := rawDoc["type"]; !hasType {
 			rawDoc["type"] = typ
 		}
+		in := InboundInput{Type: typ, Settings: s}
+		cleanStaleRawInboundUsers(rawDoc, in)
+		cleanStaleRawInboundProtocolFields(rawDoc, in)
+		var overlayTLS map[string]any
+		if tls := buildTLS(s.TLS); tls != nil {
+			if b, err := json.Marshal(tls); err == nil {
+				_ = json.Unmarshal(b, &overlayTLS)
+			}
+		}
+		cleanStaleRawInboundTLS(rawDoc, s.TLS, map[string]any{"tls": overlayTLS})
+		cleanStaleRawInboundTransport(rawDoc, s.Transport)
 		if err := ValidateJSONAgainstSchema(InboundSchema(), rawDoc); err != nil {
 			return err
 		}

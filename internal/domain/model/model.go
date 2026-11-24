@@ -280,6 +280,8 @@ const (
 	InboundNaive       InboundType = "naive"
 	InboundHysteria    InboundType = "hysteria" // v1
 	InboundSocks       InboundType = "socks"
+	InboundHTTP        InboundType = "http"
+	InboundMixed       InboundType = "mixed"
 	InboundShadowTLS   InboundType = "shadowtls"
 	InboundAnyTLS      InboundType = "anytls"
 	InboundSnell       InboundType = "snell"

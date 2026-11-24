@@ -95,10 +95,24 @@ func TestTrustedProxiesParseAndValidate(t *testing.T) {
 			t.Fatalf("prefix %d = %s, want %s", i, p, want[i])
 		}
 	}
-
 	cfg.BaseURL = "https://panel.example.com"
 	cfg.TrustedProxies = []string{"not-an-ip"}
 	if err := cfg.Validate(); err == nil {
 		t.Fatal("invalid trusted proxy accepted")
+	}
+}
+
+func TestExplicitEmptyTrustedProxiesDisablesDefaultTrust(t *testing.T) {
+	t.Setenv("SINGBOX_PANEL_TRUSTED_PROXIES", "none")
+	cfg, err := Load("")
+	if err != nil {
+		t.Fatal(err)
+	}
+	prefixes, err := cfg.TrustedProxyPrefixes()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if prefixes == nil || len(prefixes) != 0 {
+		t.Fatalf("explicit empty trusted_proxies = %v, want non-nil empty", prefixes)
 	}
 }

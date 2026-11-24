@@ -78,7 +78,7 @@
 .rule-editor .fm-param-value {
   display: flex;
   min-width: 0;
-  align-items: center;
+  align-items: start;
   gap: 4px;
 }
 .rule-editor .fm-param-value > :first-child {
@@ -89,8 +89,12 @@
   flex: none;
   height: 24px;
   width: 24px;
+  margin-top: 6px;
   padding: 0;
   color: var(--console-faint);
+}
+.rule-editor .fm-param-json .fm-code-editor {
+  height: 112px;
 }
 .rule-editor .fm-param-remove:hover {
   color: var(--console-ink);

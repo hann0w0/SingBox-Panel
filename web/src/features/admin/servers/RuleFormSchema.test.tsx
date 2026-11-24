@@ -331,4 +331,136 @@ describe('RuleForm JSON Schema integration', () => {
     fireEvent.click(screen.getByRole('combobox', { name: '参数名' }))
     expect(await screen.findByRole('option', { name: /^invert\b/ })).toBeTruthy()
   })
+
+  it('preserves legacy string network, ip_version, and rule_set_ip_cidr_accept_empty on Form edit', async () => {
+    const legacyRule: RouteRule = {
+      id: 21,
+      server_id: 1,
+      sort: 1,
+      enabled: true,
+      outbound: 'direct',
+      remark: '',
+      match: {
+        action: 'route',
+        network: 'tcp' as unknown as string[],
+        ip_version: 4,
+        rule_set_ip_cidr_accept_empty: true,
+      },
+    }
+
+    render(
+      <RuleForm
+        serverId={1}
+        rule={legacyRule}
+        outboundTags={['direct']}
+        inboundTags={['vless-in']}
+        open
+        onClose={vi.fn()}
+        onSaved={vi.fn()}
+      />,
+    )
+
+    expect(await screen.findByText('传输: tcp')).toBeTruthy()
+    fireEvent.click(screen.getByRole('button', { name: '保存' }))
+
+    await waitFor(() => expect(updateRule).toHaveBeenCalledOnce())
+    expect(vi.mocked(updateRule).mock.calls[0][2].match).toMatchObject({
+      action: 'route',
+      network: ['tcp'],
+      ip_version: 4,
+      rule_set_ip_cidr_accept_empty: true,
+    })
+  })
+
+  it('resets extra parameter value on key switch, disables duplicates, and handles incremental array/JSON input', async () => {
+    render(
+      <RuleForm
+        serverId={1}
+        rule={null}
+        outboundTags={['direct']}
+        inboundTags={['vless-in']}
+        open
+        onClose={vi.fn()}
+        onSaved={vi.fn()}
+      />,
+    )
+
+    // Add first extra param and pick process_path, type incrementally with trailing comma
+    fireEvent.click(await screen.findByRole('button', { name: '添加参数' }))
+    fireEvent.click(screen.getByRole('combobox', { name: '参数名' }))
+    fireEvent.click(await screen.findByRole('option', { name: /^process_path\s·/ }))
+
+    const pathInput = screen.getByLabelText('进程路径') as HTMLInputElement
+    fireEvent.change(pathInput, { target: { value: '/bin/a,' } })
+    expect(pathInput.value).toBe('/bin/a,')
+    fireEvent.change(pathInput, { target: { value: '/bin/a, /bin/b' } })
+    expect(pathInput.value).toBe('/bin/a, /bin/b')
+
+    // Switch that row to clash_mode -> value must reset to string instead of keeping array
+    fireEvent.click(screen.getByRole('combobox', { name: '参数名' }))
+    fireEvent.click(await screen.findByRole('option', { name: /^clash_mode\s·/ }))
+    const clashInput = screen.getByLabelText('Clash 模式') as HTMLInputElement
+    expect(clashInput.value).toBe('')
+    fireEvent.change(clashInput, { target: { value: 'direct' } })
+
+    // Add second extra param -> clash_mode must be disabled in its dropdown
+    fireEvent.click(screen.getByRole('button', { name: '添加参数' }))
+    const selects = screen.getAllByRole('combobox', { name: '参数名' })
+    fireEvent.click(selects[1])
+    const dupOption = await screen.findByRole('option', { name: /^clash_mode\s·/ })
+    expect(dupOption.getAttribute('aria-disabled')).toBe('true')
+
+    // Pick interface_address -> typing partial JSON must stay in draft, valid JSON updates summary without [object Object]
+    fireEvent.click(await screen.findByRole('option', { name: /^interface_address\s·/ }))
+    const jsonEditor = screen.getByLabelText('接口地址') as HTMLTextAreaElement
+    fireEvent.change(jsonEditor, { target: { value: '{' } })
+    expect(jsonEditor.value).toBe('{')
+    fireEvent.change(jsonEditor, { target: { value: '{"en0":["10.0.0.1"]}' } })
+    expect(await screen.findByText('interface_address ×1')).toBeTruthy()
+    expect(screen.queryByText(/\[object Object\]/)).toBeNull()
+  })
+
+  it('clears reject no_drop when switching method to drop and rejects route rules with only network_strategy', async () => {
+    render(
+      <RuleForm
+        serverId={1}
+        rule={null}
+        outboundTags={['direct']}
+        inboundTags={['vless-in']}
+        open
+        onClose={vi.fn()}
+        onSaved={vi.fn()}
+      />,
+    )
+
+    // Route rule with only network_strategy must still require a match condition
+    fireEvent.click(screen.getByRole('combobox', { name: '目标出站' }))
+    fireEvent.click(await screen.findByRole('option', { name: 'direct' }))
+    fireEvent.click(await screen.findByRole('button', { name: '添加参数' }))
+    fireEvent.click(screen.getByRole('combobox', { name: '参数名' }))
+    fireEvent.click(await screen.findByRole('option', { name: /^network_strategy\s·/ }))
+    fireEvent.click(screen.getByRole('combobox', { name: '网络策略' }))
+    fireEvent.click(await screen.findByRole('option', { name: 'hybrid' }))
+    fireEvent.click(screen.getByRole('button', { name: '保存' }))
+    expect(await screen.findByText(/路由规则至少需要一个匹配条件/)).toBeTruthy()
+    expect(createRule).not.toHaveBeenCalled()
+
+    // Switch to reject, enable no_drop, then switch method to drop -> no_drop must not be saved
+    fireEvent.click(screen.getByRole('combobox', { name: '规则动作' }))
+    fireEvent.click(await screen.findByRole('option', { name: 'reject · 拒绝连接' }))
+    fireEvent.click(await screen.findByRole('combobox', { name: '条件字段' }))
+    fireEvent.click(await screen.findByRole('option', { name: /^ip_is_private/ }))
+    fireEvent.click(screen.getByLabelText('禁用自动降级'))
+    const methodBox = screen.getByRole('combobox', { name: '拒绝方式' })
+    methodBox.focus()
+    fireEvent.click(methodBox)
+    fireEvent.click(screen.getByRole('option', { name: 'drop · 静默丢弃' }))
+    expect(methodBox.textContent).toContain('drop')
+    expect(screen.getByLabelText('禁用自动降级').getAttribute('aria-checked')).toBe('false')
+    fireEvent.click(screen.getByRole('button', { name: '保存' }))
+
+    await waitFor(() => expect(createRule).toHaveBeenCalledOnce())
+    const savedMatch = vi.mocked(createRule).mock.calls[0][1].match
+    expect(savedMatch).toEqual({ action: 'reject', method: 'drop', ip_is_private: true })
+  })
 })

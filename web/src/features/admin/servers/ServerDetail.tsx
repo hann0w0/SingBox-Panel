@@ -899,11 +899,14 @@ export default function ServerDetail() {
   const matchChips = (r: RouteRule) => {
     const m = r.match || {}
     const authUsers = m.auth_user?.map((v) => userLabelByAuth.get(v) || v)
+    const networkValues = Array.isArray(m.network)
+      ? m.network.map((v) => String(v).toUpperCase())
+      : (m.network ? [String(m.network).toUpperCase()] : undefined)
     const groups: [string, (string | number)[] | undefined][] = [
       [m.rule_set_ip_cidr_match_source ? '来源规则集' : '规则集', m.rule_set], ['入站', m.inbound], ['域名', m.domain], ['后缀', m.domain_suffix],
       ['用户', authUsers], ['关键词', m.domain_keyword], ['正则', m.domain_regex], ['目标 IP', m.ip_cidr], ['来源 IP', m.source_ip_cidr],
       ['端口', m.port], ['端口范围', m.port_range], ['源端口', m.source_port], ['源端口范围', m.source_port_range],
-      ['协议', m.protocol], ['客户端', m.client], ['网络', m.network ? [String(m.network).toUpperCase()] : undefined],
+      ['协议', m.protocol], ['客户端', m.client], ['网络', networkValues],
       ['进程名', m.process_name], ['进程路径', m.process_path], ['包名', m.package_name],
       ['Clash', m.clash_mode ? [m.clash_mode] : undefined],
       ['DNS', m.server ? [String(m.server)] : undefined],
@@ -937,7 +940,8 @@ export default function ServerDetail() {
     const v = r.outbound
     const act = (r.match?.action as string) || (v === 'block' ? 'reject' : v)
     if (act === 'reject' || v === 'block' || v === 'reject') {
-      return <span className="sd-rule-target"><span className="sd-rule-verb">拒绝</span><span>{r.match?.method === 'drop' ? '静默丢弃' : '快速拒绝'}</span></span>
+      const rejectLabel = r.match?.method === 'drop' ? '静默丢弃' : r.match?.method === 'reply' ? 'ICMP 回复' : '快速拒绝'
+      return <span className="sd-rule-target"><span className="sd-rule-verb">拒绝</span><span>{rejectLabel}</span></span>
     }
     if (act === 'sniff' || v === 'sniff') return '协议嗅探'
     if (act === 'hijack-dns' || v === 'hijack-dns') return 'DNS 劫持'

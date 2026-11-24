@@ -688,6 +688,22 @@ function splitLines(s: string | undefined): string[] {
 }
 const joinLines = (a?: string[]) => (a || []).join(', ')
 
+function normalizeStringList(v: unknown): string[] {
+  if (Array.isArray(v)) return v.map(String).filter(Boolean)
+  if (typeof v === 'string' && v.trim()) return [v.trim()]
+  return []
+}
+
+function normalizeParsedRuleNetwork(parsed: Record<string, unknown>) {
+  if (typeof parsed.network !== 'string') return
+  const trimmed = parsed.network.trim()
+  if (trimmed) {
+    parsed.network = [trimmed]
+  } else {
+    delete parsed.network
+  }
+}
+
 function validateDurationValue(value: unknown) {
   const error = validateGoDuration(value)
   return error ? Promise.reject(new Error(error)) : Promise.resolve()
@@ -696,7 +712,110 @@ function validateDurationValue(value: unknown) {
 function extraParamDefaultValue(schema: JSONSchema): unknown {
   if (schema.type === 'boolean' || schema['x-ui']?.widget === 'switch') return false
   if (schema.type === 'array') return []
+  if (schema.type === 'object' || schema['x-ui']?.widget === 'json') return undefined
+  if (schema.type === 'integer' || schema.type === 'number') return undefined
   return ''
+}
+
+function parseArrayLineDraft(raw: string, isIntArray: boolean): (string | number)[] {
+  const vals = raw.split(/[\n,]/).map((x) => x.trim()).filter(Boolean)
+  return isIntArray ? vals.map(Number).filter((n) => Number.isInteger(n)) : vals
+}
+
+function ArrayLineParamInput({
+  label,
+  placeholder,
+  isIntArray,
+  value,
+  onChange,
+}: {
+  label: string
+  placeholder?: string
+  isIntArray: boolean
+  value: unknown
+  onChange: (next: (string | number)[]) => void
+}) {
+  const items = useMemo(() => (Array.isArray(value) ? value.map(String) : []), [value])
+  const serialized = useMemo(() => JSON.stringify(isIntArray ? items.map(Number).filter((n) => Number.isInteger(n)) : items), [items, isIntArray])
+  const [draft, setDraft] = useState(() => items.join(', '))
+
+  useEffect(() => {
+    if (JSON.stringify(parseArrayLineDraft(draft, isIntArray)) !== serialized) {
+      setDraft(items.join(', '))
+    }
+  }, [serialized, items, isIntArray])
+
+  return (
+    <Input
+      aria-label={label}
+      className="mono"
+      placeholder={placeholder}
+      value={draft}
+      onChange={(e) => {
+        const nextDraft = e.target.value
+        setDraft(nextDraft)
+        onChange(parseArrayLineDraft(nextDraft, isIntArray))
+      }}
+    />
+  )
+}
+
+function JsonObjectParamInput({
+  label,
+  value,
+  onChange,
+}: {
+  label: string
+  value: unknown
+  onChange: (next: Record<string, unknown> | undefined) => void
+}) {
+  const serialized = useMemo(
+    () => (value && typeof value === 'object' && !Array.isArray(value) ? JSON.stringify(value, null, 2) : ''),
+    [value],
+  )
+  const [draft, setDraft] = useState(() => serialized)
+  const [parseError, setParseError] = useState('')
+  const lastEmittedRef = useRef<string>(serialized)
+
+  useEffect(() => {
+    if (serialized !== lastEmittedRef.current) {
+      lastEmittedRef.current = serialized
+      setDraft(serialized)
+      setParseError('')
+    }
+  }, [serialized])
+
+  return (
+    <div className="fm-param-json space-y-1">
+      <JsonCodeEditor
+        ariaLabel={label}
+        value={draft}
+        onChange={(raw) => {
+          setDraft(raw)
+          const trimmed = raw.trim()
+          if (!trimmed) {
+            setParseError('')
+            lastEmittedRef.current = ''
+            onChange(undefined)
+            return
+          }
+          try {
+            const parsed = JSON.parse(trimmed)
+            if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
+              setParseError('')
+              lastEmittedRef.current = JSON.stringify(parsed, null, 2)
+              onChange(parsed as Record<string, unknown>)
+            } else {
+              setParseError('请输入 JSON 对象，例如 {"en0": ["10.0.0.1"]}')
+            }
+          } catch {
+            setParseError('JSON 格式不完整，补全后自动生效')
+          }
+        }}
+      />
+      {parseError && <div className="text-[12px] text-muted-foreground">{parseError}</div>}
+    </div>
+  )
 }
 
 function ExtraParamValueEditor({
@@ -704,35 +823,20 @@ function ExtraParamValueEditor({
   schema,
   value,
   onChange,
-  onRemove,
 }: {
   fieldKey: string
   schema: JSONSchema
   value: unknown
   onChange: (next: unknown) => void
-  onRemove: () => void
 }) {
   const ui = schema['x-ui']
   const label = ui?.label || fieldKey
-  const clearButton = (
-    <Button
-      type="text"
-      size="small"
-      aria-label={`移除${fieldKey.replace(/^extra-/, '')}`}
-      className="fm-param-remove h-6 w-6 px-0 text-muted-foreground hover:text-foreground"
-      icon={<X className="size-4" />}
-      onClick={onRemove}
-    />
-  )
 
   if (schema.type === 'boolean' || ui?.widget === 'switch') {
     return (
-      <div className="flex h-9 items-center justify-between gap-2 rounded-[7px] border border-[var(--inbound-line-strong)] bg-[var(--inbound-field)] pl-3 pr-1">
+      <div className="flex h-9 items-center justify-between gap-2 rounded-[7px] border border-[var(--inbound-line-strong)] bg-[var(--inbound-field)] px-3">
         <span className="truncate text-[13px] text-muted-foreground">{value === true ? 'true' : 'false'}</span>
-        <span className="flex shrink-0 items-center gap-1">
-          <Switch aria-label={label} checked={value === true} onCheckedChange={(checked) => onChange(checked)} />
-          {clearButton}
-        </span>
+        <Switch aria-label={label} checked={value === true} onCheckedChange={(checked) => onChange(checked)} />
       </div>
     )
   }
@@ -742,129 +846,78 @@ function ExtraParamValueEditor({
     const items = Array.isArray(value) ? value.map(String) : []
     if (ui?.widget === 'tags' || ui?.widget === 'multiselect') {
       return (
-        <div className="flex items-center gap-1">
-          <div className="min-w-0 flex-1">
-            <Select
-              mode="tags"
-              allowClear
-              aria-label={label}
-              placeholder={ui?.placeholder}
-              value={items}
-              onChange={(vals: string[]) => {
-                if (isIntArray) {
-                  onChange(vals.map(Number).filter((n) => Number.isInteger(n)))
-                } else {
-                  onChange(vals)
-                }
-              }}
-              options={(schema.items?.enum ?? [])
-                .filter((opt) => opt !== '')
-                .map((opt) => ({ value: String(opt), label: String(opt) }))}
-            />
-          </div>
-          {clearButton}
-        </div>
-      )
-    }
-    return (
-      <div className="flex items-center gap-1">
-        <Input
+        <Select
+          mode="tags"
+          allowClear
           aria-label={label}
-          className="mono"
           placeholder={ui?.placeholder}
-          value={items.join(', ')}
-          onChange={(e) => {
-            const vals = e.target.value.split(/[\n,]/).map((x) => x.trim()).filter(Boolean)
+          value={items}
+          onChange={(vals: string[]) => {
             if (isIntArray) {
               onChange(vals.map(Number).filter((n) => Number.isInteger(n)))
             } else {
               onChange(vals)
             }
           }}
+          options={(schema.items?.enum ?? [])
+            .filter((opt) => opt !== '')
+            .map((opt) => ({ value: String(opt), label: String(opt) }))}
         />
-        {clearButton}
-      </div>
+      )
+    }
+    return (
+      <ArrayLineParamInput
+        label={label}
+        placeholder={ui?.placeholder}
+        isIntArray={isIntArray}
+        value={value}
+        onChange={onChange}
+      />
     )
   }
 
   if (schema.type === 'object' || ui?.widget === 'json') {
-    return (
-      <div className="flex items-start gap-1">
-        <div className="min-w-0 flex-1">
-          <JsonCodeEditor
-            ariaLabel={label}
-            value={value && typeof value === 'object' ? JSON.stringify(value, null, 2) : ''}
-            onChange={(raw) => {
-              const trimmed = raw.trim()
-              if (!trimmed) {
-                onChange(undefined)
-                return
-              }
-              try {
-                const parsed = JSON.parse(trimmed)
-                if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) onChange(parsed)
-              } catch {
-                // Keep the previous value while the draft is incomplete.
-              }
-            }}
-          />
-        </div>
-        {clearButton}
-      </div>
-    )
+    return <JsonObjectParamInput label={label} value={value} onChange={onChange} />
   }
 
   if (schema.enum && schema.enum.length > 0) {
     const isNumEnum = schema.type === 'integer' || schema.type === 'number'
     return (
-      <div className="flex items-center gap-1">
-        <div className="min-w-0 flex-1">
-          <Select
-            allowClear
-            aria-label={label}
-            placeholder={ui?.placeholder}
-            value={value !== undefined && value !== '' ? (value as string | number) : undefined}
-            onChange={(next) => onChange(next === undefined || next === '' ? undefined : next)}
-            options={schema.enum
-              .filter((opt) => opt !== '')
-              .map((opt) => ({ value: isNumEnum ? Number(opt) : String(opt), label: String(opt) }))}
-          />
-        </div>
-        {clearButton}
-      </div>
+      <Select
+        allowClear
+        aria-label={label}
+        placeholder={ui?.placeholder}
+        value={value !== undefined && value !== '' ? (value as string | number) : undefined}
+        onChange={(next) => onChange(next === undefined || next === '' ? undefined : next)}
+        options={schema.enum
+          .filter((opt) => opt !== '')
+          .map((opt) => ({ value: isNumEnum ? Number(opt) : String(opt), label: String(opt) }))}
+      />
     )
   }
 
   if (schema.type === 'integer' || schema.type === 'number') {
     return (
-      <div className="flex items-center gap-1">
-        <div className="min-w-0 flex-1">
-          <InputNumber
-            aria-label={label}
-            className="mono"
-            min={schema.minimum}
-            max={schema.maximum}
-            precision={schema.type === 'integer' ? 0 : undefined}
-            value={typeof value === 'number' ? value : undefined}
-            onChange={(next) => onChange(next === null ? undefined : next)}
-          />
-        </div>
-        {clearButton}
-      </div>
+      <InputNumber
+        aria-label={label}
+        className="mono"
+        min={schema.minimum}
+        max={schema.maximum}
+        precision={schema.type === 'integer' ? 0 : undefined}
+        value={typeof value === 'number' ? value : undefined}
+        onChange={(next) => onChange(next === null ? undefined : next)}
+      />
     )
   }
 
   return (
-    <div className="flex items-center gap-1">
-      <Input
-        aria-label={label}
-        className="mono"
-        placeholder={ui?.placeholder}
-        value={typeof value === 'string' ? value : ''}
-        onChange={(e) => onChange(e.target.value)}
-      />
-      {clearButton}
-    </div>
+    <Input
+      aria-label={label}
+      className="mono"
+      placeholder={ui?.placeholder}
+      value={typeof value === 'string' ? value : ''}
+      onChange={(e) => onChange(e.target.value)}
+    />
   )
 }
 
@@ -886,7 +939,6 @@ const STANDARD_RULE_MATCH_KEYS = new Set([
   'inbound',
   'rule_set',
   'rule_set_ip_cidr_match_source',
-  'rule_set_ip_cidr_accept_empty',
   'domain',
   'domain_suffix',
   'domain_keyword',
@@ -899,7 +951,6 @@ const STANDARD_RULE_MATCH_KEYS = new Set([
   'port_range',
   'protocol',
   'network',
-  'ip_version',
   'sniffer',
   'method',
   'server',
@@ -999,7 +1050,8 @@ function matchToConditionRows(match: RuleMatch, act: string, nextId: () => strin
   if (act !== 'sniff' && act !== 'hijack-dns' && match.protocol?.length) {
     rows.push({ ...emptyConditionRow('protocol', nextId()), list: [...match.protocol] })
   }
-  if (match.network?.length) rows.push({ ...emptyConditionRow('network', nextId()), list: [...match.network] })
+  const networks = normalizeStringList(match.network)
+  if (networks.length) rows.push({ ...emptyConditionRow('network', nextId()), list: networks })
   return rows
 }
 
@@ -1019,6 +1071,9 @@ const NON_MATCH_RULE_KEYS = new Set([
   'udp_disable_domain_unmapping',
   'udp_connect',
   'udp_timeout',
+  'network_strategy',
+  'fallback_network_type',
+  'fallback_delay',
   'tls_fragment',
   'tls_fragment_fallback_delay',
   'tls_record_fragment',
@@ -1028,12 +1083,14 @@ const NON_MATCH_RULE_KEYS = new Set([
   'disable_optimistic_cache',
   'invert',
   'rule_set_ip_cidr_match_source',
+  'rule_set_ip_cidr_accept_empty',
 ])
 
 function ruleMatchHasCondition(match: RuleMatch): boolean {
   for (const [k, v] of Object.entries(match)) {
     if (NON_MATCH_RULE_KEYS.has(k) || v === undefined || v === null || v === '' || v === false) continue
     if (Array.isArray(v) && v.length === 0) continue
+    if (typeof v === 'object' && !Array.isArray(v) && Object.keys(v as Record<string, unknown>).length === 0) continue
     return true
   }
   return false
@@ -1053,14 +1110,23 @@ function summarizeRuleMatch(match: RuleMatch): string[] {
   if (match.port?.length) chips.push(`端口: ${match.port.join(', ')}`)
   if (match.port_range?.length) chips.push(`端口段 ×${match.port_range.length}`)
   if (match.protocol?.length) chips.push(`协议: ${match.protocol.join(', ')}`)
-  if (match.network?.length) chips.push(`传输: ${match.network.join(', ')}`)
+  const networks = normalizeStringList(match.network)
+  if (networks.length) chips.push(`传输: ${networks.join(', ')}`)
   if (match.ip_is_private) chips.push('私有 IP')
   if (match.source_ip_is_private) chips.push('来源私有 IP')
   for (const [k, v] of Object.entries(match)) {
     if (NON_MATCH_RULE_KEYS.has(k) || STANDARD_RULE_MATCH_KEYS.has(k)) continue
     if (v === undefined || v === null || v === '' || v === false) continue
-    if (Array.isArray(v) && v.length === 0) continue
-    chips.push(Array.isArray(v) ? `${k} ×${v.length}` : `${k}: ${String(v)}`)
+    if (Array.isArray(v)) {
+      if (v.length === 0) continue
+      chips.push(`${k} ×${v.length}`)
+    } else if (typeof v === 'object') {
+      const count = Object.keys(v as Record<string, unknown>).length
+      if (count === 0) continue
+      chips.push(`${k} ×${count}`)
+    } else {
+      chips.push(`${k}: ${String(v)}`)
+    }
   }
   return chips
 }
@@ -1112,7 +1178,7 @@ function buildRulePayload(
 ): { match: RuleMatch; outbound: string } {
   const act = String(v.action || 'route') as NonNullable<RuleMatch['action']>
   const match: RuleMatch = { action: act }
-  if (act === 'reject' && v.no_drop === true) {
+  if (act === 'reject' && v.method !== 'drop' && v.no_drop === true) {
     match.no_drop = true
   }
   if (act === 'resolve') {
@@ -1131,7 +1197,7 @@ function buildRulePayload(
   if (act === 'resolve' && typeof v.server === 'string' && v.server.trim()) {
     match.server = v.server.trim()
   }
-  if ((act === 'resolve' || act === 'route-options') && typeof v.strategy === 'string' && v.strategy) {
+  if (act === 'resolve' && typeof v.strategy === 'string' && v.strategy) {
     match.strategy = v.strategy
   }
   if (act === 'route' || act === 'reject' || act === 'resolve' || act === 'route-options') {
@@ -1207,6 +1273,7 @@ function ruleToNativeJson(match: RuleMatch, outbound: string): Record<string, un
     if (v === undefined || v === null) continue
     out[k] = structuredClone(v)
   }
+  normalizeParsedRuleNetwork(out)
   const act = String(match.action || 'route')
   if (act === 'route' && outbound) {
     out.outbound = outbound
@@ -1271,6 +1338,11 @@ export function RuleForm({
   const nextRowId = () => `cond-${++rowSeqRef.current}`
   const action = Form.useWatch('action', form) || 'route'
   const rejectMethod = Form.useWatch('method', form)
+  useEffect(() => {
+    if (action === 'reject' && rejectMethod === 'drop' && form.getFieldValue('no_drop')) {
+      form.setFieldValue('no_drop', false)
+    }
+  }, [action, rejectMethod, form])
   const showConditions = action === 'route' || action === 'reject' || action === 'resolve' || action === 'route-options'
   const requiresCondition = action === 'route' || action === 'reject'
 
@@ -1398,6 +1470,7 @@ export function RuleForm({
         setJsonError('配置必须是 JSON 对象')
         return
       }
+      normalizeParsedRuleNetwork(parsed)
       const schemaErr = validateObjectBySchema(schemas.route_rule, parsed)
       if (schemaErr) {
         setJsonError(schemaErr)
@@ -1435,6 +1508,7 @@ export function RuleForm({
           setJsonError('配置必须是 JSON 对象')
           return
         }
+        normalizeParsedRuleNetwork(parsed)
         const schemaErr = validateObjectBySchema(schemas.route_rule, parsed)
         if (schemaErr) {
           setJsonError(schemaErr)
@@ -1832,7 +1906,7 @@ export function RuleForm({
           >
             {extraParamKeys.length === 0 ? (
               <div className="fm-full rounded-[7px] border border-dashed border-[var(--inbound-line-strong)] px-3 py-2.5 text-[13px] text-muted-foreground">
-                未设置动作参数
+                未设置其他参数
               </div>
             ) : (
               extraParamKeys.map((key) => {
@@ -1845,14 +1919,22 @@ export function RuleForm({
                       <Select
                         aria-label="参数名"
                         value={key}
-                        options={extraParamOptions}
+                        options={extraParamOptions.map((opt) => ({
+                          ...opt,
+                          disabled: opt.value !== key && opt.value in extraMatch,
+                        }))}
                         onChange={(nextKey: string) => {
-                          if (!nextKey || nextKey === key) return
+                          if (!nextKey || nextKey === key || nextKey in extraMatch) return
+                          const nextSchema = extraSchemaProps[nextKey]
                           setExtraMatch((prev) => {
-                            const next: Record<string, unknown> = { ...prev }
-                            const value = next[key]
-                            delete next[key]
-                            next[nextKey] = value
+                            const next: Record<string, unknown> = {}
+                            for (const [k, v] of Object.entries(prev)) {
+                              if (k === key) {
+                                next[nextKey] = nextSchema ? extraParamDefaultValue(nextSchema) : ''
+                              } else {
+                                next[k] = v
+                              }
+                            }
                             return next
                           })
                         }}
@@ -1864,7 +1946,14 @@ export function RuleForm({
                         schema={schema}
                         value={extraMatch[key]}
                         onChange={(next) => setExtraParam(key, next)}
-                        onRemove={() => removeExtraParam(key)}
+                      />
+                      <Button
+                        type="text"
+                        size="small"
+                        aria-label={`移除${key}`}
+                        className="fm-param-remove h-6 w-6 px-0 text-muted-foreground hover:text-foreground"
+                        icon={<X className="size-4" />}
+                        onClick={() => removeExtraParam(key)}
                       />
                     </div>
                   </div>

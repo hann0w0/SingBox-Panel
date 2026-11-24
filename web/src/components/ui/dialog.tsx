@@ -51,7 +51,6 @@ const DialogContent = React.forwardRef<React.ElementRef<typeof DialogPrimitive.C
   className,
   children,
   showCloseButton = true,
-  onClick,
   ...props
 }, ref) => {
   return (
@@ -65,10 +64,6 @@ const DialogContent = React.forwardRef<React.ElementRef<typeof DialogPrimitive.C
           className
         )}
         {...props}
-        onClick={(event) => {
-          event.stopPropagation()
-          onClick?.(event)
-        }}
       >
         {children}
         {showCloseButton && (

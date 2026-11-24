@@ -507,6 +507,7 @@ export default function Servers() {
               data-server-id={s.id}
               className={`srv-row${s.online ? '' : ' is-offline'}${draggingID === s.id ? ' is-dragging' : ''}${dropClass}`}
               onClick={(e) => {
+                if (!e.currentTarget.contains(e.target as Node)) return
                 if ((e.target as Element).closest('button, a, input, [role="button"], .ui-dropdown') || window.getSelection()?.toString()) return
                 open_(s)
               }}

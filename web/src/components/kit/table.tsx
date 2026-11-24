@@ -97,9 +97,16 @@ function TableRoot<T extends object>({
   const items = windowed ? virtualizer.getVirtualItems() : []
   const row = (record: T, index: number) => {
     const rowProps = onRow?.(record, index)
+    const rowOnClick = rowProps?.onClick
     return (
       <TableRow
         {...rowProps}
+        onClick={rowOnClick ? (event) => {
+          // React bubbles synthetic events through portals; ignore clicks
+          // originating outside this row's DOM subtree (e.g. Popover/Dialog).
+          if (!event.currentTarget.contains(event.target as Node)) return
+          rowOnClick(event)
+        } : undefined}
         key={getKey(record, index)}
         data-index={index}
         data-row-key={getKey(record, index)}

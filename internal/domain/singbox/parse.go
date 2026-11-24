@@ -492,7 +492,7 @@ func parseRule(m map[string]any) (ParsedRule, bool) {
 			Port:                     mIntSlice(m, "port"),
 			Protocol:                 mStrSlice(m, "protocol"),
 			Sniffer:                  mStrSlice(m, "sniffer"),
-			Network:                  mStr(m, "network"),
+			Network:                  mStrSlice(m, "network"),
 			RuleSet:                  mStrSlice(m, "rule_set"),
 			RuleSetIPCIDRMatchSource: mBool(m, "rule_set_ip_cidr_match_source"),
 			Extra:                    extra,

@@ -971,3 +971,29 @@ func TestBetaProtocolValidation(t *testing.T) {
 		}
 	}
 }
+
+func TestRouteRuleNetworkArrayAndExtraMatchConditions(t *testing.T) {
+	built := buildRouteRule(RuleInput{
+		Action:   "route",
+		Network:  []string{"tcp", "udp"},
+		Outbound: "direct",
+	})
+	if network, ok := built["network"].([]string); !ok || len(network) != 2 || network[0] != "tcp" || network[1] != "udp" {
+		t.Fatalf("network array = %#v", built["network"])
+	}
+
+	for _, extra := range []map[string]any{
+		{"ip_is_private": true},
+		{"source_ip_is_private": true},
+		{"wifi_ssid": []any{"CorpWiFi"}},
+		{"process_name": []any{"curl"}},
+	} {
+		rule := RuleInput{Action: "route", Outbound: "direct", Extra: extra}
+		if !HasRuleMatch(rule) {
+			t.Fatalf("match carried in Extra reported as empty: %#v", extra)
+		}
+	}
+	if HasRuleMatch(RuleInput{Action: "route", Outbound: "direct", Extra: map[string]any{"timeout": "300ms", "invert": true}}) {
+		t.Fatal("action options alone must not count as a match condition")
+	}
+}

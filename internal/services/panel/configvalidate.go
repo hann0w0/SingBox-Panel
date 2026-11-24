@@ -387,8 +387,10 @@ func (a *App) validateRule(db *gorm.DB, serverID uint, raw json.RawMessage, outb
 	default:
 		return fmt.Errorf("不支持的规则动作 %q", action)
 	}
-	if rule.Network != "" && rule.Network != "tcp" && rule.Network != "udp" && rule.Network != "icmp" {
-		return fmt.Errorf("network 只能是 tcp、udp 或 icmp")
+	for _, network := range rule.Network {
+		if network != "tcp" && network != "udp" && network != "icmp" {
+			return fmt.Errorf("network 只能是 tcp、udp 或 icmp")
+		}
 	}
 	if rule.RuleSetIPCIDRMatchSource && len(rule.RuleSet) == 0 {
 		return fmt.Errorf("规则集匹配来源 IP 时必须选择规则集")

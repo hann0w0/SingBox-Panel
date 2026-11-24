@@ -20,19 +20,19 @@ type OutboundInput struct {
 // The match fields carry json tags so a stored rule's Match blob unmarshals
 // straight into this struct; Outbound is set separately from its own column.
 type RuleInput struct {
-	Action                   string   `json:"action,omitempty"`
-	Method                   string   `json:"method,omitempty"`
-	AuthUser                 []string `json:"auth_user,omitempty"`
-	Inbound                  []string `json:"inbound,omitempty"` // match by which inbound received the traffic
-	Domain                   []string `json:"domain,omitempty"`
-	DomainSuffix             []string `json:"domain_suffix,omitempty"`
-	DomainKeyword            []string `json:"domain_keyword,omitempty"`
-	IPCIDR                   []string `json:"ip_cidr,omitempty"`
-	SourceIPCIDR             []string `json:"source_ip_cidr,omitempty"`
-	Port                     []int    `json:"port,omitempty"`
-	Protocol                 []string `json:"protocol,omitempty"`
-	Sniffer                  []string `json:"sniffer,omitempty"`
-	Network                  string   `json:"network,omitempty"`  // "" | tcp | udp
+	Action                   string         `json:"action,omitempty"`
+	Method                   string         `json:"method,omitempty"`
+	AuthUser                 []string       `json:"auth_user,omitempty"`
+	Inbound                  []string       `json:"inbound,omitempty"` // match by which inbound received the traffic
+	Domain                   []string       `json:"domain,omitempty"`
+	DomainSuffix             []string       `json:"domain_suffix,omitempty"`
+	DomainKeyword            []string       `json:"domain_keyword,omitempty"`
+	IPCIDR                   []string       `json:"ip_cidr,omitempty"`
+	SourceIPCIDR             []string       `json:"source_ip_cidr,omitempty"`
+	Port                     []int          `json:"port,omitempty"`
+	Protocol                 []string       `json:"protocol,omitempty"`
+	Sniffer                  []string       `json:"sniffer,omitempty"`
+	Network                  []string       `json:"network,omitempty"`  // tcp | udp | icmp
 	RuleSet                  []string       `json:"rule_set,omitempty"` // referenced rule-set tags
 	RuleSetIPCIDRMatchSource bool           `json:"rule_set_ip_cidr_match_source,omitempty"`
 	Outbound                 string         `json:"-"` // target tag; "block"/"reject" => reject
@@ -201,6 +201,42 @@ func ruleNeedsSniff(r RuleInput) bool {
 	return len(mStrSlice(r.Extra, "domain_regex")) > 0 || len(mStrSlice(r.Extra, "client")) > 0
 }
 
+// HasRuleMatch reports whether any condition field is populated. Shared by the
+// API validator and config checks so conditions carried in Extra (ip_is_private,
+// process_name, wifi_ssid, ...) are not mistaken for an empty rule.
+func HasRuleMatch(r RuleInput) bool {
+	if len(r.AuthUser) > 0 || len(r.Inbound) > 0 || len(r.Domain) > 0 ||
+		len(r.DomainSuffix) > 0 || len(r.DomainKeyword) > 0 || len(r.IPCIDR) > 0 ||
+		len(r.SourceIPCIDR) > 0 || len(r.Port) > 0 || len(r.Protocol) > 0 ||
+		len(r.Network) > 0 || len(r.RuleSet) > 0 {
+		return true
+	}
+	for key, val := range r.Extra {
+		if isRuleActionOptionKey(key) || val == nil || val == "" || val == false {
+			continue
+		}
+		if list, ok := val.([]any); ok && len(list) == 0 {
+			continue
+		}
+		return true
+	}
+	return false
+}
+
+// isRuleActionOptionKey lists rule keys that configure an action rather than
+// match traffic.
+func isRuleActionOptionKey(key string) bool {
+	switch key {
+	case "strategy", "server", "timeout", "override_address", "override_port",
+		"disable_cache", "disable_optimistic_cache", "rewrite_ttl", "client_subnet",
+		"udp_disable_domain_unmapping", "udp_connect", "udp_timeout",
+		"tls_fragment", "tls_fragment_fallback_delay", "tls_record_fragment",
+		"tls_spoof", "tls_spoof_method", "invert", "no_drop":
+		return true
+	}
+	return false
+}
+
 func routeRuleAction(r RuleInput) string {
 	if r.Action != "" {
 		return r.Action
@@ -254,7 +290,7 @@ func buildRouteRule(r RuleInput) map[string]any {
 	if len(r.Protocol) > 0 {
 		m["protocol"] = r.Protocol
 	}
-	if r.Network != "" {
+	if len(r.Network) > 0 {
 		m["network"] = r.Network
 	}
 	if len(r.RuleSet) > 0 {
@@ -270,7 +306,7 @@ func buildRouteRule(r RuleInput) map[string]any {
 	// from carrying domain/IP/port conditions after it is changed to sniff/DNS.
 	if act == "sniff" {
 		for key := range m {
-			if key != "inbound" && key != "auth_user" && key != "timeout" && key != "invert" {
+			if key != "inbound" && key != "auth_user" && key != "timeout" && key != "invert" && key != "sniffer" {
 				delete(m, key)
 			}
 		}

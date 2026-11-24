@@ -769,7 +769,12 @@ export default function ServerDetail() {
       const result = await applyRawConfig(targetSID, cfgText)
       if (!isCurrentSession()) return
       if (result.summary.skipped?.length) {
-        message.warning(`已下发并同步；${result.summary.skipped.length} 项无法转换为面板表单，已在原始配置中完整保留`)
+        const preview = result.summary.skipped.slice(0, 2).join('；')
+        const more = result.summary.skipped.length > 2 ? ` 等 ${result.summary.skipped.length} 项` : ''
+        message.warning({
+          content: `已下发并同步；${result.summary.skipped.length} 项无法转换为面板表单，已在原始配置中完整保留：${preview}${more}`,
+          duration: 8,
+        })
       } else {
         message.success('已校验、下发并自动进入面板管理')
       }

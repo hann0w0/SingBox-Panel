@@ -108,7 +108,8 @@ func (a *App) applyRawConfig(c *gin.Context) {
 		c.JSON(http.StatusBadGateway, gin.H{"error": err.Error(), "output": res.Output})
 		return
 	}
-	if err := a.applyImportUnlocked(&model.Server{ID: id}, parsed, raw); err != nil {
+	resolved, err := a.applyImportUnlockedWithSummary(&model.Server{ID: id}, parsed, raw)
+	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{
 			"error":  "配置已下发，但同步面板视图失败: " + err.Error(),
 			"output": res.Output,
@@ -121,7 +122,7 @@ func (a *App) applyRawConfig(c *gin.Context) {
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{
-		"ok": true, "output": res.Output, "summary": buildImportSummary(parsed),
+		"ok": true, "output": res.Output, "summary": buildImportSummary(parsed, &resolved),
 		"config_mode": synced.ConfigMode,
 		"warnings":    rawConfigSecurityWarnings(raw),
 	})

@@ -522,6 +522,12 @@ func parseRule(m map[string]any) (ParsedRule, bool) {
 	return r, true
 }
 
+// MultiUserImportWarning formats the skipped warning emitted when a raw inbound
+// carries multiple unmanaged user credentials.
+func MultiUserImportWarning(tag string, userCount int) string {
+	return fmt.Sprintf("入站 %s: 含 %d 个手写用户凭证，导入不会自动映射为面板账号（未修改凭证前由覆盖层保留原列表，如需多用户管理请手动开启多用户模式并分配用户）", tag, userCount)
+}
+
 // ParseServerConfig recovers the panel's model from an existing official
 // sing-box config.json, so a server configured by hand can be adopted by the
 // panel without retyping everything. Unmodellable entries are reported in
@@ -556,7 +562,7 @@ func ParseServerConfig(raw []byte) (*ParsedConfig, error) {
 			continue
 		}
 		if in.UserCount > 1 && in.Type != "snell" {
-			out.Skipped = append(out.Skipped, fmt.Sprintf("入站 %s: 含 %d 个手写用户凭证，导入不会自动映射为面板账号（未修改凭证前由覆盖层保留原列表，如需多用户管理请手动开启多用户模式并分配用户）", in.Tag, in.UserCount))
+			out.Skipped = append(out.Skipped, MultiUserImportWarning(in.Tag, in.UserCount))
 		}
 		if _, tlsWarnings := parseTLSWithWarnings(mMap(m, "tls")); len(tlsWarnings) > 0 {
 			for _, w := range tlsWarnings {

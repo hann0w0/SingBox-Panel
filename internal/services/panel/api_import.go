@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"net"
 	"net/http"
+	"sort"
 	"strconv"
 	"time"
 
@@ -110,15 +111,20 @@ func (a *App) importRemoteConfig(c *gin.Context) {
 		return
 	}
 
-	sum := buildImportSummary(parsed)
 	if req.DryRun {
-		c.JSON(http.StatusOK, gin.H{"summary": sum, "dry_run": true})
+		resolved, err := a.resolveImportedView(a.db, srv.ID, parsed, []byte(raw))
+		if err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+			return
+		}
+		c.JSON(http.StatusOK, gin.H{"summary": buildImportSummary(parsed, &resolved), "dry_run": true})
 		return
 	}
 	// Replace this server's panel-side routing model with the parsed one. The
 	// server's own config file is untouched — importing only teaches the panel
 	// what is already running there.
-	if err := a.applyImport(&srv, parsed, []byte(raw)); err != nil {
+	resolved, err := a.applyImportWithSummary(&srv, parsed, []byte(raw))
+	if err != nil {
 		status := http.StatusInternalServerError
 		if errors.Is(err, errInboundTrafficTagReserved) {
 			status = http.StatusBadRequest
@@ -126,12 +132,24 @@ func (a *App) importRemoteConfig(c *gin.Context) {
 		c.JSON(status, gin.H{"error": err.Error()})
 		return
 	}
-	c.JSON(http.StatusOK, gin.H{"ok": true, "summary": sum})
+	c.JSON(http.StatusOK, gin.H{"ok": true, "summary": buildImportSummary(parsed, &resolved)})
 }
 
-func buildImportSummary(p *singbox.ParsedConfig) importSummary {
-	sum := importSummary{Final: p.Final, Skipped: p.Skipped}
-	for _, in := range p.Inbounds {
+type resolvedImportView struct {
+	Inbounds         []singbox.ParsedInbound
+	Skipped          []string
+	ManagedMultiTags map[string]bool
+}
+
+func buildImportSummary(p *singbox.ParsedConfig, resolved *resolvedImportView) importSummary {
+	inbounds := p.Inbounds
+	skipped := p.Skipped
+	if resolved != nil {
+		inbounds = resolved.Inbounds
+		skipped = resolved.Skipped
+	}
+	sum := importSummary{Final: p.Final, Skipped: skipped}
+	for _, in := range inbounds {
 		sum.Inbounds = append(sum.Inbounds, importedInbound{
 			Tag: in.Tag, Type: in.Type, ListenPort: in.ListenPort,
 			SingleUser: in.Settings.SingleUser, Users: in.UserCount,
@@ -164,27 +182,47 @@ func buildImportSummary(p *singbox.ParsedConfig) importSummary {
 // and a panel input baseline are saved together so only later form changes
 // affect the file, including when the panel cannot model entire entries.
 func (a *App) applyImport(srv *model.Server, p *singbox.ParsedConfig, raw []byte) error {
+	_, err := a.applyImportWithSummary(srv, p, raw)
+	return err
+}
+
+func (a *App) applyImportWithSummary(srv *model.Server, p *singbox.ParsedConfig, raw []byte) (resolvedImportView, error) {
 	// Import changes both the structured rows and the raw source-of-truth mode.
 	// Serialize it with reconnect pushes, raw edits and explicit mode switches so
 	// no concurrent operation can observe or apply a half-transitioned state.
 	unlock := a.orch.lockServer(srv.ID)
 	defer unlock()
-	return a.applyImportUnlocked(srv, p, raw)
+	return a.applyImportUnlockedWithSummary(srv, p, raw)
 }
 
 // applyImportUnlocked performs the database transaction while the caller owns
 // the server configuration lock.
 func (a *App) applyImportUnlocked(srv *model.Server, p *singbox.ParsedConfig, raw []byte) error {
-	a.userAccessMu.Lock()
-	defer a.userAccessMu.Unlock()
+	_, err := a.applyImportUnlockedWithSummary(srv, p, raw)
+	return err
+}
+
+// resolveImportedView reconciles parsed multi-user inbounds against this
+// server's current panel-managed inbounds so untouched panel-generated users
+// stay managed without emitting bogus "manual credentials" skipped warnings.
+func (a *App) resolveImportedView(db *gorm.DB, serverID uint, p *singbox.ParsedConfig, raw []byte) (resolvedImportView, error) {
+	view := resolvedImportView{
+		Inbounds:         append([]singbox.ParsedInbound(nil), p.Inbounds...),
+		Skipped:          append([]string(nil), p.Skipped...),
+		ManagedMultiTags: make(map[string]bool),
+	}
+	var current model.Server
+	if err := db.First(&current, serverID).Error; err != nil {
+		return view, err
+	}
 	preserveManagedUsers := false
 	var rawUsersByTag, generatedUsersByTag map[string]json.RawMessage
-	var current model.Server
-	if err := a.db.First(&current, srv.ID).Error; err != nil {
-		return err
-	}
+	// Build the pure panel-managed view (ignoring any previous overlay) so
+	// manual overlay credentials are never mistaken for panel-managed users.
 	current.ConfigMode = model.ConfigModeManaged
-	if generated, err := a.orch.BuildServerConfig(&current); err == nil {
+	current.ConfigOverlay = nil
+	current.ConfigResidual = nil
+	if generated, err := NewOrchestrator(db, nil).BuildServerConfig(&current); err == nil {
 		if equivalentJSON(raw, generated) {
 			preserveManagedUsers = true
 		} else {
@@ -192,32 +230,73 @@ func (a *App) applyImportUnlocked(srv *model.Server, p *singbox.ParsedConfig, ra
 			generatedUsersByTag = inboundUsersByTag(generated)
 		}
 	}
-	return a.db.Transaction(func(tx *gorm.DB) error {
+	if !preserveManagedUsers && generatedUsersByTag == nil {
+		return view, nil
+	}
+	var previous []model.Inbound
+	if err := db.Where("server_id = ?", serverID).Find(&previous).Error; err != nil {
+		return view, err
+	}
+	for index := range view.Inbounds {
+		in := &view.Inbounds[index]
+		for _, inbound := range previous {
+			var settings singbox.InboundSettings
+			if inbound.Tag != in.Tag || string(inbound.Type) != in.Type || json.Unmarshal(inbound.Settings, &settings) != nil || !settings.UseMultiUser(string(inbound.Type)) {
+				continue
+			}
+			managedUsersMatch := preserveManagedUsers || equivalentManagedInboundUsers(rawUsersByTag[inbound.Tag], generatedUsersByTag[inbound.Tag])
+			if managedUsersMatch || in.UserCount >= 2 {
+				in.Settings.MultiUser = true
+				in.Settings.SingleUser = false
+			}
+			if managedUsersMatch {
+				view.ManagedMultiTags[in.Tag] = true
+			}
+		}
+	}
+	view.Skipped = filterManagedMultiUserSkipped(view.Skipped, view.Inbounds, view.ManagedMultiTags)
+	return view, nil
+}
+
+func filterManagedMultiUserSkipped(skipped []string, inbounds []singbox.ParsedInbound, managedMultiTags map[string]bool) []string {
+	if len(skipped) == 0 || len(managedMultiTags) == 0 {
+		return skipped
+	}
+	drop := make(map[string]bool, len(managedMultiTags))
+	for _, in := range inbounds {
+		if managedMultiTags[in.Tag] && in.UserCount > 1 && in.Type != "snell" {
+			drop[singbox.MultiUserImportWarning(in.Tag, in.UserCount)] = true
+		}
+	}
+	if len(drop) == 0 {
+		return skipped
+	}
+	filtered := make([]string, 0, len(skipped))
+	for _, item := range skipped {
+		if !drop[item] {
+			filtered = append(filtered, item)
+		}
+	}
+	return filtered
+}
+
+func (a *App) applyImportUnlockedWithSummary(srv *model.Server, p *singbox.ParsedConfig, raw []byte) (resolvedImportView, error) {
+	a.userAccessMu.Lock()
+	defer a.userAccessMu.Unlock()
+	var resolved resolvedImportView
+	err := a.db.Transaction(func(tx *gorm.DB) error {
 		if err := validateImportedPrivateRouting(tx, srv.ID, p, raw); err != nil {
 			return err
 		}
 		if err := validateImportedInboundTrafficTags(tx, srv.ID, raw); err != nil {
 			return err
 		}
-		inbounds := append([]singbox.ParsedInbound(nil), p.Inbounds...)
-		if preserveManagedUsers || generatedUsersByTag != nil {
-			var previous []model.Inbound
-			if err := tx.Where("server_id = ?", srv.ID).Find(&previous).Error; err != nil {
-				return err
-			}
-			for index := range inbounds {
-				for _, inbound := range previous {
-					var settings singbox.InboundSettings
-					if inbound.Tag == inbounds[index].Tag && string(inbound.Type) == inbounds[index].Type && json.Unmarshal(inbound.Settings, &settings) == nil && settings.UseMultiUser(string(inbound.Type)) {
-						if preserveManagedUsers || inbounds[index].UserCount >= 2 || equivalentInboundUsers(rawUsersByTag[inbound.Tag], generatedUsersByTag[inbound.Tag]) {
-							inbounds[index].Settings.MultiUser = true
-							inbounds[index].Settings.SingleUser = false
-						}
-					}
-				}
-			}
+		var err error
+		resolved, err = a.resolveImportedView(tx, srv.ID, p, raw)
+		if err != nil {
+			return err
 		}
-		if err := syncImportedInbounds(tx, srv.ID, inbounds); err != nil {
+		if err := syncImportedInbounds(tx, srv.ID, resolved.Inbounds); err != nil {
 			return err
 		}
 		editableOutbounds := make([]singbox.ParsedOutbound, 0, len(p.Outbounds))
@@ -257,6 +336,7 @@ func (a *App) applyImportUnlocked(srv *model.Server, p *singbox.ParsedConfig, ra
 		}
 		return initializeConfigOverlay(tx, srv.ID, p, raw)
 	})
+	return resolved, err
 }
 
 // rawConfigSecurityWarnings flags control endpoints without a secret. A
@@ -355,6 +435,60 @@ func equivalentInboundUsers(left, right json.RawMessage) bool {
 		return true
 	}
 	return equivalentJSON(left, right)
+}
+
+// equivalentManagedInboundUsers checks whether raw users[] still represents the
+// exact same panel-managed accounts as generated users[], tolerating ordering
+// differences or inbound-level VLESS flow edits when all entries are panel
+// traffic identities.
+func equivalentManagedInboundUsers(rawUsers, generatedUsers json.RawMessage) bool {
+	if equivalentInboundUsers(rawUsers, generatedUsers) {
+		return true
+	}
+	var rawList, genList []map[string]any
+	if json.Unmarshal(rawUsers, &rawList) != nil || json.Unmarshal(generatedUsers, &genList) != nil {
+		return false
+	}
+	if len(rawList) == 0 || len(rawList) != len(genList) {
+		return false
+	}
+	normalize := func(items []map[string]any, requireReservedName bool) ([]string, bool) {
+		out := make([]string, 0, len(items))
+		for _, item := range items {
+			name, _ := item["name"].(string)
+			if requireReservedName && !reservedTrafficUsername(name) {
+				return nil, false
+			}
+			clone := make(map[string]any, len(item))
+			for k, v := range item {
+				if k == "flow" {
+					continue
+				}
+				clone[k] = v
+			}
+			blob, err := json.Marshal(clone)
+			if err != nil {
+				return nil, false
+			}
+			out = append(out, string(blob))
+		}
+		sort.Strings(out)
+		return out, true
+	}
+	leftNorm, ok := normalize(rawList, true)
+	if !ok {
+		return false
+	}
+	rightNorm, ok := normalize(genList, false)
+	if !ok {
+		return false
+	}
+	for i := range leftNorm {
+		if leftNorm[i] != rightNorm[i] {
+			return false
+		}
+	}
+	return true
 }
 
 func isEmptyJSONArrayOrNull(raw json.RawMessage) bool {

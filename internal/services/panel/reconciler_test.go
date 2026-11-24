@@ -47,4 +47,37 @@ func TestReconcilerExpiryIsDerivedAndReversible(t *testing.T) {
 	if len(changes) != 2 {
 		t.Fatalf("extending expiry did not restore proxy access: %+v", changes)
 	}
+
+	// Simulate panel restart while user is already expired: first tick must reconcile.
+	expiredAtBoot := time.Now().Add(-5 * time.Minute)
+	if err := db.Model(&user).Update("expire_at", expiredAtBoot).Error; err != nil {
+		t.Fatal(err)
+	}
+	var bootChanges [][]uint
+	bootReconciler := NewReconciler(db, func(ids []uint) {
+		bootChanges = append(bootChanges, append([]uint(nil), ids...))
+	})
+	bootReconciler.tick()
+	if len(bootChanges) != 1 || len(bootChanges[0]) != 1 || bootChanges[0][0] != 7 {
+		t.Fatalf("startup tick missed expired user reconciliation: %+v", bootChanges)
+	}
+	bootReconciler.tick()
+	if len(bootChanges) != 1 {
+		t.Fatalf("second tick repeated unchanged expired user reconciliation: %+v", bootChanges)
+	}
+}
+
+func TestHostStatsSampleValuesPreventsUint64Underflow(t *testing.T) {
+	var h hostStats
+	h.sampleValues(1000, 2000)
+	// Non-monotonic idle retreat (idle < prevIdle) must clamp rather than wrap uint64.
+	h.sampleValues(995, 2010)
+	if got := h.CPUPercent(); got < 0 || got > 100 {
+		t.Fatalf("CPU percent wrapped on idle retreat: %v", got)
+	}
+	// di > dt must clamp to 0 rather than wrapping dt-di.
+	h.sampleValues(1020, 2020)
+	if got := h.CPUPercent(); got != 0 {
+		t.Fatalf("expected 0 CPU percent when di > dt, got %v", got)
+	}
 }

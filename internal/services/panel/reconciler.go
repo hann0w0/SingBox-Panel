@@ -73,7 +73,7 @@ func (r *Reconciler) tick() {
 		u := &users[i]
 		active := u.Enabled && !u.Expired(now)
 		previous, known := r.active[u.ID]
-		if known && previous != active && r.onAccessChange != nil {
+		if r.onAccessChange != nil && ((known && previous != active) || (!known && u.Enabled && u.Expired(now) && len(u.ServerIDs) > 0)) {
 			r.onAccessChange(u.ServerIDs)
 			log.Printf("reconciler: user %d (%s) proxy access changed to active=%t", u.ID, u.Email, active)
 		}

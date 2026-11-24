@@ -548,6 +548,20 @@ func stepOffsetSeconds(step time.Duration, start time.Time) int64 {
 }
 
 func emptyTrafficPoints(start, end time.Time, step time.Duration) []trafficPoint {
+	return emptyTrafficPointsInLocation(start, end, step, nil)
+}
+
+func emptyTrafficPointsInLocation(start, end time.Time, step time.Duration, loc *time.Location) []trafficPoint {
+	if step >= 24*time.Hour && loc != nil && loc != time.UTC {
+		var points []trafficPoint
+		cur := start.In(loc)
+		endLocal := end.In(loc)
+		for cur.Before(endLocal) {
+			points = append(points, trafficPoint{Time: cur.UTC()})
+			cur = time.Date(cur.Year(), cur.Month(), cur.Day()+1, 0, 0, 0, 0, loc)
+		}
+		return points
+	}
 	count := int(end.Sub(start) / step)
 	if count < 0 {
 		count = 0
@@ -557,6 +571,25 @@ func emptyTrafficPoints(start, end time.Time, step time.Duration) []trafficPoint
 		points[i].Time = start.Add(time.Duration(i) * step)
 	}
 	return points
+}
+
+func trafficPointIndexInLocation(bucketUnix int64, start, end time.Time, step time.Duration, points []trafficPoint, loc *time.Location) int {
+	if step >= 24*time.Hour && loc != nil && loc != time.UTC {
+		bucket := time.Unix(bucketUnix, 0).UTC()
+		if bucket.Before(start) || !bucket.Before(end) || len(points) == 0 {
+			return -1
+		}
+		local := bucket.In(loc)
+		dayStart := time.Date(local.Year(), local.Month(), local.Day(), 0, 0, 0, 0, loc).UTC()
+		idx := sort.Search(len(points), func(i int) bool {
+			return !points[i].Time.Before(dayStart)
+		})
+		if idx < len(points) && points[idx].Time.Equal(dayStart) {
+			return idx
+		}
+		return -1
+	}
+	return trafficPointIndex(bucketUnix, start, end, step, len(points))
 }
 
 func sumTraffic(points []trafficPoint) (upload, download uint64) {

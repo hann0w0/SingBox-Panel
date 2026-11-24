@@ -319,8 +319,14 @@ func (a *App) userTrafficSeries(userID uint, c *gin.Context) (userTrafficSeries,
 	loc := a.location()
 	start, end := trafficWindow(time.Now(), rangeConfig, loc)
 	step := rangeConfig.step
-	stepSeconds := int64(step / time.Second)
-	offset := stepOffsetSeconds(step, start)
+	queryStep := step
+	if step >= 24*time.Hour && loc != nil && loc != time.UTC {
+		// Group at hourly resolution in SQL and fold into local calendar days in Go
+		// so DST 23-hour/25-hour days never shift midnight boundaries or drop day 7/30.
+		queryStep = time.Hour
+	}
+	stepSeconds := int64(queryStep / time.Second)
+	offset := stepOffsetSeconds(queryStep, start)
 	bucketExpression, err := trafficBucketExpression(a.db, stepSeconds, offset)
 	if err != nil {
 		return userTrafficSeries{}, err
@@ -338,12 +344,12 @@ func (a *App) userTrafficSeries(userID uint, c *gin.Context) (userTrafficSeries,
 	if len(rows) > maxTrafficQueryRows {
 		return userTrafficSeries{}, &httpStatusError{http.StatusInternalServerError, "traffic query produced too many aggregated rows"}
 	}
-	points := emptyTrafficPoints(start, end, step)
+	points := emptyTrafficPointsInLocation(start, end, step, loc)
 	type inboundKey struct{ serverID, inboundID uint }
 	totals := map[inboundKey]*userTrafficInbound{}
 	for _, row := range rows {
 		bucket := row.BucketIndex*stepSeconds - offset
-		if index := trafficPointIndex(bucket, start, end, step, len(points)); index >= 0 {
+		if index := trafficPointIndexInLocation(bucket, start, end, step, points, loc); index >= 0 {
 			points[index].Upload += row.Upload
 			points[index].Download += row.Download
 		}

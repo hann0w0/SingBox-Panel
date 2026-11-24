@@ -37,11 +37,21 @@ func (h *hostStats) sample() {
 	if !ok {
 		return
 	}
+	h.sampleValues(idle, total)
+}
+
+func (h *hostStats) sampleValues(idle, total uint64) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
 	if h.prevTotal != 0 && total > h.prevTotal {
 		dt := total - h.prevTotal
-		di := idle - h.prevIdle
+		var di uint64
+		if idle >= h.prevIdle {
+			di = idle - h.prevIdle
+		}
+		if di > dt {
+			di = dt
+		}
 		if dt > 0 {
 			h.cpuPercent = 100 * float64(dt-di) / float64(dt)
 		}

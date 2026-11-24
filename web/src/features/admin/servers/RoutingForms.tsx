@@ -636,6 +636,9 @@ export function OutboundForm({
             <Form.Item name="tls_alpn" label="ALPN">
               <Input className="mono" />
             </Form.Item>
+            <Form.Item name="tls_fingerprint" label="uTLS 指纹">
+              <Select options={['chrome', 'firefox', 'safari', 'ios', 'random', 'randomized'].map((v) => ({ value: v, label: v }))} />
+            </Form.Item>
             <div className="fm-switches">
               <Form.Item name="tls" label="启用 TLS" valuePropName="checked" className="fm-switch">
                 <Switch disabled={TLS_REQUIRED_OUT.has(type)} />

@@ -720,26 +720,41 @@ export function nativeJsonToInboundSettings(prev: InboundSettings, rawObj: Recor
     next.ipv6_only = rawObj.listen.includes(':') && rawObj.listen !== '::'
   }
   if (typeof rawObj.flow === 'string') next.flow = rawObj.flow
+  else delete next.flow
   if (typeof rawObj.packet_encoding === 'string') next.packet_encoding = rawObj.packet_encoding
+  else delete next.packet_encoding
   if (typeof rawObj.method === 'string') next.method = rawObj.method
   if (typeof rawObj.password === 'string' && rawObj.type === 'shadowsocks') next.ss_server_psk = rawObj.password
   if (typeof rawObj.up_mbps === 'number') next.up_mbps = rawObj.up_mbps
+  else delete next.up_mbps
   if (typeof rawObj.down_mbps === 'number') next.down_mbps = rawObj.down_mbps
+  else delete next.down_mbps
   if (typeof rawObj.ignore_client_bandwidth === 'boolean') next.ignore_client_bandwidth = rawObj.ignore_client_bandwidth
+  else delete next.ignore_client_bandwidth
   if (typeof rawObj.congestion_control === 'string') next.congestion_control = rawObj.congestion_control
+  else delete next.congestion_control
   if (typeof rawObj.auth_timeout === 'string') next.auth_timeout = rawObj.auth_timeout
+  else delete next.auth_timeout
   if (typeof rawObj.zero_rtt_handshake === 'boolean') next.zero_rtt_handshake = rawObj.zero_rtt_handshake
+  else delete next.zero_rtt_handshake
   if (typeof rawObj.heartbeat === 'string') next.heartbeat = rawObj.heartbeat
+  else delete next.heartbeat
   if (typeof rawObj.version === 'number') next.snell_version = rawObj.version
   if (typeof rawObj.psk === 'string') next.snell_psk = rawObj.psk
   if (typeof rawObj.obfs_mode === 'string') next.snell_obfs_mode = rawObj.obfs_mode
+  else delete next.snell_obfs_mode
   if (typeof rawObj.mode === 'string') next.snell_mode = rawObj.mode
+  else delete next.snell_mode
   if (rawObj.obfs && typeof rawObj.obfs === 'object' && !Array.isArray(rawObj.obfs)) {
     const obfs = rawObj.obfs as Record<string, unknown>
     if (typeof obfs.type === 'string') next.obfs_type = obfs.type
+    else delete next.obfs_type
     if (typeof obfs.password === 'string') next.obfs_password = obfs.password
+    else delete next.obfs_password
     if (typeof obfs.min_packet_size === 'number') next.gecko_min_packet_size = obfs.min_packet_size
+    else delete next.gecko_min_packet_size
     if (typeof obfs.max_packet_size === 'number') next.gecko_max_packet_size = obfs.max_packet_size
+    else delete next.gecko_max_packet_size
   } else if (rawObj.type === 'hysteria2') {
     delete next.obfs_type
     delete next.obfs_password
@@ -898,26 +913,32 @@ export function outboundSettingsToNativeJson(
     else delete base.password
     if (type === 'http') {
       if (inner.http_path) base.path = inner.http_path
+      else delete base.path
       if (inner.http_headers && Object.keys(inner.http_headers).length > 0) base.headers = inner.http_headers
+      else delete base.headers
     }
   }
 
   if (inner.transport?.type && inner.transport.type !== 'tcp') {
     const prevTr = (base.transport && typeof base.transport === 'object' ? base.transport : {}) as Record<string, unknown>
-    base.transport = {
-      ...prevTr,
-      type: inner.transport.type,
-      ...(inner.transport.path ? { path: inner.transport.path } : {}),
-      ...(inner.transport.headers ? { headers: inner.transport.headers } : {}),
-    }
+    const nextTr: Record<string, unknown> = { ...prevTr, type: inner.transport.type }
+    if (inner.transport.path) nextTr.path = inner.transport.path
+    else delete nextTr.path
+    if (inner.transport.headers && Object.keys(inner.transport.headers).length > 0) nextTr.headers = inner.transport.headers
+    else delete nextTr.headers
+    base.transport = nextTr
+  } else {
+    delete base.transport
   }
 
   if (inner.tls?.enabled || inner.tls?.reality?.enabled) {
     const prevTls = (base.tls && typeof base.tls === 'object' ? base.tls : {}) as Record<string, unknown>
     const tlsObj: Record<string, unknown> = { ...prevTls, enabled: true }
     if (inner.tls.server_name) tlsObj.server_name = inner.tls.server_name
+    else delete tlsObj.server_name
     if (inner.tls.insecure !== undefined) tlsObj.insecure = inner.tls.insecure
     if (inner.tls.alpn?.length) tlsObj.alpn = inner.tls.alpn
+    else delete tlsObj.alpn
     if (inner.tls.fingerprint) {
       tlsObj.utls = {
         ...(typeof prevTls.utls === 'object' && prevTls.utls ? (prevTls.utls as Record<string, unknown>) : {}),
@@ -969,32 +990,53 @@ export function nativeJsonToOutboundSettings(prev: OutboundSettings, rawObj: Rec
   }
   if (typeof rawObj.method === 'string') inner.method = rawObj.method
   if (typeof rawObj.flow === 'string') inner.flow = rawObj.flow
+  else delete inner.flow
   if (typeof rawObj.packet_encoding === 'string') inner.packet_encoding = rawObj.packet_encoding
+  else delete inner.packet_encoding
   if (typeof rawObj.security === 'string') inner.vmess_security = rawObj.security
   if (typeof rawObj.alter_id === 'number') inner.vmess_alter_id = rawObj.alter_id
   if (typeof rawObj.congestion_control === 'string') inner.congestion_control = rawObj.congestion_control
   if (typeof rawObj.zero_rtt_handshake === 'boolean') inner.zero_rtt_handshake = rawObj.zero_rtt_handshake
+  else delete inner.zero_rtt_handshake
   if (typeof rawObj.heartbeat === 'string') inner.heartbeat = rawObj.heartbeat
+  else delete inner.heartbeat
   if (typeof rawObj.up_mbps === 'number') inner.up_mbps = rawObj.up_mbps
+  else delete inner.up_mbps
   if (typeof rawObj.down_mbps === 'number') inner.down_mbps = rawObj.down_mbps
+  else delete inner.down_mbps
   if (rawObj.obfs && typeof rawObj.obfs === 'object') {
     const obfs = rawObj.obfs as Record<string, unknown>
     if (typeof obfs.type === 'string') inner.obfs_type = obfs.type
+    else delete inner.obfs_type
     if (typeof obfs.password === 'string') inner.obfs_password = obfs.password
+    else delete inner.obfs_password
     if (typeof obfs.min_packet_size === 'number') inner.gecko_min_packet_size = obfs.min_packet_size
+    else delete inner.gecko_min_packet_size
     if (typeof obfs.max_packet_size === 'number') inner.gecko_max_packet_size = obfs.max_packet_size
+    else delete inner.gecko_max_packet_size
+  } else if (rawObj.type === 'hysteria2') {
+    delete inner.obfs_type
+    delete inner.obfs_password
+    delete inner.gecko_min_packet_size
+    delete inner.gecko_max_packet_size
   }
   if (rawObj.type === 'snell') {
     if (typeof rawObj.version === 'number') inner.snell_version = rawObj.version
     if (typeof rawObj.network === 'string') inner.snell_network = rawObj.network
     if (typeof rawObj.reuse === 'boolean') inner.snell_reuse = rawObj.reuse
+    else delete inner.snell_reuse
     if (typeof rawObj.obfs_mode === 'string') inner.snell_obfs_mode = rawObj.obfs_mode
+    else delete inner.snell_obfs_mode
     if (typeof rawObj.obfs_host === 'string') inner.snell_obfs_host = rawObj.obfs_host
+    else delete inner.snell_obfs_host
     if (typeof rawObj.mode === 'string') inner.snell_mode = rawObj.mode
+    else delete inner.snell_mode
   }
   if (rawObj.type === 'http') {
     if (typeof rawObj.path === 'string') inner.http_path = rawObj.path
+    else delete inner.http_path
     if (rawObj.headers && typeof rawObj.headers === 'object') inner.http_headers = rawObj.headers as Record<string, string | string[]>
+    else delete inner.http_headers
   }
 
   if (rawObj.transport && typeof rawObj.transport === 'object' && !Array.isArray(rawObj.transport)) {
@@ -1048,6 +1090,17 @@ export function hasPopulatedValue(v: unknown): boolean {
   return true
 }
 
+export function hasPopulatedSchemaValue(v: unknown, schema?: JSONSchema): boolean {
+  if (v === undefined || v === null || v === '') return false
+  if (v === false) return schema?.default === true
+  if (Array.isArray(v)) return v.length > 0
+  if (typeof v === 'object') {
+    const obj = v as Record<string, unknown>
+    return Object.entries(obj).some(([k, child]) => hasPopulatedSchemaValue(child, schema?.properties?.[k]))
+  }
+  return true
+}
+
 export function pickPopulatedSchemaProps(
   props: Record<string, JSONSchema>,
   values: Record<string, unknown> | undefined,
@@ -1056,7 +1109,7 @@ export function pickPopulatedSchemaProps(
   const out: Record<string, JSONSchema> = {}
   const data = values && typeof values === 'object' ? values : {}
   for (const [k, v] of Object.entries(props)) {
-    if (alwaysIncludeKeys?.has(k) || hasPopulatedValue(data[k])) {
+    if (alwaysIncludeKeys?.has(k) || hasPopulatedSchemaValue(data[k], v)) {
       out[k] = v
     }
   }

@@ -125,3 +125,19 @@ describe('buildOutboundBody', () => {
     expect(body.settings.username).toBe('alice')
   })
 })
+
+
+it('preserves a generic TLS fingerprint for a trojan outbound', () => {
+  const outbound = {
+    id: 1, server_id: 1, tag: 'trojan', type: 'trojan', remark: '', sort: 0,
+    settings: {
+      server: 'old.example.com', server_port: 443, password: 'secret',
+      settings: { tls: { enabled: true, server_name: 'old.example.com', fingerprint: 'firefox' } },
+    },
+  } satisfies Outbound
+  const body = buildOutboundBody(outbound, {
+    type: 'trojan', tag: 'trojan', server: 'new.example.com', server_port: 8443,
+    password: 'secret', tls: true, sni: 'new.example.com', tls_fingerprint: 'safari',
+  })
+  expect(body.settings.settings?.tls?.fingerprint).toBe('safari')
+})

@@ -62,6 +62,18 @@ export function buildOutboundBody(
     // fallback copies that the renderer would otherwise reuse.
     delete inner.username
     delete inner.password
+    if (type === 'http') {
+      // buildClientOutbound only derives Basic auth when username is nonempty;
+      // preserve the password-only form through an explicit header.
+      const headers = { ...(inner.http_headers ?? {}) }
+      const hasAuth = Object.keys(headers).some((key) => key.toLowerCase() === 'proxy-authorization')
+      if (!outer.username && outer.password && !hasAuth) {
+        headers['Proxy-Authorization'] = 'Basic ' + btoa(':' + outer.password)
+        inner.http_headers = headers
+      } else if (!outer.password && !hasAuth) {
+        delete inner.http_headers
+      }
+    }
   }
   if (type === 'vless' || type === 'vmess' || type === 'tuic') outer.uuid = values.uuid || ''
   if (type === 'trojan' || type === 'hysteria2' || type === 'tuic' || type === 'anytls' || type === 'snell') {
@@ -154,7 +166,8 @@ export function buildOutboundBody(
       tls.enabled = true
       tls.server_name = String(values.reality_server_name || '').trim()
       tls.alpn = splitValues(values.tls_alpn)
-      tls.fingerprint = values.tls_fingerprint || 'chrome'
+      if (values.tls_fingerprint === '') delete tls.fingerprint
+      else tls.fingerprint = values.tls_fingerprint || tls.fingerprint || 'chrome'
       tls.reality = {
         ...reality,
         enabled: true,
@@ -168,7 +181,8 @@ export function buildOutboundBody(
       tls.enabled = true
       tls.server_name = String(values.sni || '').trim()
       tls.alpn = splitValues(values.tls_alpn)
-      tls.fingerprint = values.tls_fingerprint || 'chrome'
+      if (values.tls_fingerprint === '') delete tls.fingerprint
+      else tls.fingerprint = values.tls_fingerprint || tls.fingerprint || 'chrome'
       tls.insecure = !!values.insecure
       inner.tls = tls
     } else {
@@ -180,6 +194,10 @@ export function buildOutboundBody(
       tls.enabled = true
       tls.server_name = String(values.sni || '').trim()
       tls.alpn = splitValues(values.tls_alpn)
+      if (typeof values.tls_fingerprint === 'string') {
+        if (values.tls_fingerprint === '') delete tls.fingerprint
+        else tls.fingerprint = values.tls_fingerprint
+      }
       tls.insecure = !!values.insecure
       inner.tls = tls
     } else {

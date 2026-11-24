@@ -37,15 +37,18 @@ function SchemaJsonObjectField({
   const externalText =
     current && typeof current === 'object' ? JSON.stringify(current, null, 2) : ''
   const [draft, setDraft] = useState(externalText)
+  const [jsonError, setJsonError] = useState<string | null>(null)
 
   useEffect(() => {
     const trimmed = draft.trim()
     if (!trimmed) {
+      setJsonError(null)
       if (externalText) setDraft(externalText)
       return
     }
     try {
       const parsed = JSON.parse(trimmed)
+      setJsonError(null)
       if (JSON.stringify(parsed, null, 2) !== externalText) {
         setDraft(externalText)
       }
@@ -64,19 +67,24 @@ function SchemaJsonObjectField({
           setDraft(raw)
           const trimmed = raw.trim()
           if (!trimmed) {
+            setJsonError(null)
             onUpdate(undefined)
             return
           }
           try {
             const parsed = JSON.parse(trimmed)
             if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
+              setJsonError(null)
               onUpdate(parsed)
+            } else {
+              setJsonError('请输入有效的 JSON 对象（{ ... }）')
             }
           } catch {
-            // Keep editing until JSON becomes valid
+            setJsonError('JSON 语法格式有误，修改尚未生效')
           }
         }}
       />
+      {jsonError ? <div className="mt-1 text-[12px] text-[var(--console-danger)]">{jsonError}</div> : null}
     </Field>
   )
 }
@@ -226,7 +234,12 @@ export function SchemaFieldList({
                       updateKey(key, vals)
                     }
                   }}
-                  options={[]}
+                  options={(schema.items?.enum ?? [])
+                    .filter((opt) => opt !== '')
+                    .map((opt) => ({
+                      value: isIntArray ? Number(opt) : String(opt),
+                      label: String(opt),
+                    }))}
                 />
               </Field>
             )

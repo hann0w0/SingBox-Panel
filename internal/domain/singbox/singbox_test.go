@@ -993,7 +993,54 @@ func TestRouteRuleNetworkArrayAndExtraMatchConditions(t *testing.T) {
 			t.Fatalf("match carried in Extra reported as empty: %#v", extra)
 		}
 	}
-	if HasRuleMatch(RuleInput{Action: "route", Outbound: "direct", Extra: map[string]any{"timeout": "300ms", "invert": true}}) {
+	if HasRuleMatch(RuleInput{Action: "route", Outbound: "direct", Extra: map[string]any{
+		"timeout":                      "300ms",
+		"invert":                       true,
+		"network_strategy":             "hybrid",
+		"fallback_network_type":        []any{"cellular"},
+		"fallback_delay":               "300ms",
+		"rule_set_ip_cidr_accept_empty": true,
+	}}) {
 		t.Fatal("action options alone must not count as a match condition")
+	}
+
+	var legacy RuleInput
+	if err := json.Unmarshal([]byte(`{"action":"route","network":"tcp","ip_is_private":true}`), &legacy); err != nil {
+		t.Fatalf("legacy string network failed to unmarshal: %v", err)
+	}
+	if len(legacy.Network) != 1 || legacy.Network[0] != "tcp" {
+		t.Fatalf("legacy network = %#v, want [tcp]", legacy.Network)
+	}
+
+	var emptyNet RuleInput
+	if err := json.Unmarshal([]byte(`{"action":"route","network":""}`), &emptyNet); err != nil {
+		t.Fatalf("empty string network failed to unmarshal: %v", err)
+	}
+	if len(emptyNet.Network) != 0 {
+		t.Fatalf("empty network = %#v, want empty", emptyNet.Network)
+	}
+
+	var badNet RuleInput
+	if err := json.Unmarshal([]byte(`{"action":"route","network":123}`), &badNet); err == nil {
+		t.Fatal("expected numeric network to fail unmarshal")
+	}
+
+	dropped := buildRouteRule(RuleInput{
+		Action:  "reject",
+		Method:  "drop",
+		Network: []string{"udp"},
+		Extra:   map[string]any{"no_drop": true},
+	})
+	if _, hasNoDrop := dropped["no_drop"]; hasNoDrop {
+		t.Fatalf("reject drop rule must not keep no_drop: %#v", dropped)
+	}
+	replied := buildRouteRule(RuleInput{
+		Action:  "reject",
+		Method:  "reply",
+		Network: []string{"icmp"},
+		Extra:   map[string]any{"no_drop": true},
+	})
+	if replied["no_drop"] != true {
+		t.Fatalf("reject reply rule lost no_drop: %#v", replied)
 	}
 }

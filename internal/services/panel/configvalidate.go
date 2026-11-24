@@ -316,6 +316,13 @@ func (a *App) validateRule(db *gorm.DB, serverID uint, raw json.RawMessage, outb
 		}
 		var ruleMap map[string]any
 		if json.Unmarshal(raw, &ruleMap) == nil {
+			if single, ok := ruleMap["network"].(string); ok {
+				if single == "" {
+					delete(ruleMap, "network")
+				} else {
+					ruleMap["network"] = []any{single}
+				}
+			}
 			if err := singbox.ValidateJSONAgainstSchema(singbox.RouteRuleSchema(), ruleMap); err != nil {
 				return err
 			}

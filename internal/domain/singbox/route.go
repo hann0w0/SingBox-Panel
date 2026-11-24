@@ -51,12 +51,32 @@ type ruleInputAlias RuleInput
 
 // UnmarshalJSON decodes known typed fields while preserving any additional
 // sing-box route rule fields (such as domain_regex, process_name, invert) in Extra.
+// Legacy and native sing-box configs may encode "network" as either a single
+// string ("tcp") or a string list (["tcp", "udp"]); both are accepted.
 func (r *RuleInput) UnmarshalJSON(data []byte) error {
-	var alias ruleInputAlias
-	if err := json.Unmarshal(data, &alias); err != nil {
+	type ruleInputWire struct {
+		ruleInputAlias
+		Network json.RawMessage `json:"network,omitempty"`
+	}
+	var wire ruleInputWire
+	if err := json.Unmarshal(data, &wire); err != nil {
 		return err
 	}
-	*r = RuleInput(alias)
+	*r = RuleInput(wire.ruleInputAlias)
+	if len(wire.Network) > 0 && string(wire.Network) != "null" {
+		var single string
+		if err := json.Unmarshal(wire.Network, &single); err == nil {
+			if single != "" {
+				r.Network = []string{single}
+			}
+		} else {
+			var list []string
+			if err := json.Unmarshal(wire.Network, &list); err != nil {
+				return err
+			}
+			r.Network = list
+		}
+	}
 	var raw map[string]any
 	if err := json.Unmarshal(data, &raw); err != nil {
 		return err
@@ -230,8 +250,10 @@ func isRuleActionOptionKey(key string) bool {
 	case "strategy", "server", "timeout", "override_address", "override_port",
 		"disable_cache", "disable_optimistic_cache", "rewrite_ttl", "client_subnet",
 		"udp_disable_domain_unmapping", "udp_connect", "udp_timeout",
+		"network_strategy", "fallback_network_type", "fallback_delay",
 		"tls_fragment", "tls_fragment_fallback_delay", "tls_record_fragment",
-		"tls_spoof", "tls_spoof_method", "invert", "no_drop":
+		"tls_spoof", "tls_spoof_method", "invert", "no_drop",
+		"rule_set_ip_cidr_accept_empty":
 		return true
 	}
 	return false
@@ -329,6 +351,9 @@ func buildRouteRule(r RuleInput) map[string]any {
 		m["action"] = "reject"
 		if r.Method != "" && r.Method != "default" {
 			m["method"] = r.Method
+		}
+		if r.Method == "drop" {
+			delete(m, "no_drop")
 		}
 	} else if act == "hijack-dns" {
 		m["action"] = "hijack-dns"

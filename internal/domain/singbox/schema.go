@@ -844,7 +844,7 @@ func RouteRuleSchema() *JSONSchema {
 		}),
 		"timeout": {
 			Type: "string",
-			UI:   &UIMeta{Label: "嗅探超时", Group: "动作", Order: 4, Placeholder: "300ms", Actions: []string{"sniff"}, Advanced: true},
+			UI:   &UIMeta{Label: "嗅探超时", Group: "动作", Order: 4, Placeholder: "300ms", Actions: []string{"sniff", "resolve"}},
 		},
 		"inbound": stringArraySchema(&UIMeta{
 			Label: "入站来源", Group: "来源与身份", Order: 10, Widget: "multiselect",
@@ -933,7 +933,7 @@ func RouteRuleSchema() *JSONSchema {
 			Label: "应用包名", Group: "进程与环境", Order: 63, Widget: "tags", Actions: routeActions, Advanced: true,
 		}),
 		"package_name_regex": stringArraySchema(&UIMeta{
-			Label: "应用包名正则", Group: "进程与环境", Order: 63, Widget: "lines", FullWidth: true, Actions: routeActions, Advanced: true,
+			Label: "应用包名正则", Group: "进程与环境", Order: 64, Widget: "lines", FullWidth: true, Actions: routeActions, Advanced: true,
 		}),
 		"user": stringArraySchema(&UIMeta{
 			Label: "系统用户", Group: "进程与环境", Order: 65, Widget: "tags", Actions: routeActions, Advanced: true,
@@ -943,6 +943,9 @@ func RouteRuleSchema() *JSONSchema {
 			Items: &JSONSchema{Type: "integer"},
 			UI:    &UIMeta{Label: "系统用户 ID", Group: "进程与环境", Order: 66, Widget: "lines", Actions: routeActions, Advanced: true},
 		},
+		"network_type": stringArraySchema(&UIMeta{
+			Label: "网络类型", Group: "进程与环境", Order: 67, Widget: "tags", Actions: routeActions, Advanced: true,
+		}),
 		"network_is_expensive": {
 			Type: "boolean",
 			UI:   &UIMeta{Label: "计费网络", Group: "进程与环境", Order: 68, Widget: "switch", Actions: routeActions, Advanced: true},
@@ -1014,15 +1017,12 @@ func RouteRuleSchema() *JSONSchema {
 			Enum: strEnum("", "default", "hybrid", "fallback"),
 			UI:   &UIMeta{Label: "网络策略", Group: "高级选项", Order: 96, Widget: "select", Actions: routeOptionsActions, Advanced: true},
 		},
-		"network_type": stringArraySchema(&UIMeta{
-			Label: "网络类型", Group: "高级选项", Order: 97, Widget: "tags", Actions: routeOptionsActions, Advanced: true,
-		}),
 		"fallback_network_type": stringArraySchema(&UIMeta{
-			Label: "备用网络类型", Group: "高级选项", Order: 98, Widget: "tags", Actions: routeOptionsActions, Advanced: true,
+			Label: "备用网络类型", Group: "高级选项", Order: 97, Widget: "tags", Actions: routeOptionsActions, Advanced: true,
 		}),
 		"fallback_delay": {
 			Type: "string",
-			UI:   &UIMeta{Label: "回落延迟", Group: "高级选项", Order: 99, Placeholder: "300ms", Actions: routeOptionsActions, Advanced: true},
+			UI:   &UIMeta{Label: "回落延迟", Group: "高级选项", Order: 98, Placeholder: "300ms", Actions: routeOptionsActions, Advanced: true},
 		},
 		"tls_fragment": {
 			Type: "boolean",

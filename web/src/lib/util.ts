@@ -6,6 +6,24 @@ export function cn(...inputs: ClassValue[]) {
   return twMerge(clsx(inputs))
 }
 
+const GO_DURATION_RE = /^\+?(?:(?:\d+(?:\.\d*)?|\.\d+)(?:ns|us|µs|μs|ms|s|m|h))+$/
+const GO_DURATION_PART_RE = /(\d+(?:\.\d*)?|\.\d+)(ns|us|µs|μs|ms|s|m|h)/g
+const GO_DURATION_SCALE: Record<string, number> = {
+  ns: 1e-9, us: 1e-6, 'µs': 1e-6, 'μs': 1e-6, ms: 1e-3, s: 1, m: 60, h: 3600,
+}
+
+/** Validates the Go duration syntax sing-box accepts (duration strings). */
+export function validateGoDuration(value: unknown): string | undefined {
+  const text = typeof value === 'string' ? value.trim() : ''
+  if (!text) return undefined
+  if (!GO_DURATION_RE.test(text)) return '请输入时长，例如 300ms'
+  let seconds = 0
+  for (const match of text.matchAll(GO_DURATION_PART_RE)) {
+    seconds += Number(match[1]) * (GO_DURATION_SCALE[match[2]] ?? 0)
+  }
+  return seconds > 0 ? undefined : '时长必须大于 0，例如 300ms'
+}
+
 export function formatBytes(n: number): string {
   if (!Number.isFinite(n) || !n || n <= 0) return '0 B'
   const units = ['B', 'KB', 'MB', 'GB', 'TB', 'PB']

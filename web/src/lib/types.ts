@@ -299,7 +299,7 @@ export interface RuleMatch {
   protocol?: string[]
   sniffer?: string[]
   method?: 'default' | 'drop' | 'reply'
-  network?: string
+  network?: string[]
   ip_version?: number
   client?: string[]
   process_name?: string[]

@@ -41,10 +41,21 @@ func TestSchemaBundleCoversProtocolsAndComplexFields(t *testing.T) {
 		t.Error("hysteria2 inbound schema must not include multiplex")
 	}
 
-	for _, key := range []string{"domain_regex", "port_range", "process_name", "clash_mode", "ip_is_private", "invert"} {
+	for _, key := range []string{
+		"domain_regex", "port_range", "process_name", "process_path_regex", "package_name_regex",
+		"clash_mode", "ip_is_private", "source_ip_is_private", "invert", "no_drop",
+		"disable_optimistic_cache", "rewrite_ttl", "client_subnet",
+		"network_strategy", "network_type", "fallback_network_type", "fallback_delay",
+		"tls_fragment", "tls_fragment_fallback_delay", "tls_record_fragment",
+		"tls_spoof", "tls_spoof_method",
+	} {
 		if _, ok := bundle.RouteRule.Properties[key]; !ok {
 			t.Errorf("missing route_rule schema property %q", key)
 		}
+	}
+
+	if enum := bundle.RouteRule.Properties["action"].Enum; len(enum) != 7 {
+		t.Errorf("route action enum = %v, want route/reject/sniff/hijack-dns/resolve/route-options/empty", enum)
 	}
 }
 

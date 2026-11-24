@@ -65,7 +65,7 @@ describe('RuleForm JSON Schema integration', () => {
 
     expect(await screen.findByText('其他参数')).toBeTruthy()
     expect(screen.getByDisplayValue('^api\\..*\\.example\\.com$')).toBeTruthy()
-    expect(screen.getByDisplayValue('rule')).toBeTruthy()
+    expect(screen.getAllByDisplayValue('rule').length).toBeGreaterThan(0)
 
     fireEvent.click(screen.getByRole('button', { name: '保存' }))
 
@@ -166,6 +166,64 @@ describe('RuleForm JSON Schema integration', () => {
     })
   })
 
+  it('surfaces sniff timeout in Form mode and saves it with the sniffer list', async () => {
+    render(
+      <RuleForm
+        serverId={1}
+        rule={null}
+        outboundTags={['direct']}
+        inboundTags={['vless-in']}
+        open
+        onClose={vi.fn()}
+        onSaved={vi.fn()}
+      />,
+    )
+
+    fireEvent.click(screen.getByRole('combobox', { name: '规则动作' }))
+    fireEvent.click(await screen.findByRole('option', { name: 'sniff · 协议嗅探' }))
+
+    fireEvent.click(await screen.findByRole('combobox', { name: '嗅探协议' }))
+    fireEvent.click(await screen.findByRole('option', { name: 'TLS' }))
+    fireEvent.change(screen.getByLabelText('嗅探超时'), { target: { value: '300ms' } })
+    fireEvent.click(screen.getByRole('button', { name: '保存' }))
+
+    await waitFor(() => expect(createRule).toHaveBeenCalledOnce())
+    const body = vi.mocked(createRule).mock.calls[0][1]
+    expect(body.outbound).toBe('sniff')
+    expect(body.match).toMatchObject({
+      action: 'sniff',
+      sniffer: ['tls'],
+      timeout: '300ms',
+    })
+  })
+
+  it('saves reject no_drop and resolve timeout only for their own actions', async () => {
+    render(
+      <RuleForm
+        serverId={1}
+        rule={null}
+        outboundTags={['direct', 'proxy-hk']}
+        inboundTags={['vless-in']}
+        open
+        onClose={vi.fn()}
+        onSaved={vi.fn()}
+      />,
+    )
+
+    fireEvent.click(screen.getByRole('combobox', { name: '规则动作' }))
+    fireEvent.click(await screen.findByRole('option', { name: 'reject · 拒绝连接' }))
+    fireEvent.click(await screen.findByRole('combobox', { name: '条件字段' }))
+    fireEvent.click(await screen.findByRole('option', { name: /^ip_is_private/ }))
+    fireEvent.click(screen.getByLabelText('禁用自动降级'))
+    fireEvent.click(screen.getByRole('button', { name: '保存' }))
+
+    await waitFor(() => expect(createRule).toHaveBeenCalledOnce())
+    expect(vi.mocked(createRule).mock.calls[0][1].match).toMatchObject({
+      action: 'reject',
+      no_drop: true,
+    })
+  })
+
   it('creates an explicit ip_cidr + port -> direct rule in JSON mode even when action is omitted', async () => {
     render(
       <RuleForm
@@ -227,5 +285,50 @@ describe('RuleForm JSON Schema integration', () => {
     fireEvent.click(screen.getByRole('button', { name: '保存' }))
     expect(await screen.findByText(/路由规则至少需要一个匹配条件/)).toBeTruthy()
     expect(createRule).not.toHaveBeenCalled()
+  })
+
+  it('exposes advanced route match and route-options fields in Form mode', async () => {
+    render(
+      <RuleForm
+        serverId={1}
+        rule={null}
+        outboundTags={['direct', 'proxy-hk']}
+        inboundTags={['vless-in']}
+        open
+        onClose={vi.fn()}
+        onSaved={vi.fn()}
+      />,
+    )
+
+    fireEvent.click(screen.getByRole('combobox', { name: '规则动作' }))
+    fireEvent.click(await screen.findByRole('option', { name: 'route · 路由分流' }))
+
+    fireEvent.click(await screen.findByRole('button', { name: '添加参数' }))
+    const paramSelects = screen.getAllByRole('combobox', { name: '参数名' })
+    expect(paramSelects.length).toBe(1)
+    fireEvent.click(paramSelects[0])
+    expect(await screen.findByRole('option', { name: /process_name/ })).toBeTruthy()
+    expect(screen.getByRole('option', { name: /^tls_fragment\b/ })).toBeTruthy()
+  })
+
+  it('keeps invert out of the match-condition section and offers it as an optional extra parameter', async () => {
+    render(
+      <RuleForm
+        serverId={1}
+        rule={null}
+        outboundTags={['direct']}
+        inboundTags={['vless-in']}
+        open
+        onClose={vi.fn()}
+        onSaved={vi.fn()}
+      />,
+    )
+
+    expect(await screen.findByText('匹配条件')).toBeTruthy()
+    expect(screen.queryByRole('switch', { name: '匹配结果取反' })).toBeNull()
+
+    fireEvent.click(await screen.findByRole('button', { name: '添加参数' }))
+    fireEvent.click(screen.getByRole('combobox', { name: '参数名' }))
+    expect(await screen.findByRole('option', { name: /^invert\b/ })).toBeTruthy()
   })
 })

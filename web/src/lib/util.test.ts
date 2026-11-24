@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 
-import { SHADOWSOCKS_METHODS, daysUntil, relativeTime, toCSV } from './util'
+import { SHADOWSOCKS_METHODS, daysUntil, relativeTime, toCSV, validateGoDuration } from './util'
 
 describe('Shadowsocks methods', () => {
   it('offers aes-128-gcm in every form through the shared method list', () => {
@@ -25,5 +25,16 @@ describe('usage helpers', () => {
   })
   it('quotes CSV cells', () => {
     expect(toCSV([['a', 'b,c'], ['say "hi"', 1]])).toBe('\uFEFFa,"b,c"\r\n"say ""hi""",1')
+  })
+})
+
+describe('Go duration validation', () => {
+  it('accepts sing-box duration strings and rejects invalid values', () => {
+    for (const value of ['300ms', '2m30s', '1.5s', '.5s', '+300ms', '1μs', '']) {
+      expect(validateGoDuration(value)).toBeUndefined()
+    }
+    expect(validateGoDuration('0ms')).toContain('大于 0')
+    expect(validateGoDuration('5')).toContain('请输入时长')
+    expect(validateGoDuration('-1s')).toContain('请输入时长')
   })
 })

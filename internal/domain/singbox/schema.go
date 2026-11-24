@@ -57,7 +57,7 @@ type SchemaBundle struct {
 }
 
 func ptrFloat(v float64) *float64 { return &v }
-func ptrBool(v bool) *bool       { return &v }
+func ptrBool(v bool) *bool        { return &v }
 
 func strEnum(values ...string) []any {
 	out := make([]any, len(values))
@@ -517,8 +517,8 @@ func InboundSchema() *JSONSchema {
 				UI:   &UIMeta{Label: "v6 模式", Group: "协议参数", Order: 4, Widget: "select"},
 			},
 		}),
-		"socks":  inboundVariantWithListen(true, true, map[string]*JSONSchema{}),
-		"mixed":  inboundVariantWithListen(true, true, map[string]*JSONSchema{}),
+		"socks": inboundVariantWithListen(true, true, map[string]*JSONSchema{}),
+		"mixed": inboundVariantWithListen(true, true, map[string]*JSONSchema{}),
 		"http": inboundVariantWithListen(true, false, map[string]*JSONSchema{
 			"realm": {Type: "string", UI: &UIMeta{Label: "认证域", Group: "协议参数", Order: 1, Advanced: true}},
 			"tls":   tlsInboundSubSchema(false),
@@ -821,6 +821,7 @@ func OutboundSchema() *JSONSchema {
 // RouteRuleSchema returns the JSON Schema for sing-box route rule match objects.
 func RouteRuleSchema() *JSONSchema {
 	routeActions := []string{"route", "reject", "resolve", "route-options"}
+	routeOptionsActions := []string{"route", "route-options"}
 	props := map[string]*JSONSchema{
 		"action": {
 			Type:    "string",
@@ -833,6 +834,10 @@ func RouteRuleSchema() *JSONSchema {
 			Default: "default",
 			Enum:    strEnum("", "default", "drop", "reply"),
 			UI:      &UIMeta{Label: "拒绝方式", Group: "动作", Order: 2, Widget: "select", Actions: []string{"reject"}},
+		},
+		"no_drop": {
+			Type: "boolean",
+			UI:   &UIMeta{Label: "禁用自动降级", Group: "动作", Order: 3, Widget: "switch", Actions: []string{"reject"}, Advanced: true},
 		},
 		"sniffer": stringArraySchema(&UIMeta{
 			Label: "嗅探协议", Group: "动作", Order: 3, Widget: "multiselect", Actions: []string{"sniff"},
@@ -897,9 +902,12 @@ func RouteRuleSchema() *JSONSchema {
 			Label: "来源端口范围", Group: "IP 与端口", Order: 47, Widget: "tags", Placeholder: "1000:2000", Actions: routeActions, Advanced: true,
 		}),
 		"network": {
-			Type: "string",
-			Enum: strEnum("", "tcp", "udp", "icmp"),
-			UI:   &UIMeta{Label: "网络类型", Group: "协议与版本", Order: 50, Widget: "select", Actions: routeActions},
+			Type: "array",
+			Items: &JSONSchema{
+				Type: "string",
+				Enum: strEnum("tcp", "udp", "icmp"),
+			},
+			UI: &UIMeta{Label: "网络类型", Group: "协议与版本", Order: 50, Widget: "multiselect", Actions: routeActions},
 		},
 		"ip_version": {
 			Type: "integer",
@@ -924,44 +932,143 @@ func RouteRuleSchema() *JSONSchema {
 		"package_name": stringArraySchema(&UIMeta{
 			Label: "应用包名", Group: "进程与环境", Order: 63, Widget: "tags", Actions: routeActions, Advanced: true,
 		}),
+		"package_name_regex": stringArraySchema(&UIMeta{
+			Label: "应用包名正则", Group: "进程与环境", Order: 63, Widget: "lines", FullWidth: true, Actions: routeActions, Advanced: true,
+		}),
+		"user": stringArraySchema(&UIMeta{
+			Label: "系统用户", Group: "进程与环境", Order: 65, Widget: "tags", Actions: routeActions, Advanced: true,
+		}),
+		"user_id": {
+			Type:  "array",
+			Items: &JSONSchema{Type: "integer"},
+			UI:    &UIMeta{Label: "系统用户 ID", Group: "进程与环境", Order: 66, Widget: "lines", Actions: routeActions, Advanced: true},
+		},
+		"network_is_expensive": {
+			Type: "boolean",
+			UI:   &UIMeta{Label: "计费网络", Group: "进程与环境", Order: 68, Widget: "switch", Actions: routeActions, Advanced: true},
+		},
+		"network_is_constrained": {
+			Type: "boolean",
+			UI:   &UIMeta{Label: "低数据模式", Group: "进程与环境", Order: 69, Widget: "switch", Actions: routeActions, Advanced: true},
+		},
+		"wifi_ssid": stringArraySchema(&UIMeta{
+			Label: "Wi-Fi SSID", Group: "进程与环境", Order: 70, Widget: "tags", Actions: routeActions, Advanced: true,
+		}),
+		"wifi_bssid": stringArraySchema(&UIMeta{
+			Label: "Wi-Fi BSSID", Group: "进程与环境", Order: 71, Widget: "tags", Actions: routeActions, Advanced: true,
+		}),
+		"source_mac_address": stringArraySchema(&UIMeta{
+			Label: "来源 MAC 地址", Group: "进程与环境", Order: 72, Widget: "tags", Actions: routeActions, Advanced: true,
+		}),
+		"source_hostname": stringArraySchema(&UIMeta{
+			Label: "来源主机名", Group: "进程与环境", Order: 73, Widget: "tags", Actions: routeActions, Advanced: true,
+		}),
+		"preferred_by": stringArraySchema(&UIMeta{
+			Label: "优先出站类型", Group: "进程与环境", Order: 74, Widget: "tags", Actions: routeActions, Advanced: true,
+		}),
+		"interface_address": {
+			Type:                 "object",
+			AdditionalProperties: ptrBool(true),
+			UI:                   &UIMeta{Label: "接口地址", Group: "进程与环境", Order: 75, Widget: "json", FullWidth: true, Actions: routeActions, Advanced: true},
+		},
+		"network_interface_address": {
+			Type:                 "object",
+			AdditionalProperties: ptrBool(true),
+			UI:                   &UIMeta{Label: "网络接口地址", Group: "进程与环境", Order: 76, Widget: "json", FullWidth: true, Actions: routeActions, Advanced: true},
+		},
+		"default_interface_address": stringArraySchema(&UIMeta{
+			Label: "默认接口地址", Group: "进程与环境", Order: 77, Widget: "tags", Actions: routeActions, Advanced: true,
+		}),
 		"clash_mode": {
 			Type: "string",
-			UI:   &UIMeta{Label: "Clash 模式", Group: "进程与环境", Order: 64, Actions: routeActions, Advanced: true},
+			UI:   &UIMeta{Label: "Clash 模式", Group: "进程与环境", Order: 78, Actions: routeActions, Advanced: true},
 		},
 		"invert": {
 			Type: "boolean",
-			UI:   &UIMeta{Label: "匹配结果取反", Group: "高级选项", Order: 70, Widget: "switch", Advanced: true},
+			UI:   &UIMeta{Label: "匹配结果取反", Group: "协议与版本", Order: 90, Widget: "switch", Actions: routeActions, Advanced: true},
 		},
 		"override_address": {
 			Type: "string",
-			UI:   &UIMeta{Label: "覆盖目标地址", Group: "高级选项", Order: 71, Actions: []string{"route", "route-options"}, Advanced: true},
+			UI:   &UIMeta{Label: "覆盖目标地址", Group: "高级选项", Order: 91, Actions: routeOptionsActions, Advanced: true},
 		},
 		"override_port": {
 			Type:    "integer",
 			Minimum: ptrFloat(1),
 			Maximum: ptrFloat(65535),
-			UI:      &UIMeta{Label: "覆盖目标端口", Group: "高级选项", Order: 72, Actions: []string{"route", "route-options"}, Advanced: true},
+			UI:      &UIMeta{Label: "覆盖目标端口", Group: "高级选项", Order: 92, Actions: routeOptionsActions, Advanced: true},
 		},
 		"udp_disable_domain_unmapping": {
 			Type: "boolean",
-			UI:   &UIMeta{Label: "禁用 UDP 域名反解", Group: "高级选项", Order: 73, Widget: "switch", Actions: []string{"route", "route-options"}, Advanced: true},
+			UI:   &UIMeta{Label: "禁用 UDP 域名反解", Group: "高级选项", Order: 93, Widget: "switch", Actions: routeOptionsActions, Advanced: true},
 		},
 		"udp_connect": {
 			Type: "boolean",
-			UI:   &UIMeta{Label: "UDP Connect", Group: "高级选项", Order: 74, Widget: "switch", Actions: []string{"route", "route-options"}, Advanced: true},
+			UI:   &UIMeta{Label: "UDP Connect", Group: "高级选项", Order: 94, Widget: "switch", Actions: routeOptionsActions, Advanced: true},
 		},
 		"udp_timeout": {
 			Type: "string",
-			UI:   &UIMeta{Label: "UDP 超时", Group: "高级选项", Order: 75, Placeholder: "5m", Actions: []string{"route", "route-options"}, Advanced: true},
+			UI:   &UIMeta{Label: "UDP 超时", Group: "高级选项", Order: 95, Placeholder: "5m", Actions: routeOptionsActions, Advanced: true},
+		},
+		"network_strategy": {
+			Type: "string",
+			Enum: strEnum("", "default", "hybrid", "fallback"),
+			UI:   &UIMeta{Label: "网络策略", Group: "高级选项", Order: 96, Widget: "select", Actions: routeOptionsActions, Advanced: true},
+		},
+		"network_type": stringArraySchema(&UIMeta{
+			Label: "网络类型", Group: "高级选项", Order: 97, Widget: "tags", Actions: routeOptionsActions, Advanced: true,
+		}),
+		"fallback_network_type": stringArraySchema(&UIMeta{
+			Label: "备用网络类型", Group: "高级选项", Order: 98, Widget: "tags", Actions: routeOptionsActions, Advanced: true,
+		}),
+		"fallback_delay": {
+			Type: "string",
+			UI:   &UIMeta{Label: "回落延迟", Group: "高级选项", Order: 99, Placeholder: "300ms", Actions: routeOptionsActions, Advanced: true},
+		},
+		"tls_fragment": {
+			Type: "boolean",
+			UI:   &UIMeta{Label: "TLS 分片", Group: "高级选项", Order: 100, Widget: "switch", Actions: routeOptionsActions, Advanced: true},
+		},
+		"tls_fragment_fallback_delay": {
+			Type: "string",
+			UI:   &UIMeta{Label: "TLS 分片回落延迟", Group: "高级选项", Order: 101, Placeholder: "500ms", Actions: routeOptionsActions, Advanced: true},
+		},
+		"tls_record_fragment": {
+			Type: "boolean",
+			UI:   &UIMeta{Label: "TLS Record 分片", Group: "高级选项", Order: 102, Widget: "switch", Actions: routeOptionsActions, Advanced: true},
+		},
+		"tls_spoof": {
+			Type: "string",
+			UI:   &UIMeta{Label: "TLS 伪造 SNI", Group: "高级选项", Order: 103, Actions: routeOptionsActions, Advanced: true},
+		},
+		"tls_spoof_method": {
+			Type: "string",
+			Enum: strEnum("", "wrong-sequence", "wrong-checksum", "wrong-ack", "wrong-md5", "wrong-timestamp"),
+			UI:   &UIMeta{Label: "TLS 伪造方式", Group: "高级选项", Order: 104, Widget: "select", Actions: routeOptionsActions, Advanced: true},
+		},
+		"disable_optimistic_cache": {
+			Type: "boolean",
+			UI:   &UIMeta{Label: "禁用乐观缓存", Group: "动作", Order: 7, Widget: "switch", Actions: []string{"resolve"}, Advanced: true},
 		},
 		"server": {
 			Type: "string",
-			UI:   &UIMeta{Label: "解析 DNS 服务器", Group: "动作", Order: 5, Actions: []string{"resolve"}, Advanced: true},
+			UI:   &UIMeta{Label: "解析 DNS 服务器", Group: "动作", Order: 8, Actions: []string{"resolve"}, Advanced: true},
 		},
 		"strategy": {
 			Type: "string",
 			Enum: strEnum("", "prefer_ipv4", "prefer_ipv6", "ipv4_only", "ipv6_only"),
-			UI:   &UIMeta{Label: "解析策略", Group: "动作", Order: 6, Widget: "select", Actions: []string{"resolve", "route-options"}, Advanced: true},
+			UI:   &UIMeta{Label: "解析策略", Group: "动作", Order: 9, Widget: "select", Actions: []string{"resolve"}, Advanced: true},
+		},
+		"disable_cache": {
+			Type: "boolean",
+			UI:   &UIMeta{Label: "禁用 DNS 缓存", Group: "动作", Order: 10, Widget: "switch", Actions: []string{"resolve"}, Advanced: true},
+		},
+		"rewrite_ttl": {
+			Type: "integer",
+			UI:   &UIMeta{Label: "重写 TTL", Group: "动作", Order: 11, Actions: []string{"resolve"}, Advanced: true},
+		},
+		"client_subnet": {
+			Type: "string",
+			UI:   &UIMeta{Label: "客户端子网", Group: "动作", Order: 12, Placeholder: "1.1.1.0/24", Actions: []string{"resolve"}, Advanced: true},
 		},
 	}
 

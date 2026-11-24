@@ -10,7 +10,7 @@ import {
 } from '../../../lib/api'
 import { applyWithToast } from '../../../lib/configApply'
 import type { Outbound, OutboundType, RouteRule, RuleMatch, RuleSet } from '../../../lib/types'
-import { randomBase64, randomHex, randomUUID, SHADOWSOCKS_METHODS, ss2022KeyLen } from '../../../lib/util'
+import { randomBase64, randomHex, randomUUID, SHADOWSOCKS_METHODS, ss2022KeyLen, validateGoDuration } from '../../../lib/util'
 import { buildOutboundBody, TLS_REQUIRED_OUT, TRANSPORT_OUT, transportHost } from '../../../lib/outboundForm'
 import { FormGroup, scrollToFirstError } from './InboundForm'
 import '../../../styles/forms.css'
@@ -688,6 +688,186 @@ function splitLines(s: string | undefined): string[] {
 }
 const joinLines = (a?: string[]) => (a || []).join(', ')
 
+function validateDurationValue(value: unknown) {
+  const error = validateGoDuration(value)
+  return error ? Promise.reject(new Error(error)) : Promise.resolve()
+}
+
+function extraParamDefaultValue(schema: JSONSchema): unknown {
+  if (schema.type === 'boolean' || schema['x-ui']?.widget === 'switch') return false
+  if (schema.type === 'array') return []
+  return ''
+}
+
+function ExtraParamValueEditor({
+  fieldKey,
+  schema,
+  value,
+  onChange,
+  onRemove,
+}: {
+  fieldKey: string
+  schema: JSONSchema
+  value: unknown
+  onChange: (next: unknown) => void
+  onRemove: () => void
+}) {
+  const ui = schema['x-ui']
+  const label = ui?.label || fieldKey
+  const clearButton = (
+    <Button
+      type="text"
+      size="small"
+      aria-label={`移除${fieldKey.replace(/^extra-/, '')}`}
+      className="fm-param-remove h-6 w-6 px-0 text-muted-foreground hover:text-foreground"
+      icon={<X className="size-4" />}
+      onClick={onRemove}
+    />
+  )
+
+  if (schema.type === 'boolean' || ui?.widget === 'switch') {
+    return (
+      <div className="flex h-9 items-center justify-between gap-2 rounded-[7px] border border-[var(--inbound-line-strong)] bg-[var(--inbound-field)] pl-3 pr-1">
+        <span className="truncate text-[13px] text-muted-foreground">{value === true ? 'true' : 'false'}</span>
+        <span className="flex shrink-0 items-center gap-1">
+          <Switch aria-label={label} checked={value === true} onCheckedChange={(checked) => onChange(checked)} />
+          {clearButton}
+        </span>
+      </div>
+    )
+  }
+
+  if (schema.type === 'array') {
+    const isIntArray = schema.items?.type === 'integer' || schema.items?.type === 'number'
+    const items = Array.isArray(value) ? value.map(String) : []
+    if (ui?.widget === 'tags' || ui?.widget === 'multiselect') {
+      return (
+        <div className="flex items-center gap-1">
+          <div className="min-w-0 flex-1">
+            <Select
+              mode="tags"
+              allowClear
+              aria-label={label}
+              placeholder={ui?.placeholder}
+              value={items}
+              onChange={(vals: string[]) => {
+                if (isIntArray) {
+                  onChange(vals.map(Number).filter((n) => Number.isInteger(n)))
+                } else {
+                  onChange(vals)
+                }
+              }}
+              options={(schema.items?.enum ?? [])
+                .filter((opt) => opt !== '')
+                .map((opt) => ({ value: String(opt), label: String(opt) }))}
+            />
+          </div>
+          {clearButton}
+        </div>
+      )
+    }
+    return (
+      <div className="flex items-center gap-1">
+        <Input
+          aria-label={label}
+          className="mono"
+          placeholder={ui?.placeholder}
+          value={items.join(', ')}
+          onChange={(e) => {
+            const vals = e.target.value.split(/[\n,]/).map((x) => x.trim()).filter(Boolean)
+            if (isIntArray) {
+              onChange(vals.map(Number).filter((n) => Number.isInteger(n)))
+            } else {
+              onChange(vals)
+            }
+          }}
+        />
+        {clearButton}
+      </div>
+    )
+  }
+
+  if (schema.type === 'object' || ui?.widget === 'json') {
+    return (
+      <div className="flex items-start gap-1">
+        <div className="min-w-0 flex-1">
+          <JsonCodeEditor
+            ariaLabel={label}
+            value={value && typeof value === 'object' ? JSON.stringify(value, null, 2) : ''}
+            onChange={(raw) => {
+              const trimmed = raw.trim()
+              if (!trimmed) {
+                onChange(undefined)
+                return
+              }
+              try {
+                const parsed = JSON.parse(trimmed)
+                if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) onChange(parsed)
+              } catch {
+                // Keep the previous value while the draft is incomplete.
+              }
+            }}
+          />
+        </div>
+        {clearButton}
+      </div>
+    )
+  }
+
+  if (schema.enum && schema.enum.length > 0) {
+    const isNumEnum = schema.type === 'integer' || schema.type === 'number'
+    return (
+      <div className="flex items-center gap-1">
+        <div className="min-w-0 flex-1">
+          <Select
+            allowClear
+            aria-label={label}
+            placeholder={ui?.placeholder}
+            value={value !== undefined && value !== '' ? (value as string | number) : undefined}
+            onChange={(next) => onChange(next === undefined || next === '' ? undefined : next)}
+            options={schema.enum
+              .filter((opt) => opt !== '')
+              .map((opt) => ({ value: isNumEnum ? Number(opt) : String(opt), label: String(opt) }))}
+          />
+        </div>
+        {clearButton}
+      </div>
+    )
+  }
+
+  if (schema.type === 'integer' || schema.type === 'number') {
+    return (
+      <div className="flex items-center gap-1">
+        <div className="min-w-0 flex-1">
+          <InputNumber
+            aria-label={label}
+            className="mono"
+            min={schema.minimum}
+            max={schema.maximum}
+            precision={schema.type === 'integer' ? 0 : undefined}
+            value={typeof value === 'number' ? value : undefined}
+            onChange={(next) => onChange(next === null ? undefined : next)}
+          />
+        </div>
+        {clearButton}
+      </div>
+    )
+  }
+
+  return (
+    <div className="flex items-center gap-1">
+      <Input
+        aria-label={label}
+        className="mono"
+        placeholder={ui?.placeholder}
+        value={typeof value === 'string' ? value : ''}
+        onChange={(e) => onChange(e.target.value)}
+      />
+      {clearButton}
+    </div>
+  )
+}
+
 // 动作类型选项（官方 sing-box 参数 + 中文释义）
 const ACTION_OPTIONS = [
   { value: 'route', label: 'route · 路由分流' },
@@ -701,10 +881,12 @@ const ACTION_OPTIONS = [
 const STANDARD_RULE_MATCH_KEYS = new Set([
   'action',
   'outbound',
+  'no_drop',
   'auth_user',
   'inbound',
   'rule_set',
   'rule_set_ip_cidr_match_source',
+  'rule_set_ip_cidr_accept_empty',
   'domain',
   'domain_suffix',
   'domain_keyword',
@@ -712,14 +894,21 @@ const STANDARD_RULE_MATCH_KEYS = new Set([
   'ip_cidr',
   'source_ip_cidr',
   'ip_is_private',
+  'source_ip_is_private',
   'port',
   'port_range',
   'protocol',
   'network',
+  'ip_version',
   'sniffer',
   'method',
   'server',
   'strategy',
+  'timeout',
+  'disable_cache',
+  'disable_optimistic_cache',
+  'rewrite_ttl',
+  'client_subnet',
 ])
 
 function cloneMatchExtra(m: Record<string, unknown> | undefined): Record<string, unknown> {
@@ -751,6 +940,7 @@ type MatchField =
   | 'rule_set'
   | 'ip_cidr'
   | 'source_ip_cidr'
+  | 'source_ip_is_private'
   | 'port'
   | 'port_range'
   | 'ip_is_private'
@@ -764,7 +954,6 @@ type ConditionRow = {
   field: MatchField
   text: string
   list: string[]
-  single: string
   ruleSetSource: boolean
 }
 
@@ -776,6 +965,7 @@ const MATCH_FIELD_OPTIONS: { value: MatchField; label: string }[] = [
   { value: 'domain', label: 'domain · 完整域名' },
   { value: 'ip_cidr', label: 'ip_cidr · 目标 IP 段' },
   { value: 'source_ip_cidr', label: 'source_ip_cidr · 来源 IP 段' },
+  { value: 'source_ip_is_private', label: 'source_ip_is_private · 来源为私有 IP' },
   { value: 'domain_keyword', label: 'domain_keyword · 域名关键词' },
   { value: 'domain_regex', label: 'domain_regex · 域名正则' },
   { value: 'port', label: 'port · 目标端口' },
@@ -786,7 +976,7 @@ const MATCH_FIELD_OPTIONS: { value: MatchField; label: string }[] = [
 ]
 
 function emptyConditionRow(field: MatchField, id: string): ConditionRow {
-  return { id, field, text: '', list: [], single: '', ruleSetSource: false }
+  return { id, field, text: '', list: [], ruleSetSource: false }
 }
 
 function matchToConditionRows(match: RuleMatch, act: string, nextId: () => string): ConditionRow[] {
@@ -798,6 +988,7 @@ function matchToConditionRows(match: RuleMatch, act: string, nextId: () => strin
   if (match.rule_set?.length) rows.push({ ...emptyConditionRow('rule_set', nextId()), list: [...match.rule_set], ruleSetSource: !!match.rule_set_ip_cidr_match_source })
   if (match.ip_cidr?.length) rows.push({ ...emptyConditionRow('ip_cidr', nextId()), text: joinLines(match.ip_cidr) })
   if (match.source_ip_cidr?.length) rows.push({ ...emptyConditionRow('source_ip_cidr', nextId()), text: joinLines(match.source_ip_cidr) })
+  if (match.source_ip_is_private) rows.push(emptyConditionRow('source_ip_is_private', nextId()))
   if (match.port?.length) rows.push({ ...emptyConditionRow('port', nextId()), text: joinLines(match.port.map(String)) })
   if (match.port_range?.length) rows.push({ ...emptyConditionRow('port_range', nextId()), text: joinLines(match.port_range) })
   if (match.ip_is_private) rows.push(emptyConditionRow('ip_is_private', nextId()))
@@ -808,7 +999,7 @@ function matchToConditionRows(match: RuleMatch, act: string, nextId: () => strin
   if (act !== 'sniff' && act !== 'hijack-dns' && match.protocol?.length) {
     rows.push({ ...emptyConditionRow('protocol', nextId()), list: [...match.protocol] })
   }
-  if (match.network) rows.push({ ...emptyConditionRow('network', nextId()), single: String(match.network) })
+  if (match.network?.length) rows.push({ ...emptyConditionRow('network', nextId()), list: [...match.network] })
   return rows
 }
 
@@ -831,6 +1022,10 @@ const NON_MATCH_RULE_KEYS = new Set([
   'tls_fragment',
   'tls_fragment_fallback_delay',
   'tls_record_fragment',
+  'tls_spoof',
+  'tls_spoof_method',
+  'no_drop',
+  'disable_optimistic_cache',
   'invert',
   'rule_set_ip_cidr_match_source',
 ])
@@ -858,8 +1053,9 @@ function summarizeRuleMatch(match: RuleMatch): string[] {
   if (match.port?.length) chips.push(`端口: ${match.port.join(', ')}`)
   if (match.port_range?.length) chips.push(`端口段 ×${match.port_range.length}`)
   if (match.protocol?.length) chips.push(`协议: ${match.protocol.join(', ')}`)
-  if (match.network) chips.push(`传输: ${match.network}`)
+  if (match.network?.length) chips.push(`传输: ${match.network.join(', ')}`)
   if (match.ip_is_private) chips.push('私有 IP')
+  if (match.source_ip_is_private) chips.push('来源私有 IP')
   for (const [k, v] of Object.entries(match)) {
     if (NON_MATCH_RULE_KEYS.has(k) || STANDARD_RULE_MATCH_KEYS.has(k)) continue
     if (v === undefined || v === null || v === '' || v === false) continue
@@ -895,9 +1091,16 @@ function ruleToFormValues(m: Record<string, unknown>, outbound?: string) {
     outbound: act === 'route' ? (outbound || undefined) : undefined,
     sniffer: match.sniffer || (act === 'sniff' ? match.protocol : undefined) || [],
     method: (match.method as string) || 'default',
+    no_drop: match.no_drop === true,
     inbound: match.inbound || [],
     server: match.server || '',
     strategy: typeof m.strategy === 'string' ? m.strategy : undefined,
+    timeout: act === 'sniff' && typeof m.timeout === 'string' ? m.timeout : undefined,
+    resolve_timeout: act === 'resolve' && typeof m.timeout === 'string' ? m.timeout : undefined,
+    disable_cache: match.disable_cache === true,
+    disable_optimistic_cache: match.disable_optimistic_cache === true,
+    rewrite_ttl: typeof match.rewrite_ttl === 'number' ? match.rewrite_ttl : undefined,
+    client_subnet: typeof match.client_subnet === 'string' ? match.client_subnet : undefined,
   }
 }
 
@@ -909,6 +1112,19 @@ function buildRulePayload(
 ): { match: RuleMatch; outbound: string } {
   const act = String(v.action || 'route') as NonNullable<RuleMatch['action']>
   const match: RuleMatch = { action: act }
+  if (act === 'reject' && v.no_drop === true) {
+    match.no_drop = true
+  }
+  if (act === 'resolve') {
+    if (typeof v.resolve_timeout === 'string' && v.resolve_timeout.trim()) match.timeout = v.resolve_timeout.trim()
+    if (v.disable_cache === true) match.disable_cache = true
+    if (v.disable_optimistic_cache === true) match.disable_optimistic_cache = true
+    if (typeof v.rewrite_ttl === 'number') match.rewrite_ttl = v.rewrite_ttl
+    if (typeof v.client_subnet === 'string' && v.client_subnet.trim()) match.client_subnet = v.client_subnet.trim()
+  }
+  if (act === 'sniff' && typeof v.timeout === 'string' && v.timeout.trim()) {
+    match.timeout = v.timeout.trim()
+  }
   if ((act === 'sniff' || act === 'hijack-dns') && v.inbound?.length) {
     match.inbound = v.inbound
   }
@@ -927,8 +1143,9 @@ function buildRulePayload(
         if (row.ruleSetSource) match.rule_set_ip_cidr_match_source = true
       }
       else if (row.field === 'protocol' && row.list.length) match.protocol = row.list
-      else if (row.field === 'network' && row.single) match.network = row.single
+      else if (row.field === 'network' && row.list.length) match.network = row.list
       else if (row.field === 'ip_is_private') match.ip_is_private = true
+      else if (row.field === 'source_ip_is_private') match.source_ip_is_private = true
       else if (row.field === 'domain') {
         const items = splitLines(row.text)
         if (items.length) match.domain = items
@@ -1053,6 +1270,7 @@ export function RuleForm({
   const rowSeqRef = useRef(0)
   const nextRowId = () => `cond-${++rowSeqRef.current}`
   const action = Form.useWatch('action', form) || 'route'
+  const rejectMethod = Form.useWatch('method', form)
   const showConditions = action === 'route' || action === 'reject' || action === 'resolve' || action === 'route-options'
   const requiresCondition = action === 'route' || action === 'reject'
 
@@ -1062,17 +1280,49 @@ export function RuleForm({
     const built = buildRulePayload({ action }, conditions, extraMatch, schemaProps)
     return summarizeRuleMatch(built.match)
   }, [action, conditions, extraMatch, schemaProps, showConditions])
-  const advancedSchemaProps = useMemo(() => {
-    const candidates: Record<string, JSONSchema> = {}
-    for (const [k, v] of Object.entries(schemaProps)) {
-      if (STANDARD_RULE_MATCH_KEYS.has(k)) continue
-      const actions = v['x-ui']?.actions
+  const extraSchemaProps = useMemo(() => {
+    const out: Record<string, JSONSchema> = {}
+    for (const [key, schema] of Object.entries(schemaProps)) {
+      if (STANDARD_RULE_MATCH_KEYS.has(key)) continue
+      const actions = schema['x-ui']?.actions
       if (actions && !actions.includes(action)) continue
-      candidates[k] = v
+      out[key] = schema
     }
-    return pickPopulatedSchemaProps(candidates, extraMatch)
-  }, [schemaProps, action, extraMatch])
-  const hasAdvancedSchemaProps = Object.keys(advancedSchemaProps).length > 0
+    return out
+  }, [schemaProps, action])
+  const extraParamKeys = useMemo(
+    () => Object.keys(extraMatch).filter((key) => key in extraSchemaProps),
+    [extraMatch, extraSchemaProps],
+  )
+  const extraParamOptions = useMemo(
+    () => Object.entries(extraSchemaProps).map(([key, schema]) => ({
+      value: key,
+      label: schema['x-ui']?.label ? `${key} · ${schema['x-ui'].label}` : key,
+    })),
+    [extraSchemaProps],
+  )
+  const nextExtraKey = useMemo(
+    () => extraParamOptions.find((option) => !(option.value in extraMatch))?.value,
+    [extraParamOptions, extraMatch],
+  )
+
+  const addExtraParam = () => {
+    if (!nextExtraKey) return
+    const schema = extraSchemaProps[nextExtraKey]
+    setExtraMatch((prev) => ({ ...prev, [nextExtraKey]: extraParamDefaultValue(schema) }))
+  }
+
+  const removeExtraParam = (key: string) => {
+    setExtraMatch((prev) => {
+      const next = { ...prev }
+      delete next[key]
+      return next
+    })
+  }
+
+  const setExtraParam = (key: string, value: unknown) => {
+    setExtraMatch((prev) => ({ ...prev, [key]: value }))
+  }
 
   const usedFields = useMemo(() => new Set(conditions.map((c) => c.field)), [conditions])
   const nextAvailableField = MATCH_FIELD_OPTIONS.find((opt) => !usedFields.has(opt.value))?.value
@@ -1312,10 +1562,11 @@ export function RuleForm({
     if (row.field === 'network') {
       return (
         <Select
+          mode="multiple"
           allowClear
           aria-label="网络类型"
-          value={row.single}
-          onChange={(single: string) => updateConditionRow(row.id, { single: single || '' })}
+          value={row.list}
+          onChange={(list: string[]) => updateConditionRow(row.id, { list })}
           options={[
             { value: 'tcp', label: 'TCP' },
             { value: 'udp', label: 'UDP' },
@@ -1324,7 +1575,7 @@ export function RuleForm({
         />
       )
     }
-    if (row.field === 'ip_is_private') {
+    if (row.field === 'ip_is_private' || row.field === 'source_ip_is_private') {
       return (
         <div className="flex h-9 items-center rounded-[7px] border border-[var(--inbound-line-strong)] bg-[var(--inbound-field)] px-3 text-[13px] text-muted-foreground">
           true · 匹配私有 / 局域网 IP
@@ -1355,7 +1606,7 @@ export function RuleForm({
 
   return (
     <Modal
-      className="fm-modal inbound-compact"
+      className="fm-modal inbound-compact rule-editor"
       title={<span className="inbound-compact-heading">{rule ? '编辑路由规则' : '新增路由规则'}</span>}
       open={open}
       onOk={submit}
@@ -1406,32 +1657,53 @@ export function RuleForm({
             </Form.Item>
           )}
           {action === 'reject' && (
-            <Form.Item name="method" label="拒绝方式">
-              <Select
-                aria-label="拒绝方式"
-                options={[
-                  { value: 'default', label: 'default · 拒绝响应' },
-                  { value: 'drop', label: 'drop · 静默丢弃' },
-                ]}
-              />
-            </Form.Item>
+            <>
+              <Form.Item name="method" label="拒绝方式">
+                <Select
+                  aria-label="拒绝方式"
+                  options={[
+                    { value: 'default', label: 'default · 拒绝响应' },
+                    { value: 'drop', label: 'drop · 静默丢弃' },
+                    { value: 'reply', label: 'reply · ICMP Echo 回复' },
+                  ]}
+                />
+              </Form.Item>
+              <Form.Item name="no_drop" label="禁用自动降级" valuePropName="checked" className="fm-switch">
+                <Switch aria-label="禁用自动降级" disabled={rejectMethod === 'drop'} />
+              </Form.Item>
+            </>
           )}
           {action === 'sniff' && (
-            <Form.Item name="sniffer" label="嗅探协议">
-              <Select
-                mode="multiple"
-                allowClear
-                aria-label="嗅探协议"
-                options={[
-                  { value: 'tls', label: 'TLS' },
-                  { value: 'http', label: 'HTTP' },
-                  { value: 'quic', label: 'QUIC' },
-                  { value: 'dns', label: 'DNS' },
-                ]}
-              />
-            </Form.Item>
+            <>
+              <Form.Item name="sniffer" label="嗅探协议">
+                <Select
+                  mode="multiple"
+                  allowClear
+                  aria-label="嗅探协议"
+                  options={[
+                    { value: 'tls', label: 'TLS' },
+                    { value: 'http', label: 'HTTP' },
+                    { value: 'quic', label: 'QUIC' },
+                    { value: 'dns', label: 'DNS' },
+                    { value: 'stun', label: 'STUN' },
+                    { value: 'bittorrent', label: 'BitTorrent' },
+                    { value: 'dtls', label: 'DTLS' },
+                    { value: 'ssh', label: 'SSH' },
+                    { value: 'rdp', label: 'RDP' },
+                    { value: 'ntp', label: 'NTP' },
+                  ]}
+                />
+              </Form.Item>
+              <Form.Item
+                name="timeout"
+                label="嗅探超时"
+                rules={[{ validator: (_, value) => validateDurationValue(value) }]}
+              >
+                <Input aria-label="嗅探超时" className="mono" placeholder="300ms" />
+              </Form.Item>
+            </>
           )}
-          {(action === 'resolve' || action === 'route-options') && (
+          {action === 'resolve' && (
             <Form.Item name="strategy" label="strategy · 解析策略">
               <Select
                 allowClear
@@ -1446,12 +1718,33 @@ export function RuleForm({
             </Form.Item>
           )}
           {action === 'resolve' && (
-            <Form.Item name="server" label="server · DNS 服务器">
-              <Input aria-label="DNS 服务器" className="mono" />
-            </Form.Item>
+            <>
+              <Form.Item name="server" label="server · DNS 服务器">
+                <Input aria-label="DNS 服务器" className="mono" />
+              </Form.Item>
+              <Form.Item
+                name="resolve_timeout"
+                label="解析超时"
+                rules={[{ validator: (_, value) => validateDurationValue(value) }]}
+              >
+                <Input aria-label="解析超时" className="mono" placeholder="10s" />
+              </Form.Item>
+              <Form.Item name="disable_cache" label="禁用 DNS 缓存" valuePropName="checked" className="fm-switch">
+                <Switch aria-label="禁用 DNS 缓存" />
+              </Form.Item>
+              <Form.Item name="disable_optimistic_cache" label="禁用乐观缓存" valuePropName="checked" className="fm-switch">
+                <Switch aria-label="禁用乐观缓存" />
+              </Form.Item>
+              <Form.Item name="rewrite_ttl" label="重写 TTL">
+                <InputNumber aria-label="重写 TTL" min={0} precision={0} className="mono" />
+              </Form.Item>
+              <Form.Item name="client_subnet" label="客户端子网">
+                <Input aria-label="客户端子网" className="mono" placeholder="1.1.1.0/24" />
+              </Form.Item>
+            </>
           )}
           {(action === 'sniff' || action === 'hijack-dns') && (
-            <Form.Item name="inbound" label="限定入站" className="fm-full">
+            <Form.Item name="inbound" label="限定入站">
               <Select
                 mode="multiple"
                 allowClear
@@ -1480,8 +1773,8 @@ export function RuleForm({
                 </div>
               ) : (
                 conditions.map((row) => (
-                  <div key={row.id} className="flex items-start gap-2">
-                    <div className="w-[228px] max-w-[48%] shrink-0">
+                  <div key={row.id} className="fm-param-row">
+                    <div>
                       <Select
                         aria-label="条件字段"
                         value={row.field}
@@ -1490,7 +1783,6 @@ export function RuleForm({
                             field: nextField,
                             text: '',
                             list: [],
-                            single: '',
                             ruleSetSource: false,
                           })
                         }}
@@ -1500,15 +1792,17 @@ export function RuleForm({
                         }))}
                       />
                     </div>
-                    <div className="min-w-0 flex-1">{renderConditionValue(row)}</div>
-                    <Button
-                      type="text"
-                      size="small"
-                      aria-label={`移除${row.field}`}
-                      className="h-9 w-9 shrink-0 px-0 text-muted-foreground hover:text-foreground"
-                      icon={<X className="size-4" />}
-                      onClick={() => removeConditionRow(row.id)}
-                    />
+                    <div className="fm-param-value">
+                      {renderConditionValue(row)}
+                      <Button
+                        type="text"
+                        size="small"
+                        aria-label={`移除${row.field}`}
+                        className="fm-param-remove h-6 w-6 px-0 text-muted-foreground hover:text-foreground"
+                        icon={<X className="size-4" />}
+                        onClick={() => removeConditionRow(row.id)}
+                      />
+                    </div>
                   </div>
                 ))
               )}
@@ -1526,14 +1820,57 @@ export function RuleForm({
           </FormGroup>
         )}
 
-        {hasAdvancedSchemaProps && (
-          <FormGroup title="其他参数" panel="inbound">
-            <SchemaFieldList
-              properties={advancedSchemaProps}
-              value={extraMatch}
-              onChange={setExtraMatch}
-              idPrefix="rule-adv"
-            />
+        {action !== 'sniff' && action !== 'hijack-dns' && (extraParamKeys.length > 0 || nextExtraKey) && (
+          <FormGroup
+            title="其他参数"
+            panel="inbound"
+            extra={nextExtraKey ? (
+              <Button size="small" type="text" icon={<Plus className="size-3.5" />} onClick={addExtraParam}>
+                添加参数
+              </Button>
+            ) : undefined}
+          >
+            {extraParamKeys.length === 0 ? (
+              <div className="fm-full rounded-[7px] border border-dashed border-[var(--inbound-line-strong)] px-3 py-2.5 text-[13px] text-muted-foreground">
+                未设置动作参数
+              </div>
+            ) : (
+              extraParamKeys.map((key) => {
+                const schema = extraSchemaProps[key]
+                if (!schema) return null
+                const fieldKey = `extra-${key}`
+                return (
+                  <div key={key} className="fm-full fm-param-row">
+                    <div>
+                      <Select
+                        aria-label="参数名"
+                        value={key}
+                        options={extraParamOptions}
+                        onChange={(nextKey: string) => {
+                          if (!nextKey || nextKey === key) return
+                          setExtraMatch((prev) => {
+                            const next: Record<string, unknown> = { ...prev }
+                            const value = next[key]
+                            delete next[key]
+                            next[nextKey] = value
+                            return next
+                          })
+                        }}
+                      />
+                    </div>
+                    <div className="fm-param-value">
+                      <ExtraParamValueEditor
+                        fieldKey={fieldKey}
+                        schema={schema}
+                        value={extraMatch[key]}
+                        onChange={(next) => setExtraParam(key, next)}
+                        onRemove={() => removeExtraParam(key)}
+                      />
+                    </div>
+                  </div>
+                )
+              })
+            )}
           </FormGroup>
         )}
       </Form>

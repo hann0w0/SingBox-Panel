@@ -43,6 +43,9 @@ const (
 // credentials. Obfuscated QUIC answers nothing, so only DNS can be verified.
 func TestOutbound(ctx context.Context, cmd protocol.TestOutboundCmd) protocol.TestOutboundData {
 	host, port := strings.TrimSpace(cmd.Host), cmd.Port
+	if strings.HasPrefix(host, "[") && strings.HasSuffix(host, "]") {
+		host = host[1 : len(host)-1]
+	}
 	if host == "" || port <= 0 || port > 65535 {
 		return protocol.TestOutboundData{Error: "落地地址或端口无效"}
 	}
@@ -85,6 +88,7 @@ func probeDialer() net.Dialer {
 var disallowedProbePrefixes = []netip.Prefix{
 	netip.MustParsePrefix("0.0.0.0/8"),
 	netip.MustParsePrefix("100.100.100.200/32"), // Alibaba Cloud metadata
+	netip.MustParsePrefix("fd00:ec2::254/128"),  // AWS EC2 IPv6 IMDS
 }
 
 func isDisallowedProbeHost(raw string) bool {

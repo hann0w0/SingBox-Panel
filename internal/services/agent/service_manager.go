@@ -105,7 +105,15 @@ func startSystemdAgentTask(ctx context.Context, unit string, runner commandRunne
 }
 
 type systemdServiceManager struct {
-	run commandRunner
+	run      commandRunner
+	procRoot string
+}
+
+func (m systemdServiceManager) procRootOrDefault() string {
+	if m.procRoot != "" {
+		return m.procRoot
+	}
+	return "/proc"
 }
 
 func (m systemdServiceManager) Kind() serviceKind { return serviceKindSystemd }
@@ -162,13 +170,50 @@ func (m systemdServiceManager) MainPID(ctx context.Context) (int, error) {
 	return pid, nil
 }
 
-func (m systemdServiceManager) StartedAt(ctx context.Context, _ int) (time.Time, error) {
+func (m systemdServiceManager) StartedAt(ctx context.Context, pid int) (time.Time, error) {
 	out, err := m.run(ctx, "busctl", "get-property", "org.freedesktop.systemd1", systemdUnitPath,
 		"org.freedesktop.systemd1.Service", "ExecMainStartTimestamp")
+	if err == nil {
+		if ts, parseErr := parseSystemdTimestamp(out); parseErr == nil {
+			return ts, nil
+		}
+	}
+	// Minimal systemd hosts/containers without system D-Bus can still query PID 1
+	// over /run/systemd/private via systemctl or read /proc/<pid>/stat directly.
+	if showOut, showErr := m.run(ctx, "systemctl", "show", ServiceName, "--property=ExecMainStartTimestamp", "--value", "--timestamp=utc"); showErr == nil {
+		if ts, parseErr := parseSystemctlUTCTimestamp(showOut); parseErr == nil {
+			return ts, nil
+		}
+	}
+	if pid > 0 {
+		if clock, clockErr := readProcessClockAt(m.procRootOrDefault(), time.Now); clockErr == nil {
+			if ts, statErr := readProcessStartTimeAt(m.procRootOrDefault(), pid, clock.bootLower); statErr == nil {
+				return ts, nil
+			}
+		}
+	}
 	if err != nil {
 		return time.Time{}, fmt.Errorf("busctl get ExecMainStartTimestamp: %w: %s", err, out)
 	}
 	return parseSystemdTimestamp(out)
+}
+
+func parseSystemctlUTCTimestamp(out string) (time.Time, error) {
+	s := strings.TrimSpace(out)
+	if s == "" || s == "n/a" {
+		return time.Time{}, errors.New("empty systemctl timestamp")
+	}
+	for _, layout := range []string{
+		"Mon 2006-01-02 15:04:05.999999 UTC",
+		"2006-01-02 15:04:05.999999 UTC",
+		"Mon 2006-01-02 15:04:05 UTC",
+		"2006-01-02 15:04:05 UTC",
+	} {
+		if t, err := time.ParseInLocation(layout, s, time.UTC); err == nil && !t.IsZero() {
+			return t, nil
+		}
+	}
+	return time.Time{}, fmt.Errorf("invalid systemctl ExecMainStartTimestamp %q", out)
 }
 
 func (m systemdServiceManager) LogCommand(lines int, follow bool) (string, []string) {

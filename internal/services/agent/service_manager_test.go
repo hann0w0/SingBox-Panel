@@ -379,3 +379,24 @@ func containsCommandCall(calls [][]string, want []string) bool {
 	}
 	return false
 }
+
+func TestSystemdStartedAtFallsBackWithoutBusctl(t *testing.T) {
+	ctx := context.Background()
+	manager := systemdServiceManager{run: func(_ context.Context, command string, args ...string) (string, error) {
+		if command == "busctl" {
+			return "Failed to connect to system scope bus", errors.New("exit status 1")
+		}
+		if command == "systemctl" {
+			return "Mon 2026-08-21 04:14:01.404504 UTC\n", nil
+		}
+		return "", errors.New("unexpected command")
+	}}
+	started, err := manager.StartedAt(ctx, 4321)
+	if err != nil {
+		t.Fatalf("StartedAt fallback failed: %v", err)
+	}
+	want := time.Date(2026, 8, 21, 4, 14, 1, 404504000, time.UTC)
+	if !started.Equal(want) {
+		t.Fatalf("StartedAt = %s; want %s", started, want)
+	}
+}

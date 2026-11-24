@@ -55,11 +55,34 @@ func fakeQUICServer(t *testing.T) int {
 }
 
 func TestTestOutboundRejectsLoopbackAndUnspecifiedTargetsByDefault(t *testing.T) {
-	for _, host := range []string{"127.0.0.1", "localhost", "foo.localhost", "::1", "0.0.0.0", "::"} {
+	for _, host := range []string{"127.0.0.1", "localhost", "foo.localhost", "::1", "[::1]", "0.0.0.0", "::", "100.100.100.200", "fd00:ec2::254", "[fd00:ec2::254]"} {
 		res := TestOutbound(context.Background(), protocol.TestOutboundCmd{Host: host, Port: 443})
 		if res.OK || !strings.Contains(res.Error, "回环") {
 			t.Fatalf("host %q not rejected: %+v", host, res)
 		}
+	}
+}
+
+func TestTestOutboundStripsIPv6BracketsBeforeDial(t *testing.T) {
+	withLoopbackAllowed(t)
+	ln, err := net.Listen("tcp", "[::1]:0")
+	if err != nil {
+		t.Skipf("IPv6 loopback unavailable: %v", err)
+	}
+	defer ln.Close()
+	go func() {
+		for {
+			c, err := ln.Accept()
+			if err != nil {
+				return
+			}
+			_ = c.Close()
+		}
+	}()
+	port := ln.Addr().(*net.TCPAddr).Port
+	res := TestOutbound(context.Background(), protocol.TestOutboundCmd{Host: "[::1]", Port: port})
+	if !res.OK {
+		t.Fatalf("bracketed IPv6 probe failed: %+v", res)
 	}
 }
 

@@ -80,8 +80,8 @@ func ApplyConfig(ctx context.Context, configBytes []byte) (string, error) {
 		}
 	}
 
-	// 1) write temp (extension is .tmp so the -C directory loader ignores it).
-	if err := os.WriteFile(tmpConfigFile, configBytes, 0o600); err != nil {
+	// 1) write temp (extension is .tmp so the -C directory loader ignores it) and fsync before check/rename.
+	if err := writeSyncedFile(tmpConfigFile, configBytes, 0o600); err != nil {
 		return "", fmt.Errorf("write temp config: %w", err)
 	}
 
@@ -534,6 +534,26 @@ func copyFile(src, dst string) error {
 		return err
 	}
 	return os.Rename(tmpName, dst)
+}
+
+func writeSyncedFile(path string, data []byte, mode os.FileMode) error {
+	f, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, mode)
+	if err != nil {
+		return err
+	}
+	if _, err := f.Write(data); err != nil {
+		_ = f.Close()
+		return err
+	}
+	if err := f.Chmod(mode); err != nil {
+		_ = f.Close()
+		return err
+	}
+	if err := f.Sync(); err != nil {
+		_ = f.Close()
+		return err
+	}
+	return f.Close()
 }
 
 func secureKnownConfigFiles() error {

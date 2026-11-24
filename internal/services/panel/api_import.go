@@ -689,6 +689,9 @@ func validatePrivateRouteScope(db *gorm.DB, serverID uint, outbound model.Outbou
 	if outbound.ServerID != 0 && outbound.ServerID != serverID {
 		return fmt.Errorf("专属出站 %q 绑定在其它入口服务器", outbound.Tag)
 	}
+	if invert, exists := match.Extra["invert"]; exists && invert != false && invert != nil {
+		return fmt.Errorf("专属出站 %q 的身份范围不能取反", outbound.Tag)
+	}
 	if len(match.AuthUser) != 1 {
 		return fmt.Errorf("专属出站 %q 必须限定为所属用户或对应转发的唯一身份", outbound.Tag)
 	}

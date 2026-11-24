@@ -1000,8 +1000,51 @@ func TestRouteRuleNetworkArrayAndExtraMatchConditions(t *testing.T) {
 		"fallback_network_type":        []any{"cellular"},
 		"fallback_delay":               "300ms",
 		"rule_set_ip_cidr_accept_empty": true,
+		"interface_address":            map[string]any{},
+		"process_name":                 []string{},
 	}}) {
-		t.Fatal("action options alone must not count as a match condition")
+		t.Fatal("action options and empty collections alone must not count as a match condition")
+	}
+
+	// Cross-action option validation & stripping
+	for _, invalid := range []RuleInput{
+		{Action: "reject", Domain: []string{"a.com"}, Extra: map[string]any{"tls_fragment": true}},
+		{Action: "route", Outbound: "direct", Domain: []string{"a.com"}, Extra: map[string]any{"no_drop": true}},
+		{Action: "route", Outbound: "direct", Domain: []string{"a.com"}, Extra: map[string]any{"disable_cache": true}},
+		{Action: "route", Outbound: "direct", Domain: []string{"a.com"}, Extra: map[string]any{"timeout": "5s"}},
+		{Action: "sniff", Extra: map[string]any{"timeout": "0ms"}},
+		{Action: "sniff", Extra: map[string]any{"timeout": "5"}},
+		{Action: "resolve", Extra: map[string]any{"timeout": "-1s"}},
+		{Action: "resolve", Extra: map[string]any{"client_subnet": "not-a-cidr"}},
+		{Action: "route-options", Extra: map[string]any{"udp_timeout": "invalid"}},
+		{Action: "route-options", Extra: map[string]any{"fallback_delay": "0s"}},
+	} {
+		if err := ValidateRuleActionFields(invalid); err == nil {
+			t.Fatalf("expected ValidateRuleActionFields to reject %+v", invalid)
+		}
+	}
+	for _, valid := range []RuleInput{
+		{Action: "sniff", Extra: map[string]any{"timeout": "300ms"}},
+		{Action: "resolve", Extra: map[string]any{"timeout": "5s", "client_subnet": "1.1.1.0/24", "disable_cache": true}},
+		{Action: "resolve", Extra: map[string]any{"client_subnet": "1.1.1.1"}},
+		{Action: "route", Outbound: "direct", Domain: []string{"a.com"}, Extra: map[string]any{"tls_fragment": true, "tls_fragment_fallback_delay": "500ms", "udp_timeout": "5m"}},
+		{Action: "reject", Domain: []string{"a.com"}, Extra: map[string]any{"no_drop": true}},
+	} {
+		if err := ValidateRuleActionFields(valid); err != nil {
+			t.Fatalf("expected ValidateRuleActionFields to accept %+v, got %v", valid, err)
+		}
+	}
+
+	strippedReject := buildRouteRule(RuleInput{
+		Action: "reject",
+		Domain: []string{"a.com"},
+		Extra:  map[string]any{"tls_fragment": true, "server": "dns-local"},
+	})
+	if _, has := strippedReject["tls_fragment"]; has {
+		t.Fatalf("reject rule must strip route-options key tls_fragment: %#v", strippedReject)
+	}
+	if _, has := strippedReject["server"]; has {
+		t.Fatalf("reject rule must strip resolve key server: %#v", strippedReject)
 	}
 
 	var legacy RuleInput

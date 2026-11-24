@@ -1,6 +1,13 @@
 package singbox
 
-import "encoding/json"
+import (
+	"encoding/json"
+	"fmt"
+	"net/netip"
+	"reflect"
+	"strings"
+	"time"
+)
 
 // OutboundInput describes one outbound (a landing/forward target or direct).
 type OutboundInput struct {
@@ -232,13 +239,22 @@ func HasRuleMatch(r RuleInput) bool {
 		return true
 	}
 	for key, val := range r.Extra {
-		if isRuleActionOptionKey(key) || val == nil || val == "" || val == false {
-			continue
-		}
-		if list, ok := val.([]any); ok && len(list) == 0 {
+		if isRuleActionOptionKey(key) || isEmptyRuleExtraValue(val) {
 			continue
 		}
 		return true
+	}
+	return false
+}
+
+func isEmptyRuleExtraValue(val any) bool {
+	if val == nil || val == "" || val == false {
+		return true
+	}
+	rv := reflect.ValueOf(val)
+	switch rv.Kind() {
+	case reflect.Slice, reflect.Array, reflect.Map:
+		return rv.Len() == 0
 	}
 	return false
 }
@@ -257,6 +273,87 @@ func isRuleActionOptionKey(key string) bool {
 		return true
 	}
 	return false
+}
+
+// allowedRuleActionOptionActions returns the actions that accept an action
+// option key in sing-box, or nil if the key is not restricted to specific actions.
+func allowedRuleActionOptionActions(key string) []string {
+	switch key {
+	case "no_drop":
+		return []string{"reject"}
+	case "timeout":
+		return []string{"sniff", "resolve"}
+	case "server", "strategy", "disable_cache", "disable_optimistic_cache", "rewrite_ttl", "client_subnet":
+		return []string{"resolve"}
+	case "override_address", "override_port",
+		"udp_disable_domain_unmapping", "udp_connect", "udp_timeout",
+		"network_strategy", "fallback_network_type", "fallback_delay",
+		"tls_fragment", "tls_fragment_fallback_delay", "tls_record_fragment",
+		"tls_spoof", "tls_spoof_method":
+		return []string{"route", "route-options"}
+	}
+	return nil
+}
+
+func ruleActionOptionAllowed(action, key string) bool {
+	allowed := allowedRuleActionOptionActions(key)
+	if len(allowed) == 0 {
+		return true
+	}
+	for _, a := range allowed {
+		if a == action {
+			return true
+		}
+	}
+	return false
+}
+
+// ValidateRuleActionFields checks that action-specific options in Extra match
+// the rule's action and that duration / subnet fields are valid for sing-box.
+func ValidateRuleActionFields(r RuleInput) error {
+	act := routeRuleAction(r)
+	for key, val := range r.Extra {
+		if isEmptyRuleExtraValue(val) {
+			continue
+		}
+		if !ruleActionOptionAllowed(act, key) {
+			allowed := allowedRuleActionOptionActions(key)
+			return fmt.Errorf("参数 %s 仅支持用于 %s 动作", key, strings.Join(allowed, " / "))
+		}
+		switch key {
+		case "timeout", "udp_timeout", "fallback_delay", "tls_fragment_fallback_delay":
+			text, ok := val.(string)
+			if !ok {
+				return fmt.Errorf("%s 必须是时长字符串", key)
+			}
+			trimmed := strings.TrimSpace(text)
+			if trimmed == "" {
+				continue
+			}
+			d, err := time.ParseDuration(trimmed)
+			if err != nil {
+				return fmt.Errorf("%s 时长格式无效，例如 300ms", key)
+			}
+			if d <= 0 {
+				return fmt.Errorf("%s 时长必须大于 0", key)
+			}
+		case "client_subnet":
+			text, ok := val.(string)
+			if !ok {
+				return fmt.Errorf("client_subnet 必须是 IP 或 CIDR 字符串")
+			}
+			trimmed := strings.TrimSpace(text)
+			if trimmed == "" {
+				continue
+			}
+			if _, err := netip.ParsePrefix(trimmed); err != nil {
+				if _, addrErr := netip.ParseAddr(trimmed); addrErr != nil {
+					return fmt.Errorf("client_subnet 必须是合法的 IP 或 CIDR，例如 1.1.1.0/24")
+				}
+			}
+		}
+	}
+	return nil
 }
 
 func routeRuleAction(r RuleInput) string {
@@ -323,6 +420,11 @@ func buildRouteRule(r RuleInput) map[string]any {
 	}
 
 	act := routeRuleAction(r)
+	for key := range m {
+		if !ruleActionOptionAllowed(act, key) {
+			delete(m, key)
+		}
+	}
 	// The panel intentionally exposes only the meaningful match fields for these
 	// action rules. Dropping stale hidden fields also keeps an edited route rule
 	// from carrying domain/IP/port conditions after it is changed to sniff/DNS.

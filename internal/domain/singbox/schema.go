@@ -1063,8 +1063,9 @@ func RouteRuleSchema() *JSONSchema {
 			UI:   &UIMeta{Label: "禁用 DNS 缓存", Group: "动作", Order: 10, Widget: "switch", Actions: []string{"resolve"}, Advanced: true},
 		},
 		"rewrite_ttl": {
-			Type: "integer",
-			UI:   &UIMeta{Label: "重写 TTL", Group: "动作", Order: 11, Actions: []string{"resolve"}, Advanced: true},
+			Type:    "integer",
+			Minimum: ptrFloat(0),
+			UI:      &UIMeta{Label: "重写 TTL", Group: "动作", Order: 11, Actions: []string{"resolve"}, Advanced: true},
 		},
 		"client_subnet": {
 			Type: "string",

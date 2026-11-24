@@ -406,7 +406,7 @@ export const DEFAULT_ROUTE_RULE_SCHEMA: JSONSchema = {
     strategy: { type: 'string', enum: ['', 'prefer_ipv4', 'prefer_ipv6', 'ipv4_only', 'ipv6_only'], 'x-ui': { label: '解析策略', group: '动作', order: 9, widget: 'select', actions: ['resolve'], advanced: true } },
     disable_optimistic_cache: { type: 'boolean', 'x-ui': { label: '禁用乐观缓存', group: '动作', order: 7, widget: 'switch', actions: ['resolve'], advanced: true } },
     disable_cache: { type: 'boolean', 'x-ui': { label: '禁用 DNS 缓存', group: '动作', order: 10, widget: 'switch', actions: ['resolve'], advanced: true } },
-    rewrite_ttl: { type: 'integer', 'x-ui': { label: '重写 TTL', group: '动作', order: 11, actions: ['resolve'], advanced: true } },
+    rewrite_ttl: { type: 'integer', minimum: 0, 'x-ui': { label: '重写 TTL', group: '动作', order: 11, actions: ['resolve'], advanced: true } },
     client_subnet: { type: 'string', 'x-ui': { label: '客户端子网', group: '动作', order: 12, placeholder: '1.1.1.0/24', actions: ['resolve'], advanced: true } },
     inbound: { type: 'array', items: { type: 'string' }, 'x-ui': { label: '入站来源', group: '来源与身份', order: 10, widget: 'multiselect' } },
     auth_user: { type: 'array', items: { type: 'string' }, 'x-ui': { label: '认证用户', group: '来源与身份', order: 11, widget: 'multiselect', actions: ['route', 'reject', 'resolve', 'route-options'] } },

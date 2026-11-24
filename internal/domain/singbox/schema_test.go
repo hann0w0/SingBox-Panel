@@ -112,6 +112,22 @@ func TestValidateJSONAgainstSchemaAcceptsComplexAndUnknownFields(t *testing.T) {
 		t.Fatal("expected invalid port 0 in route rule to fail schema validation")
 	}
 
+	err = ValidateJSONAgainstSchema(bundle.RouteRule, map[string]any{
+		"action":      "resolve",
+		"rewrite_ttl": float64(-1),
+	})
+	if err == nil {
+		t.Fatal("expected negative rewrite_ttl in route rule to fail schema validation")
+	}
+
+	err = ValidateJSONAgainstSchema(bundle.RouteRule, map[string]any{
+		"action":      "resolve",
+		"rewrite_ttl": float64(0),
+	})
+	if err != nil {
+		t.Fatalf("zero rewrite_ttl rejected: %v", err)
+	}
+
 	err = ValidateJSONAgainstSchema(bundle.Outbound, map[string]any{
 		"type":            "vless",
 		"tag":             "relay-out",

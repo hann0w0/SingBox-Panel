@@ -353,6 +353,9 @@ func (a *App) validateRule(db *gorm.DB, serverID uint, raw json.RawMessage, outb
 		if len(rule.AuthUser) != 1 || rule.AuthUser[0] != expected {
 			return fmt.Errorf("专属出站 %q 只能由所属用户的身份规则使用", outbound)
 		}
+		if invert, exists := rule.Extra["invert"]; exists && invert != false && invert != nil {
+			return fmt.Errorf("专属出站 %q 的身份范围不能取反", outbound)
+		}
 	} else if !errors.Is(privateErr, gorm.ErrRecordNotFound) {
 		return privateErr
 	} else if !ok {
@@ -393,6 +396,10 @@ func (a *App) validateRule(db *gorm.DB, serverID uint, raw json.RawMessage, outb
 		}
 	default:
 		return fmt.Errorf("不支持的规则动作 %q", action)
+	}
+	rule.Outbound = outbound
+	if err := singbox.ValidateRuleActionFields(rule); err != nil {
+		return err
 	}
 	for _, network := range rule.Network {
 		if network != "tcp" && network != "udp" && network != "icmp" {

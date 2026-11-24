@@ -30,7 +30,10 @@ func TestPrivateRouteScope(t *testing.T) {
 		allowed  bool
 	}{
 		{name: "owner account without inbound", match: singbox.RuleInput{AuthUser: []string{proxyTrafficName(&fixture.user)}}, allowed: true},
+		{name: "owner account with invert false", match: singbox.RuleInput{AuthUser: []string{proxyTrafficName(&fixture.user)}, Extra: map[string]any{"invert": false}}, allowed: true},
+		{name: "owner account inverted", match: singbox.RuleInput{AuthUser: []string{proxyTrafficName(&fixture.user)}, Extra: map[string]any{"invert": true}}},
 		{name: "corresponding forward", match: singbox.RuleInput{AuthUser: []string{forwardTrafficName(&fixture.user, forward.ID)}, Inbound: []string{fixture.inbound.Tag}}, allowed: true},
+		{name: "corresponding forward inverted", match: singbox.RuleInput{AuthUser: []string{forwardTrafficName(&fixture.user, forward.ID)}, Inbound: []string{fixture.inbound.Tag}, Extra: map[string]any{"invert": true}}},
 		{name: "global", match: singbox.RuleInput{}},
 		{name: "foreign account", match: singbox.RuleInput{AuthUser: []string{proxyTrafficName(&foreign)}}},
 		{name: "multiple accounts", match: singbox.RuleInput{AuthUser: []string{proxyTrafficName(&fixture.user), proxyTrafficName(&foreign)}}},
@@ -204,5 +207,84 @@ func TestPrivateImportOwnerRouteWithoutInbound(t *testing.T) {
 	var shared int64
 	if err := fixture.db.Model(&model.Outbound{}).Where("owner_user_id = 0").Count(&shared).Error; err != nil || shared != 0 {
 		t.Fatalf("private outbound copied: count=%d error=%v", shared, err)
+	}
+}
+
+func TestValidateRuleActionAndSecurityConstraints(t *testing.T) {
+	fixture := newForwardFixture(t)
+	owner := proxyTrafficName(&fixture.user)
+
+	cases := []struct {
+		name     string
+		outbound string
+		raw      string
+		wantErr  string
+	}{
+		{
+			name:     "private outbound rejects invert true",
+			outbound: fixture.outbound.Tag,
+			raw:      `{"action":"route","auth_user":["` + owner + `"],"invert":true}`,
+			wantErr:  "身份范围不能取反",
+		},
+		{
+			name:     "private outbound allows invert false",
+			outbound: fixture.outbound.Tag,
+			raw:      `{"action":"route","auth_user":["` + owner + `"],"invert":false}`,
+		},
+		{
+			name:     "empty object extra does not count as match",
+			outbound: "direct",
+			raw:      `{"action":"route","interface_address":{}}`,
+			wantErr:  "至少需要一个匹配条件",
+		},
+		{
+			name:     "reject rejects route-options field",
+			outbound: "block",
+			raw:      `{"action":"reject","domain":["a.com"],"tls_fragment":true}`,
+			wantErr:  "仅支持用于",
+		},
+		{
+			name:     "resolve rejects negative rewrite_ttl",
+			outbound: "resolve",
+			raw:      `{"action":"resolve","rewrite_ttl":-1}`,
+			wantErr:  "不能小于 0",
+		},
+		{
+			name:     "resolve rejects invalid timeout",
+			outbound: "resolve",
+			raw:      `{"action":"resolve","timeout":"0ms"}`,
+			wantErr:  "时长必须大于 0",
+		},
+		{
+			name:     "resolve rejects invalid client_subnet",
+			outbound: "resolve",
+			raw:      `{"action":"resolve","client_subnet":"not-a-cidr"}`,
+			wantErr:  "合法的 IP 或 CIDR",
+		},
+		{
+			name:     "resolve accepts valid options",
+			outbound: "resolve",
+			raw:      `{"action":"resolve","timeout":"5s","rewrite_ttl":0,"client_subnet":"1.1.1.0/24"}`,
+		},
+		{
+			name:     "route accepts legacy string network",
+			outbound: "direct",
+			raw:      `{"action":"route","network":"tcp"}`,
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			err := fixture.app.validateRule(fixture.db, fixture.server.ID, json.RawMessage(tc.raw), tc.outbound)
+			if tc.wantErr == "" {
+				if err != nil {
+					t.Fatalf("expected valid rule, got error: %v", err)
+				}
+				return
+			}
+			if err == nil || !strings.Contains(err.Error(), tc.wantErr) {
+				t.Fatalf("error = %v, want substring %q", err, tc.wantErr)
+			}
+		})
 	}
 }

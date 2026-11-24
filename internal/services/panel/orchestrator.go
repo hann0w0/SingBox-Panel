@@ -36,6 +36,8 @@ type Orchestrator struct {
 	asyncPending map[uint]bool
 }
 
+var errDryRunRollback = errors.New("dry-run rollback")
+
 // app returns the panel that owns this orchestrator, or a bare App backed by
 // the same database when tests construct one without a panel.
 func (o *Orchestrator) appOrFallback() *App {
@@ -446,7 +448,16 @@ func (o *Orchestrator) pushConfigUnlocked(ctx context.Context, serverID uint) er
 	if err := o.db.First(&srv, serverID).Error; err != nil {
 		return err
 	}
-	raw, err := o.BuildServerConfig(&srv)
+	return o.pushConfigSnapshotUnlocked(ctx, &srv, true)
+}
+
+// pushConfigSnapshotUnlocked builds the config for a server snapshot. The
+// background reconciler passes includeStaged=false while the administrator has
+// unapplied edits: those changes must only be published through the explicit
+// apply endpoint, never by an Agent reconnect or subscription reset.
+func (o *Orchestrator) pushConfigSnapshotUnlocked(ctx context.Context, srv *model.Server, includeStaged bool) error {
+	serverID := srv.ID
+	raw, err := o.buildServerConfig(srv, nil)
 	if err == nil {
 		var command protocol.ApplyConfigCmd
 		command, err = o.applyConfigCommand(raw)
@@ -551,32 +562,83 @@ func (o *Orchestrator) SwitchToManagedConfig(ctx context.Context, serverID uint)
 	if err := o.db.First(&old, serverID).Error; err != nil {
 		return err
 	}
+	app := o.appOrFallback()
+	var parsed *singbox.ParsedConfig
 	if old.EffectiveConfigMode() == model.ConfigModeRaw {
-		parsed, err := singbox.ParseServerConfig(old.RawConfig)
+		var err error
+		parsed, err = singbox.ParseServerConfig(old.RawConfig)
 		if err != nil {
 			return err
 		}
-		app := o.appOrFallback()
+	}
+
+	var command protocol.ApplyConfigCmd
+	dryErr := o.db.Transaction(func(tx *gorm.DB) error {
+		if parsed != nil {
+			app.userAccessMu.Lock()
+			_, importErr := app.applyImportTx(tx, &old, parsed, old.RawConfig)
+			app.userAccessMu.Unlock()
+			if importErr != nil {
+				return importErr
+			}
+		} else {
+			if err := tx.Model(&model.Server{}).Where("id = ?", serverID).Updates(map[string]any{
+				"config_mode":        model.ConfigModeManaged,
+				"config_initialized": true,
+			}).Error; err != nil {
+				return err
+			}
+		}
+		var staged model.Server
+		if err := tx.First(&staged, serverID).Error; err != nil {
+			return err
+		}
+		dryOrch := &Orchestrator{db: tx, hub: o.hub, app: app}
+		raw, err := dryOrch.BuildServerConfig(&staged)
+		if err != nil {
+			return err
+		}
+		command, err = dryOrch.applyConfigCommand(raw)
+		if err != nil {
+			return err
+		}
+		return errDryRunRollback
+	})
+	if dryErr != nil && !errors.Is(dryErr, errDryRunRollback) {
+		return dryErr
+	}
+
+	if _, err := o.hub.SendCommand(ctx, serverID, protocol.CmdApplyConfig, command); err != nil {
+		if old.ProxySyncRevision > old.ProxySyncAppliedRevision && !errors.Is(err, ErrAgentOffline) {
+			_ = o.db.Model(&model.Server{}).
+				Where("id = ? AND proxy_sync_revision = ?", serverID, old.ProxySyncRevision).
+				Update("proxy_sync_failed", true).Error
+		}
+		return err
+	}
+
+	if parsed != nil {
 		if err := app.applyImportUnlocked(&old, parsed, old.RawConfig); err != nil {
 			return err
 		}
-	}
-	if err := o.db.Model(&model.Server{}).Where("id = ?", serverID).Updates(map[string]any{
-		"config_mode":        model.ConfigModeManaged,
-		"config_initialized": true,
-	}).Error; err != nil {
-		return err
-	}
-	if err := o.pushConfigUnlocked(ctx, serverID); err != nil {
-		if rollbackErr := o.db.Model(&model.Server{}).Where("id = ?", serverID).Updates(map[string]any{
-			"config_mode":        old.ConfigMode,
-			"config_initialized": old.ConfigInitialized,
-			"config_overlay":     old.ConfigOverlay,
-			"config_residual":    old.ConfigResidual,
-		}).Error; rollbackErr != nil {
-			return fmt.Errorf("push managed config: %v; restore config mode: %w", err, rollbackErr)
+	} else {
+		if err := o.db.Model(&model.Server{}).Where("id = ?", serverID).Updates(map[string]any{
+			"config_mode":             model.ConfigModeManaged,
+			"config_initialized":      true,
+			"config_applied_revision": gorm.Expr("config_revision"),
+		}).Error; err != nil {
+			return err
 		}
-		return err
+	}
+	if old.ProxySyncRevision > old.ProxySyncAppliedRevision {
+		if saveErr := o.db.Model(&model.Server{}).
+			Where("id = ? AND proxy_sync_revision = ?", serverID, old.ProxySyncRevision).
+			Updates(map[string]any{
+				"proxy_sync_failed":           false,
+				"proxy_sync_applied_revision": old.ProxySyncRevision,
+			}).Error; saveErr != nil {
+			return fmt.Errorf("record credential synchronization: %w", saveErr)
+		}
 	}
 	return nil
 }
@@ -673,9 +735,19 @@ func (o *Orchestrator) PushConfigIfManaged(serverID uint) {
 		log.Printf("orchestrator: inspect desired config for server %d: %v", serverID, err)
 		return
 	}
-	if managed {
-		o.PushConfigAsync(serverID)
+	if !managed {
+		return
 	}
+	var srv model.Server
+	if err := o.db.Select("config_mode", "raw_config", "config_initialized").First(&srv, serverID).Error; err != nil {
+		log.Printf("orchestrator: inspect desired config for server %d: %v", serverID, err)
+		return
+	}
+	// Explicit administrator edits use stageConfigAndRespond and are never
+	// published by this background path. Everything else queued here (credential
+	// rotation, expiry, address changes, shared rule-set updates) is intended to
+	// converge immediately, even when an unrelated staged edit is pending.
+	o.PushConfigAsync(serverID)
 }
 
 func (o *Orchestrator) serverIsManaged(serverID uint) (bool, error) {

@@ -285,58 +285,65 @@ func (a *App) applyImportUnlockedWithSummary(srv *model.Server, p *singbox.Parse
 	defer a.userAccessMu.Unlock()
 	var resolved resolvedImportView
 	err := a.db.Transaction(func(tx *gorm.DB) error {
-		if err := validateImportedPrivateRouting(tx, srv.ID, p, raw); err != nil {
-			return err
-		}
-		if err := validateImportedInboundTrafficTags(tx, srv.ID, raw); err != nil {
-			return err
-		}
-		var err error
-		resolved, err = a.resolveImportedView(tx, srv.ID, p, raw)
-		if err != nil {
-			return err
-		}
-		if err := syncImportedInbounds(tx, srv.ID, resolved.Inbounds); err != nil {
-			return err
-		}
-		editableOutbounds := make([]singbox.ParsedOutbound, 0, len(p.Outbounds))
-		for _, outbound := range p.Outbounds {
-			if supportedOutboundTypes[outbound.Type] {
-				// A future option value can be unsupported even on a known type.
-				// Keep that object whole until an editor can render it.
-				if _, err := singbox.BuildServerConfig(singbox.ServerConfigInput{Outbounds: []singbox.OutboundInput{singbox.OutboundInput(outbound)}}); err != nil {
-					continue
-				}
-				editableOutbounds = append(editableOutbounds, outbound)
-			}
-		}
-		if err := syncImportedOutbounds(tx, srv.ID, editableOutbounds); err != nil {
-			return err
-		}
-		if err := replaceImportedRules(tx, srv.ID, p.Rules); err != nil {
-			return err
-		}
-		if err := syncImportedRuleSets(tx, srv.ID, p.RuleSets); err != nil {
-			return err
-		}
-		logLevel := p.LogLevel
-		if logLevel == "" {
-			logLevel = "info"
-		}
-		if err := tx.Model(&model.Server{}).Where("id = ?", srv.ID).Updates(map[string]any{
-			"final_outbound":          p.Final,
-			"log_level":               logLevel,
-			"config_mode":             model.ConfigModeManaged,
-			"raw_config":              model.JSONText(append([]byte(nil), raw...)),
-			"config_residual":         model.JSONText(nil),
-			"config_initialized":      true,
-			"config_applied_revision": gorm.Expr("config_revision"),
-		}).Error; err != nil {
-			return err
-		}
-		return initializeConfigOverlay(tx, srv.ID, p, raw)
+		var txErr error
+		resolved, txErr = a.applyImportTx(tx, srv, p, raw)
+		return txErr
 	})
 	return resolved, err
+}
+
+func (a *App) applyImportTx(tx *gorm.DB, srv *model.Server, p *singbox.ParsedConfig, raw []byte) (resolvedImportView, error) {
+	var resolved resolvedImportView
+	if err := validateImportedPrivateRouting(tx, srv.ID, p, raw); err != nil {
+		return resolved, err
+	}
+	if err := validateImportedInboundTrafficTags(tx, srv.ID, raw); err != nil {
+		return resolved, err
+	}
+	var err error
+	resolved, err = a.resolveImportedView(tx, srv.ID, p, raw)
+	if err != nil {
+		return resolved, err
+	}
+	if err := syncImportedInbounds(tx, srv.ID, resolved.Inbounds); err != nil {
+		return resolved, err
+	}
+	editableOutbounds := make([]singbox.ParsedOutbound, 0, len(p.Outbounds))
+	for _, outbound := range p.Outbounds {
+		if supportedOutboundTypes[outbound.Type] {
+			// A future option value can be unsupported even on a known type.
+			// Keep that object whole until an editor can render it.
+			if _, err := singbox.BuildServerConfig(singbox.ServerConfigInput{Outbounds: []singbox.OutboundInput{singbox.OutboundInput(outbound)}}); err != nil {
+				continue
+			}
+			editableOutbounds = append(editableOutbounds, outbound)
+		}
+	}
+	if err := syncImportedOutbounds(tx, srv.ID, editableOutbounds); err != nil {
+		return resolved, err
+	}
+	if err := replaceImportedRules(tx, srv.ID, p.Rules); err != nil {
+		return resolved, err
+	}
+	if err := syncImportedRuleSets(tx, srv.ID, p.RuleSets); err != nil {
+		return resolved, err
+	}
+	logLevel := p.LogLevel
+	if logLevel == "" {
+		logLevel = "info"
+	}
+	if err := tx.Model(&model.Server{}).Where("id = ?", srv.ID).Updates(map[string]any{
+		"final_outbound":          p.Final,
+		"log_level":               logLevel,
+		"config_mode":             model.ConfigModeManaged,
+		"raw_config":              model.JSONText(append([]byte(nil), raw...)),
+		"config_residual":         model.JSONText(nil),
+		"config_initialized":      true,
+		"config_applied_revision": gorm.Expr("config_revision"),
+	}).Error; err != nil {
+		return resolved, err
+	}
+	return resolved, initializeConfigOverlay(tx, srv.ID, p, raw)
 }
 
 // rawConfigSecurityWarnings flags control endpoints without a secret. A
@@ -633,7 +640,9 @@ func syncImportedOutbounds(tx *gorm.DB, serverID uint, parsed []singbox.ParsedOu
 		}
 		if err := tx.Model(row).Updates(map[string]any{
 			"type": ob.Type, "settings": model.JSONText(blob), "sort": i,
-			"remark": "同步自服务器配置",
+			"remark":      "同步自服务器配置",
+			"source_kind": "",
+			"source_id":   0,
 		}).Error; err != nil {
 			return err
 		}
@@ -855,6 +864,16 @@ func syncImportedRuleSets(tx *gorm.DB, serverID uint, parsed []singbox.RuleSetIn
 				return err
 			}
 			byTag[rs.Tag] = row
+		} else if row.Type != typ || row.Format != format || row.URL != rs.URL || row.Path != rs.Path || row.UpdateInterval != rs.UpdateInterval {
+			var otherRefs int64
+			if err := tx.Model(&model.ServerRuleSet{}).
+				Where("rule_set_id = ? AND server_id <> ?", row.ID, serverID).
+				Count(&otherRefs).Error; err != nil {
+				return err
+			}
+			if otherRefs > 0 {
+				return fmt.Errorf("规则集 %q 已被其它服务器引用且配置不一致，请先在共享规则集中统一修改或使用不同 tag", rs.Tag)
+			}
 		}
 		if err := tx.Model(&model.RuleSet{}).Where("id = ?", row.ID).Updates(map[string]any{
 			"type": typ, "format": format, "url": rs.URL, "path": rs.Path,

@@ -2,6 +2,7 @@ package panel
 
 import (
 	"archive/tar"
+	"bufio"
 	"bytes"
 	"compress/gzip"
 	"encoding/hex"
@@ -73,7 +74,7 @@ type pendingRestore struct {
 // POST /api/admin/maintenance/restore — multipart upload field "file".
 func (a *App) restoreBackup(c *gin.Context) {
 	// Restore only makes sense for the file-backed SQLite deployment.
-	_, ok := a.sqliteDBPath()
+	dbPath, ok := a.sqliteDBPath()
 	if !ok {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "仅 SQLite 部署支持一键恢复"})
 		return
@@ -112,6 +113,12 @@ func (a *App) restoreBackup(c *gin.Context) {
 	// "passphrase" is still read for archives written by releases that encrypted
 	// backups. Current exports are plain .tar.gz and send no such field.
 	passphrase := ""
+	spooledPath := ""
+	defer func() {
+		if spooledPath != "" {
+			_ = os.Remove(spooledPath)
+		}
+	}()
 	for parts := 0; parts < 32; parts++ {
 		part, partErr := multipartReader.NextPart()
 		if partErr == io.EOF {
@@ -137,7 +144,43 @@ func (a *App) restoreBackup(c *gin.Context) {
 			continue
 		}
 		if part.FormName() == "file" && part.FileName() != "" {
-			plain, _, plainErr := backupPlainReader(io.LimitReader(part, maxBackupUpload+1), passphrase)
+			if spooledPath != "" {
+				_ = part.Close()
+				c.JSON(http.StatusBadRequest, gin.H{"error": "仅允许上传单个备份文件"})
+				return
+			}
+			br := bufio.NewReaderSize(io.LimitReader(part, maxBackupUpload+1), backupChunkSize+backupTagSize+1)
+			if isEncryptedBackup(br) && passphrase == "" {
+				spool, spoolErr := os.CreateTemp(filepath.Dir(dbPath), ".restore-upload-*")
+				if spoolErr != nil {
+					_ = part.Close()
+					c.JSON(http.StatusInternalServerError, gin.H{"error": "创建上传暂存文件失败：" + spoolErr.Error()})
+					return
+				}
+				spooledPath = spool.Name()
+				written, copyErr := io.Copy(spool, br)
+				closeErr := spool.Close()
+				_ = part.Close()
+				if copyErr != nil {
+					var maxErr *http.MaxBytesError
+					if errors.As(copyErr, &maxErr) {
+						c.JSON(http.StatusRequestEntityTooLarge, gin.H{"error": "备份文件过大"})
+						return
+					}
+					c.JSON(http.StatusBadRequest, gin.H{"error": "读取上传失败：" + copyErr.Error()})
+					return
+				}
+				if closeErr != nil {
+					c.JSON(http.StatusInternalServerError, gin.H{"error": "保存上传暂存文件失败：" + closeErr.Error()})
+					return
+				}
+				if written > maxBackupUpload {
+					c.JSON(http.StatusRequestEntityTooLarge, gin.H{"error": "备份文件过大"})
+					return
+				}
+				continue
+			}
+			plain, _, plainErr := backupPlainReader(br, passphrase)
 			if plainErr != nil {
 				_ = part.Close()
 				c.JSON(http.StatusBadRequest, gin.H{"error": plainErr.Error()})
@@ -150,6 +193,22 @@ func (a *App) restoreBackup(c *gin.Context) {
 		}
 		_, _ = io.Copy(io.Discard, io.LimitReader(part, 64<<10))
 		_ = part.Close()
+	}
+	if spooledPath != "" {
+		spooledFile, openErr := os.Open(spooledPath)
+		if openErr != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "读取上传暂存文件失败：" + openErr.Error()})
+			return
+		}
+		defer spooledFile.Close()
+		plain, _, plainErr := backupPlainReader(spooledFile, passphrase)
+		if plainErr != nil {
+			c.JSON(http.StatusBadRequest, gin.H{"error": plainErr.Error()})
+			return
+		}
+		restartScheduled := a.restoreBackupReader(c, plain)
+		releaseMaintenanceLock = !restartScheduled
+		return
 	}
 	c.JSON(http.StatusBadRequest, gin.H{"error": "缺少上传文件（字段名 file）"})
 }

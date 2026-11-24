@@ -1297,3 +1297,47 @@ func TestOrchestratorShutdownContextCancelsAsyncPush(t *testing.T) {
 		t.Fatal("async push started despite canceled shutdown context")
 	}
 }
+
+func TestImportClearsOutboundSourceRefAndGuardsSharedRuleSet(t *testing.T) {
+	db := testDB(t)
+	srvA := model.Server{Name: "srv-a", AgentToken: "tok-a", ConfigMode: model.ConfigModeManaged}
+	srvB := model.Server{Name: "srv-b", AgentToken: "tok-b", ConfigMode: model.ConfigModeManaged}
+	mustCreate(t, db, &srvA)
+	mustCreate(t, db, &srvB)
+
+	mustCreate(t, db, &model.Outbound{
+		ServerID: srvA.ID, Tag: "relay", Type: "socks",
+		SourceKind: model.OutboundSourceInbound, SourceID: 99,
+		Settings: model.JSONText(`{"server":"old.example","server_port":1080}`),
+	})
+	sharedRS := model.RuleSet{Tag: "geosite-cn", Type: "remote", Format: "binary", URL: "https://a.example/cn.srs"}
+	mustCreate(t, db, &sharedRS)
+	mustCreate(t, db, &model.ServerRuleSet{ServerID: srvA.ID, RuleSetID: sharedRS.ID})
+	mustCreate(t, db, &model.RouteRule{ServerID: srvA.ID, Outbound: "direct", Match: model.JSONText(`{"rule_set":["geosite-cn"]}`), Enabled: true})
+
+	app := &App{db: db, orch: NewOrchestrator(db, NewHub(db))}
+	rawA := []byte(`{"outbounds":[{"type":"socks","tag":"relay","server":"new.example","server_port":2080},{"type":"direct","tag":"direct"}],"route":{"rules":[{"rule_set":["geosite-cn"],"outbound":"direct"}],"rule_set":[{"type":"remote","tag":"geosite-cn","format":"binary","url":"https://a.example/cn.srs"}]}}`)
+	parsedA, err := singbox.ParseServerConfig(rawA)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := app.applyImport(&srvA, parsedA, rawA); err != nil {
+		t.Fatal(err)
+	}
+	var updatedOutbound model.Outbound
+	if err := db.Where("server_id = ? AND tag = ?", srvA.ID, "relay").First(&updatedOutbound).Error; err != nil {
+		t.Fatal(err)
+	}
+	if updatedOutbound.SourceKind != "" || updatedOutbound.SourceID != 0 {
+		t.Fatalf("stale source reference survived import: %+v", updatedOutbound)
+	}
+
+	rawB := []byte(`{"outbounds":[{"type":"direct","tag":"direct"}],"route":{"rules":[{"rule_set":["geosite-cn"],"outbound":"direct"}],"rule_set":[{"type":"remote","tag":"geosite-cn","format":"binary","url":"https://b.example/cn.srs"}]}}`)
+	parsedB, err := singbox.ParseServerConfig(rawB)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := app.applyImport(&srvB, parsedB, rawB); err == nil || !strings.Contains(err.Error(), "已被其它服务器引用") {
+		t.Fatalf("shared rule set overwrite was not rejected: %v", err)
+	}
+}

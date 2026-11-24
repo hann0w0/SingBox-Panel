@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState, type DragEvent, type PointerEvent as ReactPointerEvent } from 'react'
 import { Button, Dropdown, Form, Grid, Input, Modal, Segmented, Select, Typography, message } from '../../../components/kit'
 import { Check, ChevronDown, Copy, Network, Pencil, ChevronsUpDown, Plus, Trash2 } from 'lucide-react'
-import { useNavigate } from 'react-router-dom'
+import { useNavigate, useSearchParams } from 'react-router-dom'
 import { createServer, deleteServer, errMsg, getOverview, getServersMeta, installSingbox, isCanceledRequest, updateAllAgents, updateServer, updateServerOrder } from '../../../lib/api'
 import type { Server } from '../../../lib/types'
 import { copyToClipboard, formatBytes } from '../../../lib/util'
@@ -97,6 +97,7 @@ function ServerNetworkButton({ server }: { server: Server }) {
 
 export default function Servers() {
   const nav = useNavigate()
+  const [searchParams, setSearchParams] = useSearchParams()
   const screens = Grid.useBreakpoint()
   const isMobile = !screens.md
   const [servers, setServers] = useState<Server[]>([])
@@ -123,6 +124,14 @@ export default function Servers() {
   const [singboxForm] = Form.useForm()
 
   const singboxMethod = Form.useWatch('method', singboxForm) ?? 'script'
+
+  // PWA shortcuts land here with ?view=traffic|logs. There is no single server
+  // selected yet, so remember the view and forward it when the user opens one.
+  const pendingView = searchParams.get('view')
+  const openServer = (server: Server) => {
+    setSearchParams({}, { replace: true })
+    nav(`/admin/servers/${server.id}${pendingView === 'traffic' || pendingView === 'logs' ? `/${pendingView}` : ''}`)
+  }
 
   const handleUpdateAllAgents = () => {
     Modal.confirm({
@@ -461,7 +470,7 @@ export default function Servers() {
   const totalDown = online.reduce((sum, s) => sum + (s.traffic_available ? s.traffic_download_rate ?? 0 : 0), 0)
   const totalUp = online.reduce((sum, s) => sum + (s.traffic_available ? s.traffic_upload_rate ?? 0 : 0), 0)
   const shown = servers.filter((s) => filter === 'all' || (filter === 'online') === s.online)
-  const open_ = (s: Server) => nav(`/admin/servers/${s.id}`)
+  const open_ = (s: Server) => openServer(s)
   // Reordering a filtered view would move servers relative to hidden rows.
   const canSort = filter === 'all'
 

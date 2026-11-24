@@ -429,16 +429,16 @@
 }
 
 :root[data-console-theme='dark'] .ui-modal.inbound-compact .ui-modal-footer > .ui-btn-primary:not(.ui-btn-dangerous) {
-  border-color: var(--inbound-line-strong);
-  background: transparent;
-  color: var(--inbound-ink);
+  border-color: var(--inbound-ink);
+  background: var(--inbound-ink);
+  color: var(--console-on-primary);
   opacity: 1;
 }
 
 :root[data-console-theme='dark'] .ui-modal.inbound-compact .ui-modal-footer > .ui-btn-primary:not(.ui-btn-dangerous):hover {
-  border-color: var(--inbound-hover-line);
-  background: var(--inbound-hover);
-  opacity: 1;
+  border-color: var(--inbound-ink);
+  background: var(--inbound-ink);
+  opacity: .82;
 }
 
 :root[data-console-theme='dark'] .ui-modal.inbound-compact {
@@ -451,7 +451,7 @@
   }
 
   .ui-modal.inbound-compact .ui-modal-header {
-    padding: 20px 44px 0 18px;
+    padding: 20px 44px 16px 18px;
   }
 
   .ui-modal.inbound-compact .ui-modal-body {

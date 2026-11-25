@@ -116,7 +116,13 @@ func (a *App) releaseMaintenanceAfterDetachedUpdate(lockPath string) {
 	ticker := time.NewTicker(250 * time.Millisecond)
 	defer ticker.Stop()
 	for {
-		if _, err := os.Stat(lockPath); errors.Is(err, os.ErrNotExist) {
+		info, err := os.Stat(lockPath)
+		if errors.Is(err, os.ErrNotExist) {
+			a.selfUpdating.Unlock()
+			return
+		}
+		if err == nil && time.Since(info.ModTime()) > panelUpdateLockLifetime {
+			_ = os.Remove(lockPath)
 			a.selfUpdating.Unlock()
 			return
 		}
@@ -261,12 +267,13 @@ func sameVersion(a, b string) bool {
 	return strings.TrimPrefix(a, "v") == strings.TrimPrefix(b, "v")
 }
 
-// compareVersions orders vMAJOR.MINOR.PATCH tags numerically. Pre-release or
-// build suffixes ("-rc1", "+meta") are ignored for ordering. Unparseable
-// versions compare equal so they never look like an upgrade or downgrade.
+// compareVersions orders vMAJOR.MINOR.PATCH tags numerically, ordering standard
+// pre-release suffixes (alpha/beta/rc/pre) before their corresponding final
+// release while treating build metadata, edge hashes, and post-release tags as
+// equal within the same triplet. Unparseable versions compare equal.
 func compareVersions(a, b string) int {
-	pa, okA := parseVersionTriplet(a)
-	pb, okB := parseVersionTriplet(b)
+	pa, preA, okA := parseVersionTag(a)
+	pb, preB, okB := parseVersionTag(b)
 	if !okA || !okB {
 		return 0
 	}
@@ -278,27 +285,97 @@ func compareVersions(a, b string) int {
 			return -1
 		}
 	}
-	return 0
+	isPreA := isSemverPrerelease(preA)
+	isPreB := isSemverPrerelease(preB)
+	if !isPreA && !isPreB {
+		return 0
+	}
+	if isPreA && !isPreB {
+		if preB == "" {
+			return -1
+		}
+		return 0
+	}
+	if !isPreA && isPreB {
+		if preA == "" {
+			return 1
+		}
+		return 0
+	}
+	return comparePrereleaseIdentifiers(preA, preB)
 }
 
-func parseVersionTriplet(v string) ([3]int, bool) {
+func parseVersionTag(v string) ([3]int, string, bool) {
 	var out [3]int
 	v = strings.TrimPrefix(strings.TrimSpace(v), "v")
-	if i := strings.IndexAny(v, "-+"); i >= 0 {
+	if i := strings.IndexByte(v, '+'); i >= 0 {
+		v = v[:i]
+	}
+	pre := ""
+	if i := strings.IndexByte(v, '-'); i >= 0 {
+		pre = v[i+1:]
 		v = v[:i]
 	}
 	parts := strings.Split(v, ".")
 	if len(parts) != 3 {
-		return out, false
+		return out, "", false
 	}
 	for i, part := range parts {
 		n, err := strconv.Atoi(part)
 		if err != nil || n < 0 {
-			return out, false
+			return out, "", false
 		}
 		out[i] = n
 	}
-	return out, true
+	return out, pre, true
+}
+
+func isSemverPrerelease(pre string) bool {
+	lower := strings.ToLower(strings.TrimSpace(pre))
+	for _, prefix := range []string{"alpha", "beta", "rc", "pre"} {
+		if !strings.HasPrefix(lower, prefix) {
+			continue
+		}
+		rest := lower[len(prefix):]
+		if rest == "" || rest[0] == '.' || rest[0] == '-' || (rest[0] >= '0' && rest[0] <= '9') {
+			return true
+		}
+	}
+	return false
+}
+
+func comparePrereleaseIdentifiers(a, b string) int {
+	split := func(s string) []string {
+		return strings.FieldsFunc(strings.ToLower(s), func(r rune) bool {
+			return r == '.' || r == '-'
+		})
+	}
+	ta, tb := split(a), split(b)
+	for i := 0; i < len(ta) && i < len(tb); i++ {
+		if ta[i] == tb[i] {
+			continue
+		}
+		na, errA := strconv.Atoi(ta[i])
+		nb, errB := strconv.Atoi(tb[i])
+		if errA == nil && errB == nil {
+			if na > nb {
+				return 1
+			}
+			return -1
+		}
+		if ta[i] > tb[i] {
+			return 1
+		}
+		return -1
+	}
+	switch {
+	case len(ta) > len(tb):
+		return 1
+	case len(ta) < len(tb):
+		return -1
+	default:
+		return 0
+	}
 }
 
 type panelUpdateOperation struct {
@@ -730,6 +807,11 @@ func (a *App) selfUpdate(c *gin.Context) {
 	stagedBin := filepath.Join(stageDir, assetName)
 	rollbackDB := filepath.Join(stageDir, "database.rollback")
 	dbPath, _ := a.sqliteDBPath()
+	if dbPath != "" {
+		if absDB, absErr := filepath.Abs(dbPath); absErr == nil {
+			dbPath = absDB
+		}
+	}
 
 	checksumManifest, err := downloadReleaseChecksums(base + "/checksums.txt")
 	if err != nil {
@@ -759,7 +841,7 @@ func (a *App) selfUpdate(c *gin.Context) {
 	// stopped or replaced. An older release cannot open a schema migrated by a
 	// newer one, and discovering that after the swap means a panel that will not
 	// come back up.
-	if probeErr := runDatabaseProbe(stagedBin, a.cfgPath, stageDir); probeErr != nil {
+	if probeErr := runDatabaseProbe(stagedBin, a.cfgPath, dbPath, stageDir); probeErr != nil {
 		c.JSON(http.StatusConflict, gin.H{"error": "目标版本 " + target + " 无法使用当前数据库，已取消安装（当前面板未受影响）：" + probeErr.Error()})
 		return
 	}
@@ -828,7 +910,11 @@ func installDirFromDSN(dsn string) string {
 	if dbPath == "" {
 		return ""
 	}
-	dbPath = filepath.Clean(dbPath)
+	if absPath, err := filepath.Abs(dbPath); err == nil {
+		dbPath = absPath
+	} else {
+		dbPath = filepath.Clean(dbPath)
+	}
 	dataDir := filepath.Dir(dbPath)
 	if filepath.Base(dataDir) != "data" {
 		return ""
@@ -944,9 +1030,12 @@ func panelReadyURL(listen string) (string, error) {
 // runDatabaseProbe executes the staged binary's --check-database mode against the
 // live configuration. It only reads the migration ledger, so it is safe to run
 // while the current panel still serves requests.
-func runDatabaseProbe(binary, cfgPath, stageDir string) error {
+func runDatabaseProbe(binary, cfgPath, dbPath, stageDir string) error {
 	args := []string{"--check-database"}
 	if cfgPath != "" {
+		if absCfg, err := filepath.Abs(cfgPath); err == nil {
+			cfgPath = absCfg
+		}
 		args = append(args, "--config", cfgPath)
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
@@ -955,6 +1044,9 @@ func runDatabaseProbe(binary, cfgPath, stageDir string) error {
 	// Keep any stray temp output inside the staging directory, which the swap
 	// helper already cleans up.
 	cmd.Dir = stageDir
+	if dbPath != "" && os.Getenv("SINGBOX_PANEL_DB_DSN") == "" {
+		cmd.Env = append(os.Environ(), "SINGBOX_PANEL_DB_DSN="+dbPath)
+	}
 	out, err := cmd.CombinedOutput()
 	if err != nil {
 		msg := strings.TrimSpace(string(out))
@@ -993,7 +1085,6 @@ func launchSwap(stagedBin, stageDir, readyURL, lockPath, dbPath, rollbackDB stri
 func buildSwapScript(liveBin, stagedBin, stageDir, readyURL, lockPath, dbPath, rollbackDB string) string {
 	return fmt.Sprintf(`set -u
 umask 077
-sleep 2
 STAGE=%[1]s
 ROLLBACK="$STAGE/rollback"
 BIN=%[2]s
@@ -1023,6 +1114,7 @@ finish_update() {
   exit "$result"
 }
 trap finish_update EXIT
+sleep 2
 
 rollback_update() {
   ROLLBACK_FAILED=0
@@ -1107,11 +1199,31 @@ exit 1`,
 		shellQuote(serviceUnitName), shellQuote(readyURL), shellQuote(lockPath), shellQuote(dbPath), shellQuote(rollbackDB))
 }
 
+func normalizeExecutablePath(p string) string {
+	p = strings.TrimSpace(p)
+	p = strings.TrimSuffix(p, " (deleted)")
+	if p == "" {
+		return ""
+	}
+	if abs, err := filepath.Abs(p); err == nil {
+		return abs
+	}
+	return p
+}
+
 // panelBinaryPath returns the path to the running panel binary so the swap
 // overwrites the correct file even for a non-standard install.
 func panelBinaryPath() string {
-	if p, err := os.Executable(); err == nil && p != "" {
-		return p
+	if p, err := os.Executable(); err == nil {
+		if clean := normalizeExecutablePath(p); clean != "" {
+			if _, statErr := os.Stat(clean); statErr == nil || !strings.HasSuffix(p, " (deleted)") {
+				return clean
+			}
+			if _, fallbackErr := os.Stat("/usr/local/bin/singbox-panel"); fallbackErr == nil {
+				return "/usr/local/bin/singbox-panel"
+			}
+			return clean
+		}
 	}
 	return "/usr/local/bin/singbox-panel"
 }

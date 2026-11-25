@@ -1,7 +1,7 @@
 import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { DialogHost } from '../../../components/kit'
-import Settings from './Settings'
+import Settings, { compareVersions } from './Settings'
 import {
   getMaintenanceInfo,
   getOneDriveStatus,
@@ -97,5 +97,13 @@ describe('Settings', () => {
 
     fireEvent.click(screen.getByRole('button', { name: '重试' }))
     expect((await screen.findAllByText('v1.0.17')).length).toBeGreaterThan(0)
+  })
+
+  it('orders pre-release versions before final releases without breaking edge tags', () => {
+    expect(compareVersions('v1.0.18', 'v1.0.18-rc.1')).toBe(1)
+    expect(compareVersions('v1.0.18-rc.1', 'v1.0.18')).toBe(-1)
+    expect(compareVersions('v1.0.18-rc.10', 'v1.0.18-rc.2')).toBe(1)
+    expect(compareVersions('v1.0.18-edge.a38152651ae5', 'v1.0.18')).toBe(0)
+    expect(compareVersions('dev', 'v1.0.18')).toBe(0)
   })
 })

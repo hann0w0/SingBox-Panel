@@ -75,3 +75,56 @@ web_dir: "/custom/frontend"
 		})
 	}
 }
+
+func TestInstallerConfigurePreservesCustomKeysAndSkipsRestartOnFailedRollback(t *testing.T) {
+	raw, err := os.ReadFile("../../../install.sh")
+	if err != nil {
+		t.Fatal(err)
+	}
+	scriptText := string(raw)
+	updateScript := installerFunction(t, scriptText, "yaml_double_quote") + "\n" + installerFunction(t, scriptText, "update_panel_endpoint_config")
+	dir := t.TempDir()
+	cfgPath := filepath.Join(dir, "panel.yaml")
+	initial := `listen: "127.0.0.1:32334"
+base_url: "https://old.example.com"
+jwt_secret: "existing-strong-secret-0123456789"
+timezone: "UTC"
+trusted_proxies:
+  - "127.0.0.1"
+admin:
+  email: "admin"
+  password: ""
+`
+	if err := os.WriteFile(cfgPath, []byte(initial), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	setup := "INSTALL_REAL=" + shellQuote(dir) + "\nPANEL_CONFIG=" + shellQuote(cfgPath) + "\n" +
+		"CONFIGURE=1\nEXISTING_DATABASE=1\nPORT_PROVIDED=0\nBASE_URL_PROVIDED=0\n" +
+		"PANEL_PORT=35555\nBASE_URL=https://configured.example.com\nchown() { :; }\n"
+	cmd := exec.Command("bash", "-c", "set -eu\n"+setup+updateScript+"\nupdate_panel_endpoint_config\n")
+	if out, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("configure update failed: %v: %s", err, out)
+	}
+	updated, err := os.ReadFile(cfgPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var values map[string]any
+	if err := yaml.Unmarshal(updated, &values); err != nil {
+		t.Fatal(err)
+	}
+	if values["listen"] != "127.0.0.1:35555" || values["base_url"] != "https://configured.example.com" {
+		t.Fatalf("updated values = %#v", values)
+	}
+	if values["timezone"] != "UTC" || values["jwt_secret"] != "existing-strong-secret-0123456789" {
+		t.Fatalf("configure lost custom settings: %#v", values)
+	}
+
+	restoreFn := installerFunction(t, scriptText, "restore_previous_install")
+	if strings.Contains(restoreFn, `rm -rf -- "$INSTALL_REAL/data"`) {
+		t.Fatal("restore_previous_install still unlinks $INSTALL_REAL/data mount directory")
+	}
+	if !strings.Contains(restoreFn, `if [[ "$had_unit" -eq 1 && "$failed" -eq 0 ]]; then`) {
+		t.Fatal("restore_previous_install restarts service even when rollback failed")
+	}
+}

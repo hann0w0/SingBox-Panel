@@ -620,6 +620,8 @@ validate_install_dir
 acquire_install_lock
 PANEL_CONFIG="$INSTALL_DIR/panel.yaml"
 EXISTING_INSTALL=0
+EXISTING_DATABASE=0
+SECRET_GENERATED=0
 
 # Reinstalls keep the existing domain, port and credentials unless the caller
 # explicitly overrides them.
@@ -642,6 +644,18 @@ if [[ -f "$PANEL_CONFIG" ]]; then
     ADMIN_PASSWORD="$(read_yaml_nested admin password "$PANEL_CONFIG" || printf '%s' "$ADMIN_PASSWORD")"
   fi
   JWT_SECRET="$(read_yaml_scalar jwt_secret "$PANEL_CONFIG" || true)"
+fi
+existing_db_dsn=""
+if [[ -f "$PANEL_CONFIG" ]]; then
+  existing_db_dsn="$(read_yaml_nested database dsn "$PANEL_CONFIG" || true)"
+fi
+if [[ -z "$existing_db_dsn" ]]; then
+  existing_db_dsn="$INSTALL_DIR/data/singbox-panel.db"
+elif [[ "$existing_db_dsn" != /* && "$existing_db_dsn" != file:* ]]; then
+  existing_db_dsn="$INSTALL_DIR/${existing_db_dsn#./}"
+fi
+if [[ -s "$existing_db_dsn" ]]; then
+  EXISTING_DATABASE=1
 fi
 
 is_ipv4() {
@@ -679,12 +693,14 @@ normalize_panel_domain() {
 
 if [[ "$INTERACTIVE" -eq 1 && ( "$EXISTING_INSTALL" -eq 0 || "$CONFIGURE" -eq 1 ) ]]; then
   PANEL_PORT="$(prompt_value "面板端口" "$PANEL_PORT")"
-  ADMIN_USERNAME="$(prompt_value "管理员账号" "$ADMIN_USERNAME")"
+  if [[ "$EXISTING_DATABASE" -eq 0 ]]; then
+    ADMIN_USERNAME="$(prompt_value "管理员账号" "$ADMIN_USERNAME")"
 
-  if [[ -z "$ADMIN_PASSWORD" ]]; then
-    printf '管理员密码（不回显，留空自动生成）: ' >&"$PROMPT_FD"
-    read -rs -u "$PROMPT_FD" ADMIN_PASSWORD
-    printf '\n' >&"$PROMPT_FD"
+    if [[ -z "$ADMIN_PASSWORD" ]]; then
+      printf '管理员密码（不回显，留空自动生成）: ' >&"$PROMPT_FD"
+      read -rs -u "$PROMPT_FD" ADMIN_PASSWORD
+      printf '\n' >&"$PROMPT_FD"
+    fi
   fi
 
   printf '\n提示：安装完成后，请将该域名反向代理到 http://127.0.0.1:%s。\n' "$PANEL_PORT" >&"$PROMPT_FD"
@@ -726,7 +742,7 @@ random_hex() {
   fi
 }
 
-if [[ -z "$ADMIN_PASSWORD" && ( "$EXISTING_INSTALL" -eq 0 || "$CONFIGURE" -eq 1 ) ]]; then
+if [[ -z "$ADMIN_PASSWORD" && "$EXISTING_DATABASE" -eq 0 && ( "$EXISTING_INSTALL" -eq 0 || "$CONFIGURE" -eq 1 ) ]]; then
   ADMIN_PASSWORD="$(random_hex 12)"
   PASSWORD_GENERATED=1
 fi
@@ -939,19 +955,42 @@ prune_legacy_panel_asset_config() {
   }
 }
 
-# Explicit endpoint overrides must be persisted without replacing unrelated
-# database, JWT, static asset or administrator settings in an existing config.
+# Explicit endpoint or --configure updates must be persisted without replacing
+# unrelated database, JWT, static asset, timezone, or trusted_proxies settings
+# in an existing config.
 update_panel_endpoint_config() {
   local config_temp=""
+  local change_port=0 change_origin=0 change_secret=0 change_admin=0
+  [[ "${PORT_PROVIDED:-0}" -eq 1 || "${CONFIGURE:-0}" -eq 1 ]] && change_port=1
+  [[ "${BASE_URL_PROVIDED:-0}" -eq 1 || "${CONFIGURE:-0}" -eq 1 ]] && change_origin=1
+  [[ "${SECRET_GENERATED:-0}" -eq 1 ]] && change_secret=1
+  if [[ "${EXISTING_DATABASE:-1}" -eq 0 && ( "${CONFIGURE:-0}" -eq 1 || "${ADMIN_PROVIDED:-0}" -eq 1 || "${PASSWORD_PROVIDED:-0}" -eq 1 ) ]]; then
+    change_admin=1
+  fi
   config_temp="$(mktemp "$INSTALL_REAL/panel.yaml.XXXXXX")" || return 1
-  if ! SB_INSTALL_CHANGE_PORT="$PORT_PROVIDED" \
-    SB_INSTALL_CHANGE_ORIGIN="$BASE_URL_PROVIDED" \
+  if ! SB_INSTALL_CHANGE_PORT="$change_port" \
+    SB_INSTALL_CHANGE_ORIGIN="$change_origin" \
+    SB_INSTALL_CHANGE_SECRET="$change_secret" \
+    SB_INSTALL_CHANGE_ADMIN="$change_admin" \
     SB_INSTALL_LISTEN="$(yaml_double_quote "127.0.0.1:${PANEL_PORT}")" \
     SB_INSTALL_ORIGIN="$(yaml_double_quote "$BASE_URL")" \
+    SB_INSTALL_SECRET="$(yaml_double_quote "${JWT_SECRET:-}")" \
+    SB_INSTALL_ADMIN="$(yaml_double_quote "${ADMIN_USERNAME:-admin}")" \
+    SB_INSTALL_PASSWORD="$(yaml_double_quote "${ADMIN_PASSWORD:-}")" \
     awk '
       BEGIN {
         change_port = ENVIRON["SB_INSTALL_CHANGE_PORT"] == "1"
         change_origin = ENVIRON["SB_INSTALL_CHANGE_ORIGIN"] == "1"
+        change_secret = ENVIRON["SB_INSTALL_CHANGE_SECRET"] == "1"
+        change_admin = ENVIRON["SB_INSTALL_CHANGE_ADMIN"] == "1"
+      }
+      /^[^[:space:]#]/ {
+        if (in_admin && change_admin) {
+          if (!admin_email_written++) print "  email: " ENVIRON["SB_INSTALL_ADMIN"]
+          if (!admin_password_written++) print "  password: " ENVIRON["SB_INSTALL_PASSWORD"]
+        }
+        in_admin = ($0 ~ /^admin:[[:space:]]*(#.*)?$/)
+        if (in_admin) admin_section_seen = 1
       }
       /^listen[[:space:]]*:/ && change_port {
         if (!port_written++) print "listen: " ENVIRON["SB_INSTALL_LISTEN"]
@@ -961,10 +1000,32 @@ update_panel_endpoint_config() {
         if (!origin_written++) print "base_url: " ENVIRON["SB_INSTALL_ORIGIN"]
         next
       }
+      /^jwt_secret[[:space:]]*:/ && change_secret {
+        if (!secret_written++) print "jwt_secret: " ENVIRON["SB_INSTALL_SECRET"]
+        next
+      }
+      in_admin && change_admin && /^[[:space:]]+email[[:space:]]*:/ {
+        if (!admin_email_written++) print "  email: " ENVIRON["SB_INSTALL_ADMIN"]
+        next
+      }
+      in_admin && change_admin && /^[[:space:]]+password[[:space:]]*:/ {
+        if (!admin_password_written++) print "  password: " ENVIRON["SB_INSTALL_PASSWORD"]
+        next
+      }
       { print }
       END {
+        if (in_admin && change_admin) {
+          if (!admin_email_written++) print "  email: " ENVIRON["SB_INSTALL_ADMIN"]
+          if (!admin_password_written++) print "  password: " ENVIRON["SB_INSTALL_PASSWORD"]
+        }
         if (change_port && !port_written) print "listen: " ENVIRON["SB_INSTALL_LISTEN"]
         if (change_origin && !origin_written) print "base_url: " ENVIRON["SB_INSTALL_ORIGIN"]
+        if (change_secret && !secret_written) print "jwt_secret: " ENVIRON["SB_INSTALL_SECRET"]
+        if (change_admin && !admin_section_seen) {
+          print "admin:"
+          print "  email: " ENVIRON["SB_INSTALL_ADMIN"]
+          print "  password: " ENVIRON["SB_INSTALL_PASSWORD"]
+        }
       }
     ' "$PANEL_CONFIG" > "$config_temp"; then
     rm -f -- "$config_temp"
@@ -1114,35 +1175,36 @@ install_binary_panel() {
     had_previous_config=1
   fi
 
-  if [[ ! -f "$PANEL_CONFIG" || "$CONFIGURE" -eq 1 ]]; then
+  if [[ ! -f "$PANEL_CONFIG" ]]; then
     # Only mint a secret when one is about to be persisted. Rotating it on an
     # existing install would log every signed-in user out.
     if (( ${#JWT_SECRET} < 24 )); then
       JWT_SECRET="$(random_hex 32)"
     fi
     if ! write_panel_config; then
-      if [[ "$had_previous_config" -eq 1 ]]; then
-        cp -p -- "$rollback_dir/config" "$PANEL_CONFIG" || true
-      else
-        rm -f -- "$PANEL_CONFIG"
-      fi
+      rm -f -- "$PANEL_CONFIG"
       die "failed to write $PANEL_CONFIG"
     fi
     CONFIG_WRITTEN=1
     [[ -n "$ADMIN_PASSWORD" ]] && BOOTSTRAP_PASSWORD_WRITTEN=1
     info "Wrote $PANEL_CONFIG"
-  elif [[ "$PORT_PROVIDED" -eq 1 || "$BASE_URL_PROVIDED" -eq 1 ]]; then
+  elif [[ "$CONFIGURE" -eq 1 || "$PORT_PROVIDED" -eq 1 || "$BASE_URL_PROVIDED" -eq 1 ]]; then
+    if [[ "$CONFIGURE" -eq 1 ]] && (( ${#JWT_SECRET} < 24 )); then
+      JWT_SECRET="$(random_hex 32)"
+      SECRET_GENERATED=1
+    fi
     if ! update_panel_endpoint_config; then
       cp -p -- "$rollback_dir/config" "$PANEL_CONFIG" || true
       die "failed to update the panel port or domain in $PANEL_CONFIG"
     fi
     CONFIG_WRITTEN=1
+    [[ "$EXISTING_DATABASE" -eq 0 && -n "$ADMIN_PASSWORD" ]] && BOOTSTRAP_PASSWORD_WRITTEN=1
     info "Updated the requested port/domain in $PANEL_CONFIG; other settings were preserved"
   else
     info "Keeping the existing $PANEL_CONFIG (pass --configure to rewrite it)"
   fi
 
-  if [[ "$had_previous_config" -eq 1 && "$CONFIGURE" -eq 0 ]]; then
+  if [[ "$had_previous_config" -eq 1 ]]; then
     if ! prune_legacy_panel_asset_config; then
       cp -p -- "$rollback_dir/config" "$PANEL_CONFIG" || true
       die "failed to clean legacy web_dir/agents_dir entries in $PANEL_CONFIG"
@@ -1284,8 +1346,9 @@ restore_previous_install() {
     rm -f -- "$PANEL_CONFIG" || failed=1
   fi
   if [[ "$restore_data" -eq 1 && -d "$rollback_dir/data" ]]; then
-    if ! rm -rf -- "$INSTALL_REAL/data" ||
-       ! mv -- "$rollback_dir/data" "$INSTALL_REAL/data"; then
+    if ! mkdir -p "$INSTALL_REAL/data" ||
+       ! find "$INSTALL_REAL/data" -mindepth 1 -maxdepth 1 -exec rm -rf -- {} + ||
+       ! cp -a -- "$rollback_dir/data/." "$INSTALL_REAL/data/"; then
       failed=1
     fi
   elif [[ "$restore_data" -eq 1 ]]; then
@@ -1296,7 +1359,7 @@ restore_previous_install() {
   if [[ "$had_unit" -eq 0 && "$enabled_by_install" -eq 1 ]]; then
     systemctl disable "$SERVICE_NAME" >/dev/null 2>&1 || failed=1
   fi
-  if [[ "$had_unit" -eq 1 ]]; then
+  if [[ "$had_unit" -eq 1 && "$failed" -eq 0 ]]; then
     systemctl restart "$SERVICE_NAME" >/dev/null 2>&1 || failed=1
   fi
   if [[ "$failed" -ne 0 ]]; then

@@ -30,13 +30,36 @@ import { RequestState } from '../../../components/RequestState'
 import type { PanelRelease } from '../../../lib/api'
 import '../../../styles/settings-user.css'
 
-// Orders vMAJOR.MINOR.PATCH tags; unparsable tags compare equal.
-function compareVersions(a: string, b: string): number {
-  const parse = (v: string) => v.replace(/^v/, '').split(/[.-]/).slice(0, 3).map((n) => Number(n))
+// Orders vMAJOR.MINOR.PATCH tags, placing standard pre-releases (alpha/beta/rc/pre)
+// before their final release while treating unparsable or non-prerelease suffixes equal.
+export function compareVersions(a: string, b: string): number {
+  const parse = (raw: string) => {
+    const clean = raw.trim().replace(/^v/, '').split('+', 1)[0]
+    const dash = clean.indexOf('-')
+    const ver = dash >= 0 ? clean.slice(0, dash) : clean
+    const pre = dash >= 0 ? clean.slice(dash + 1) : ''
+    const parts = ver.split('.')
+    if (parts.length !== 3) return null
+    const nums = parts.map((p) => (/^\d+$/.test(p) ? Number(p) : NaN))
+    if (nums.some((n) => !Number.isFinite(n))) return null
+    return { nums, pre }
+  }
+  const isPre = (pre: string) => /^(alpha|beta|rc|pre)($|[.-]|\d)/i.test(pre.trim())
   const pa = parse(a), pb = parse(b)
-  if (pa.length < 3 || pb.length < 3 || [...pa, ...pb].some((n) => !Number.isFinite(n))) return 0
-  for (let i = 0; i < 3; i++) if (pa[i] !== pb[i]) return pa[i] > pb[i] ? 1 : -1
-  return 0
+  if (!pa || !pb) return 0
+  for (let i = 0; i < 3; i++) if (pa.nums[i] !== pb.nums[i]) return pa.nums[i] > pb.nums[i] ? 1 : -1
+  const preA = isPre(pa.pre), preB = isPre(pb.pre)
+  if (!preA && !preB) return 0
+  if (preA && !preB) return pb.pre === '' ? -1 : 0
+  if (!preA && preB) return pa.pre === '' ? 1 : 0
+  const ta = pa.pre.toLowerCase().split(/[.-]/).filter(Boolean)
+  const tb = pb.pre.toLowerCase().split(/[.-]/).filter(Boolean)
+  for (let i = 0; i < Math.min(ta.length, tb.length); i++) {
+    if (ta[i] === tb[i]) continue
+    if (/^\d+$/.test(ta[i]) && /^\d+$/.test(tb[i])) return Number(ta[i]) > Number(tb[i]) ? 1 : -1
+    return ta[i] > tb[i] ? 1 : -1
+  }
+  return ta.length === tb.length ? 0 : ta.length > tb.length ? 1 : -1
 }
 
 type SettingsView = 'version' | 'backup' | 'restore'

@@ -241,6 +241,17 @@ func TestInstallDirFromDSN(t *testing.T) {
 			t.Errorf("installDirFromDSN(%q) = %q, want %q", dsn, got, want)
 		}
 	}
+
+	wd, err := os.Getwd()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := installDirFromDSN("./data/singbox-panel.db"); got != wd {
+		t.Errorf("installDirFromDSN(./data/singbox-panel.db) = %q, want %q", got, wd)
+	}
+	if got := normalizeExecutablePath("/usr/local/bin/singbox-panel (deleted)"); got != "/usr/local/bin/singbox-panel" {
+		t.Errorf("normalizeExecutablePath = %q", got)
+	}
 }
 
 // shellQuote (shared with agentinstall) must neutralize embedded quotes so the
@@ -464,6 +475,34 @@ func TestDetachedUpdateReleasesOriginalProcessLockOnlyAfterHelperFinishes(t *tes
 	}
 	if !app.selfUpdating.TryLock() {
 		t.Fatal("retry could not acquire the original process maintenance gate")
+	}
+	app.selfUpdating.Unlock()
+
+	// Expired abandoned lock file must also release a waiting parent process.
+	expiredLock := filepath.Join(t.TempDir(), ".active")
+	if err := os.WriteFile(expiredLock, []byte("abandoned"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	expiredAt := time.Now().Add(-panelUpdateLockLifetime - time.Minute)
+	if err := os.Chtimes(expiredLock, expiredAt, expiredAt); err != nil {
+		t.Fatal(err)
+	}
+	app.selfUpdating.Lock()
+	expiredDone := make(chan struct{})
+	go func() {
+		app.releaseMaintenanceAfterDetachedUpdate(expiredLock)
+		close(expiredDone)
+	}()
+	select {
+	case <-expiredDone:
+	case <-time.After(2 * time.Second):
+		t.Fatal("expired helper lock did not release parent maintenance gate")
+	}
+	if _, err := os.Stat(expiredLock); !os.IsNotExist(err) {
+		t.Fatalf("expired helper lock file was not cleaned up: %v", err)
+	}
+	if !app.selfUpdating.TryLock() {
+		t.Fatal("parent maintenance gate stayed locked after expired helper cleanup")
 	}
 	app.selfUpdating.Unlock()
 }
@@ -712,13 +751,29 @@ func TestCompareVersions(t *testing.T) {
 		{"v1.0.2", "v1.0.3", -1},
 		{"1.0.10", "v1.0.9", 1},
 		{"v1.0.2", "1.0.2", 0},
-		{"v1.0.3-rc1", "v1.0.3", 0},
+		{"v1.0.3-rc1", "v1.0.3", -1},
+		{"v1.0.3", "v1.0.3-rc.1", 1},
+		{"v1.0.3-rc.10", "v1.0.3-rc.2", 1},
 		{"v1.0.2-trafficfix.20261003", "v1.0.2", 0},
+		{"v1.0.8-edge.a38152651ae5", "v1.0.8", 0},
 		{"unknown", "v1.0.2", 0},
 	}
 	for _, tc := range cases {
 		if got := compareVersions(tc.a, tc.b); got != tc.want {
 			t.Errorf("compareVersions(%q, %q) = %d, want %d", tc.a, tc.b, got, tc.want)
 		}
+	}
+}
+
+func TestSwapScriptRegistersExitTrapBeforeInitialSleep(t *testing.T) {
+	script := buildSwapScript(
+		"/opt/panel/bin", "/opt/panel/stage/new-bin",
+		"/opt/panel/stage", "http://127.0.0.1:32334/api/ready",
+		"/opt/panel/.update/.active", "/opt/panel/data/panel.db", "/opt/panel/stage/database.rollback",
+	)
+	trapIdx := strings.Index(script, "trap finish_update EXIT")
+	sleepIdx := strings.Index(script, "\nsleep 2\n")
+	if trapIdx < 0 || sleepIdx < 0 || trapIdx > sleepIdx {
+		t.Fatalf("trap finish_update EXIT (at %d) must precede initial sleep 2 (at %d)", trapIdx, sleepIdx)
 	}
 }

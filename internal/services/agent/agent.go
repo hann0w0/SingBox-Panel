@@ -56,6 +56,7 @@ func New(cfg Config) *Agent {
 	a.client.Heartbeat = a.heartbeat
 	a.client.OnCommand = a.onCommand
 	a.client.IsMutatingCommand = commandMutates
+	a.client.CommandTimeout = commandTimeout
 	a.client.OnTrafficAck = a.traffic.acknowledgeReport
 	a.client.OnConnected = func() {
 		if err := markAgentReady(a.cfg.AgentVersion); err != nil {
@@ -66,26 +67,29 @@ func New(cfg Config) *Agent {
 	return a
 }
 
-// Run blocks until ctx is cancelled.
+// Run blocks until ctx is cancelled and all background workers (including the
+// traffic spool flush) have finished.
 func (a *Agent) Run(ctx context.Context) {
-	go a.traffic.run(ctx)
+	var bg sync.WaitGroup
+	bg.Go(func() { a.traffic.run(ctx) })
 	// sing-box 1.14+ API service: per-user attribution and exact final totals
 	// for closing connections. Without it the Clash poll alone keeps per-port
 	// accounting working.
-	go newStatsStream(a.traffic).run(ctx)
+	bg.Go(func() { newStatsStream(a.traffic).run(ctx) })
 	// Push high-frequency traffic snapshots every 3s, independent of the 10s
 	// heartbeat. This lets the panel capture short-lived rate spikes without
 	// bloating the heartbeat payload.
-	go a.trafficReportLoop(ctx)
+	bg.Go(func() { a.trafficReportLoop(ctx) })
 	// Push lightweight 1s live metrics (rates + /proc load/memory) for smooth UI
 	// updates. Handled purely in memory on the panel without database writes.
-	go a.liveMetricsLoop(ctx)
+	bg.Go(func() { a.liveMetricsLoop(ctx) })
 	// Ensure log stream stops when the agent exits.
-	go func() {
+	bg.Go(func() {
 		<-ctx.Done()
 		a.logStream.stop()
-	}()
+	})
 	a.client.Run(ctx)
+	bg.Wait()
 }
 
 // trafficReportLoop sends a TrafficEvt every 3 seconds. The heartbeat still

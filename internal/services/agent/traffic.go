@@ -230,6 +230,8 @@ func (s *trafficSampler) run(ctx context.Context) {
 	s.poll(ctx)
 	ticker := time.NewTicker(time.Second)
 	defer ticker.Stop()
+	spoolTicker := time.NewTicker(30 * time.Second)
+	defer spoolTicker.Stop()
 	for {
 		select {
 		case <-ctx.Done():
@@ -239,6 +241,10 @@ func (s *trafficSampler) run(ctx context.Context) {
 			return
 		case <-ticker.C:
 			s.poll(ctx)
+		case <-spoolTicker.C:
+			if s.spoolPath != "" && s.hasPendingAccounting() {
+				_ = s.saveSpool()
+			}
 		}
 	}
 }

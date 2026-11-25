@@ -125,21 +125,22 @@ func (s *trafficSampler) observeConnection(id, inbound, user string, total [2]ui
 		s.pendingPorts[entry.inbound] = port
 		s.addPortBucket(now, entry.inbound, delta)
 	}
+	effectiveNow := s.effectiveNowLocked(now)
 	if entry.user == "" {
 		if delta[0] != 0 || delta[1] != 0 {
 			if entry.unassigned == nil {
 				entry.unassigned = make(map[int64][2]uint64)
 			}
-			key := now.UTC().Truncate(time.Hour).Unix()
+			key := effectiveNow.UTC().Truncate(time.Hour).Unix()
 			v := entry.unassigned[key]
 			v[0] += delta[0]
 			v[1] += delta[1]
 			entry.unassigned[key] = v
 		}
-		entry.pruneUnassigned(now)
+		entry.pruneUnassigned(effectiveNow)
 		return
 	}
-	entry.pruneUnassigned(now)
+	entry.pruneUnassigned(effectiveNow)
 	var userDelta [2]uint64
 	for i := range userDelta {
 		attributed := entry.counted[i] - entry.baseline[i]
@@ -161,7 +162,7 @@ func (s *trafficSampler) observeConnection(id, inbound, user string, total [2]ui
 	// A user may become known after Clash already counted its bytes. Attribute
 	// those bytes to their original collection buckets, not the discovery time,
 	// without rebasing live minute buckets back to the historical hour key.
-	nowKey := now.UTC().Truncate(time.Minute).Unix()
+	nowKey := effectiveNow.UTC().Truncate(time.Minute).Unix()
 	s.rebaseFutureClockLocked(nowKey)
 	remaining := userDelta
 	for bucket, value := range entry.unassigned {

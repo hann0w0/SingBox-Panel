@@ -49,6 +49,7 @@ type Client struct {
 	Heartbeat         func() protocol.HeartbeatEvt
 	OnCommand         func(ctx context.Context, env protocol.Envelope) protocol.CommandResultEvt
 	IsMutatingCommand func(protocol.MessageType) bool
+	CommandTimeout    func(protocol.MessageType) time.Duration
 	OnTrafficAck      func(protocol.TrafficAck)
 	// OnConnected runs after registration has been written successfully. The
 	// self-updater uses it as a local readiness signal for automatic rollback.
@@ -71,8 +72,9 @@ type Client struct {
 }
 
 type mutatingCommand struct {
-	session uint64
-	env     protocol.Envelope
+	session  uint64
+	deadline time.Time
+	env      protocol.Envelope
 }
 
 type sessionEnvelope struct {
@@ -467,8 +469,28 @@ func (c *Client) startMutatingWorker(rootCtx context.Context, wg *sync.WaitGroup
 				if c.OnCommand == nil {
 					continue
 				}
+				// Drop queued mutating commands whose originating WebSocket session
+				// disconnected before execution started.
+				if task.session != 0 && c.activeSession.Load() != task.session {
+					continue
+				}
+				if !task.deadline.IsZero() && !time.Now().Before(task.deadline) {
+					if out, err := protocol.NewEnvelope(protocol.EvtCommandResult, task.env.ID, protocol.CommandResultEvt{
+						ID: task.env.ID, OK: false, Error: "wait for previous operation: " + context.DeadlineExceeded.Error(),
+					}); err == nil {
+						c.sendControlForSession(task.session, out)
+					}
+					continue
+				}
 				taskCtx := context.WithValue(workerCtx, clientSessionContextKey{}, task.session)
+				var cancelTask context.CancelFunc
+				if !task.deadline.IsZero() {
+					taskCtx, cancelTask = context.WithDeadline(taskCtx, task.deadline)
+				}
 				res := c.OnCommand(taskCtx, task.env)
+				if cancelTask != nil {
+					cancelTask()
+				}
 				if out, err := protocol.NewEnvelope(protocol.EvtCommandResult, task.env.ID, res); err == nil {
 					c.sendControlForSession(task.session, out)
 				}
@@ -567,11 +589,17 @@ func (c *Client) readLoop(ctx context.Context, conn *websocket.Conn) error {
 			continue
 		}
 		if c.IsMutatingCommand != nil && c.IsMutatingCommand(env.Type) {
+			var deadline time.Time
+			if c.CommandTimeout != nil {
+				if d := c.CommandTimeout(env.Type); d > 0 {
+					deadline = time.Now().Add(d)
+				}
+			}
 			if persistentMutating != nil {
 				select {
 				case <-ctx.Done():
 					return ctx.Err()
-				case persistentMutating <- mutatingCommand{session: session, env: env}:
+				case persistentMutating <- mutatingCommand{session: session, deadline: deadline, env: env}:
 				default:
 					c.sendQueueFullReply(ctx, env.ID)
 				}

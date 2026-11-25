@@ -323,8 +323,18 @@ func (s *trafficSampler) acknowledgeReport(ack protocol.TrafficAck) {
 type trafficSpoolState struct {
 	AccountingSession string                       `json:"accounting_session,omitempty"`
 	ReportSequence    uint64                       `json:"report_sequence,omitempty"`
+	Endpoint          string                       `json:"endpoint,omitempty"`
+	LastUpload        uint64                       `json:"last_upload,omitempty"`
+	LastDownload      uint64                       `json:"last_download,omitempty"`
+	LastSampleUnix    int64                        `json:"last_sample_unix,omitempty"`
 	Report            *protocol.TrafficReport      `json:"report,omitempty"`
 	Buckets           []protocol.TrafficTimeBucket `json:"buckets,omitempty"`
+}
+
+func (s *trafficSampler) hasPendingAccounting() bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.report != nil || len(s.buckets) > 0
 }
 
 func (s *trafficSampler) saveSpool() error {
@@ -340,6 +350,14 @@ func (s *trafficSampler) saveSpoolToPath(path string) error {
 		AccountingSession: s.accountingSession,
 		ReportSequence:    s.reportSequence,
 		Report:            cloneTrafficReport(s.report),
+	}
+	if s.haveSample && s.endpoint != "" {
+		state.Endpoint = s.endpoint
+		state.LastUpload = s.lastUpload
+		state.LastDownload = s.lastDownload
+		if !s.lastSample.IsZero() {
+			state.LastSampleUnix = s.lastSample.UTC().Unix()
+		}
 	}
 	if len(s.buckets) > 0 {
 		keys := make([]int64, 0, len(s.buckets))
@@ -368,7 +386,7 @@ func (s *trafficSampler) saveSpoolToPath(path string) error {
 	}
 	s.mu.Unlock()
 
-	if state.Report == nil && len(state.Buckets) == 0 {
+	if state.Report == nil && len(state.Buckets) == 0 && state.Endpoint == "" {
 		err := os.Remove(path)
 		if errors.Is(err, os.ErrNotExist) || errors.Is(err, os.ErrPermission) {
 			return nil
@@ -423,6 +441,16 @@ func (s *trafficSampler) loadSpoolFromPath(path string) error {
 	}
 	if s.report == nil && state.Report != nil {
 		s.report = cloneTrafficReport(state.Report)
+	}
+	if !s.haveSample && state.Endpoint != "" {
+		s.endpoint = state.Endpoint
+		s.lastUpload = state.LastUpload
+		s.lastDownload = state.LastDownload
+		if state.LastSampleUnix > 0 {
+			s.lastSample = time.Unix(state.LastSampleUnix, 0).UTC()
+			s.startedAt = s.lastSample
+		}
+		s.haveSample = true
 	}
 	if len(state.Buckets) > 0 {
 		if s.buckets == nil {

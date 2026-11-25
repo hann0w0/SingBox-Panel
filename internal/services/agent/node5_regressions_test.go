@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -263,5 +264,102 @@ func TestRestrictedOutboundHTTPHostAndIPv6Preference(t *testing.T) {
 	}
 	if len(tr.Host) != 1 || tr.Host[0] != "cdn.custom" {
 		t.Fatalf("explicit http host mutated: %+v", tr.Host)
+	}
+}
+
+func TestObserveConnectionUsesCalibratedClockOffsetAndSpoolBaseline(t *testing.T) {
+	s := newTrafficSampler()
+	serverNow := time.Date(2026, 11, 25, 11, 57, 0, 0, time.UTC)
+	fastLocal := serverNow.Add(5 * time.Minute) // 12:02 local (crosses hour boundary!)
+	s.clockOffset = serverNow.Sub(fastLocal)    // -5m
+
+	s.ingest("http://127.0.0.1:9090/connections", clashTrafficResponse{UploadTotal: 1000, DownloadTotal: 2000}, fastLocal.Add(-time.Minute))
+	// Observe anonymous bytes on fastLocal (12:02 local -> 11:57 calibrated), then attribute user at +10s.
+	s.observeConnection("conn-skew", "vless-in", "", [2]uint64{400, 600}, false, fastLocal)
+	s.observeConnection("conn-skew", "vless-in", "u1:token", [2]uint64{500, 800}, false, fastLocal.Add(10*time.Second))
+
+	snap := s.accountingSnapshot()
+	if snap == nil || snap.Report == nil || len(snap.Report.Buckets) == 0 {
+		t.Fatalf("missing accounting report: %+v", snap)
+	}
+	maxServerMinute := serverNow.Truncate(time.Minute).Unix()
+	for _, b := range snap.Report.Buckets {
+		if b.Time > maxServerMinute {
+			t.Fatalf("bucket timestamp %d exceeded calibrated server minute %d (uncalibrated local clock leaked)", b.Time, maxServerMinute)
+		}
+	}
+
+	// Verify L2: spool persists node counter baseline across short Agent restart.
+	spoolPath := filepath.Join(t.TempDir(), "traffic-spool.json")
+	s.spoolPath = spoolPath
+	s.acknowledgeReport(protocol.TrafficAck{
+		Session:    snap.Report.Session,
+		Sequence:   snap.Report.Sequence,
+		ServerTime: serverNow.Unix(),
+	})
+	if err := s.saveSpool(); err != nil {
+		t.Fatal(err)
+	}
+	restarted := newTrafficSampler()
+	restarted.spoolPath = spoolPath
+	if err := restarted.loadSpool(); err != nil {
+		t.Fatal(err)
+	}
+	// sing-box stayed running and transferred +350 upload / +700 download while Agent restarted.
+	restarted.ingest("http://127.0.0.1:9090/connections", clashTrafficResponse{UploadTotal: 1350, DownloadTotal: 2700}, serverNow.Add(5*time.Second))
+	afterRestart := restarted.accountingSnapshot()
+	if afterRestart == nil || afterRestart.Report == nil || len(afterRestart.Report.Buckets) != 1 {
+		t.Fatalf("missing post-restart delta report: %+v", afterRestart)
+	}
+	if afterRestart.Report.Buckets[0].Upload != 350 || afterRestart.Report.Buckets[0].Download != 700 {
+		t.Fatalf("post-restart delta = %+v, want upload=350 download=700", afterRestart.Report.Buckets[0])
+	}
+}
+
+func TestMutatingQueueDropsDisconnectedAndExpiredCommands(t *testing.T) {
+	c := NewClient("https://panel.example.com", "token", false)
+	c.IsMutatingCommand = commandMutates
+	c.CommandTimeout = func(protocol.MessageType) time.Duration { return 20 * time.Millisecond }
+
+	var executed []string
+	c.OnCommand = func(_ context.Context, env protocol.Envelope) protocol.CommandResultEvt {
+		executed = append(executed, env.ID)
+		return protocol.CommandResultEvt{ID: env.ID, OK: true}
+	}
+
+	rootCtx, cancel := context.WithCancel(context.Background())
+	var wg sync.WaitGroup
+	c.startMutatingWorker(rootCtx, &wg)
+
+	c.activeSession.Store(2)
+	// 1. Stale session (session 1 != active session 2) must be dropped.
+	c.mutatingCommands <- mutatingCommand{
+		session:  1,
+		deadline: time.Now().Add(time.Minute),
+		env:      protocol.Envelope{ID: "stale-session", Type: protocol.CmdServiceAction},
+	}
+	// 2. Expired deadline on active session must be rejected without calling OnCommand.
+	c.mutatingCommands <- mutatingCommand{
+		session:  2,
+		deadline: time.Now().Add(-time.Millisecond),
+		env:      protocol.Envelope{ID: "expired-cmd", Type: protocol.CmdServiceAction},
+	}
+	// 3. Valid active command must still execute.
+	c.mutatingCommands <- mutatingCommand{
+		session:  2,
+		deadline: time.Now().Add(time.Minute),
+		env:      protocol.Envelope{ID: "fresh-cmd", Type: protocol.CmdServiceAction},
+	}
+
+	deadline := time.Now().Add(2 * time.Second)
+	for len(c.mutatingCommands) > 0 && time.Now().Before(deadline) {
+		time.Sleep(10 * time.Millisecond)
+	}
+	time.Sleep(25 * time.Millisecond)
+	cancel()
+	wg.Wait()
+
+	if len(executed) != 1 || executed[0] != "fresh-cmd" {
+		t.Fatalf("executed commands = %v, want [fresh-cmd]", executed)
 	}
 }

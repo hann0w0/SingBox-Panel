@@ -8,6 +8,14 @@
 <p align="center">面向官方 sing-box 的多节点管理面板，统一管理配置、用户、订阅与流量。</p>
 
 <p align="center">
+  <a href="https://github.com/hann0w0/SingBox-Panel/releases"><img src="https://img.shields.io/github/v/release/hann0w0/SingBox-Panel?label=Release&logo=github&color=22c55e" alt="Release"></a>
+  <img src="https://img.shields.io/badge/Backend-Go-00ADD8?logo=go&logoColor=white" alt="Backend: Go">
+  <img src="https://img.shields.io/badge/Frontend-React%2018-61DAFB?logo=react&logoColor=61DAFB" alt="Frontend: React 18">
+  <img src="https://img.shields.io/badge/Database-SQLite%20%2F%20MySQL%20%2F%20PG-0F80CC?logo=sqlite&logoColor=white" alt="Database: SQLite / MySQL / PostgreSQL">
+  <a href="#安装"><img src="https://img.shields.io/badge/Deploy-Binary%20%2F%20Docker-2496ED?logo=docker&logoColor=white" alt="Deploy: Binary / Docker"></a>
+</p>
+
+<p align="center">
   <a href="#工作模式">工作模式</a> ·
   <a href="#安装">安装</a> ·
   <a href="#卸载">卸载</a> ·

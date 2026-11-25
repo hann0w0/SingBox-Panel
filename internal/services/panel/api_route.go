@@ -3,6 +3,7 @@ package panel
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/url"
@@ -879,36 +880,48 @@ func (a *App) deleteSharedRuleSet(c *gin.Context) {
 	if !ok {
 		return
 	}
-	var rs model.RuleSet
-	if err := a.db.First(&rs, rsid).Error; err != nil {
-		c.JSON(http.StatusNotFound, gin.H{"error": "ruleset not found"})
-		return
-	}
-	referenced, err := sharedRuleSetReferencedAnywhere(a.db, rs.Tag)
-	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
-		return
-	}
-	if referenced {
-		c.JSON(http.StatusConflict, gin.H{"error": "该规则集仍被分流规则引用，请先修改相关规则"})
-		return
-	}
-	var assignments []model.ServerRuleSet
-	if err := a.db.Where("rule_set_id = ?", rs.ID).Find(&assignments).Error; err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
-		return
-	}
+	var (
+		assignments       []model.ServerRuleSet
+		errRuleSetMissing = errors.New("ruleset not found")
+		errRuleSetInUse   = errors.New("该规则集仍被分流规则引用，请先修改相关规则")
+	)
 	if err := a.db.Transaction(func(tx *gorm.DB) error {
+		var rs model.RuleSet
+		if err := tx.First(&rs, rsid).Error; err != nil {
+			if errors.Is(err, gorm.ErrRecordNotFound) {
+				return errRuleSetMissing
+			}
+			return err
+		}
+		referenced, err := sharedRuleSetReferencedAnywhere(tx, rs.Tag)
+		if err != nil {
+			return err
+		}
+		if referenced {
+			return errRuleSetInUse
+		}
+		if err := tx.Where("rule_set_id = ?", rs.ID).Find(&assignments).Error; err != nil {
+			return err
+		}
 		if err := tx.Where("rule_set_id = ?", rs.ID).Delete(&model.ServerRuleSet{}).Error; err != nil {
 			return err
 		}
 		return tx.Delete(&rs).Error
 	}); err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		switch {
+		case errors.Is(err, errRuleSetMissing):
+			c.JSON(http.StatusNotFound, gin.H{"error": err.Error()})
+		case errors.Is(err, errRuleSetInUse):
+			c.JSON(http.StatusConflict, gin.H{"error": err.Error()})
+		default:
+			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		}
 		return
 	}
-	for _, assignment := range assignments {
-		a.orch.PushConfigIfManaged(assignment.ServerID)
+	if a.orch != nil {
+		for _, assignment := range assignments {
+			a.orch.PushConfigIfManaged(assignment.ServerID)
+		}
 	}
 	c.JSON(http.StatusOK, gin.H{"ok": true})
 }

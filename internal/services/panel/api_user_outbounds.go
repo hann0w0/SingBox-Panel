@@ -489,7 +489,7 @@ func (a *App) listUserForwards(c *gin.Context) {
 		return
 	}
 	var inbounds []model.Inbound
-	if err := a.db.Select("id", "server_id", "tag").Where("id IN ?", forwardInboundIDs(rows)).Find(&inbounds).Error; err != nil {
+	if err := a.db.Select("id", "server_id", "tag", "enabled", "type", "settings").Where("id IN ?", forwardInboundIDs(rows)).Find(&inbounds).Error; err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
@@ -502,11 +502,9 @@ func (a *App) listUserForwards(c *gin.Context) {
 	for _, server := range servers {
 		serverNames[server.ID] = server.Name
 	}
-	inboundTags := make(map[uint]string, len(inbounds))
-	inboundServers := make(map[uint]uint, len(inbounds))
+	inboundsByID := make(map[uint]model.Inbound, len(inbounds))
 	for _, inbound := range inbounds {
-		inboundTags[inbound.ID] = inbound.Tag
-		inboundServers[inbound.ID] = inbound.ServerID
+		inboundsByID[inbound.ID] = inbound
 	}
 	outboundTags := make(map[uint]string, len(outbounds))
 	for _, outbound := range outbounds {
@@ -514,18 +512,20 @@ func (a *App) listUserForwards(c *gin.Context) {
 	}
 	forwards := make([]UserForward, 0)
 	for _, row := range rows {
-		inboundTag, serverID := inboundTags[row.InboundID], inboundServers[row.InboundID]
+		inbound, found := inboundsByID[row.InboundID]
 		outboundTag := outboundTags[row.OutboundID]
-		if inboundTag == "" || outboundTag == "" || serverID != row.ServerID || !u.HasServer(serverID) {
+		if !found || inbound.Tag == "" || outboundTag == "" || inbound.ServerID != row.ServerID || !u.HasServer(inbound.ServerID) {
 			continue
 		}
-		if !u.HasInbound(serverID, row.InboundID) {
+		if !u.HasInbound(inbound.ServerID, row.InboundID) {
 			continue
 		}
+		var st singbox.InboundSettings
+		enabled := inbound.Enabled && json.Unmarshal(inbound.Settings, &st) == nil && st.UseMultiUser(string(inbound.Type))
 		forwards = append(forwards, UserForward{
 			ID: row.ID, ServerID: row.ServerID, ServerName: serverNames[row.ServerID],
-			InboundTag: inboundTag, OutboundID: row.OutboundID, OutboundTag: outboundTag,
-			NodeName: forwardNodeName(serverNames[row.ServerID], inboundTag, outboundTag, row.Remark), Remark: row.Remark, Enabled: true,
+			InboundTag: inbound.Tag, OutboundID: row.OutboundID, OutboundTag: outboundTag,
+			NodeName: forwardNodeName(serverNames[row.ServerID], inbound.Tag, outboundTag, row.Remark), Remark: row.Remark, Enabled: enabled,
 		})
 	}
 	c.JSON(http.StatusOK, gin.H{"forwards": forwards})

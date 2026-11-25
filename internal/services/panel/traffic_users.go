@@ -308,11 +308,9 @@ func (a *App) userTrafficSeries(userID uint, c *gin.Context) (userTrafficSeries,
 	if err := a.db.Select("id").First(&user, userID).Error; err != nil {
 		return userTrafficSeries{}, &httpStatusError{http.StatusNotFound, "user not found"}
 	}
-	rangeName, rangeConfig, ok := a.parseTrafficRange(c)
-	if !ok {
-		return userTrafficSeries{}, &httpStatusError{http.StatusBadRequest, "invalid traffic range"}
-	}
-	if !rangeConfig.hourly {
+	rangeName := c.DefaultQuery("range", "24h")
+	rangeConfig, exists := trafficRanges[rangeName]
+	if !exists || !rangeConfig.hourly {
 		return userTrafficSeries{}, &httpStatusError{http.StatusBadRequest, fmt.Sprintf("unsupported range %q", rangeName)}
 	}
 	a.flushTraffic()
@@ -325,9 +323,9 @@ func (a *App) userTrafficSeries(userID uint, c *gin.Context) (userTrafficSeries,
 		// so DST 23-hour/25-hour days never shift midnight boundaries or drop day 7/30.
 		queryStep = time.Hour
 	}
-	stepSeconds := int64(queryStep / time.Second)
+	queryStepSeconds := int64(queryStep / time.Second)
 	offset := stepOffsetSeconds(queryStep, start)
-	bucketExpression, err := trafficBucketExpression(a.db, stepSeconds, offset)
+	bucketExpression, err := trafficBucketExpression(a.db, queryStepSeconds, offset)
 	if err != nil {
 		return userTrafficSeries{}, err
 	}
@@ -348,7 +346,7 @@ func (a *App) userTrafficSeries(userID uint, c *gin.Context) (userTrafficSeries,
 	type inboundKey struct{ serverID, inboundID uint }
 	totals := map[inboundKey]*userTrafficInbound{}
 	for _, row := range rows {
-		bucket := row.BucketIndex*stepSeconds - offset
+		bucket := row.BucketIndex*queryStepSeconds - offset
 		if index := trafficPointIndexInLocation(bucket, start, end, step, points, loc); index >= 0 {
 			points[index].Upload += row.Upload
 			points[index].Download += row.Download
@@ -402,7 +400,7 @@ func (a *App) userTrafficSeries(userID uint, c *gin.Context) (userTrafficSeries,
 	})
 	upload, download := sumTraffic(points)
 	return userTrafficSeries{
-		Range: rangeName, StepSeconds: stepSeconds, Timezone: loc.String(),
+		Range: rangeName, StepSeconds: int64(step / time.Second), Timezone: loc.String(),
 		Upload: upload, Download: download, Points: points, Inbounds: inbounds,
 	}, nil
 }

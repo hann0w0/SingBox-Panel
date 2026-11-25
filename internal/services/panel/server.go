@@ -114,6 +114,7 @@ func NewApp(cfg config.PanelConfig, db *gorm.DB) *App {
 	// The orchestrator resolves node-imported outbounds against the live panel
 	// state (source inbound, external node, or their removal).
 	orch.app = a
+	a.customSubscriptions.onNodesChanged = a.pushCustomNodeConsumers
 	hub.AfterRegister = func(serverID uint) {
 		// onRegister runs in the Agent read pump. Every command that waits for a
 		// result must run asynchronously so that pump can receive the response.

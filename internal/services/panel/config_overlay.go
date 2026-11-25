@@ -21,10 +21,18 @@ func initializeConfigOverlay(tx *gorm.DB, serverID uint, parsed *singbox.ParsedC
 	}
 	seed := singbox.ConfigOverlay{Version: 1, Original: raw, Bindings: map[string][]string{}}
 	var root struct {
-		Outbounds []json.RawMessage `json:"outbounds"`
+		Outbounds []struct {
+			Tag string `json:"tag"`
+		} `json:"outbounds"`
 	}
 	if err := json.Unmarshal(raw, &root); err != nil {
 		return err
+	}
+	rawOutboundTags := make(map[string]bool, len(root.Outbounds))
+	for _, ob := range root.Outbounds {
+		if ob.Tag != "" {
+			rawOutboundTags[ob.Tag] = true
+		}
 	}
 	seed.Bindings["outbounds"] = make([]string, len(root.Outbounds))
 	seed.Baseline.Input.StatsController, seed.Baseline.Input.StatsSecret, seed.Baseline.Input.StatsAPI = importedStatsSettings(raw)
@@ -44,10 +52,19 @@ func initializeConfigOverlay(tx *gorm.DB, serverID uint, parsed *singbox.ParsedC
 		return fmt.Errorf("imported rule identities do not match parsed rules")
 	}
 	sources := make(map[int]string, len(rules))
+	sourceIDs := make(map[string]bool, len(rules))
 	for i, rule := range rules {
-		sources[parsed.Rules[i].SourceIndex] = configRuleIdentity(rule)
+		id := configRuleIdentity(rule)
+		sources[parsed.Rules[i].SourceIndex] = id
+		sourceIDs[id] = true
 	}
-	overlay, err := singbox.NewConfigOverlay(raw, projection, sources)
+	// Active UserForward rules and any private outbounds pulled in solely for
+	// them may be absent from the raw snapshot being imported. Exclude those
+	// unbound derived entries from the overlay baseline so ApplyConfigOverlay
+	// emits them as active panel state instead of suppressing them as untouched
+	// renderer defaults.
+	baseline := pruneUnboundForwardBaseline(projection, sourceIDs, rawOutboundTags)
+	overlay, err := singbox.NewConfigOverlay(raw, baseline, sources)
 	if err != nil {
 		return err
 	}
@@ -60,6 +77,54 @@ func initializeConfigOverlay(tx *gorm.DB, serverID uint, parsed *singbox.ParsedC
 		return err
 	}
 	return tx.Model(&model.Server{}).Where("id = ?", serverID).Update("config_overlay", model.JSONText(encoded)).Error
+}
+
+func pruneUnboundForwardBaseline(projection singbox.ConfigProjection, sourceRuleIDs, rawOutboundTags map[string]bool) singbox.ConfigProjection {
+	baseline := projection
+	baseline.IDs = make(map[string][]string, len(projection.IDs))
+	for k, v := range projection.IDs {
+		baseline.IDs[k] = append([]string(nil), v...)
+	}
+	if len(projection.Input.Rules) > 0 {
+		rules := make([]singbox.RuleInput, 0, len(projection.Input.Rules))
+		ruleIDs := make([]string, 0, len(projection.IDs["rules"]))
+		ruleTargets := make([]string, 0, len(projection.RuleTargets))
+		for i, r := range projection.Input.Rules {
+			id := ""
+			if i < len(projection.IDs["rules"]) {
+				id = projection.IDs["rules"][i]
+			}
+			if strings.HasPrefix(id, "forward:") && !sourceRuleIDs[id] {
+				continue
+			}
+			rules = append(rules, r)
+			if i < len(projection.IDs["rules"]) {
+				ruleIDs = append(ruleIDs, id)
+			}
+			if i < len(projection.RuleTargets) {
+				ruleTargets = append(ruleTargets, projection.RuleTargets[i])
+			}
+		}
+		baseline.Input.Rules = rules
+		baseline.IDs["rules"] = ruleIDs
+		baseline.RuleTargets = ruleTargets
+	}
+	if len(projection.Input.Outbounds) > 0 {
+		outbounds := make([]singbox.OutboundInput, 0, len(projection.Input.Outbounds))
+		outboundIDs := make([]string, 0, len(projection.IDs["outbounds"]))
+		for i, ob := range projection.Input.Outbounds {
+			if !rawOutboundTags[ob.Tag] {
+				continue
+			}
+			outbounds = append(outbounds, ob)
+			if i < len(projection.IDs["outbounds"]) {
+				outboundIDs = append(outboundIDs, projection.IDs["outbounds"][i])
+			}
+		}
+		baseline.Input.Outbounds = outbounds
+		baseline.IDs["outbounds"] = outboundIDs
+	}
+	return baseline
 }
 
 func configRuleIdentity(rule model.RouteRule) string {

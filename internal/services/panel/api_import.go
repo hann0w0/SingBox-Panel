@@ -319,7 +319,7 @@ func (a *App) applyImportTx(tx *gorm.DB, srv *model.Server, p *singbox.ParsedCon
 			editableOutbounds = append(editableOutbounds, outbound)
 		}
 	}
-	if err := syncImportedOutbounds(tx, srv.ID, editableOutbounds); err != nil {
+	if err := syncImportedOutbounds(tx, srv.ID, editableOutbounds, raw); err != nil {
 		return resolved, err
 	}
 	if err := replaceImportedRules(tx, srv.ID, p.Rules); err != nil {
@@ -604,8 +604,8 @@ func syncImportedInbounds(tx *gorm.DB, serverID uint, parsed []singbox.ParsedInb
 	return nil
 }
 
-func syncImportedOutbounds(tx *gorm.DB, serverID uint, parsed []singbox.ParsedOutbound) error {
-	privateByTag, err := validateImportedPrivateOutbounds(tx, parsed)
+func syncImportedOutbounds(tx *gorm.DB, serverID uint, parsed []singbox.ParsedOutbound, raw []byte) error {
+	privateByTag, err := validateImportedPrivateOutbounds(tx, parsed, raw)
 	if err != nil {
 		return err
 	}
@@ -651,7 +651,7 @@ func syncImportedOutbounds(tx *gorm.DB, serverID uint, parsed []singbox.ParsedOu
 	return deleteRowsExcept(tx, serverID, keepIDs, &model.Outbound{})
 }
 
-func validateImportedPrivateOutbounds(db *gorm.DB, parsed []singbox.ParsedOutbound) (map[string]model.Outbound, error) {
+func validateImportedPrivateOutbounds(db *gorm.DB, parsed []singbox.ParsedOutbound, raw []byte) (map[string]model.Outbound, error) {
 	var private []model.Outbound
 	if err := db.Where("owner_user_id <> 0").Find(&private).Error; err != nil {
 		return nil, err
@@ -659,6 +659,32 @@ func validateImportedPrivateOutbounds(db *gorm.DB, parsed []singbox.ParsedOutbou
 	privateByTag := make(map[string]model.Outbound, len(private))
 	for _, row := range private {
 		privateByTag[row.Tag] = row
+	}
+	parsedByTag := make(map[string]int, len(parsed))
+	for _, ob := range parsed {
+		parsedByTag[ob.Tag]++
+	}
+	if len(raw) > 0 && len(privateByTag) > 0 {
+		var root struct {
+			Outbounds []struct {
+				Tag string `json:"tag"`
+			} `json:"outbounds"`
+		}
+		if err := json.Unmarshal(raw, &root); err != nil {
+			return nil, err
+		}
+		rawCounts := make(map[string]int, len(root.Outbounds))
+		for _, ob := range root.Outbounds {
+			if ob.Tag == "" {
+				continue
+			}
+			rawCounts[ob.Tag]++
+			if _, exists := privateByTag[ob.Tag]; exists {
+				if parsedByTag[ob.Tag] == 0 || rawCounts[ob.Tag] > 1 {
+					return nil, fmt.Errorf("导入出站 %q 与专属出站标签冲突，请先重命名", ob.Tag)
+				}
+			}
+		}
 	}
 	for _, ob := range parsed {
 		if private, exists := privateByTag[ob.Tag]; exists {

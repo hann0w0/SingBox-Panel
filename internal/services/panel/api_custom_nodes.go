@@ -3,6 +3,7 @@ package panel
 import (
 	"encoding/json"
 	"errors"
+	"log"
 	"net/http"
 	"strings"
 
@@ -310,6 +311,7 @@ func (a *App) updateCustomNode(c *gin.Context) {
 	if node.SubscriptionID != nil {
 		if nextName != node.Name || req.Link != node.Link || req.Protocol != node.Protocol ||
 			req.Address != node.Address || req.Port != node.Port || nextGroup != node.Group ||
+			!equivalentOptionalJSON(req.Params, []byte(node.Params)) ||
 			(req.SortOrder != nil && *req.SortOrder != node.SortOrder) {
 			c.JSON(http.StatusConflict, gin.H{"error": "该节点由外部订阅托管，无法修改节点本身配置（下次同步会被覆盖），仅支持调整可见用户范围"})
 			return
@@ -367,7 +369,43 @@ func (a *App) updateCustomNode(c *gin.Context) {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
+	a.pushCustomNodeConsumers([]uint{node.ID})
 	c.JSON(http.StatusOK, gin.H{"node": node})
+}
+
+func equivalentOptionalJSON(a, b []byte) bool {
+	trimA := strings.TrimSpace(string(a))
+	trimB := strings.TrimSpace(string(b))
+	emptyA := trimA == "" || trimA == "null" || trimA == "{}"
+	emptyB := trimB == "" || trimB == "null" || trimB == "{}"
+	if emptyA && emptyB {
+		return true
+	}
+	if emptyA != emptyB {
+		return false
+	}
+	return equivalentJSON(a, b)
+}
+
+func (a *App) pushCustomNodeConsumers(nodeIDs []uint) {
+	if a == nil || a.orch == nil || len(nodeIDs) == 0 {
+		return
+	}
+	seen := make(map[uint]bool)
+	for _, nodeID := range nodeIDs {
+		consumers, err := routingConsumers(a.db, model.OutboundSourceCustomNode, nodeID)
+		if err != nil {
+			log.Printf("custom nodes: find routing consumers for node %d: %v", nodeID, err)
+			continue
+		}
+		for _, serverID := range consumers {
+			if seen[serverID] {
+				continue
+			}
+			seen[serverID] = true
+			a.orch.PushConfigIfManaged(serverID)
+		}
+	}
 }
 
 var errInvalidCustomNodeAudience = errors.New("用户列表包含不存在的用户")

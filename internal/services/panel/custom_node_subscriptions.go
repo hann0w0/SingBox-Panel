@@ -25,9 +25,10 @@ const (
 )
 
 type customNodeSubscriptionManager struct {
-	db         *gorm.DB
-	locks      *keyedMutex[uint]
-	audienceMu sync.Mutex
+	db             *gorm.DB
+	locks          *keyedMutex[uint]
+	audienceMu     sync.Mutex
+	onNodesChanged func(nodeIDs []uint)
 	// syncSource overrides the per-source sync in tests; nil means m.sync.
 	syncSource func(ctx context.Context, id uint) error
 	fetch      func(context.Context, *url.URL) ([]byte, error)
@@ -54,7 +55,9 @@ func (a *App) subscriptionManager() *customNodeSubscriptionManager {
 	if a.customSubscriptions != nil {
 		return a.customSubscriptions
 	}
-	return newCustomNodeSubscriptionManager(a.db)
+	m := newCustomNodeSubscriptionManager(a.db)
+	m.onNodesChanged = a.pushCustomNodeConsumers
+	return m
 }
 
 func normalizeCustomNodeSubscriptionInterval(minutes int) int {
@@ -269,6 +272,7 @@ func (m *customNodeSubscriptionManager) sync(ctx context.Context, id uint) (cust
 		Total: visibleCount, Skipped: len(parsed.Skipped), Filtered: len(desired) - visibleCount,
 	}
 	partial := len(parsed.Skipped) > 0
+	var changedNodeIDs []uint
 	unlockAudience := m.lockAudience()
 	defer unlockAudience()
 	err = m.db.Transaction(func(tx *gorm.DB) error {
@@ -308,6 +312,7 @@ func (m *customNodeSubscriptionManager) sync(ctx context.Context, id uint) (cust
 				if err := tx.Model(current).Updates(updates).Error; err != nil {
 					return err
 				}
+				changedNodeIDs = append(changedNodeIDs, current.ID)
 				result.Updated++
 				delete(byKey, key)
 				continue
@@ -339,6 +344,7 @@ func (m *customNodeSubscriptionManager) sync(ctx context.Context, id uint) (cust
 			if err := deleteUserNodeOrderRefs(tx, userNodeTypeCustom, []uint{stale.ID}); err != nil {
 				return err
 			}
+			changedNodeIDs = append(changedNodeIDs, stale.ID)
 			result.Deleted++
 		}
 		var actualVisible int64
@@ -366,6 +372,9 @@ func (m *customNodeSubscriptionManager) sync(ctx context.Context, id uint) (cust
 	})
 	if err != nil {
 		return customNodeSubscriptionSyncResult{}, markFailure(fmt.Errorf("保存订阅节点失败: %w", err))
+	}
+	if len(changedNodeIDs) > 0 && m.onNodesChanged != nil {
+		m.onNodesChanged(changedNodeIDs)
 	}
 	return result, nil
 }

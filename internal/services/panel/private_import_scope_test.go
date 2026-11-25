@@ -156,7 +156,7 @@ func TestPrivateImportScopeFailurePreservesExistingData(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := validateImportedPrivateOutbounds(fixture.db, parsed.Outbounds); err != nil {
+	if _, err := validateImportedPrivateOutbounds(fixture.db, parsed.Outbounds, raw); err != nil {
 		t.Fatalf("credential validation unexpectedly failed: %v", err)
 	}
 	if err := fixture.app.applyImport(&fixture.server, parsed, raw); err == nil || !strings.Contains(err.Error(), "专属出站") {

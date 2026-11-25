@@ -95,7 +95,7 @@ func (a *App) applyRawConfig(c *gin.Context) {
 		c.JSON(status, gin.H{"error": err.Error()})
 		return
 	}
-	if _, err := validateImportedPrivateOutbounds(a.db, parsed.Outbounds); err != nil {
+	if _, err := validateImportedPrivateOutbounds(a.db, parsed.Outbounds, raw); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}

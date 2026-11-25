@@ -448,14 +448,13 @@ func (o *Orchestrator) pushConfigUnlocked(ctx context.Context, serverID uint) er
 	if err := o.db.First(&srv, serverID).Error; err != nil {
 		return err
 	}
-	return o.pushConfigSnapshotUnlocked(ctx, &srv, true)
+	return o.pushConfigSnapshotUnlocked(ctx, &srv)
 }
 
-// pushConfigSnapshotUnlocked builds the config for a server snapshot. The
-// background reconciler passes includeStaged=false while the administrator has
-// unapplied edits: those changes must only be published through the explicit
-// apply endpoint, never by an Agent reconnect or subscription reset.
-func (o *Orchestrator) pushConfigSnapshotUnlocked(ctx context.Context, srv *model.Server, includeStaged bool) error {
+// pushConfigSnapshotUnlocked builds and pushes the current server configuration
+// snapshot, then advances proxy-sync and configuration-revision markers once the
+// Agent acknowledges the apply command.
+func (o *Orchestrator) pushConfigSnapshotUnlocked(ctx context.Context, srv *model.Server) error {
 	serverID := srv.ID
 	raw, err := o.buildServerConfig(srv, nil)
 	if err == nil {
@@ -736,11 +735,6 @@ func (o *Orchestrator) PushConfigIfManaged(serverID uint) {
 		return
 	}
 	if !managed {
-		return
-	}
-	var srv model.Server
-	if err := o.db.Select("config_mode", "raw_config", "config_initialized").First(&srv, serverID).Error; err != nil {
-		log.Printf("orchestrator: inspect desired config for server %d: %v", serverID, err)
 		return
 	}
 	// Explicit administrator edits use stageConfigAndRespond and are never

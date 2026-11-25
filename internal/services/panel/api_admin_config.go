@@ -86,7 +86,12 @@ func (a *App) applyRawConfig(c *gin.Context) {
 	// server lock. A concurrent edit can therefore never apply config B and then
 	// have the slower request overwrite the database view with config A.
 	unlock := a.orch.lockServer(id)
-	defer unlock()
+	locked := true
+	defer func() {
+		if locked {
+			unlock()
+		}
+	}()
 	if err := validateImportedInboundTrafficTags(a.db, id, raw); err != nil {
 		status := http.StatusInternalServerError
 		if errors.Is(err, errInboundTrafficTagReserved) {
@@ -121,6 +126,9 @@ func (a *App) applyRawConfig(c *gin.Context) {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "读取同步结果失败: " + err.Error()})
 		return
 	}
+	locked = false
+	unlock()
+	a.reconcileNodeConsumers(id)
 	c.JSON(http.StatusOK, gin.H{
 		"ok": true, "output": res.Output, "summary": buildImportSummary(parsed, &resolved),
 		"config_mode": synced.ConfigMode,
@@ -161,5 +169,6 @@ func (a *App) setConfigMode(c *gin.Context) {
 		c.JSON(http.StatusBadGateway, gin.H{"error": "切换失败，已保留原始配置模式: " + err.Error()})
 		return
 	}
+	a.reconcileNodeConsumers(id)
 	c.JSON(http.StatusOK, gin.H{"ok": true, "config_mode": model.ConfigModeManaged})
 }

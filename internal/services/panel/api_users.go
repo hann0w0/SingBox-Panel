@@ -820,7 +820,12 @@ func (a *App) updateUser(c *gin.Context) {
 		return
 	}
 	if req.ExpireAt != nil {
-		u.ExpireAt = unixToTime(req.ExpireAt)
+		nextExpireAt := unixToTime(req.ExpireAt)
+		if u.Role == model.RoleAdmin && nextExpireAt != nil {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "不能为管理员账号设置到期时间"})
+			return
+		}
+		u.ExpireAt = nextExpireAt
 		columns = append(columns, "ExpireAt")
 	}
 	if req.Enabled != nil {
@@ -978,12 +983,15 @@ func (a *App) deleteUser(c *gin.Context) {
 		if err != nil {
 			return err
 		}
-		for _, sid := range routeServers {
+		affectedServerIDs = append(affectedServerIDs, routeServers...)
+		for _, sid := range normalizedIDs(affectedServerIDs) {
+			if sid == 0 {
+				continue
+			}
 			if err := syncServerRuleSets(tx, sid); err != nil {
 				return err
 			}
 		}
-		affectedServerIDs = append(affectedServerIDs, routeServers...)
 		if err := tx.Delete(&model.User{}, id).Error; err != nil {
 			return err
 		}

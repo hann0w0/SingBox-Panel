@@ -65,6 +65,7 @@ type App struct {
 	agentArtifacts    map[string]agentArtifactChecksum
 	logSessionsMu     sync.Mutex
 	logSessions       map[uint]map[string]logSessionLease
+	logStreamActive   map[uint]bool
 	logSessionLocks   keyedMutex[uint]
 	serverOperations  *keyedMutex[uint]
 	userAccessMu      sync.Mutex
@@ -114,13 +115,15 @@ func NewApp(cfg config.PanelConfig, db *gorm.DB) *App {
 		agentInstallCodes:    make(map[string]agentInstallCode),
 		agentRegisterLimiter: newLoginGuard(),
 		agentArtifacts:       make(map[string]agentArtifactChecksum),
-		logSessions:         make(map[uint]map[string]logSessionLease),
-		serverOperations:    newKeyedMutex[uint](),
+		logSessions:          make(map[uint]map[string]logSessionLease),
+		logStreamActive:      make(map[uint]bool),
+		serverOperations:     newKeyedMutex[uint](),
 	}
 	// The orchestrator resolves node-imported outbounds against the live panel
 	// state (source inbound, external node, or their removal).
 	orch.app = a
 	a.customSubscriptions.onNodesChanged = a.pushCustomNodeConsumers
+	hub.AfterDisconnect = a.clearLogStreamActive
 	hub.AfterRegister = func(serverID uint) {
 		// onRegister runs in the Agent read pump. Every command that waits for a
 		// result must run asynchronously so that pump can receive the response.
@@ -613,11 +616,9 @@ func corsMiddleware(baseURL, environment string) gin.HandlerFunc {
 		requestOrigin := strings.TrimSpace(c.GetHeader("Origin"))
 		if requestOrigin != "" {
 			c.Header("Vary", "Origin")
-			if requestOrigin == allowedOrigin || (strings.EqualFold(environment, "development") && isLoopbackOrigin(requestOrigin)) {
-				c.Header("Access-Control-Allow-Origin", allowedOrigin)
-				if requestOrigin != allowedOrigin {
-					c.Header("Access-Control-Allow-Origin", requestOrigin)
-				}
+			normalizedOrigin := normalizeOriginHeader(requestOrigin)
+			if (normalizedOrigin != "" && normalizedOrigin == allowedOrigin) || (strings.EqualFold(environment, "development") && isLoopbackOrigin(requestOrigin)) {
+				c.Header("Access-Control-Allow-Origin", requestOrigin)
 				c.Header("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS")
 				c.Header("Access-Control-Allow-Headers", "Authorization, Content-Type")
 			} else {
@@ -635,19 +636,55 @@ func corsMiddleware(baseURL, environment string) gin.HandlerFunc {
 
 func isLoopbackOrigin(raw string) bool {
 	u, err := url.Parse(raw)
-	if err != nil || (u.Scheme != "http" && u.Scheme != "https") {
+	if err != nil || (!strings.EqualFold(u.Scheme, "http") && !strings.EqualFold(u.Scheme, "https")) {
 		return false
 	}
-	host := strings.Trim(u.Hostname(), "[]")
+	if u.User != nil || u.Path != "" || u.RawQuery != "" || u.Fragment != "" {
+		return false
+	}
+	host := strings.ToLower(strings.Trim(u.Hostname(), "[]"))
 	return host == "localhost" || host == "127.0.0.1" || host == "::1"
+}
+
+func normalizeOriginURL(u *url.URL) string {
+	if u == nil || u.Host == "" {
+		return ""
+	}
+	scheme := strings.ToLower(u.Scheme)
+	if scheme != "http" && scheme != "https" {
+		return ""
+	}
+	host := strings.ToLower(u.Hostname())
+	if host == "" {
+		return ""
+	}
+	port := u.Port()
+	if (scheme == "http" && port == "80") || (scheme == "https" && port == "443") {
+		port = ""
+	}
+	if strings.Contains(host, ":") {
+		host = "[" + host + "]"
+	}
+	if port != "" {
+		return scheme + "://" + host + ":" + port
+	}
+	return scheme + "://" + host
+}
+
+func normalizeOriginHeader(raw string) string {
+	u, err := url.Parse(strings.TrimSpace(raw))
+	if err != nil || u.User != nil || u.Path != "" || u.RawQuery != "" || u.Fragment != "" {
+		return ""
+	}
+	return normalizeOriginURL(u)
 }
 
 func originFromBaseURL(raw string) string {
 	u, err := url.Parse(strings.TrimSpace(raw))
-	if err != nil || u.Host == "" || (u.Scheme != "http" && u.Scheme != "https") {
+	if err != nil {
 		return ""
 	}
-	return u.Scheme + "://" + u.Host
+	return normalizeOriginURL(u)
 }
 
 func securityHeadersMiddleware(baseURL string) gin.HandlerFunc {

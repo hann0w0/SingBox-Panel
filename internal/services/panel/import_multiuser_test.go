@@ -144,3 +144,95 @@ func TestManualMultiUserImportOnFreshServerStillWarns(t *testing.T) {
 		t.Fatalf("expected manual multi-user warning on fresh server, got %v", resp.Summary.Skipped)
 	}
 }
+
+func TestManagedMultiUserImportPreservedWithOverlayOutboundAndSingleUserDrift(t *testing.T) {
+	fixture := newForwardFixture(t)
+	fixture.router.POST("/servers/:id/import-config", fixture.app.importRemoteConfig)
+
+	raw, err := fixture.app.orch.BuildServerConfig(&fixture.server)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Inject an overlay-only selector outbound and set route.final to it.
+	var doc map[string]any
+	if err := json.Unmarshal(raw, &doc); err != nil {
+		t.Fatal(err)
+	}
+	outbounds := doc["outbounds"].([]any)
+	doc["outbounds"] = append(outbounds, map[string]any{
+		"type":      "selector",
+		"tag":       "overlay-select",
+		"outbounds": []string{"direct"},
+	})
+	doc["route"].(map[string]any)["final"] = "overlay-select"
+	withOverlay, err := json.Marshal(doc)
+	if err != nil {
+		t.Fatal(err)
+	}
+	payload, _ := json.Marshal(map[string]any{"config": string(withOverlay), "dry_run": false})
+	rec := serveJSONRequest(t, fixture.router, http.MethodPost, fmt.Sprintf("/servers/%d/import-config", fixture.server.ID), string(payload))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("overlay import failed: %d %s", rec.Code, rec.Body.String())
+	}
+
+	// Rotate the single user's proxy_token in DB so raw users[] (1 user) drifts
+	// from generated users[], then re-import with an edited log level.
+	if err := fixture.db.Model(&fixture.user).Update("proxy_token", "rotated-single-user-token").Error; err != nil {
+		t.Fatal(err)
+	}
+	doc["log"] = map[string]any{"level": "warn"}
+	driftedRaw, _ := json.Marshal(doc)
+	driftedPayload, _ := json.Marshal(map[string]any{"config": string(driftedRaw), "dry_run": false})
+	rec2 := serveJSONRequest(t, fixture.router, http.MethodPost, fmt.Sprintf("/servers/%d/import-config", fixture.server.ID), string(driftedPayload))
+	if rec2.Code != http.StatusOK {
+		t.Fatalf("second overlay import failed: %d %s", rec2.Code, rec2.Body.String())
+	}
+
+	var updatedInbound model.Inbound
+	if err := fixture.db.First(&updatedInbound, fixture.inbound.ID).Error; err != nil {
+		t.Fatal(err)
+	}
+	var st singbox.InboundSettings
+	if err := json.Unmarshal(updatedInbound.Settings, &st); err != nil {
+		t.Fatal(err)
+	}
+	if !st.MultiUser || st.SingleUser {
+		t.Fatalf("multi-user inbound silently downgraded to single-user: %+v", st)
+	}
+}
+
+func TestSyncImportedInboundsUnlinksCrossServerConsumerOutbounds(t *testing.T) {
+	fixture := newForwardFixture(t)
+	fixture.router.POST("/servers/:id/import-config", fixture.app.importRemoteConfig)
+
+	consumerServer := model.Server{Name: "Consumer", Address: "consumer.example.com", AgentToken: "consumer-token"}
+	if err := fixture.db.Create(&consumerServer).Error; err != nil {
+		t.Fatal(err)
+	}
+	consumerOb := model.Outbound{
+		ServerID:   consumerServer.ID,
+		Tag:        "to-origin",
+		Type:       "vless",
+		SourceKind: model.OutboundSourceInbound,
+		SourceID:   fixture.inbound.ID,
+		Settings:   model.JSONText(`{"server":"entry.example.com","server_port":443}`),
+	}
+	if err := fixture.db.Create(&consumerOb).Error; err != nil {
+		t.Fatal(err)
+	}
+
+	emptyInboundsCfg := `{"inbounds":[],"outbounds":[{"type":"direct","tag":"direct"}],"route":{"final":"direct"}}`
+	payload, _ := json.Marshal(map[string]any{"config": emptyInboundsCfg, "dry_run": false})
+	rec := serveJSONRequest(t, fixture.router, http.MethodPost, fmt.Sprintf("/servers/%d/import-config", fixture.server.ID), string(payload))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("import-config failed: %d %s", rec.Code, rec.Body.String())
+	}
+
+	var refreshed model.Outbound
+	if err := fixture.db.First(&refreshed, consumerOb.ID).Error; err != nil {
+		t.Fatal(err)
+	}
+	if refreshed.SourceKind != "" || refreshed.SourceID != 0 {
+		t.Fatalf("deleted inbound left dangling cross-server source reference: %+v", refreshed)
+	}
+}

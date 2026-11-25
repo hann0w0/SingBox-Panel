@@ -45,6 +45,7 @@ type Hub struct {
 	// in-place upgrade to 1.14), so the config can enable or drop the service.
 	AfterStatsCapabilityChange func(serverID uint)
 	AfterAddressChange         func(serverID uint)
+	AfterDisconnect            func(serverID uint)
 }
 
 // NewHub builds a Hub bound to a database.
@@ -112,14 +113,30 @@ func (h *Hub) registerWithEvent(serverID uint, remoteIP string, conn *websocket.
 	return ac
 }
 
+func (ac *agentConn) isClosed() bool {
+	if ac == nil {
+		return true
+	}
+	select {
+	case <-ac.done:
+		return true
+	default:
+		return false
+	}
+}
+
 func (h *Hub) connection(serverID uint) *agentConn {
 	h.mu.RLock()
-	defer h.mu.RUnlock()
-	return h.conns[serverID]
+	ac := h.conns[serverID]
+	h.mu.RUnlock()
+	if ac != nil && ac.isClosed() {
+		return nil
+	}
+	return ac
 }
 
 func (h *Hub) isCurrentConnection(serverID uint, ac *agentConn) bool {
-	if ac == nil {
+	if ac == nil || ac.isClosed() {
 		return false
 	}
 	h.mu.RLock()
@@ -138,6 +155,9 @@ func (h *Hub) unregister(ac *agentConn) {
 	}
 	h.mu.Unlock()
 	if removed {
+		if h.AfterDisconnect != nil {
+			h.AfterDisconnect(ac.serverID)
+		}
 		touchServerSeen(h.db, ac.serverID, false)
 		if err := h.traffic.record(ac.serverID, nil); err != nil {
 			log.Printf("traffic: clear offline server %d: %v", ac.serverID, err)
@@ -157,10 +177,7 @@ func (h *Hub) unregister(ac *agentConn) {
 
 // IsOnline reports whether a server's agent is connected.
 func (h *Hub) IsOnline(serverID uint) bool {
-	h.mu.RLock()
-	defer h.mu.RUnlock()
-	_, ok := h.conns[serverID]
-	return ok
+	return h.connection(serverID) != nil
 }
 
 // Close terminates all active agent WebSocket connections during server shutdown.
@@ -186,6 +203,7 @@ func (h *Hub) Disconnect(serverID uint) {
 	h.mu.RUnlock()
 	if ac != nil {
 		ac.close()
+		h.unregister(ac)
 	}
 }
 
@@ -200,6 +218,7 @@ func (h *Hub) DisconnectAndWait(ctx context.Context, serverID uint) error {
 		return nil
 	}
 	ac.close()
+	h.unregister(ac)
 	if ac.stopped == nil {
 		return nil
 	}
@@ -216,8 +235,10 @@ func (h *Hub) OnlineServerIDs() []uint {
 	h.mu.RLock()
 	defer h.mu.RUnlock()
 	out := make([]uint, 0, len(h.conns))
-	for id := range h.conns {
-		out = append(out, id)
+	for id, ac := range h.conns {
+		if ac != nil && !ac.isClosed() {
+			out = append(out, id)
+		}
 	}
 	return out
 }

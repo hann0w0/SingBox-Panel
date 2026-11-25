@@ -462,3 +462,130 @@ func TestStagedConfigEditsApplyOnceOnDemand(t *testing.T) {
 		t.Fatalf("apply-config response = %d %s", applyRec.Code, applyRec.Body.String())
 	}
 }
+
+func TestLogStreamRecoversAfterFailedReconnectAndDropsOfflineStopLease(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	const (
+		serverID = uint(19)
+		session  = "reconnect-session-01"
+	)
+	hub := NewHub(testDB(t))
+	a := &App{
+		hub:             hub,
+		logSessions:     make(map[uint]map[string]logSessionLease),
+		logStreamActive: make(map[uint]bool),
+	}
+	hub.AfterDisconnect = a.clearLogStreamActive
+	router := gin.New()
+	router.POST("/servers/:id/stream-logs", a.streamLogs)
+
+	// Offline stop must not re-insert a zombie lease.
+	a.logSessions[serverID] = map[string]logSessionLease{
+		session: {Lines: 200, ExpiresAt: time.Now().Add(time.Minute)},
+	}
+	stopReq := httptest.NewRequest(http.MethodPost, "/servers/19/stream-logs", strings.NewReader(`{"enable":false,"session_id":"reconnect-session-01"}`))
+	stopReq.Header.Set("Content-Type", "application/json")
+	stopRec := httptest.NewRecorder()
+	router.ServeHTTP(stopRec, stopReq)
+	if stopRec.Code != http.StatusConflict {
+		t.Fatalf("offline stop status = %d, want 409", stopRec.Code)
+	}
+	a.logSessionsMu.Lock()
+	remainingAfterOfflineStop := len(a.logSessions[serverID])
+	a.logSessionsMu.Unlock()
+	if remainingAfterOfflineStop != 0 {
+		t.Fatalf("offline stop resurrected log session lease: %#v", a.logSessions[serverID])
+	}
+
+	// Simulate an active browser lease after a reconnect whose resumeLogStream failed.
+	conn := &agentConn{
+		serverID: serverID,
+		send:     make(chan protocol.Envelope, 2),
+		done:     make(chan struct{}),
+		pending:  make(map[string]chan protocol.CommandResultEvt),
+	}
+	hub.conns[serverID] = conn
+	a.logSessionsMu.Lock()
+	a.setLogSessionLocked(serverID, session, 200)
+	a.setLogStreamActiveLocked(serverID, false)
+	a.logSessionsMu.Unlock()
+	defer a.stopLogSessions()
+
+	startedOnAgent := make(chan struct{}, 1)
+	go func() {
+		env := <-conn.send
+		conn.mu.Lock()
+		ch := conn.pending[env.ID]
+		conn.mu.Unlock()
+		startedOnAgent <- struct{}{}
+		ch <- protocol.CommandResultEvt{ID: env.ID, OK: true, Output: "restarted"}
+	}()
+
+	renewReq := httptest.NewRequest(http.MethodPost, "/servers/19/stream-logs", strings.NewReader(`{"enable":true,"lines":200,"session_id":"reconnect-session-01"}`))
+	renewReq.Header.Set("Content-Type", "application/json")
+	renewRec := httptest.NewRecorder()
+	router.ServeHTTP(renewRec, renewReq)
+	if renewRec.Code != http.StatusOK {
+		t.Fatalf("renew status = %d, body = %s", renewRec.Code, renewRec.Body.String())
+	}
+	select {
+	case <-startedOnAgent:
+	default:
+		t.Fatal("lease renewal did not re-send CmdStreamLogs after failed reconnect resume")
+	}
+}
+
+func TestDisconnectUnregistersClosedConnectionAndAdminExpiryRejected(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	db := testDB(t)
+	srv := model.Server{Name: "hub-node", AgentToken: "hub-token", PublicIP: "198.51.100.1"}
+	if err := db.Create(&srv).Error; err != nil {
+		t.Fatal(err)
+	}
+	hub := NewHub(db)
+	ac := hub.register(srv.ID, "203.0.113.9", nil)
+	close(ac.stopped)
+	if err := hub.DisconnectAndWait(context.Background(), srv.ID); err != nil {
+		t.Fatal(err)
+	}
+	if hub.IsOnline(srv.ID) || hub.isCurrentConnection(srv.ID, ac) {
+		t.Fatal("disconnected connection remained online or current")
+	}
+	// Late onRegister from revoked connection must be ignored.
+	hub.onRegister(ac, protocol.RegisterEvt{Hostname: "spoofed", PublicIP: "203.0.113.99"})
+	var checkSrv model.Server
+	if err := db.First(&checkSrv, srv.ID).Error; err != nil {
+		t.Fatal(err)
+	}
+	if checkSrv.Online || checkSrv.PublicIP != "198.51.100.1" {
+		t.Fatalf("revoked connection mutated server state: %+v", checkSrv)
+	}
+
+	// Admin account cannot be assigned a non-zero expire_at.
+	admin := model.User{Email: "root", Password: "x", Role: model.RoleAdmin, Enabled: true, SubToken: "s", ProxyToken: "p"}
+	if err := db.Create(&admin).Error; err != nil {
+		t.Fatal(err)
+	}
+	app := &App{db: db, hub: hub, orch: NewOrchestrator(db, hub)}
+	r := gin.New()
+	r.PUT("/users/:id", app.updateUser)
+	expReq := httptest.NewRequest(http.MethodPut, "/users/1", strings.NewReader(`{"expire_at":4102444800}`))
+	expReq.Header.Set("Content-Type", "application/json")
+	expRec := httptest.NewRecorder()
+	r.ServeHTTP(expRec, expReq)
+	if expRec.Code != http.StatusBadRequest {
+		t.Fatalf("setting expire_at on admin returned %d (%s), want 400", expRec.Code, expRec.Body.String())
+	}
+
+	// CORS normalization accepts uppercase host and default :443 port in base_url.
+	corsRouter := gin.New()
+	corsRouter.Use(corsMiddleware("https://PANEL.EXAMPLE.COM:443", "production"))
+	corsRouter.POST("/ping", func(c *gin.Context) { c.Status(http.StatusOK) })
+	corsReq := httptest.NewRequest(http.MethodPost, "/ping", nil)
+	corsReq.Header.Set("Origin", "https://panel.example.com")
+	corsRec := httptest.NewRecorder()
+	corsRouter.ServeHTTP(corsRec, corsReq)
+	if corsRec.Code != http.StatusOK {
+		t.Fatalf("CORS rejected canonical browser Origin against uppercase/:443 base_url: %d", corsRec.Code)
+	}
+}

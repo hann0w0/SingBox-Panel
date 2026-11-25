@@ -132,6 +132,9 @@ func (a *App) importRemoteConfig(c *gin.Context) {
 		c.JSON(status, gin.H{"error": err.Error()})
 		return
 	}
+	if a.orch != nil {
+		a.reconcileNodeConsumers(srv.ID)
+	}
 	c.JSON(http.StatusOK, gin.H{"ok": true, "summary": buildImportSummary(parsed, &resolved)})
 }
 
@@ -216,22 +219,34 @@ func (a *App) resolveImportedView(db *gorm.DB, serverID uint, p *singbox.ParsedC
 		return view, err
 	}
 	preserveManagedUsers := false
-	var rawUsersByTag, generatedUsersByTag map[string]json.RawMessage
-	// Build the pure panel-managed view (ignoring any previous overlay) so
-	// manual overlay credentials are never mistaken for panel-managed users.
-	current.ConfigMode = model.ConfigModeManaged
-	current.ConfigOverlay = nil
-	current.ConfigResidual = nil
-	if generated, err := NewOrchestrator(db, nil).buildServerConfigReadOnly(&current, nil); err == nil {
+	rawUsersByTag := inboundUsersByTag(raw)
+	var generatedUsersByTag map[string]json.RawMessage
+	// Build the pure panel-managed view (ignoring any previous overlay) first so
+	// manual overlay credentials are never mistaken for panel-managed users. If a
+	// route or final target depends on an overlay-only outbound, retry with the
+	// existing overlay so multi-user inbound comparison still succeeds.
+	pure := current
+	pure.ConfigMode = model.ConfigModeManaged
+	pure.ConfigOverlay = nil
+	pure.ConfigResidual = nil
+	orch := NewOrchestrator(db, nil)
+	if generated, err := orch.buildServerConfigReadOnly(&pure, nil); err == nil {
 		if equivalentJSON(raw, generated) {
 			preserveManagedUsers = true
 		} else {
-			rawUsersByTag = inboundUsersByTag(raw)
 			generatedUsersByTag = inboundUsersByTag(generated)
 		}
-	}
-	if !preserveManagedUsers && generatedUsersByTag == nil {
-		return view, nil
+	} else if len(current.ConfigOverlay) > 0 {
+		withOverlay := current
+		withOverlay.ConfigMode = model.ConfigModeManaged
+		withOverlay.ConfigResidual = nil
+		if generated, overlayErr := orch.buildServerConfigReadOnly(&withOverlay, nil); overlayErr == nil {
+			if equivalentJSON(raw, generated) {
+				preserveManagedUsers = true
+			} else {
+				generatedUsersByTag = inboundUsersByTag(generated)
+			}
+		}
 	}
 	var previous []model.Inbound
 	if err := db.Where("server_id = ?", serverID).Find(&previous).Error; err != nil {
@@ -244,7 +259,10 @@ func (a *App) resolveImportedView(db *gorm.DB, serverID uint, p *singbox.ParsedC
 			if inbound.Tag != in.Tag || string(inbound.Type) != in.Type || json.Unmarshal(inbound.Settings, &settings) != nil || !settings.UseMultiUser(string(inbound.Type)) {
 				continue
 			}
-			managedUsersMatch := preserveManagedUsers || equivalentManagedInboundUsers(rawUsersByTag[inbound.Tag], generatedUsersByTag[inbound.Tag])
+			allReserved := inboundRawUsersAllReserved(rawUsersByTag[inbound.Tag])
+			managedUsersMatch := preserveManagedUsers ||
+				(generatedUsersByTag != nil && equivalentManagedInboundUsers(rawUsersByTag[inbound.Tag], generatedUsersByTag[inbound.Tag])) ||
+				allReserved
 			if managedUsersMatch || in.UserCount >= 2 {
 				in.Settings.MultiUser = true
 				in.Settings.SingleUser = false
@@ -448,6 +466,20 @@ func equivalentInboundUsers(left, right json.RawMessage) bool {
 // exact same panel-managed accounts as generated users[], tolerating ordering
 // differences or inbound-level VLESS flow edits when all entries are panel
 // traffic identities.
+func inboundRawUsersAllReserved(rawUsers json.RawMessage) bool {
+	var items []map[string]any
+	if len(rawUsers) == 0 || json.Unmarshal(rawUsers, &items) != nil || len(items) == 0 {
+		return false
+	}
+	for _, item := range items {
+		name, _ := item["name"].(string)
+		if !reservedTrafficUsername(name) {
+			return false
+		}
+	}
+	return true
+}
+
 func equivalentManagedInboundUsers(rawUsers, generatedUsers json.RawMessage) bool {
 	if equivalentInboundUsers(rawUsers, generatedUsers) {
 		return true
@@ -580,6 +612,11 @@ func syncImportedInbounds(tx *gorm.DB, serverID uint, parsed []singbox.ParsedInb
 	}
 	if len(removedIDs) > 0 {
 		if err := releaseInboundTrafficTags(tx, serverID, removedIDs...); err != nil {
+			return err
+		}
+		if err := tx.Model(&model.Outbound{}).
+			Where("source_kind = ? AND source_id IN ?", model.OutboundSourceInbound, removedIDs).
+			Updates(map[string]any{"source_kind": "", "source_id": 0}).Error; err != nil {
 			return err
 		}
 		var forwards []model.UserForward

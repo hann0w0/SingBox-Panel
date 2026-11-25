@@ -66,8 +66,26 @@ func (a *App) deleteLogSessionLocked(serverID uint, sessionID string) (logSessio
 	delete(sessions, sessionID)
 	if len(sessions) == 0 {
 		delete(a.logSessions, serverID)
+		delete(a.logStreamActive, serverID)
 	}
 	return lease, true
+}
+
+func (a *App) setLogStreamActiveLocked(serverID uint, active bool) {
+	if !active {
+		delete(a.logStreamActive, serverID)
+		return
+	}
+	if a.logStreamActive == nil {
+		a.logStreamActive = make(map[uint]bool)
+	}
+	a.logStreamActive[serverID] = true
+}
+
+func (a *App) clearLogStreamActive(serverID uint) {
+	a.logSessionsMu.Lock()
+	delete(a.logStreamActive, serverID)
+	a.logSessionsMu.Unlock()
 }
 
 // expireLogSession removes a browser lease that stopped renewing (tab crash,
@@ -112,6 +130,7 @@ func (a *App) stopLogSessions() {
 		}
 		delete(a.logSessions, serverID)
 	}
+	clear(a.logStreamActive)
 }
 
 const sseWriteDeadline = 10 * time.Second
@@ -328,23 +347,27 @@ func (a *App) streamLogs(c *gin.Context) {
 	var removedLease logSessionLease
 	a.logSessionsMu.Lock()
 	sessions := a.logSessions[id]
+	streamRunning := a.logStreamActive[id] && a.hub != nil && a.hub.IsOnline(id)
 	if req.Enable {
 		if _, exists := sessions[req.SessionID]; exists {
-			a.setLogSessionLocked(id, req.SessionID, req.Lines)
-			a.logSessionsMu.Unlock()
-			c.JSON(http.StatusOK, gin.H{"ok": true, "output": "log session lease renewed"})
-			return
-		}
-		if len(sessions) >= 64 {
-			a.logSessionsMu.Unlock()
-			c.JSON(http.StatusTooManyRequests, gin.H{"error": "too many log sessions"})
-			return
-		}
-		if len(sessions) > 0 {
-			a.setLogSessionLocked(id, req.SessionID, req.Lines)
-			a.logSessionsMu.Unlock()
-			c.JSON(http.StatusOK, gin.H{"ok": true, "output": "joined existing log stream"})
-			return
+			if streamRunning {
+				a.setLogSessionLocked(id, req.SessionID, req.Lines)
+				a.logSessionsMu.Unlock()
+				c.JSON(http.StatusOK, gin.H{"ok": true, "output": "log session lease renewed"})
+				return
+			}
+		} else {
+			if len(sessions) >= 64 {
+				a.logSessionsMu.Unlock()
+				c.JSON(http.StatusTooManyRequests, gin.H{"error": "too many log sessions"})
+				return
+			}
+			if len(sessions) > 0 && streamRunning {
+				a.setLogSessionLocked(id, req.SessionID, req.Lines)
+				a.logSessionsMu.Unlock()
+				c.JSON(http.StatusOK, gin.H{"ok": true, "output": "joined existing log stream"})
+				return
+			}
 		}
 	} else {
 		if sessions == nil {
@@ -371,19 +394,23 @@ func (a *App) streamLogs(c *gin.Context) {
 	res, err := a.hub.SendCommand(ctx, id, protocol.CmdStreamLogs, req)
 	if err != nil {
 		if req.Enable {
+			a.clearLogStreamActive(id)
 			// The command may have reached the Agent just before the request was
 			// cancelled. Stop any orphaned stream without reusing the cancelled
 			// browser context; a later explicit enable will start it again.
 			stopCtx, stopCancel := context.WithTimeout(context.Background(), 3*time.Second)
 			_, _ = a.hub.SendCommand(stopCtx, id, protocol.CmdStreamLogs, protocol.StreamLogsCmd{Enable: false, SessionID: req.SessionID})
 			stopCancel()
-		} else {
-			// Keep the final browser reference when the Agent did not acknowledge
-			// the stop. A retry can then stop a stream that may still be running;
-			// dropping the reference here would turn it into an unmanageable orphan.
+		} else if !errors.Is(err, ErrAgentOffline) {
+			// Keep the final browser reference when an online Agent rejected the
+			// stop so a retry can stop a stream that may still be running. When the
+			// Agent is offline its native follower is already gone, so do not
+			// resurrect a 2-minute zombie lease.
 			a.logSessionsMu.Lock()
 			a.setLogSessionLocked(id, req.SessionID, removedLease.Lines)
 			a.logSessionsMu.Unlock()
+		} else {
+			a.clearLogStreamActive(id)
 		}
 		status := http.StatusBadGateway
 		if errors.Is(err, ErrAgentOffline) {
@@ -392,11 +419,14 @@ func (a *App) streamLogs(c *gin.Context) {
 		c.JSON(status, gin.H{"error": err.Error()})
 		return
 	}
+	a.logSessionsMu.Lock()
 	if req.Enable {
-		a.logSessionsMu.Lock()
 		a.setLogSessionLocked(id, req.SessionID, req.Lines)
-		a.logSessionsMu.Unlock()
+		a.setLogStreamActiveLocked(id, true)
+	} else if len(a.logSessions[id]) == 0 {
+		a.setLogStreamActiveLocked(id, false)
 	}
+	a.logSessionsMu.Unlock()
 	c.JSON(http.StatusOK, gin.H{"ok": true, "output": res.Output})
 }
 
@@ -407,6 +437,7 @@ func (a *App) resumeLogStream(serverID uint) {
 	defer unlockServer()
 
 	a.logSessionsMu.Lock()
+	a.setLogStreamActiveLocked(serverID, false)
 	sessions := a.logSessions[serverID]
 	sessionID := ""
 	lines := 0
@@ -431,9 +462,17 @@ func (a *App) resumeLogStream(serverID uint) {
 	defer cancel()
 	if _, err := a.hub.SendCommand(ctx, serverID, protocol.CmdStreamLogs, protocol.StreamLogsCmd{
 		Enable: true, Lines: lines, SessionID: sessionID,
-	}); err != nil && !errors.Is(err, ErrAgentOffline) {
-		log.Printf("resume log stream for server %d: %v", serverID, err)
+	}); err != nil {
+		if !errors.Is(err, ErrAgentOffline) {
+			log.Printf("resume log stream for server %d: %v", serverID, err)
+		}
+		return
 	}
+	a.logSessionsMu.Lock()
+	if len(a.logSessions[serverID]) > 0 {
+		a.setLogStreamActiveLocked(serverID, true)
+	}
+	a.logSessionsMu.Unlock()
 }
 
 func validLogSessionID(value string) bool {

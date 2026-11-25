@@ -117,6 +117,7 @@ func (a *App) updateCustomNodeSubscription(c *gin.Context) {
 	unlockAudience := a.subscriptionManager().lockAudience()
 	defer unlockAudience()
 	var row model.CustomNodeSubscription
+	var affectedNodeIDs []uint
 	err = a.db.Transaction(func(tx *gorm.DB) error {
 		if err := tx.First(&row, id).Error; err != nil {
 			return err
@@ -155,6 +156,9 @@ func (a *App) updateCustomNodeSubscription(c *gin.Context) {
 			if err := tx.Model(&model.CustomNodeSubscription{}).Where("id = ?", id).Update("node_count", visible).Error; err != nil {
 				return err
 			}
+			if err := tx.Model(&model.CustomNode{}).Where("subscription_id = ?", id).Pluck("id", &affectedNodeIDs).Error; err != nil {
+				return err
+			}
 		}
 		// Apply source-level presentation changes immediately, including a base
 		// sort offset, without waiting for a remote fetch.
@@ -177,6 +181,9 @@ func (a *App) updateCustomNodeSubscription(c *gin.Context) {
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
+	}
+	if len(affectedNodeIDs) > 0 {
+		a.pushCustomNodeConsumers(affectedNodeIDs)
 	}
 	a.db.First(&row, id)
 	row.NameRewriteRules = nonNilNameRewriteRules(row.NameRewriteRules)

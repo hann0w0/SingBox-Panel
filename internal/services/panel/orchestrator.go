@@ -342,7 +342,11 @@ func (o *Orchestrator) buildServerConfigWithMode(srv *model.Server, projection *
 			p.IDs["inbounds"] = append(p.IDs["inbounds"], fmt.Sprint(row.ID))
 		}
 		for _, row := range obRows {
-			p.IDs["outbounds"] = append(p.IDs["outbounds"], fmt.Sprint(row.ID))
+			if row.OwnerUserID != 0 {
+				p.IDs["outbounds"] = append(p.IDs["outbounds"], fmt.Sprintf("private:%d:%d:%s", row.OwnerUserID, row.ID, row.Tag))
+			} else {
+				p.IDs["outbounds"] = append(p.IDs["outbounds"], fmt.Sprint(row.ID))
+			}
 		}
 		for _, row := range ruleRows {
 			p.IDs["rules"] = append(p.IDs["rules"], configRuleIdentity(row))

@@ -419,6 +419,7 @@ export default function InboundForm({
   const [submitting, setSubmitting] = useState(false)
   const [editorMode, setEditorMode] = useState<'form' | 'json'>('form')
   const [rawExtra, setRawExtra] = useState<Record<string, unknown>>({})
+  const [schemaJsonErrors, setSchemaJsonErrors] = useState<Record<string, string>>({})
   const [jsonText, setJsonText] = useState('')
   const [jsonError, setJsonError] = useState('')
   const schemas = useSingboxSchemas(open)
@@ -513,6 +514,7 @@ export default function InboundForm({
     form.setFieldsValue(prefill ?? toForm(inbound))
     const initialRaw = cloneJson((inbound?.settings?.raw ?? {}) as Record<string, unknown>)
     setRawExtra(initialRaw)
+    setSchemaJsonErrors({})
     setEditorMode('form')
     setJsonError('')
     setJsonText(
@@ -554,11 +556,16 @@ export default function InboundForm({
         return
       }
       const nextType = (typeof parsed.type === 'string' && TYPES.some((t) => t.value === parsed.type) ? parsed.type : type) as InboundType
+      if (inbound && nextType !== inbound.type) {
+        setJsonError(`编辑已有入站时不能修改协议类型（当前为 ${inbound.type}）`)
+        return
+      }
       const prevSettings = assembleSettings(inbound?.settings || {}, form.getFieldsValue() as FormVals, nextType, rawExtra)
       const nextSettings = nativeJsonToInboundSettings(prevSettings, parsed)
       const nextTag = typeof parsed.tag === 'string' ? parsed.tag : ''
       const nextPort = typeof parsed.listen_port === 'number' ? parsed.listen_port : (form.getFieldValue('listen_port') || 0)
       setRawExtra(cloneJson(nextSettings.raw ?? {}))
+      setSchemaJsonErrors({})
       form.setFieldsValue(
         toForm({
           ...(inbound ?? { id: 0, server_id: serverId, enabled: true, remark: '', created_at: '', updated_at: '' }),
@@ -588,6 +595,20 @@ export default function InboundForm({
     return form.validateFields().catch((err) => {
       scrollToFirstError(form, err)
       throw err
+    })
+  }
+
+  const handleSchemaJsonError = (fieldKey: string, err: string | null) => {
+    setJsonError('')
+    setSchemaJsonErrors((prev) => {
+      if (!err) {
+        if (!(fieldKey in prev)) return prev
+        const next = { ...prev }
+        delete next[fieldKey]
+        return next
+      }
+      if (prev[fieldKey] === err) return prev
+      return { ...prev, [fieldKey]: err }
     })
   }
 
@@ -623,6 +644,10 @@ export default function InboundForm({
           return
         }
         const nextType = (typeof parsed.type === 'string' && TYPES.some((t) => t.value === parsed.type) ? parsed.type : type) as InboundType
+        if (inbound && nextType !== inbound.type) {
+          setJsonError(`编辑已有入站时不能修改协议类型（当前为 ${inbound.type}）`)
+          return
+        }
         const prevSettings = assembleSettings(inbound?.settings || {}, form.getFieldsValue() as FormVals, nextType, rawExtra)
         const nextSettings = nativeJsonToInboundSettings(prevSettings, parsed)
         body = {
@@ -633,8 +658,14 @@ export default function InboundForm({
           settings: nextSettings,
         }
       } else {
+        setJsonError('')
         const v = await readValues()
         if (session !== submitSessionRef.current) return
+        const badJson = Object.values(schemaJsonErrors)[0]
+        if (badJson) {
+          setJsonError(badJson)
+          return
+        }
         const settings = assembleSettings(inbound?.settings || {}, v, v.type, rawExtra)
         const listenPort: number = v.type === 'tun' ? Number(v.listen_port || 0) : (v.listen_port || randomPort())
         if (v.type !== 'tun' && !v.listen_port && listenPort > 0) {
@@ -713,12 +744,16 @@ export default function InboundForm({
         </div>
       ) : (
       <Form form={form} layout="vertical" className="fm-form inbound-compact-form">
+        {jsonError && <Alert type="error" showIcon message={jsonError} className="mb-3" />}
         <div className="fm-grid" data-panel="inbound">
           <Form.Item name="type" label="协议" rules={[{ required: true }]} className="inbound-compact-type">
             <Select
               options={TYPES}
               disabled={!!inbound}
               onChange={(t: InboundType) => {
+                setRawExtra({})
+                setSchemaJsonErrors({})
+                setJsonError('')
                 const allowed = tlsModeOptions(t).map((o) => o.value)
                 const currentTls = form.getFieldValue('tls_mode')
                 if (!currentTls || !allowed.includes(currentTls) || (!inbound && t === 'vless' && currentTls === 'none')) {
@@ -1043,6 +1078,7 @@ export default function InboundForm({
               value={rawExtra}
               onChange={setRawExtra}
               idPrefix="inbound-proto"
+              onJsonErrorChange={handleSchemaJsonError}
             />
           )}
 
@@ -1084,6 +1120,7 @@ export default function InboundForm({
                   value={(rawExtra.transport && typeof rawExtra.transport === 'object' ? rawExtra.transport : {}) as Record<string, unknown>}
                   onChange={(nextTr) => setRawExtra((prev) => ({ ...prev, transport: nextTr }))}
                   idPrefix="inbound-tr"
+                  onJsonErrorChange={handleSchemaJsonError}
                 />
               )}
             </>
@@ -1252,6 +1289,7 @@ export default function InboundForm({
               value={(rawExtra.tls && typeof rawExtra.tls === 'object' ? rawExtra.tls : {}) as Record<string, unknown>}
               onChange={(nextTls) => setRawExtra((prev) => ({ ...prev, tls: nextTls }))}
               idPrefix="inbound-tls"
+              onJsonErrorChange={handleSchemaJsonError}
             />
           )}
           {Object.keys(otherParamsSchemaProps).length > 0 && (
@@ -1260,6 +1298,7 @@ export default function InboundForm({
               value={rawExtra}
               onChange={setRawExtra}
               idPrefix="inbound-other"
+              onJsonErrorChange={handleSchemaJsonError}
             />
           )}
         </div>

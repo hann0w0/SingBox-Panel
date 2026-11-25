@@ -141,3 +141,12 @@ it('preserves a generic TLS fingerprint for a trojan outbound', () => {
   })
   expect(body.settings.settings?.tls?.fingerprint).toBe('safari')
 })
+
+it('encodes non-Latin1 HTTP password-only auth safely and keeps it when extraRaw is passed', () => {
+  const body = buildOutboundBody(null, {
+    type: 'http', tag: 'http-cn', server: 'proxy.example.com', server_port: 8080,
+    username: '', password: '密码🚀',
+  }, { path: '/proxy', headers: { 'X-Custom': '1' } })
+  expect(body.settings.settings?.http_headers?.['X-Custom']).toBe('1')
+  expect(body.settings.settings?.http_headers?.['Proxy-Authorization']).toMatch(/^Basic /)
+})

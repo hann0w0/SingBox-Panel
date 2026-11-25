@@ -192,4 +192,41 @@ describe('InboundForm JSON Schema integration', () => {
     expect(body.listen_port).toBe(1443)
     expect(body.settings?.client_port).toBe(443)
   })
+
+  it('preserves VLESS packet_encoding=none across JSON mode and blocks mutating type on existing inbound', async () => {
+    const existing: Inbound = {
+      id: 7,
+      server_id: 1,
+      tag: 'vless-in',
+      type: 'vless',
+      listen_port: 443,
+      enabled: true,
+      remark: '',
+      created_at: '',
+      updated_at: '',
+      settings: {
+        packet_encoding: 'none',
+        tls: { enabled: true, server_name: 'example.com', certificate_path: '/c.pem', key_path: '/k.pem' },
+      },
+    }
+
+    render(<InboundForm serverId={1} inbound={existing} open onClose={vi.fn()} onSaved={vi.fn()} />)
+
+    fireEvent.click(screen.getByRole('radio', { name: 'JSON' }))
+    const editor = screen.getByLabelText('inbound.json') as HTMLTextAreaElement
+
+    // Attempting to change type on an existing inbound must be blocked
+    const mutated = { ...JSON.parse(editor.value), type: 'trojan' }
+    fireEvent.change(editor, { target: { value: JSON.stringify(mutated) } })
+    fireEvent.click(screen.getByRole('button', { name: '保存' }))
+    expect(await screen.findByText(/不能修改协议类型/)).toBeTruthy()
+    expect(updateInbound).not.toHaveBeenCalled()
+
+    // Restoring type=vless and saving in JSON mode must preserve packet_encoding="none"
+    const valid = { ...JSON.parse(editor.value), type: 'vless' }
+    fireEvent.change(editor, { target: { value: JSON.stringify(valid) } })
+    fireEvent.click(screen.getByRole('button', { name: '保存' }))
+    await waitFor(() => expect(updateInbound).toHaveBeenCalledOnce())
+    expect(vi.mocked(updateInbound).mock.calls[0][2].settings?.packet_encoding).toBe('none')
+  })
 })

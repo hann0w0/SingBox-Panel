@@ -42,6 +42,15 @@ function setHostHeader(transport: TransportSettings, value: unknown) {
 // not expose. Imported configs can contain REALITY, plugins, early-data,
 // repeated transport headers and protocol-specific beta fields; editing a tag
 // or one visible field must leave those values intact.
+function encodeBase64UTF8(text: string): string {
+  const bytes = new TextEncoder().encode(text)
+  let binary = ''
+  for (let i = 0; i < bytes.length; i += 1) {
+    binary += String.fromCharCode(bytes[i])
+  }
+  return btoa(binary)
+}
+
 export function buildOutboundBody(
   outbound: Outbound | null,
   values: OutboundFormValues,
@@ -62,18 +71,6 @@ export function buildOutboundBody(
     // fallback copies that the renderer would otherwise reuse.
     delete inner.username
     delete inner.password
-    if (type === 'http') {
-      // buildClientOutbound only derives Basic auth when username is nonempty;
-      // preserve the password-only form through an explicit header.
-      const headers = { ...(inner.http_headers ?? {}) }
-      const hasAuth = Object.keys(headers).some((key) => key.toLowerCase() === 'proxy-authorization')
-      if (!outer.username && outer.password && !hasAuth) {
-        headers['Proxy-Authorization'] = 'Basic ' + btoa(':' + outer.password)
-        inner.http_headers = headers
-      } else if (!outer.password && !hasAuth) {
-        delete inner.http_headers
-      }
-    }
   }
   if (type === 'vless' || type === 'vmess' || type === 'tuic') outer.uuid = values.uuid || ''
   if (type === 'trojan' || type === 'hysteria2' || type === 'tuic' || type === 'anytls' || type === 'snell') {
@@ -116,12 +113,25 @@ export function buildOutboundBody(
       else delete inner.down_mbps
     }
   }
-  if (type === 'http' && extraRaw) {
-    if (typeof extraRaw.path === 'string' && extraRaw.path) inner.http_path = extraRaw.path
-    else delete inner.http_path
-    if (extraRaw.headers && typeof extraRaw.headers === 'object' && !Array.isArray(extraRaw.headers)) {
-      inner.http_headers = extraRaw.headers as Record<string, string>
-    } else {
+  if (type === 'http') {
+    if (extraRaw) {
+      if (typeof extraRaw.path === 'string' && extraRaw.path) inner.http_path = extraRaw.path
+      else delete inner.http_path
+      if (extraRaw.headers && typeof extraRaw.headers === 'object' && !Array.isArray(extraRaw.headers)) {
+        inner.http_headers = { ...(extraRaw.headers as Record<string, string>) }
+      } else {
+        delete inner.http_headers
+      }
+    }
+    // buildClientOutbound only derives Basic auth when username is nonempty;
+    // preserve the password-only form through an explicit header after merging
+    // custom headers so extraRaw.headers cannot wipe it out.
+    const headers = { ...(inner.http_headers ?? {}) }
+    const hasAuth = Object.keys(headers).some((key) => key.toLowerCase() === 'proxy-authorization')
+    if (!outer.username && outer.password && !hasAuth) {
+      headers['Proxy-Authorization'] = 'Basic ' + encodeBase64UTF8(':' + outer.password)
+      inner.http_headers = headers
+    } else if (Object.keys(headers).length === 0) {
       delete inner.http_headers
     }
   }

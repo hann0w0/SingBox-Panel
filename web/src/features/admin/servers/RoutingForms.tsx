@@ -156,6 +156,8 @@ export function OutboundForm({
   const [source, setSource] = useState<OutboundSourceMode>('manual')
   const [submitting, setSubmitting] = useState(false)
   const [rawExtra, setRawExtra] = useState<Record<string, unknown>>({})
+  const [schemaJsonErrors, setSchemaJsonErrors] = useState<Record<string, string>>({})
+  const [extraJsonErrorMsg, setExtraJsonErrorMsg] = useState('')
   const schemas = useSingboxSchemas(open)
   const submitLock = useRef(false)
   const submitSessionRef = useRef(0)
@@ -175,6 +177,7 @@ export function OutboundForm({
     for (const [k, v] of Object.entries(variantProps)) {
       if (SCHEMA_OUT_TOP_EXCLUDES.has(k)) continue
       if (type !== 'vless' && k === 'packet_encoding') continue
+      if (type === 'snell' && k === 'version') continue
       if (SCHEMA_OUT_PRIMARY_PROTO_KEYS.has(k)) out[k] = v
     }
     return out
@@ -184,6 +187,7 @@ export function OutboundForm({
     for (const [k, v] of Object.entries(variantProps)) {
       if (SCHEMA_OUT_TOP_EXCLUDES.has(k)) continue
       if (type === 'vless' && k === 'packet_encoding') continue
+      if (type === 'snell' && (k === 'version' || k === 'network')) continue
       if (SCHEMA_OUT_PRIMARY_PROTO_KEYS.has(k)) continue
       candidates[k] = k === 'multiplex' ? compactOutboundMultiplexSchema(v) : v
     }
@@ -245,7 +249,23 @@ export function OutboundForm({
     if (inner?.http_path && seededRaw.path === undefined) seededRaw.path = inner.http_path
     if (inner?.http_headers && Object.keys(inner.http_headers).length > 0 && seededRaw.headers === undefined) seededRaw.headers = cloneJson(inner.http_headers)
     setRawExtra(seededRaw)
+    setSchemaJsonErrors({})
+    setExtraJsonErrorMsg('')
   }, [open, outbound, form])
+
+  const handleSchemaJsonError = (fieldKey: string, err: string | null) => {
+    setExtraJsonErrorMsg('')
+    setSchemaJsonErrors((prev) => {
+      if (!err) {
+        if (!(fieldKey in prev)) return prev
+        const next = { ...prev }
+        delete next[fieldKey]
+        return next
+      }
+      if (prev[fieldKey] === err) return prev
+      return { ...prev, [fieldKey]: err }
+    })
+  }
 
   const submit = async () => {
     if (!open || submitLock.current) return
@@ -253,10 +273,16 @@ export function OutboundForm({
     const session = submitSessionRef.current
     setSubmitting(true)
     try {
+      setExtraJsonErrorMsg('')
       const v = await form.validateFields().catch((err) => {
         scrollToFirstError(form, err)
         throw err
       })
+      const badJson = Object.values(schemaJsonErrors)[0]
+      if (badJson) {
+        setExtraJsonErrorMsg(badJson)
+        return
+      }
       if (session !== submitSessionRef.current) return
       const body = buildOutboundBody(outbound, v as Record<string, any> & { type: OutboundType }, rawExtra)
       const editing = outbound
@@ -322,6 +348,7 @@ export function OutboundForm({
         <OutboundImport key={`${serverId}-${source}`} serverId={serverId} mode={source} onClose={onClose} onSaved={onSaved} onSavingChange={setSubmitting} formId={importFormId} onReadyChange={setImportReady} />
       ) : <fieldset disabled={submitting} aria-busy={submitting} className="inbound-compact-fieldset">
       <Form form={form} layout="vertical" className="fm-form inbound-compact-form">
+        {extraJsonErrorMsg && <Alert type="error" showIcon message={extraJsonErrorMsg} className="mb-3" />}
         <FormGroup title="基本">
           <Form.Item name="tag" label="标签" rules={[{ required: true }]}>
             <Input />
@@ -330,6 +357,9 @@ export function OutboundForm({
             <Select
               options={OUT_TYPES}
               onChange={(next: OutboundType) => {
+                setRawExtra({})
+                setSchemaJsonErrors({})
+                setExtraJsonErrorMsg('')
                 if (TLS_REQUIRED_OUT.has(next)) form.setFieldValue('tls', true)
               }}
             />
@@ -537,6 +567,7 @@ export function OutboundForm({
                 value={rawExtra}
                 onChange={setRawExtra}
                 idPrefix="outbound-proto"
+                onJsonErrorChange={handleSchemaJsonError}
               />
             )}
           </FormGroup>
@@ -570,6 +601,7 @@ export function OutboundForm({
                 value={(rawExtra.transport && typeof rawExtra.transport === 'object' ? rawExtra.transport : {}) as Record<string, unknown>}
                 onChange={(nextTr) => setRawExtra((prev) => ({ ...prev, transport: nextTr }))}
                 idPrefix="outbound-tr"
+                onJsonErrorChange={handleSchemaJsonError}
               />
             )}
           </FormGroup>
@@ -657,6 +689,7 @@ export function OutboundForm({
                 value={(rawExtra.tls && typeof rawExtra.tls === 'object' ? rawExtra.tls : {}) as Record<string, unknown>}
                 onChange={(nextTls) => setRawExtra((prev) => ({ ...prev, tls: nextTls }))}
                 idPrefix="outbound-tls"
+                onJsonErrorChange={handleSchemaJsonError}
               />
             )}
             {Object.keys(otherParamsSchemaProps).length > 0 && (
@@ -665,6 +698,7 @@ export function OutboundForm({
                 value={rawExtra}
                 onChange={setRawExtra}
                 idPrefix="outbound-other"
+                onJsonErrorChange={handleSchemaJsonError}
               />
             )}
           </FormGroup>

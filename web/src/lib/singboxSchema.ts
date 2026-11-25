@@ -748,8 +748,9 @@ export function nativeJsonToInboundSettings(prev: InboundSettings, rawObj: Recor
   }
   if (typeof rawObj.flow === 'string') next.flow = rawObj.flow
   else delete next.flow
+  // packet_encoding is a client-subscription option stripped from server inbound JSON;
+  // only overwrite when explicitly present so toggling JSON mode preserves "none".
   if (typeof rawObj.packet_encoding === 'string') next.packet_encoding = rawObj.packet_encoding
-  else delete next.packet_encoding
   if (typeof rawObj.method === 'string') next.method = rawObj.method
   if (typeof rawObj.password === 'string' && rawObj.type === 'shadowsocks') next.ss_server_psk = rawObj.password
   if (typeof rawObj.up_mbps === 'number') next.up_mbps = rawObj.up_mbps
@@ -1000,29 +1001,45 @@ export function nativeJsonToOutboundSettings(prev: OutboundSettings, rawObj: Rec
   inner.raw = cloneJson(rawObj)
 
   if (typeof rawObj.server === 'string') outer.server = rawObj.server
+  else delete outer.server
   if (typeof rawObj.server_port === 'number') outer.server_port = rawObj.server_port
+  else delete outer.server_port
   if (typeof rawObj.uuid === 'string') outer.uuid = rawObj.uuid
+  else delete outer.uuid
   if (typeof rawObj.username === 'string') {
     outer.username = rawObj.username
     inner.username = rawObj.username
+  } else {
+    delete outer.username
+    delete inner.username
   }
   if (typeof rawObj.password === 'string') {
     outer.password = rawObj.password
     if (rawObj.type === 'shadowsocks') inner.ss_server_psk = rawObj.password
     else if (rawObj.type === 'socks' || rawObj.type === 'http') inner.password = rawObj.password
+  } else if (typeof rawObj.psk !== 'string') {
+    delete outer.password
+    if (rawObj.type === 'shadowsocks') delete inner.ss_server_psk
+    else if (rawObj.type === 'socks' || rawObj.type === 'http') delete inner.password
   }
   if (typeof rawObj.psk === 'string') {
     outer.password = rawObj.psk
     inner.snell_psk = rawObj.psk
+  } else if (rawObj.type === 'snell') {
+    delete inner.snell_psk
   }
   if (typeof rawObj.method === 'string') inner.method = rawObj.method
+  else delete inner.method
   if (typeof rawObj.flow === 'string') inner.flow = rawObj.flow
   else delete inner.flow
   if (typeof rawObj.packet_encoding === 'string') inner.packet_encoding = rawObj.packet_encoding
   else delete inner.packet_encoding
   if (typeof rawObj.security === 'string') inner.vmess_security = rawObj.security
+  else delete inner.vmess_security
   if (typeof rawObj.alter_id === 'number') inner.vmess_alter_id = rawObj.alter_id
+  else delete inner.vmess_alter_id
   if (typeof rawObj.congestion_control === 'string') inner.congestion_control = rawObj.congestion_control
+  else delete inner.congestion_control
   if (typeof rawObj.zero_rtt_handshake === 'boolean') inner.zero_rtt_handshake = rawObj.zero_rtt_handshake
   else delete inner.zero_rtt_handshake
   if (typeof rawObj.heartbeat === 'string') inner.heartbeat = rawObj.heartbeat

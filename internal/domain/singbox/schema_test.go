@@ -271,3 +271,17 @@ func TestSyncFromRawUpdatesIPv6OnlyAndTLSMode(t *testing.T) {
 		t.Fatal("expected IPv6Only to be preserved when raw listen matches existing ::")
 	}
 }
+
+func TestValidateInboundRawEnforcesActualType(t *testing.T) {
+	// A mismatched "type" inside Raw must not bypass validation against the
+	// actual inbound protocol type (e.g. trojan-only fields on a vless inbound).
+	s := InboundSettings{
+		Raw: map[string]any{
+			"type": "trojan",
+			"flow": "invalid-flow-value",
+		},
+	}
+	if err := s.Validate("vless"); err == nil {
+		t.Fatal("expected Raw validation to enforce actual inbound type vless")
+	}
+}

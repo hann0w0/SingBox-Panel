@@ -835,10 +835,11 @@ func (s InboundSettings) Validate(typ string) error {
 		}
 	}
 	if len(s.Raw) > 0 {
-		rawDoc := deepCloneMap(s.Raw)
-		if _, hasType := rawDoc["type"]; !hasType {
-			rawDoc["type"] = typ
+		if rawType, ok := s.Raw["type"].(string); ok && rawType != "" && rawType != typ {
+			return fmt.Errorf("原始配置中的协议类型 %q 与入站类型 %q 不一致", rawType, typ)
 		}
+		rawDoc := deepCloneMap(s.Raw)
+		rawDoc["type"] = typ
 		in := InboundInput{Type: typ, Settings: s}
 		cleanStaleRawInboundUsers(rawDoc, in)
 		cleanStaleRawInboundProtocolFields(rawDoc, in)

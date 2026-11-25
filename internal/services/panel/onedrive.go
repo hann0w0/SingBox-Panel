@@ -1016,6 +1016,7 @@ func (a *App) downloadOneDriveBackup(c *gin.Context) {
 	// backup or update operation.
 	unlockMaintenance()
 	maintenanceLocked = false
+	c.Header("Cache-Control", "no-store")
 	c.Header("Content-Disposition", fmt.Sprintf(`attachment; filename="%s"`, file.Name))
 	contentType := "application/gzip"
 	if file.Encrypted {

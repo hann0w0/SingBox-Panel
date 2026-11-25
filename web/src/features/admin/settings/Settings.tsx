@@ -1,7 +1,8 @@
-import { useEffect, useRef, useState } from 'react'
-import { Alert, Button, Input, Modal, Popconfirm, Select, Tooltip, Typography, Upload, message } from '../../../components/kit'
-import type { UploadFile } from '../../../components/kit'
-import { Trash2, Download, Inbox, Link } from 'lucide-react'
+import { useEffect, useId, useRef, useState } from 'react'
+import { Alert, Button, Input, Modal, Popconfirm, Select, Tooltip, Typography, message } from '../../../components/kit'
+import { Button as UiButton } from '../../../components/ui/button'
+import { Trash2, Download, Link, UploadCloud, FileArchive, X } from 'lucide-react'
+import { cn } from '../../../lib/util'
 import {
   listPanelReleases,
   deleteOneDriveBackup,
@@ -48,6 +49,7 @@ const VIEWS = [
 export default function Settings() {
   const [view, setView] = useState<SettingsView>('version')
   const [info, setInfo] = useState<MaintenanceInfo | null>(null)
+  const [infoError, setInfoError] = useState<string | null>(null)
   const dockerDeployment = info?.deployment === 'docker'
   const [loading, setLoading] = useState(false)
   const [updating, setUpdating] = useState(false)
@@ -57,8 +59,11 @@ export default function Settings() {
   const [pickedVersion, setPickedVersion] = useState<string>()
   const [backing, setBacking] = useState(false)
   const [restoring, setRestoring] = useState(false)
-  const [restoreFile, setRestoreFile] = useState<UploadFile | null>(null)
+  const [restoreFile, setRestoreFile] = useState<File | null>(null)
+  const [restoreDragging, setRestoreDragging] = useState(false)
+  const restoreInputId = useId()
   const [cloud, setCloud] = useState<OneDriveStatus | null>(null)
+  const [cloudLoadError, setCloudLoadError] = useState<string | null>(null)
   const [cloudLoading, setCloudLoading] = useState(false)
   const [cloudSyncing, setCloudSyncing] = useState(false)
   const [cloudRestoring, setCloudRestoring] = useState(false)
@@ -80,12 +85,20 @@ export default function Settings() {
     const generation = ++infoLoadRef.current.generation
     infoLoadRef.current.controller = controller
     setLoading(true)
+    setInfoError(null)
     getMaintenanceInfo(controller.signal, refresh)
       .then((next) => {
-        if (generation === infoLoadRef.current.generation) setInfo(next)
+        if (generation === infoLoadRef.current.generation) {
+          setInfo(next)
+          setInfoError(null)
+        }
       })
       .catch((e) => {
-        if (generation === infoLoadRef.current.generation && !isCanceledRequest(e)) message.error(errMsg(e))
+        if (generation === infoLoadRef.current.generation && !isCanceledRequest(e)) {
+          const msg = errMsg(e)
+          setInfoError(msg)
+          message.error(msg)
+        }
       })
       .finally(() => {
         if (generation === infoLoadRef.current.generation) {
@@ -101,12 +114,18 @@ export default function Settings() {
     const generation = ++cloudLoadRef.current.generation
     cloudLoadRef.current.controller = controller
     setCloudLoading(true)
+    setCloudLoadError(null)
     try {
       const status = await getOneDriveStatus(controller.signal)
       if (generation !== cloudLoadRef.current.generation) return
       setCloud(status)
+      setCloudLoadError(null)
     } catch (e) {
-      if (generation === cloudLoadRef.current.generation && !isCanceledRequest(e)) message.error(errMsg(e))
+      if (generation === cloudLoadRef.current.generation && !isCanceledRequest(e)) {
+        const msg = errMsg(e)
+        setCloudLoadError(msg)
+        message.error(msg)
+      }
     } finally {
       if (generation === cloudLoadRef.current.generation) {
         cloudLoadRef.current.controller = null
@@ -271,15 +290,20 @@ export default function Settings() {
     return `${(size / 1024 / 1024).toFixed(1)} MB`
   }
 
+  const selectRestoreFiles = (files: FileList | null) => {
+    if (restoring || cloudRestoring || !files || files.length === 0) return
+    setRestoreFile(files[0])
+  }
+
   const doRestore = () => {
-    const file = restoreFile?.originFileObj as File | undefined
+    const file = restoreFile
     if (!file) {
       message.warning('请先选择备份文件')
       return
     }
     Modal.confirm({
       title: '恢复备份',
-      content: <>将用 <b>{restoreFile?.name}</b> 覆盖全部数据，完成后需重新登录。</>,
+      content: <>将用 <b>{file.name}</b> 覆盖全部数据，完成后需重新登录。</>,
       okText: '确认恢复',
       okButtonProps: { danger: true },
       cancelText: '取消',
@@ -437,7 +461,7 @@ export default function Settings() {
   const authLink = authPending ? (authPending.verification_uri_complete || authPending.verification_uri) : ''
 
   const versionView = (
-    <RequestState loading={loading && !info} hasData={!!info}>
+    <RequestState loading={loading && !info} error={infoError} hasData={!!info} onRetry={() => load()}>
       {info && (
         <div className="ui-card settings-card">
           <dl className="ui-kv">
@@ -603,29 +627,90 @@ export default function Settings() {
     </>
   )
 
+  const restoreDisabled = restoring || cloudRestoring
+
   const restoreView = (
     <div className="ui-card settings-card settings-restore">
-      <Upload.Dragger
-        className="settings-dragger"
-        accept=".gz,.tar.gz"
-        maxCount={1}
-        multiple={false}
-        beforeUpload={() => false /* 不自动上传，交给按钮统一提交 */}
-        fileList={restoreFile ? [restoreFile] : []}
-        onChange={({ fileList }) => setRestoreFile(fileList[fileList.length - 1] ?? null)}
-        onRemove={() => setRestoreFile(null)}
-        disabled={restoring || cloudRestoring}
-      >
-        <p className="ui-upload-drag-icon"><Inbox /></p>
-        <p className="ui-upload-text">点击或拖拽备份文件</p>
-        <p className="ui-upload-hint mono">.tar.gz</p>
-      </Upload.Dragger>
+      <div className="p-5 pb-4 max-md:p-4 max-md:pb-3 space-y-3">
+        <label
+          htmlFor={restoreInputId}
+          aria-disabled={restoreDisabled}
+          onDragEnter={(event) => {
+            event.preventDefault()
+            if (!restoreDisabled) setRestoreDragging(true)
+          }}
+          onDragOver={(event) => {
+            event.preventDefault()
+            if (!restoreDisabled && !restoreDragging) setRestoreDragging(true)
+          }}
+          onDragLeave={(event) => {
+            if (!event.currentTarget.contains(event.relatedTarget as Node | null)) {
+              setRestoreDragging(false)
+            }
+          }}
+          onDrop={(event) => {
+            event.preventDefault()
+            setRestoreDragging(false)
+            selectRestoreFiles(event.dataTransfer.files)
+          }}
+          className={cn(
+            'flex flex-col items-center justify-center gap-1.5 rounded-[var(--app-radius)] border border-dashed px-4 py-8 text-center transition-colors',
+            'border-[var(--console-border-strong)] bg-[var(--console-surface)]',
+            restoreDisabled
+              ? 'cursor-not-allowed opacity-60'
+              : 'cursor-pointer hover:border-[var(--console-ink)] focus-within:border-[var(--console-ink)] focus-within:ring-2 focus-within:ring-[var(--console-focus)]',
+            restoreDragging && !restoreDisabled && 'border-[var(--console-ink)] bg-[var(--console-hover)]',
+          )}
+        >
+          <UploadCloud className="size-7 text-[var(--console-faint)]" aria-hidden="true" />
+          <span className="text-sm font-medium text-[var(--console-ink)]">点击或拖拽备份文件</span>
+          <span className="mono text-xs text-[var(--console-faint)]">.tar.gz</span>
+          <input
+            id={restoreInputId}
+            type="file"
+            accept=".gz,.tar.gz"
+            multiple={false}
+            disabled={restoreDisabled}
+            className="sr-only"
+            aria-label="选择备份文件"
+            onChange={(event) => {
+              selectRestoreFiles(event.target.files)
+              event.target.value = ''
+            }}
+          />
+        </label>
+        {restoreFile && (
+          <div className="flex items-center justify-between gap-3 rounded-[var(--app-radius)] border border-[var(--console-border)] bg-[var(--console-container)] px-3 py-2 text-sm">
+            <div className="flex min-w-0 items-center gap-2.5">
+              <FileArchive className="size-4 shrink-0 text-[var(--console-muted)]" aria-hidden="true" />
+              <span className="mono truncate text-[var(--console-ink)]">{restoreFile.name}</span>
+              <span className="shrink-0 text-xs text-[var(--console-faint)]">{formatBackupSize(restoreFile.size)}</span>
+            </div>
+            <UiButton
+              type="button"
+              variant="ghost"
+              size="icon-xs"
+              aria-label="移除文件"
+              disabled={restoreDisabled}
+              onClick={() => setRestoreFile(null)}
+            >
+              <X className="size-3.5" />
+            </UiButton>
+          </div>
+        )}
+      </div>
       <div className="settings-card-foot">
         <span className="settings-note">将覆盖全部数据并重启面板</span>
         <div className="settings-actions">
-          <Button danger type="primary" loading={restoring} disabled={!restoreFile || cloudRestoring} onClick={doRestore}>
-            恢复并重启
-          </Button>
+          <UiButton
+            type="button"
+            variant="destructive"
+            size="sm"
+            disabled={!restoreFile || restoreDisabled}
+            onClick={doRestore}
+          >
+            {restoring ? '正在恢复…' : '恢复并重启'}
+          </UiButton>
         </div>
       </div>
     </div>
@@ -637,7 +722,7 @@ export default function Settings() {
       <Pills label="设置分类" items={VIEWS} active={view} onChange={(key) => setView(key as SettingsView)} />
       <div className="settings-view">
         {view === 'version' ? versionView : view === 'backup' ? (
-          <RequestState loading={cloudLoading && !cloud} hasData={!!cloud}>{backupView}</RequestState>
+          <RequestState loading={cloudLoading && !cloud} error={cloudLoadError} hasData={!!cloud} onRetry={() => void loadCloud()}>{backupView}</RequestState>
         ) : restoreView}
       </div>
     </div>

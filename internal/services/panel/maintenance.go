@@ -372,6 +372,7 @@ func (a *App) downloadBackup(c *gin.Context) {
 	maintenanceUnlocked = true
 	defer cleanup()
 
+	c.Header("Cache-Control", "no-store")
 	c.Header("Content-Type", "application/gzip")
 	c.Header("Content-Disposition", fmt.Sprintf(`attachment; filename="%s"`, archiveName))
 	f, err := os.Open(archivePath)

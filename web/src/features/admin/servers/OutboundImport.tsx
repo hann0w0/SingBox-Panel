@@ -23,6 +23,8 @@ export function OutboundImport({ serverId, mode, onClose, onSaved, onSavingChang
   formId?: string
   onReadyChange?: (ready: boolean) => void
 }) {
+  const [form] = Form.useForm<{ tag: string }>()
+  const watchedTag = Form.useWatch('tag', form) ?? ''
   const [sources, setSources] = useState<OutboundSource[]>([])
   const [sourcesLoading, setSourcesLoading] = useState(false)
   const [sourcesError, setSourcesError] = useState('')
@@ -32,13 +34,13 @@ export function OutboundImport({ serverId, mode, onClose, onSaved, onSavingChang
   const [expandedGroups, setExpandedGroups] = useState<Set<string>>(() => new Set())
   const [uri, setURI] = useState('')
   const [preview, setPreview] = useState<OutboundBody | null>(null)
-  const [tag, setTag] = useState('')
   const [error, setError] = useState('')
   const [parsing, setParsing] = useState(false)
   const [saving, setSaving] = useState(false)
   // Remember which source produced the preview so the save keeps that link.
   // The preview response carries the node's snapshot, not the reference.
   const [previewSource, setPreviewSource] = useState<{ kind: OutboundSourceKind; id: number } | null>(null)
+  const sourcesAbortRef = useRef<AbortController | null>(null)
   const request = useRef<AbortController | null>(null)
   const saveLock = useRef(false)
   const session = useRef(0)
@@ -47,6 +49,7 @@ export function OutboundImport({ serverId, mode, onClose, onSaved, onSavingChang
     session.current += 1
     return () => {
       session.current += 1
+      sourcesAbortRef.current?.abort()
       request.current?.abort()
     }
   }, [serverId])
@@ -65,17 +68,26 @@ export function OutboundImport({ serverId, mode, onClose, onSaved, onSavingChang
   }
 
   useEffect(() => {
+    sourcesAbortRef.current?.abort()
     const controller = new AbortController()
+    sourcesAbortRef.current = controller
     void loadSources(controller.signal)
     return () => controller.abort()
   }, [serverId])
+
+  const retrySources = () => {
+    sourcesAbortRef.current?.abort()
+    const controller = new AbortController()
+    sourcesAbortRef.current = controller
+    void loadSources(controller.signal)
+  }
 
   const invalidate = () => {
     request.current?.abort()
     setParsing(false)
     setPreview(null)
     setPreviewSource(null)
-    setTag('')
+    form.setFieldValue('tag', '')
     setError('')
   }
 
@@ -88,7 +100,7 @@ export function OutboundImport({ serverId, mode, onClose, onSaved, onSavingChang
       const result = await previewOutboundImport(serverId, body, controller.signal)
       if (controller.signal.aborted) return
       setPreview(result)
-      setTag(result.tag)
+      form.setFieldValue('tag', result.tag)
       setPreviewSource('source_kind' in body ? { kind: body.source_kind, id: body.source_id } : null)
     } catch (e) {
       if (!controller.signal.aborted) setError(errMsg(e))
@@ -103,8 +115,9 @@ export function OutboundImport({ serverId, mode, onClose, onSaved, onSavingChang
     void parse({ source_kind: source.kind, source_id: source.id })
   }
 
-  const save = async () => {
-    if (!preview || !tag.trim() || saveLock.current) return
+  const save = async (submitted?: { tag?: string }) => {
+    const trimmedTag = String(submitted?.tag ?? form.getFieldValue('tag') ?? '').trim()
+    if (!preview || !trimmedTag || saveLock.current) return
     const savingSession = session.current
     saveLock.current = true
     setSaving(true)
@@ -117,7 +130,7 @@ export function OutboundImport({ serverId, mode, onClose, onSaved, onSavingChang
       // it; a URI import stores an independent snapshot.
       const result = await createOutbound(serverId, {
         ...preview,
-        tag: tag.trim(),
+        tag: trimmedTag,
         ...(previewSource ? { source_kind: previewSource.kind, source_id: previewSource.id } : {}),
       })
       if (savingSession !== session.current) return
@@ -135,7 +148,7 @@ export function OutboundImport({ serverId, mode, onClose, onSaved, onSavingChang
     }
   }
 
-  const canSave = !!preview && !!tag.trim() && !parsing
+  const canSave = !!preview && !!watchedTag.trim() && !parsing
   useEffect(() => { onReadyChange?.(canSave) }, [canSave, onReadyChange])
 
   const panelSources = useMemo(() => sources.filter((s) => s.kind === 'inbound'), [sources])
@@ -153,7 +166,7 @@ export function OutboundImport({ serverId, mode, onClose, onSaved, onSavingChang
   }, [modeSources])
   const settings = preview?.settings
   return (
-    <Form id={formId} layout="vertical" className="fm-form fm-import-form" onFinish={save}>
+    <Form form={form} id={formId} layout="vertical" className="fm-form fm-import-form" onFinish={save}>
       {mode === 'uri' ? (
         <div className="flex flex-col">
           <div className="flex h-[264px] flex-col gap-2 rounded-lg border bg-background p-2">
@@ -233,7 +246,12 @@ export function OutboundImport({ serverId, mode, onClose, onSaved, onSavingChang
         </div>
       )}
 
-      {sourcesError && <Alert type="error" showIcon message={sourcesError} style={{ marginBottom: 16 }} />}
+      {sourcesError && (
+        <div className="mb-4 flex items-center gap-2">
+          <Alert type="error" showIcon message={sourcesError} className="min-w-0 flex-1" />
+          <Button size="small" onClick={retrySources} disabled={sourcesLoading || saving}>重试</Button>
+        </div>
+      )}
       {error && <Alert type="error" showIcon message={error} style={{ marginBottom: 16 }} />}
       {preview && (
         <>
@@ -248,14 +266,14 @@ export function OutboundImport({ serverId, mode, onClose, onSaved, onSavingChang
               {mode !== 'uri' && <div><dt>来源</dt><dd>{mode === 'panel' ? '面板节点' : '外部节点'} · 跟随节点</dd></div>}
             </dl>
           </section>
-          <Form.Item label="出站标签" required>
-            <Input aria-label="出站标签" value={tag} disabled={saving} onChange={(e) => setTag(e.target.value)} />
+          <Form.Item name="tag" label="出站标签" rules={[{ required: true, whitespace: true, message: '请输入出站标签' }]}>
+            <Input aria-label="出站标签" disabled={saving} />
           </Form.Item>
         </>
       )}
       {!formId && <Space style={{ display: 'flex', justifyContent: 'flex-end' }}>
         <Button onClick={onClose} disabled={saving}>取消</Button>
-        <Button type="primary" htmlType="submit" loading={saving} disabled={!preview || !tag.trim() || parsing}>保存</Button>
+        <Button type="primary" htmlType="submit" loading={saving} disabled={!canSave}>保存</Button>
       </Space>}
     </Form>
   )

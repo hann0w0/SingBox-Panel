@@ -292,6 +292,125 @@ func (a *App) importUserOutbound(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"outbounds": created})
 }
 
+// previewUserOutbound parses a single share link for an account without saving it,
+// returning connection details and a candidate unique tag for confirmation.
+func (a *App) previewUserOutbound(c *gin.Context) {
+	var u model.User
+	if err := a.db.First(&u, currentUID(c)).Error; err != nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "user not found"})
+		return
+	}
+	if u.Role != model.RoleAdmin && (!userActive(&u) || !u.ForwardingEnabled) {
+		c.JSON(http.StatusForbidden, gin.H{"error": "账号不可用或尚未开启转发权限"})
+		return
+	}
+	c.Header("Cache-Control", "no-store")
+	var req struct {
+		URI string `json:"uri"`
+	}
+	if !bindJSON(c, &req) {
+		return
+	}
+	req.URI = strings.TrimSpace(req.URI)
+	if req.URI == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "请填写一条节点 URI"})
+		return
+	}
+	if len(req.URI) > 65536 || strings.ContainsAny(req.URI, "\r\n") {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "请一次填写一条节点 URI（最多 64 KB）"})
+		return
+	}
+	client, err := singbox.ParseShareLink(req.URI)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "链接解析失败：" + err.Error()})
+		return
+	}
+	if client.Type == "http" && client.User.Username == "" && client.Settings.Username == "" && client.User.Password == "" && client.Settings.Password == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "暂不支持无认证的 HTTP(S) 链接作为专属出站"})
+		return
+	}
+	body, err := outboundFromClientNode(client)
+	if err == nil {
+		body.Tag, err = availablePrivateOutboundTag(a.db, body.Tag)
+	}
+	if err == nil {
+		err = a.validatePrivateOutbound(body.Tag, body.Type, body.Settings)
+	}
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"outbound": body})
+}
+
+// createUserOutbound creates a manual credential-only private exit owned by the
+// signed-in account, sharing the same protocol and SSRF constraints as imports.
+func (a *App) createUserOutbound(c *gin.Context) {
+	var req userOutboundReq
+	if !bindJSON(c, &req) {
+		return
+	}
+	req.Tag = strings.TrimSpace(req.Tag)
+	if req.Tag == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "出站名称必填"})
+		return
+	}
+	if err := a.validatePrivateOutbound(req.Tag, req.Type, req.Settings); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+	a.userAccessMu.Lock()
+	var created UserPrivateOutbound
+	statusCode := http.StatusBadRequest
+	err := a.db.Transaction(func(tx *gorm.DB) error {
+		var u model.User
+		if err := tx.First(&u, currentUID(c)).Error; err != nil {
+			statusCode = http.StatusNotFound
+			return fmt.Errorf("user not found")
+		}
+		if u.Role != model.RoleAdmin && (!userActive(&u) || !u.ForwardingEnabled) {
+			statusCode = http.StatusForbidden
+			return fmt.Errorf("账号不可用或尚未开启转发权限")
+		}
+		var existingCount int64
+		if err := tx.Model(&model.Outbound{}).Where("owner_user_id = ?", u.ID).Count(&existingCount).Error; err != nil {
+			statusCode = http.StatusInternalServerError
+			return err
+		}
+		if existingCount+1 > maxUserPrivateOutbounds {
+			return fmt.Errorf("专属出站数量不能超过 %d 个", maxUserPrivateOutbounds)
+		}
+		tag, err := availablePrivateOutboundTag(tx, req.Tag)
+		if err != nil {
+			return err
+		}
+		ob := model.Outbound{
+			ServerID: 0, OwnerUserID: u.ID, Tag: tag, Type: req.Type,
+			Settings: model.JSONText(req.Settings),
+		}
+		if req.Remark != nil {
+			ob.Remark = *req.Remark
+		}
+		if err := tx.Create(&ob).Error; err != nil {
+			statusCode = http.StatusInternalServerError
+			return err
+		}
+		created = UserPrivateOutbound{ID: ob.ID, Tag: ob.Tag, Type: ob.Type, Remark: ob.Remark}
+		return nil
+	})
+	a.userAccessMu.Unlock()
+	if err != nil {
+		if statusCode == http.StatusInternalServerError {
+			log.Printf("create user outbound: %v", err)
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "保存专属出站失败"})
+			return
+		}
+		c.JSON(statusCode, gin.H{"error": err.Error()})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"outbound": created})
+}
+
 // deleteUserOutbound lets an account clean up an unused private exit without
 // administrator involvement. Referenced exits stay protected until the user
 // removes the forwarding node or routing rule that depends on them.

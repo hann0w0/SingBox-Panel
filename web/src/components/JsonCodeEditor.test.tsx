@@ -113,4 +113,35 @@ describe('JsonCodeEditor', () => {
     fireEvent.keyDown(textarea, { key: 'Enter' })
     expect(textarea.value).toBe('{\n  "a": 1\n}')
   })
+
+  it('supports Ctrl+Z undo and Ctrl+Shift+Z redo after Tab and typing while restoring selection', () => {
+    render(<ControlledEditor initial={'{\n  "a": 1\n}'} />)
+    const textarea = screen.getByRole('textbox', { name: 'config.json' }) as HTMLTextAreaElement
+
+    textarea.setSelectionRange(2, 2)
+    fireEvent.keyDown(textarea, { key: 'Tab' })
+    expect(textarea.value).toBe('{\n    "a": 1\n}')
+    expect(textarea.selectionStart).toBe(4)
+
+    fireEvent.change(textarea, { target: { value: '{\n  "b": 2,\n    "a": 1\n}', selectionStart: 10, selectionEnd: 10 } })
+    fireEvent.keyDown(textarea, { key: 'z', ctrlKey: true })
+    expect(textarea.value).toBe('{\n    "a": 1\n}')
+    expect(textarea.selectionStart).toBe(4)
+
+    fireEvent.keyDown(textarea, { key: 'z', ctrlKey: true })
+    expect(textarea.value).toBe('{\n  "a": 1\n}')
+    expect(textarea.selectionStart).toBe(2)
+
+    fireEvent.keyDown(textarea, { key: 'z', ctrlKey: true, shiftKey: true })
+    expect(textarea.value).toBe('{\n    "a": 1\n}')
+    expect(textarea.selectionStart).toBe(4)
+  })
+
+  it('uses plain line rendering without token spans on large documents over 500 lines', () => {
+    const large = `{\n${Array.from({ length: 520 }, (_, i) => `  "k${i}": ${i}`).join(',\n')}\n}`
+    const { container } = render(<ControlledEditor initial={large} />)
+    expect(container.querySelectorAll('.fm-code-gutter-line').length).toBe(522)
+    expect(container.querySelectorAll('.fm-tok-key').length).toBe(0)
+    expect(container.querySelectorAll('.fm-code-guide').length).toBe(0)
+  })
 })

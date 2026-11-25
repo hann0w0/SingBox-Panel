@@ -905,10 +905,14 @@ export function Tooltip({
   children: React.ReactNode
   placement?: string
 }) {
+  const canDirectAttach =
+    React.isValidElement(children) &&
+    children.type !== React.Fragment &&
+    !(children.props as { disabled?: boolean }).disabled
   return (
     <TooltipRoot>
       <TooltipTrigger asChild>
-        <span className="inline-flex">{children}</span>
+        {canDirectAttach ? children : <span className="inline-flex">{children}</span>}
       </TooltipTrigger>
       <TooltipContent side={placement === 'bottom' ? 'bottom' : 'top'}>
         {title}

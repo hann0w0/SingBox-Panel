@@ -1,4 +1,4 @@
-import type { ReactNode } from 'react'
+import { useEffect, useRef, type ReactNode } from 'react'
 import { JsonCodeEditor } from '../../../components/JsonCodeEditor'
 import { Button, Form, Input, Modal, Select, Table, type FormInstance } from '../../../components/kit'
 import type { ImportSummary } from '../../../lib/api'
@@ -103,8 +103,22 @@ export function ConfigEditorModal({
   onCancel: () => void
   onSave: () => void
 }) {
+  const initialTextRef = useRef(text)
+  const readyRef = useRef(false)
+  useEffect(() => {
+    if (!open) {
+      readyRef.current = false
+      return
+    }
+    if (!loading && !readyRef.current) {
+      readyRef.current = true
+      initialTextRef.current = text
+    }
+  }, [open, loading, text])
+  const isDirty = !preview && !loading && text !== initialTextRef.current
+
   return (
-    <Modal className="fm-modal" title={preview ? '配置预览（未下发）' : '编辑配置'} open={open} onCancel={onCancel} onOk={onSave} okText="校验并下发" okButtonProps={{ disabled: loading }} confirmLoading={saving} width={MODAL_LG} footer={preview ? <Button onClick={onCancel}>关闭</Button> : undefined}>
+    <Modal className="fm-modal" title={preview ? '配置预览（未下发）' : '编辑配置'} open={open} onCancel={onCancel} onOk={onSave} maskClosable={!saving && !isDirty} okText="校验并下发" okButtonProps={{ disabled: loading }} confirmLoading={saving} width={MODAL_LG} footer={preview ? <Button onClick={onCancel}>关闭</Button> : undefined}>
       {loading ? (
         <div className="fm-loading">读取中…</div>
       ) : (
@@ -131,7 +145,7 @@ export function InstallSingboxModal({
   const method = Form.useWatch('method', form) ?? 'script'
   return (
     <Modal className="fm-modal" title="安装 / 升级 sing-box" open={open} onOk={onConfirm} onCancel={onCancel} okText="开始安装" width={MODAL_SM}>
-      <Form form={form} layout="vertical" className="fm-form" initialValues={{ channel: 'stable', method: 'script' }}>
+      <Form form={form} layout="vertical" className="fm-form" initialValues={{ channel: 'stable', method: 'script' }} onFinish={onConfirm}>
         <div className="fm-grid" style={{ paddingTop: 6 }}>
           <Form.Item name="channel" label="渠道"><Select options={[{ value: 'stable', label: 'stable' }, { value: 'beta', label: 'beta' }]} /></Form.Item>
           <Form.Item name="method" label="安装方式">

@@ -605,7 +605,7 @@ export default function Servers() {
         onCancel={() => setOpen(false)}
         confirmLoading={saving}
       >
-        <Form form={form} layout="vertical" initialValues={{ traffic_reset_day: 1 }}>
+        <Form form={form} layout="vertical" initialValues={{ traffic_reset_day: 1 }} onFinish={onSubmit}>
           <Form.Item name="name" label="名称" rules={[{ required: true }]}>
             <Input />
           </Form.Item>
@@ -629,7 +629,7 @@ export default function Servers() {
         onCancel={() => setSingboxModalOpen(false)}
         okText="开始更新"
       >
-        <Form form={singboxForm} layout="vertical" initialValues={{ channel: 'stable', method: 'script' }}>
+        <Form form={singboxForm} layout="vertical" initialValues={{ channel: 'stable', method: 'script' }} onFinish={doUpdateSingbox}>
           <Form.Item name="channel" label="版本渠道">
             <Segmented options={[{ value: 'stable', label: '稳定版' }, { value: 'beta', label: '测试版' }]} />
           </Form.Item>

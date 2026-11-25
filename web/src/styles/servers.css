@@ -32,8 +32,9 @@
 }
 @media (max-width: 767px) {
   .ui-pills-row .ui-pills-actions { flex: 1 1 100%; }
-  .srv-row { grid-template-columns: minmax(0, 1fr) auto; grid-template-areas: 'name status' 'rate actions'; gap: 8px 12px; padding: 14px 16px; }
-  .srv-drag, .srv-load { display: none; }
+  .srv-row { grid-template-columns: 20px minmax(0, 1fr) auto; grid-template-areas: 'drag name status' 'drag rate actions'; gap: 8px 10px; padding: 14px 12px 14px 8px; }
+  .srv-drag { grid-area: drag; opacity: .75; }
+  .srv-load { display: none; }
   .srv-name { grid-area: name; }
   .srv-status { grid-area: status; justify-self: end; }
   .srv-rate { grid-area: rate; flex-direction: row; gap: 12px; }

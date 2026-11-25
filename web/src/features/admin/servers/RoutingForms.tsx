@@ -164,6 +164,7 @@ export function OutboundForm({
   const schemas = useSingboxSchemas(open)
   const submitLock = useRef(false)
   const submitSessionRef = useRef(0)
+  const [dirty, setDirty] = useState(false)
   const type: OutboundType = Form.useWatch('type', form) ?? 'shadowsocks'
   const tlsMode = Form.useWatch('tls_mode', form) ?? 'none'
   const transportType = Form.useWatch('transport_type', form) ?? 'tcp'
@@ -241,6 +242,7 @@ export function OutboundForm({
   }, [variantProps, rawExtra.tls, stickyTlsKeys])
 
   const updateRawExtra = (updater: Record<string, unknown> | ((prev: Record<string, unknown>) => Record<string, unknown>)) => {
+    setDirty(true)
     setRawExtra((prev) => {
       const next = typeof updater === 'function' ? updater(prev) : updater
       const changed = Object.keys(next).filter((k) => next[k] !== prev[k])
@@ -256,6 +258,7 @@ export function OutboundForm({
     })
   }
   const updateRawTransport = (nextTr: Record<string, unknown>) => {
+    setDirty(true)
     setRawExtra((prev) => {
       const prevTr = (prev.transport && typeof prev.transport === 'object' ? prev.transport : {}) as Record<string, unknown>
       const changed = Object.keys(nextTr).filter((k) => nextTr[k] !== prevTr[k])
@@ -271,6 +274,7 @@ export function OutboundForm({
     })
   }
   const updateRawTls = (nextTls: Record<string, unknown>) => {
+    setDirty(true)
     setRawExtra((prev) => {
       const prevTls = (prev.tls && typeof prev.tls === 'object' ? prev.tls : {}) as Record<string, unknown>
       const changed = Object.keys(nextTls).filter((k) => nextTls[k] !== prevTls[k])
@@ -297,6 +301,7 @@ export function OutboundForm({
     if (!open) return
     setSource('manual')
     setImportReady(false)
+    setDirty(false)
     form.resetFields()
     form.setFieldsValue(outboundToForm(outbound))
     const inner = outbound?.settings?.settings
@@ -398,7 +403,7 @@ export function OutboundForm({
       onOk={submit}
       onCancel={() => { if (!submitting) onClose() }}
       closable={!submitting}
-      maskClosable={!submitting}
+      maskClosable={!submitting && !dirty}
       keyboard={!submitting}
       okText="保存"
       cancelText="取消"
@@ -433,7 +438,7 @@ export function OutboundForm({
       {!outbound && source !== 'manual' ? (
         <OutboundImport key={`${serverId}-${source}`} serverId={serverId} mode={source} onClose={onClose} onSaved={onSaved} onSavingChange={setSubmitting} formId={importFormId} onReadyChange={setImportReady} />
       ) : <fieldset disabled={submitting} aria-busy={submitting} className="inbound-compact-fieldset">
-      <Form form={form} layout="vertical" className="fm-form inbound-compact-form">
+      <Form form={form} layout="vertical" className="fm-form inbound-compact-form" onFinish={submit} onChange={() => setDirty(true)} onInput={() => setDirty(true)}>
         {extraJsonErrorMsg && <Alert type="error" showIcon message={extraJsonErrorMsg} className="mb-3" />}
         <FormGroup title="基本">
           <Form.Item name="tag" label="标签" rules={[{ required: true }]}>
@@ -782,6 +787,7 @@ export function OutboundForm({
                 options={availableTopParamOptions}
                 onChange={(key: string) => {
                   if (!key) return
+                  setDirty(true)
                   setStickyTopKeys((prev) => new Set([...prev, key]))
                 }}
               />
@@ -1537,6 +1543,7 @@ export function RuleForm({
   const [extraJsonErrors, setExtraJsonErrors] = useState<Record<string, string>>({})
   const [jsonText, setJsonText] = useState('')
   const [jsonError, setJsonError] = useState('')
+  const [dirty, setDirty] = useState(false)
   const schemas = useSingboxSchemas(open)
   const submitLock = useRef(false)
   const submitSessionRef = useRef(0)
@@ -1613,6 +1620,7 @@ export function RuleForm({
   }
 
   const setExtraParam = (key: string, value: unknown) => {
+    setDirty(true)
     setExtraMatch((prev) => ({ ...prev, [key]: value }))
   }
 
@@ -1634,16 +1642,19 @@ export function RuleForm({
 
   const addConditionRow = () => {
     if (!nextAvailableField) return
+    setDirty(true)
     setConditionError('')
     setConditions((prev) => [...prev, emptyConditionRow(nextAvailableField, nextRowId())])
   }
 
   const updateConditionRow = (id: string, patch: Partial<ConditionRow>) => {
+    setDirty(true)
     setConditionError('')
     setConditions((prev) => prev.map((row) => (row.id === id ? { ...row, ...patch } : row)))
   }
 
   const removeConditionRow = (id: string) => {
+    setDirty(true)
     setConditionError('')
     setConditions((prev) => prev.filter((row) => row.id !== id))
   }
@@ -1671,6 +1682,7 @@ export function RuleForm({
     setJsonError('')
     setConditionError('')
     setExtraJsonErrors({})
+    setDirty(false)
     if (rule) {
       const m = (rule.match || {}) as Record<string, unknown>
       const act = inferRuleAction(m, rule.outbound)
@@ -1940,6 +1952,7 @@ export function RuleForm({
       open={open}
       onOk={submit}
       onCancel={onClose}
+      maskClosable={!submitting && !dirty}
       confirmLoading={submitting}
       okText="保存"
       cancelText="取消"
@@ -1963,12 +1976,13 @@ export function RuleForm({
             disabled={submitting}
             onChange={(val) => {
               setJsonText(val)
+              setDirty(true)
               if (jsonError) setJsonError('')
             }}
           />
         </div>
       ) : (
-      <Form form={form} layout="vertical" className="fm-form inbound-compact-form">
+      <Form form={form} layout="vertical" className="fm-form inbound-compact-form" onFinish={submit} onChange={() => setDirty(true)} onInput={() => setDirty(true)}>
         <FormGroup title="基本" panel="inbound">
           <Form.Item name="action" label="动作" rules={[{ required: true, message: '请选择规则动作' }]}>
             <Select aria-label="规则动作" options={ACTION_OPTIONS} />

@@ -5,8 +5,10 @@ import type { User } from './types'
 interface AuthState {
   token: string | null
   user: User | null
+  needsRevalidation: boolean
   setAuth: (token: string, user: User) => void
   setUser: (user: User) => void
+  clearRevalidation: () => void
   logout: () => void
 }
 
@@ -77,18 +79,50 @@ const safeStorage: StateStorage = {
   },
 }
 
+export const AUTH_STORAGE_KEY = 'singbox-panel-auth'
+
 export const useAuth = create<AuthState>()(
   persist(
     (set) => ({
       token: null,
       user: null,
-      setAuth: (token, user) => set({ token, user }),
-      setUser: (user) => set({ user }),
-      logout: () => set({ token: null, user: null }),
+      needsRevalidation: false,
+      setAuth: (token, user) => set({ token, user, needsRevalidation: false }),
+      setUser: (user) => set({ user, needsRevalidation: false }),
+      clearRevalidation: () => set({ needsRevalidation: false }),
+      logout: () => set({ token: null, user: null, needsRevalidation: false }),
     }),
     {
-      name: 'singbox-panel-auth',
+      name: AUTH_STORAGE_KEY,
       storage: createJSONStorage(() => safeStorage),
+      partialize: (state) => ({ token: state.token, user: state.user }),
+      merge: (persisted, current) => {
+        const stored = (persisted as Partial<AuthState> | undefined) ?? {}
+        const hasStoredSession = Boolean(stored.token && stored.user)
+        return {
+          ...current,
+          ...stored,
+          needsRevalidation: current.needsRevalidation || hasStoredSession,
+        }
+      },
     },
   ),
 )
+
+if (typeof window !== 'undefined' && typeof window.addEventListener === 'function') {
+  window.addEventListener('storage', (event) => {
+    if (event.key !== AUTH_STORAGE_KEY && event.key !== null) return
+    if (!event.newValue) {
+      useAuth.setState({ token: null, user: null, needsRevalidation: false })
+      return
+    }
+    try {
+      const parsed = JSON.parse(event.newValue) as { state?: { token?: string | null; user?: User | null } }
+      const nextToken = parsed?.state?.token ?? null
+      const nextUser = parsed?.state?.user ?? null
+      useAuth.setState({ token: nextToken, user: nextUser, needsRevalidation: false })
+    } catch {
+      // ignore malformed cross-tab payload
+    }
+  })
+}

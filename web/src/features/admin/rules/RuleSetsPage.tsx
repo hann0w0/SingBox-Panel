@@ -163,7 +163,7 @@ export default function RuleSetsPage() {
       </RequestState>
 
       <Modal title={editing ? '编辑规则集' : '新增规则集'} width={MODAL_SM} open={open} onOk={submit} onCancel={() => setOpen(false)} confirmLoading={saving}>
-        <Form form={form} layout="vertical">
+        <Form form={form} layout="vertical" onFinish={submit}>
           <Form.Item name="tag" label="标签" rules={[
             { required: true, message: '请输入规则集标签' },
             { pattern: /^[a-zA-Z0-9_-]+$/, message: '标签只能包含字母、数字、下划线与连字符' },

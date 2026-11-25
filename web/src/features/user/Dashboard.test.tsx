@@ -2,7 +2,7 @@ import { StrictMode } from 'react'
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import Dashboard from './Dashboard'
-import { createUserForward, deleteUserForward, deleteUserOutbound, getMe, getMyTraffic, getSubscriptionSync, getUserForwards, getUserInbounds, getUserNodes, getUserOutbounds, importUserOutbound, resetSub } from '../../lib/api'
+import { createUserForward, createUserOutbound, deleteUserForward, deleteUserOutbound, getMe, getMyTraffic, getSubscriptionSync, getUserForwards, getUserInbounds, getUserNodes, getUserOutbounds, importUserOutbound, previewUserOutbound, resetSub } from '../../lib/api'
 import type { UserForward, UserInboundOption, UserNode, UserPrivateOutbound } from '../../lib/api'
 import type { User, UserTrafficSeries } from '../../lib/types'
 import { useAuth } from '../../lib/store'
@@ -15,7 +15,8 @@ vi.mock('../../lib/api', async (importOriginal) => ({
   ...await importOriginal<typeof import('../../lib/api')>(),
   getMe: vi.fn(), getUserNodes: vi.fn(), getUserOutbounds: vi.fn(), getUserInbounds: vi.fn(), getUserForwards: vi.fn(),
   getMyTraffic: vi.fn(), resetSub: vi.fn(), getSubscriptionSync: vi.fn(),
-  createUserForward: vi.fn(), deleteUserForward: vi.fn(), deleteUserOutbound: vi.fn(), importUserOutbound: vi.fn(),
+  createUserForward: vi.fn(), deleteUserForward: vi.fn(), deleteUserOutbound: vi.fn(),
+  importUserOutbound: vi.fn(), previewUserOutbound: vi.fn(), createUserOutbound: vi.fn(),
 }))
 vi.mock('../../lib/util', async (importOriginal) => ({
   ...await importOriginal<typeof import('../../lib/util')>(), copyToClipboard: vi.fn(),
@@ -409,5 +410,63 @@ describe('user subscription dashboard', () => {
     expect(deleteUserOutbound).toHaveBeenCalledWith(outbound.id)
     expect(success).toHaveBeenCalledWith('已删除出站')
     expect(getUserOutbounds).toHaveBeenCalledTimes(2)
+  })
+
+  it('previews URI connection details and confirms an edited outbound tag before importing', async () => {
+    vi.mocked(previewUserOutbound).mockResolvedValue({
+      tag: 'HK-Original',
+      type: 'vless',
+      settings: {
+        server: 'hk.example.com',
+        server_port: 8443,
+        settings: { tls: { enabled: true } },
+      },
+    })
+    vi.mocked(importUserOutbound).mockResolvedValue({ outbounds: [{ id: 10, tag: 'HK-Confirmed', type: 'vless', remark: '' }] })
+    mount()
+    fireEvent.click(await screen.findByRole('tab', { name: /^出站/ }))
+    fireEvent.click(screen.getByRole('button', { name: '添加出站' }))
+    const dialog = screen.getByRole('dialog', { name: '添加出站' })
+
+    const uri = 'vless://11111111-1111-1111-1111-111111111111@hk.example.com:8443#HK-Original'
+    fireEvent.change(within(dialog).getByLabelText(/^节点 URI/), { target: { value: uri } })
+    fireEvent.click(within(dialog).getByRole('button', { name: '解析链接' }))
+
+    await waitFor(() => expect(previewUserOutbound).toHaveBeenCalledWith(uri, expect.anything()))
+    expect(await within(dialog).findByText('hk.example.com')).toBeTruthy()
+    expect(within(dialog).getByText('8443')).toBeTruthy()
+    const tagInput = within(dialog).getByLabelText(/^出站标签/) as HTMLInputElement
+    expect(tagInput.value).toBe('HK-Original')
+
+    fireEvent.change(tagInput, { target: { value: 'HK-Confirmed' } })
+    fireEvent.click(within(dialog).getByRole('button', { name: '导入' }))
+    await waitFor(() => expect(importUserOutbound).toHaveBeenCalledWith({ uri, tag: 'HK-Confirmed' }))
+    await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull())
+  })
+
+  it('creates a manual private outbound from the 手动配置 mode', async () => {
+    vi.mocked(createUserOutbound).mockResolvedValue({ id: 12, tag: 'manual-vless', type: 'vless', remark: '' })
+    mount()
+    fireEvent.click(await screen.findByRole('tab', { name: /^出站/ }))
+    fireEvent.click(screen.getByRole('button', { name: '添加出站' }))
+    const dialog = screen.getByRole('dialog', { name: '添加出站' })
+
+    fireEvent.click(within(dialog).getByRole('radio', { name: '手动配置' }))
+    fireEvent.change(within(dialog).getByLabelText(/^出站标签/), { target: { value: 'manual-vless' } })
+    fireEvent.change(within(dialog).getByLabelText(/^服务器地址/), { target: { value: 'manual.example.com' } })
+    fireEvent.change(within(dialog).getByLabelText(/^端口/), { target: { value: '443' } })
+    fireEvent.change(within(dialog).getByLabelText(/^UUID/), { target: { value: '11111111-1111-1111-1111-111111111111' } })
+    fireEvent.click(within(dialog).getByRole('button', { name: '保存' }))
+
+    await waitFor(() => expect(createUserOutbound).toHaveBeenCalledWith(expect.objectContaining({
+      tag: 'manual-vless',
+      type: 'vless',
+      settings: expect.objectContaining({
+        server: 'manual.example.com',
+        server_port: 443,
+        uuid: '11111111-1111-1111-1111-111111111111',
+      }),
+    })))
+    await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull())
   })
 })

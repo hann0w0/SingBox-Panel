@@ -1,15 +1,18 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { Button, Form, Grid, Input, Modal, Segmented, Select, Typography, message } from '../../components/kit'
+import { Alert, Button, Form, Grid, Input, InputNumber, Modal, Segmented, Select, Switch, Typography, message } from '../../components/kit'
 import { ChevronRight, Eye, EyeOff, Plus, Trash2 } from 'lucide-react'
 import { QRCodeSVG } from 'qrcode.react'
 import {
-  createUserForward, deleteUserForward, deleteUserOutbound, errMsg, getMe, getMyTraffic, getUserForwards,
-  getUserInbounds, getUserNodes, getUserOutbounds, importUserOutbound, isCanceledRequest, resetSub,
+  createUserForward, createUserOutbound, deleteUserForward, deleteUserOutbound, errMsg, getMe, getMyTraffic,
+  getUserForwards, getUserInbounds, getUserNodes, getUserOutbounds, importUserOutbound, isCanceledRequest,
+  previewUserOutbound, resetSub,
 } from '../../lib/api'
-import type { SubscriptionSyncResult, UserForward, UserInboundOption, UserNode, UserPrivateOutbound } from '../../lib/api'
-import type { UserTrafficRange, UserTrafficSeries } from '../../lib/types'
+import type { OutboundBody, SubscriptionSyncResult, UserForward, UserInboundOption, UserNode, UserPrivateOutbound } from '../../lib/api'
+import type { OutboundType, UserTrafficRange, UserTrafficSeries } from '../../lib/types'
+import { buildOutboundBody } from '../../lib/outboundForm'
+import { OUTBOUND_PROTOCOL_TYPES } from '../../lib/protocols'
 import { formatHostPort } from '../../lib/nodeAddress'
-import { formatBytes } from '../../lib/util'
+import { formatBytes, SHADOWSOCKS_METHODS } from '../../lib/util'
 import { SubscriptionLinks } from './SubscriptionLinks'
 import { SubscriptionSyncStatus } from './SubscriptionSyncStatus'
 import { useAuth } from '../../lib/store'
@@ -94,9 +97,13 @@ export default function Dashboard() {
   const traffic = trafficRequest.data
   const [selectedNode, setSelectedNode] = useState<UserNode | null>(null)
   const [importOpen, setImportOpen] = useState(false)
-  const [importMode, setImportMode] = useState<'uri' | 'subscription'>('uri')
-  const [importForm] = Form.useForm<{ value: string }>()
+  const [importMode, setImportMode] = useState<'uri' | 'subscription' | 'manual'>('uri')
+  const [importForm] = Form.useForm<Record<string, any>>()
   const [importing, setImporting] = useState(false)
+  const [parsingUri, setParsingUri] = useState(false)
+  const [uriPreview, setUriPreview] = useState<OutboundBody | null>(null)
+  const [uriParseError, setUriParseError] = useState('')
+  const [manualDirty, setManualDirty] = useState(false)
   const [forwardOpen, setForwardOpen] = useState(false)
   const [forwardForm] = Form.useForm<{ inbound: number; outbound: number }>()
   const [forwarding, setForwarding] = useState(false)
@@ -105,6 +112,13 @@ export default function Dashboard() {
   const mounted = useRef(false)
   const importLock = useRef(false)
   const forwardLock = useRef(false)
+  const uriPreviewAbortRef = useRef<AbortController | null>(null)
+  const watchedImportUri = Form.useWatch('value', importForm)
+  const watchedManualType = (Form.useWatch('type', importForm) || 'vless') as OutboundType
+  const watchedManualTlsMode = Form.useWatch('tls_mode', importForm) || 'none'
+  const watchedManualTls = Form.useWatch('tls', importForm)
+  const watchedSnellVer = Form.useWatch('snell_version', importForm) ?? 4
+  useEffect(() => () => { uriPreviewAbortRef.current?.abort() }, [])
 
   const load = () => {
     me.reload()
@@ -149,6 +163,45 @@ export default function Dashboard() {
     },
   })
 
+  const openImportModal = () => {
+    uriPreviewAbortRef.current?.abort()
+    importForm.resetFields()
+    importForm.setFieldsValue({ type: 'vless', tls_mode: 'none', snell_version: 4, snell_obfs_mode: 'none', method: SHADOWSOCKS_METHODS[0] })
+    setImportMode('uri')
+    setUriPreview(null)
+    setUriParseError('')
+    setManualDirty(false)
+    setImportOpen(true)
+  }
+
+  const closeImportModal = () => {
+    if (importing) return
+    uriPreviewAbortRef.current?.abort()
+    setParsingUri(false)
+    setImportOpen(false)
+  }
+
+  const parseUriPreview = async () => {
+    const uri = String(importForm.getFieldValue('value') || '').trim()
+    if (!uri || parsingUri || importing) return
+    uriPreviewAbortRef.current?.abort()
+    const controller = new AbortController()
+    uriPreviewAbortRef.current = controller
+    setParsingUri(true)
+    setUriParseError('')
+    setUriPreview(null)
+    try {
+      const preview = await previewUserOutbound(uri, controller.signal)
+      if (controller.signal.aborted || !mounted.current) return
+      setUriPreview(preview)
+      importForm.setFieldValue('tag', preview.tag)
+    } catch (cause) {
+      if (!controller.signal.aborted && mounted.current) setUriParseError(errMsg(cause))
+    } finally {
+      if (!controller.signal.aborted && mounted.current) setParsingUri(false)
+    }
+  }
+
   const submitImport = async () => {
     if (importLock.current) return
     importLock.current = true
@@ -156,9 +209,25 @@ export default function Dashboard() {
     try {
       const values = await importForm.validateFields()
       if (!mounted.current) return
-      await importUserOutbound(importMode === 'uri' ? { uri: values.value.trim() } : { url: values.value.trim() })
+      if (importMode === 'manual') {
+        const built = buildOutboundBody(null, values as Record<string, any> & { type: OutboundType })
+        await createUserOutbound({
+          tag: String(values.tag || '').trim(),
+          type: built.type,
+          settings: built.settings,
+        })
+      } else if (importMode === 'uri') {
+        const uri = String(values.value || '').trim()
+        const tag = String(values.tag || '').trim()
+        await importUserOutbound(uriPreview && tag ? { uri, tag } : { uri })
+      } else {
+        await importUserOutbound({ url: String(values.value || '').trim() })
+      }
       if (!mounted.current) return
       setImportOpen(false)
+      setUriPreview(null)
+      setUriParseError('')
+      setManualDirty(false)
       importForm.resetFields()
       outboundRequest.reload()
       message.success('已添加出站')
@@ -237,7 +306,7 @@ export default function Dashboard() {
         <Section title="订阅链接" actions={<Button size="small" onClick={doReset}>重置链接</Button>}><SubscriptionLinks url={subUrl} /><SubscriptionSyncStatus key={subUrl} initial={resetSync} /></Section>
         <Pills label="控制台视图" active={user.forwarding_enabled ? tab : 'nodes'} onChange={(key) => setTab(key as UserTab)} actions={
           user.forwarding_enabled && tab === 'outbounds'
-            ? <Button size="small" icon={<Plus />} onClick={() => setImportOpen(true)}>添加出站</Button>
+            ? <Button size="small" icon={<Plus />} onClick={openImportModal}>添加出站</Button>
             : user.forwarding_enabled && tab === 'forwards'
               ? <Button size="small" icon={<Plus />} onClick={() => { forwardForm.resetFields(); setForwardOpen(true) }}>添加转发</Button>
               : undefined
@@ -249,10 +318,183 @@ export default function Dashboard() {
         {(user.forwarding_enabled ? tab : 'nodes') === 'nodes' && <Section><RequestState loading={nodeRequest.loading} error={nodeRequest.error} hasData={nodes.length > 0} empty={!nodeRequest.loading && !nodeRequest.error && nodes.length === 0} emptyDescription="暂无节点" onRetry={nodeRequest.reload}><div className="ui-card sub-nodes">{nodes.length > 0 ? (isMobile || nodes.length > 50 ? <VirtualList className="sub-node-virtual" style={{ height: Math.min(nodes.length, isMobile ? 6 : 9) * 64, maxHeight: isMobile ? 384 : 576 }} items={nodes} getKey={userNodeKey} estimatedItemHeight={64} overscan={5} renderItem={renderNode} /> : nodes.map((n, i) => <div key={userNodeKey(n)}>{renderNode(n, i)}</div>)) : <div className="ui-empty">暂无节点</div>}</div></RequestState></Section>}
         {user.forwarding_enabled && tab === 'outbounds' && <Section><RequestState loading={outboundRequest.loading} error={outboundRequest.error} hasData={outbounds.length > 0} empty={!outboundRequest.loading && !outboundRequest.error && outbounds.length === 0} emptyDescription="暂无出站" onRetry={outboundRequest.reload}><div className="ui-card sub-outbounds">{outbounds.map((outbound) => <div key={outbound.id} className="sub-outbound"><span className="sub-outbound-main"><strong>{outbound.tag}</strong>{outbound.remark && <small>{outbound.remark}</small>}</span><div className="flex items-center gap-1.5"><span className="ui-tag">{outbound.type}</span><Button size="small" type="text" icon={<Trash2 />} loading={outboundActionID === outbound.id} aria-label={`删除出站 ${outbound.tag}`} onClick={() => removeOutbound(outbound)} /></div></div>)}</div></RequestState></Section>}
         {user.forwarding_enabled && tab === 'forwards' && <Section><RequestState loading={forwardRequest.loading} error={forwardRequest.error} hasData={forwards.length > 0} empty={!forwardRequest.loading && !forwardRequest.error && forwards.length === 0} emptyDescription="暂无转发" onRetry={forwardRequest.reload}><div className="ui-card sub-outbounds">{forwards.map((row) => <div key={row.id} className="sub-outbound"><span className="sub-outbound-main"><strong>{row.node_name}</strong><small>{row.inbound_tag} → {row.outbound_tag} · {row.server_name}</small></span><Button size="small" type="text" icon={<Trash2 />} loading={actionID === row.id} aria-label={`删除转发 ${row.inbound_tag}`} onClick={() => removeForward(row)} /></div>)}</div></RequestState></Section>}
-        <Modal title="添加出站" width={MODAL_SM} open={importOpen} onCancel={() => setImportOpen(false)} onOk={submitImport} confirmLoading={importing} okText="导入">
-          <Form form={importForm} className="sub-form" onFinish={submitImport}>
-            <Segmented<'uri' | 'subscription'> options={[{ value: 'uri', label: 'URI 导入' }, { value: 'subscription', label: '订阅导入' }]} value={importMode} onChange={setImportMode} />
-            <Form.Item name="value" label={importMode === 'uri' ? '节点 URI' : '订阅地址'} rules={[{ required: true, whitespace: true, message: importMode === 'uri' ? '请输入节点 URI' : '请输入订阅地址' }]}><Input.TextArea autoSize={{ minRows: 3, maxRows: 6 }} className="mono" disabled={importing} /></Form.Item>
+        <Modal
+          title="添加出站"
+          width={importMode === 'manual' ? MODAL_MD : MODAL_SM}
+          open={importOpen}
+          onCancel={closeImportModal}
+          onOk={submitImport}
+          confirmLoading={importing}
+          maskClosable={!importing && !(uriPreview || (importMode === 'manual' && manualDirty))}
+          okText={importMode === 'manual' ? '保存' : '导入'}
+        >
+          <Form form={importForm} className="sub-form" onFinish={submitImport} onChange={() => { if (importMode === 'manual') setManualDirty(true) }} onInput={() => { if (importMode === 'manual') setManualDirty(true) }}>
+            <Segmented<'uri' | 'subscription' | 'manual'>
+              options={[
+                { value: 'uri', label: 'URI 导入' },
+                { value: 'subscription', label: '订阅导入' },
+                { value: 'manual', label: '手动配置' },
+              ]}
+              value={importMode}
+              onChange={(mode) => {
+                uriPreviewAbortRef.current?.abort()
+                setParsingUri(false)
+                setUriPreview(null)
+                setUriParseError('')
+                setImportMode(mode)
+              }}
+            />
+            {importMode === 'manual' ? (
+              <div className="fm-grid" style={{ paddingTop: 12 }}>
+                <Form.Item name="tag" label="出站标签" rules={[{ required: true, whitespace: true, message: '请输入出站标签' }]}>
+                  <Input aria-label="出站标签" disabled={importing} />
+                </Form.Item>
+                <Form.Item name="type" label="协议" rules={[{ required: true, message: '请选择协议' }]}>
+                  <Select aria-label="协议" disabled={importing} options={OUTBOUND_PROTOCOL_TYPES.map((t) => ({ value: t, label: t }))} />
+                </Form.Item>
+                <Form.Item name="server" label="服务器地址" rules={[{ required: true, whitespace: true, message: '请输入服务器地址' }]}>
+                  <Input aria-label="服务器地址" className="mono" disabled={importing} />
+                </Form.Item>
+                <Form.Item name="server_port" label="端口" rules={[{ required: true, message: '请输入端口' }]}>
+                  <InputNumber aria-label="端口" min={1} max={65535} precision={0} disabled={importing} className="w-full mono" />
+                </Form.Item>
+                {(watchedManualType === 'vless' || watchedManualType === 'vmess' || watchedManualType === 'tuic') && (
+                  <Form.Item name="uuid" label="UUID" className="fm-full" rules={[{ required: true, whitespace: true, message: '请输入 UUID' }]}>
+                    <Input aria-label="UUID" className="mono" disabled={importing} />
+                  </Form.Item>
+                )}
+                {watchedManualType === 'shadowsocks' && (
+                  <>
+                    <Form.Item name="method" label="加密方式" rules={[{ required: true, message: '请选择加密方式' }]}>
+                      <Select aria-label="加密方式" disabled={importing} options={SHADOWSOCKS_METHODS.map((m) => ({ value: m, label: m }))} />
+                    </Form.Item>
+                    <Form.Item name="ss_psk" label="密码" rules={[{ required: true, whitespace: true, message: '请输入密码' }]}>
+                      <Input aria-label="密码" className="mono" disabled={importing} />
+                    </Form.Item>
+                  </>
+                )}
+                {(watchedManualType === 'socks' || watchedManualType === 'http') && (
+                  <>
+                    <Form.Item name="username" label="用户名">
+                      <Input aria-label="用户名" disabled={importing} />
+                    </Form.Item>
+                    <Form.Item name="password" label="密码">
+                      <Input aria-label="密码" disabled={importing} />
+                    </Form.Item>
+                  </>
+                )}
+                {(watchedManualType === 'trojan' || watchedManualType === 'hysteria2' || watchedManualType === 'tuic' || watchedManualType === 'anytls' || watchedManualType === 'snell') && (
+                  <Form.Item name="password" label={watchedManualType === 'snell' ? 'PSK' : '密码'} rules={[{ required: true, whitespace: true, message: '请输入密码或 PSK' }]}>
+                    <Input aria-label={watchedManualType === 'snell' ? 'PSK' : '密码'} className="mono" disabled={importing} />
+                  </Form.Item>
+                )}
+                {watchedManualType === 'snell' && (
+                  <>
+                    <Form.Item name="snell_version" label="版本">
+                      <Select aria-label="版本" disabled={importing} options={[{ value: 4, label: 'v4' }, { value: 5, label: 'v5' }, { value: 6, label: 'v6' }]} />
+                    </Form.Item>
+                    {watchedSnellVer === 4 && (
+                      <Form.Item name="snell_obfs_mode" label="混淆">
+                        <Select aria-label="混淆" disabled={importing} options={[{ value: 'none', label: '无' }, { value: 'http', label: 'http' }, { value: 'tls', label: 'tls' }]} />
+                      </Form.Item>
+                    )}
+                  </>
+                )}
+                {watchedManualType === 'vless' && (
+                  <>
+                    <Form.Item name="tls_mode" label="TLS 模式">
+                      <Select
+                        aria-label="TLS 模式"
+                        disabled={importing}
+                        options={[
+                          { value: 'none', label: '不使用 TLS' },
+                          { value: 'tls', label: 'TLS' },
+                          { value: 'reality', label: 'REALITY' },
+                        ]}
+                      />
+                    </Form.Item>
+                    {watchedManualTlsMode === 'tls' && (
+                      <Form.Item name="sni" label="SNI">
+                        <Input aria-label="SNI" className="mono" disabled={importing} />
+                      </Form.Item>
+                    )}
+                    {watchedManualTlsMode === 'reality' && (
+                      <>
+                        <Form.Item name="reality_server_name" label="SNI" rules={[{ required: true, whitespace: true, message: '请输入 REALITY SNI' }]}>
+                          <Input aria-label="SNI" className="mono" disabled={importing} />
+                        </Form.Item>
+                        <Form.Item name="reality_public_key" label="公钥" className="fm-full" rules={[{ required: true, whitespace: true, message: '请输入 REALITY 公钥' }]}>
+                          <Input aria-label="公钥" className="mono" disabled={importing} />
+                        </Form.Item>
+                      </>
+                    )}
+                  </>
+                )}
+                {(watchedManualType === 'vmess' || watchedManualType === 'trojan' || watchedManualType === 'hysteria2' || watchedManualType === 'tuic' || watchedManualType === 'anytls' || watchedManualType === 'http') && (
+                  <>
+                    {watchedManualType !== 'trojan' && watchedManualType !== 'hysteria2' && watchedManualType !== 'tuic' && watchedManualType !== 'anytls' && (
+                      <Form.Item name="tls" label="启用 TLS" valuePropName="checked" className="fm-switch">
+                        <Switch disabled={importing} />
+                      </Form.Item>
+                    )}
+                    {(watchedManualType === 'trojan' || watchedManualType === 'hysteria2' || watchedManualType === 'tuic' || watchedManualType === 'anytls' || watchedManualTls) && (
+                      <>
+                        <Form.Item name="sni" label="SNI">
+                          <Input aria-label="SNI" className="mono" disabled={importing} />
+                        </Form.Item>
+                        <Form.Item name="insecure" label="跳过证书校验" valuePropName="checked" className="fm-switch">
+                          <Switch disabled={importing} />
+                        </Form.Item>
+                      </>
+                    )}
+                  </>
+                )}
+              </div>
+            ) : (
+              <>
+                <Form.Item name="value" label={importMode === 'uri' ? '节点 URI' : '订阅地址'} rules={[{ required: true, whitespace: true, message: importMode === 'uri' ? '请输入节点 URI' : '请输入订阅地址' }]}>
+                  <Input.TextArea
+                    autoSize={{ minRows: 3, maxRows: 6 }}
+                    className="mono"
+                    disabled={importing}
+                    onChange={() => {
+                      uriPreviewAbortRef.current?.abort()
+                      setParsingUri(false)
+                      if (uriPreview) {
+                        setUriPreview(null)
+                        importForm.setFieldValue('tag', '')
+                      }
+                      if (uriParseError) setUriParseError('')
+                    }}
+                  />
+                </Form.Item>
+                {importMode === 'uri' && (
+                  <>
+                    <div className="mb-3 flex items-center gap-2">
+                      <Button size="small" loading={parsingUri} disabled={importing || !String(watchedImportUri || '').trim()} onClick={() => void parseUriPreview()}>解析链接</Button>
+                    </div>
+                    {uriParseError && <Alert type="error" showIcon message={uriParseError} style={{ marginBottom: 12 }} />}
+                    {uriPreview && (
+                      <>
+                        <section className="fm-import-preview" style={{ marginBottom: 12 }}>
+                          <h3>
+                            连接详情 <span className="ui-tag">{uriPreview.type}</span>
+                          </h3>
+                          <dl className="ui-kv">
+                            <div><dt>服务器</dt><dd className="mono">{uriPreview.settings?.server}</dd></div>
+                            <div><dt>端口</dt><dd className="mono">{uriPreview.settings?.server_port}</dd></div>
+                            <div><dt>安全</dt><dd>{uriPreview.settings?.settings?.tls?.reality?.enabled ? 'REALITY' : uriPreview.settings?.settings?.tls?.enabled ? 'TLS' : '未启用 TLS'}</dd></div>
+                          </dl>
+                        </section>
+                        <Form.Item name="tag" label="出站标签" rules={[{ required: true, whitespace: true, message: '请输入出站标签' }]}>
+                          <Input aria-label="出站标签" disabled={importing} />
+                        </Form.Item>
+                      </>
+                    )}
+                  </>
+                )}
+              </>
+            )}
           </Form>
         </Modal>
         <Modal title="添加转发" width={MODAL_SM} open={forwardOpen} onCancel={() => setForwardOpen(false)} onOk={submitForward} confirmLoading={forwarding} okText="添加">

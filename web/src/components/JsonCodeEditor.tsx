@@ -20,6 +20,11 @@ export type JsonCodeEditorProps = {
 }
 
 const INDENT_UNIT = '  '
+const MAX_HISTORY_ENTRIES = 100
+const HIGHLIGHT_LINE_LIMIT = 500
+const HIGHLIGHT_BYTE_LIMIT = 32768
+
+type EditorSnapshot = { value: string; start: number; end: number }
 
 function unindentPrefixLength(line: string): number {
   if (line.startsWith('\t')) return 1
@@ -40,12 +45,42 @@ export function JsonCodeEditor({
   const gutterInnerRef = useRef<HTMLDivElement | null>(null)
   const highlightRef = useRef<HTMLDivElement | null>(null)
   const pendingSelectionRef = useRef<[number, number] | null>(null)
+  const historyRef = useRef<{ entries: EditorSnapshot[]; index: number }>({
+    entries: [{ value, start: 0, end: 0 }],
+    index: 0,
+  })
+  const lastEmittedRef = useRef(value)
 
   const [focused, setFocused] = useState(false)
   const [activeLine, setActiveLine] = useState<number | null>(null)
 
-  const doc = useMemo(() => highlightJsonDocument(value), [value])
-  const gutterDigits = Math.max(2, String(doc.lines.length).length)
+  const rawLines = useMemo(() => value.split('\n'), [value])
+  const isLargeDoc = rawLines.length > HIGHLIGHT_LINE_LIMIT || value.length > HIGHLIGHT_BYTE_LIMIT
+  const doc = useMemo(() => (isLargeDoc ? null : highlightJsonDocument(value)), [isLargeDoc, value])
+  const lineCount = doc ? doc.lines.length : rawLines.length
+  const gutterDigits = Math.max(2, String(lineCount).length)
+
+  const recordHistory = (nextValue: string, selStart: number, selEnd: number, prevStart?: number, prevEnd?: number) => {
+    const h = historyRef.current
+    if (prevStart !== undefined && h.entries[h.index]) {
+      h.entries[h.index] = {
+        ...h.entries[h.index],
+        start: prevStart,
+        end: prevEnd ?? prevStart,
+      }
+    }
+    if (h.entries[h.index]?.value === nextValue) {
+      h.entries[h.index] = { value: nextValue, start: selStart, end: selEnd }
+      lastEmittedRef.current = nextValue
+      return
+    }
+    const nextEntries = [...h.entries.slice(0, h.index + 1), { value: nextValue, start: selStart, end: selEnd }]
+    if (nextEntries.length > MAX_HISTORY_ENTRIES) {
+      nextEntries.splice(0, nextEntries.length - MAX_HISTORY_ENTRIES)
+    }
+    historyRef.current = { entries: nextEntries, index: nextEntries.length - 1 }
+    lastEmittedRef.current = nextValue
+  }
 
   const applyScrollTransform = useCallback((top: number, left: number) => {
     if (gutterInnerRef.current) {
@@ -67,6 +102,10 @@ export function JsonCodeEditor({
   }, [])
 
   useLayoutEffect(() => {
+    if (value !== lastEmittedRef.current) {
+      historyRef.current = { entries: [{ value, start: 0, end: 0 }], index: 0 }
+      lastEmittedRef.current = value
+    }
     const ta = textareaRef.current
     if (!ta) return
     if (pendingSelectionRef.current) {
@@ -78,7 +117,8 @@ export function JsonCodeEditor({
     applyScrollTransform(ta.scrollTop, ta.scrollLeft)
   }, [value, applyScrollTransform])
 
-  const commitEdit = (nextValue: string, selStart: number, selEnd = selStart) => {
+  const commitEdit = (nextValue: string, selStart: number, selEnd = selStart, prevStart?: number, prevEnd?: number) => {
+    recordHistory(nextValue, selStart, selEnd, prevStart, prevEnd)
     pendingSelectionRef.current = [selStart, selEnd]
     onChange(nextValue)
   }
@@ -90,11 +130,29 @@ export function JsonCodeEditor({
     const end = ta.selectionEnd ?? start
     const text = ta.value
 
+    const mod = event.metaKey || event.ctrlKey
+    if (mod && !event.altKey) {
+      const key = event.key.toLowerCase()
+      if (key === 'z' || (key === 'y' && !event.shiftKey)) {
+        const isRedo = (key === 'z' && event.shiftKey) || key === 'y'
+        const h = historyRef.current
+        const targetIndex = isRedo ? h.index + 1 : h.index - 1
+        event.preventDefault()
+        if (targetIndex < 0 || targetIndex >= h.entries.length) return
+        const entry = h.entries[targetIndex]
+        historyRef.current = { entries: h.entries, index: targetIndex }
+        lastEmittedRef.current = entry.value
+        pendingSelectionRef.current = [entry.start, entry.end]
+        onChange(entry.value)
+        return
+      }
+    }
+
     if (event.key === 'Tab') {
       event.preventDefault()
       if (!event.shiftKey && start === end) {
         const next = text.slice(0, start) + INDENT_UNIT + text.slice(end)
-        commitEdit(next, start + INDENT_UNIT.length)
+        commitEdit(next, start + INDENT_UNIT.length, start + INDENT_UNIT.length, start, end)
         return
       }
 
@@ -126,7 +184,7 @@ export function JsonCodeEditor({
       })
 
       const next = text.slice(0, blockStart) + updatedLines.join('\n') + text.slice(blockEnd)
-      commitEdit(next, nextStart, nextEnd)
+      commitEdit(next, nextStart, nextEnd, start, end)
       return
     }
 
@@ -146,13 +204,13 @@ export function JsonCodeEditor({
       if (closesBlock) {
         const insert = `\n${innerIndent}\n${baseIndent}`
         const next = text.slice(0, start) + insert + text.slice(end)
-        commitEdit(next, start + 1 + innerIndent.length)
+        commitEdit(next, start + 1 + innerIndent.length, start + 1 + innerIndent.length, start, end)
         return
       }
 
       const insert = `\n${innerIndent}`
       const next = text.slice(0, start) + insert + text.slice(end)
-      commitEdit(next, start + insert.length)
+      commitEdit(next, start + insert.length, start + insert.length, start, end)
     }
   }
 
@@ -169,7 +227,7 @@ export function JsonCodeEditor({
     >
       <div className="fm-code-gutter" aria-hidden="true">
         <div ref={gutterInnerRef} className="fm-code-gutter-inner">
-          {doc.lines.map((_, index) => (
+          {rawLines.map((_, index) => (
             <div
               key={index}
               className={cn('fm-code-gutter-line', activeLine === index && 'is-active')}
@@ -182,7 +240,7 @@ export function JsonCodeEditor({
 
       <div className="fm-code-stage">
         <div ref={highlightRef} className="fm-code-highlight" aria-hidden="true">
-          {doc.lines.map((line, index) => (
+          {doc ? doc.lines.map((line, index) => (
             <div
               key={index}
               className={cn('fm-code-line', activeLine === index && 'is-active')}
@@ -207,6 +265,13 @@ export function JsonCodeEditor({
                     ),
                   )}
             </div>
+          )) : rawLines.map((line, index) => (
+            <div
+              key={index}
+              className={cn('fm-code-line', activeLine === index && 'is-active')}
+            >
+              {line === '' ? '\u200b' : line}
+            </div>
           ))}
         </div>
 
@@ -222,7 +287,11 @@ export function JsonCodeEditor({
           value={value}
           readOnly={readOnly}
           disabled={disabled}
-          onChange={(event) => onChange(event.target.value)}
+          onChange={(event) => {
+            const ta = event.currentTarget
+            recordHistory(ta.value, ta.selectionStart ?? ta.value.length, ta.selectionEnd ?? ta.value.length)
+            onChange(ta.value)
+          }}
           onScroll={handleScroll}
           onKeyDown={handleKeyDown}
           onKeyUp={syncActiveLine}

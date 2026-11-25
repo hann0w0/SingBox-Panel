@@ -156,6 +156,10 @@ export const createUserForward = (body: { inbound_server_id: number; inbound_tag
   http.post<{ forward: UserForward } & ConfigApplyResult>('/api/user/forwards', body).then((r) => r.data)
 export const deleteUserForward = (id: number) =>
   http.delete<ConfigApplyResult>(`/api/user/forwards/${id}`).then((r) => r.data)
+export const previewUserOutbound = (uri: string, signal?: AbortSignal) =>
+  http.post<{ outbound: OutboundBody }>('/api/user/outbounds/preview', { uri }, { signal }).then((r) => r.data.outbound)
+export const createUserOutbound = (body: OutboundBody) =>
+  http.post<{ outbound: UserPrivateOutbound }>('/api/user/outbounds', body).then((r) => r.data.outbound)
 export const importUserOutbound = (body: { uri?: string; url?: string; tag?: string }) =>
   http.post<{ outbounds: UserPrivateOutbound[] }>('/api/user/outbounds/import', body).then((r) => r.data)
 export const deleteUserOutbound = (id: number) =>

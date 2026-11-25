@@ -428,6 +428,7 @@ export default function InboundForm({
   const schemas = useSingboxSchemas(open)
   const submitLock = useRef(false)
   const submitSessionRef = useRef(0)
+  const [dirty, setDirty] = useState(false)
   const type: InboundType = Form.useWatch('type', form) ?? 'shadowsocks'
   const showTLS = !NO_TLS.has(type)
   const watchedTlsMode = Form.useWatch('tls_mode', form)
@@ -521,6 +522,7 @@ export default function InboundForm({
     setStickyTlsKeys(new Set(Object.keys(pickPopulatedSchemaProps(tlsCandidates, tlsRaw))))
   }
   const updateRawExtra = (updater: Record<string, unknown> | ((prev: Record<string, unknown>) => Record<string, unknown>)) => {
+    setDirty(true)
     setRawExtra((prev) => {
       const next = typeof updater === 'function' ? updater(prev) : updater
       const changed = Object.keys(next).filter((k) => next[k] !== prev[k])
@@ -536,6 +538,7 @@ export default function InboundForm({
     })
   }
   const updateRawTransport = (nextTr: Record<string, unknown>) => {
+    setDirty(true)
     setRawExtra((prev) => {
       const prevTr = (prev.transport && typeof prev.transport === 'object' ? prev.transport : {}) as Record<string, unknown>
       const changed = Object.keys(nextTr).filter((k) => nextTr[k] !== prevTr[k])
@@ -551,6 +554,7 @@ export default function InboundForm({
     })
   }
   const updateRawTls = (nextTls: Record<string, unknown>) => {
+    setDirty(true)
     setRawExtra((prev) => {
       const prevTls = (prev.tls && typeof prev.tls === 'object' ? prev.tls : {}) as Record<string, unknown>
       const changed = Object.keys(nextTls).filter((k) => nextTls[k] !== prevTls[k])
@@ -587,6 +591,7 @@ export default function InboundForm({
     setSchemaJsonErrors({})
     setEditorMode('form')
     setJsonError('')
+    setDirty(false)
     setJsonText(
       inbound
         ? JSON.stringify(inboundSettingsToNativeJson(inbound.type, inbound.tag, inbound.listen_port, inbound.settings || {}), null, 2)
@@ -807,6 +812,7 @@ export default function InboundForm({
       open={open}
       onOk={submit}
       onCancel={onClose}
+      maskClosable={!submitting && !dirty}
       confirmLoading={submitting}
       okText="保存"
       cancelText="取消"
@@ -830,12 +836,13 @@ export default function InboundForm({
             disabled={submitting}
             onChange={(val) => {
               setJsonText(val)
+              setDirty(true)
               if (jsonError) setJsonError('')
             }}
           />
         </div>
       ) : (
-      <Form form={form} layout="vertical" className="fm-form inbound-compact-form">
+      <Form form={form} layout="vertical" className="fm-form inbound-compact-form" onFinish={submit} onChange={() => setDirty(true)} onInput={() => setDirty(true)}>
         {jsonError && <Alert type="error" showIcon message={jsonError} className="mb-3" />}
         <div className="fm-grid" data-panel="inbound">
           <Form.Item name="type" label="协议" rules={[{ required: true }]} className="inbound-compact-type">

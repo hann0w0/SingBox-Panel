@@ -66,7 +66,7 @@ export default function Settings() {
   const [cloudLoadError, setCloudLoadError] = useState<string | null>(null)
   const [cloudLoading, setCloudLoading] = useState(false)
   const [cloudSyncing, setCloudSyncing] = useState(false)
-  const [cloudRestoring, setCloudRestoring] = useState(false)
+  const [cloudRestoringId, setCloudRestoringId] = useState<string | null>(null)
   const [authPending, setAuthPending] = useState<OneDriveAuthStart | null>(null)
   const authTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
   const authAbort = useRef<AbortController | null>(null)
@@ -257,7 +257,7 @@ export default function Settings() {
       onOk: async () => {
         if (restoreOperationRef.current) return
         restoreOperationRef.current = true
-        setCloudRestoring(true)
+        setCloudRestoringId(id)
         let restarting = false
         try {
           const result = await restoreOneDriveBackup(id)
@@ -278,7 +278,7 @@ export default function Settings() {
           // redirect runs, preventing a second restore against a changing DB.
           if (!restarting) {
             restoreOperationRef.current = false
-            setCloudRestoring(false)
+            setCloudRestoringId(null)
           }
         }
       },
@@ -291,7 +291,7 @@ export default function Settings() {
   }
 
   const selectRestoreFiles = (files: FileList | null) => {
-    if (restoring || cloudRestoring || !files || files.length === 0) return
+    if (restoring || cloudRestoringId !== null || !files || files.length === 0) return
     setRestoreFile(files[0])
   }
 
@@ -605,7 +605,7 @@ export default function Settings() {
                   <span className="settings-row-meta">{formatBackupSize(file.size)} · {new Date(file.lastModifiedDateTime).toLocaleString()}</span>
                 </div>
                 <div className="ui-row-actions">
-                  <Button type="text" size="small" loading={cloudRestoring} disabled={restoring} onClick={() => doCloudRestore(file.id, file.name)}>恢复</Button>
+                  <Button type="text" size="small" loading={cloudRestoringId === file.id} disabled={restoring || (cloudRestoringId !== null && cloudRestoringId !== file.id)} onClick={() => doCloudRestore(file.id, file.name)}>恢复</Button>
                   <Tooltip title="下载">
                     <Button type="text" size="small" icon={<Download />} aria-label={`下载 ${file.name}`} onClick={() => doCloudDownload(file.id, file.name)} />
                   </Tooltip>
@@ -627,7 +627,7 @@ export default function Settings() {
     </>
   )
 
-  const restoreDisabled = restoring || cloudRestoring
+  const restoreDisabled = restoring || cloudRestoringId !== null
 
   const restoreView = (
     <div className="ui-card settings-card settings-restore">

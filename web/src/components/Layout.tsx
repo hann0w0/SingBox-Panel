@@ -45,7 +45,7 @@ function ServerSwitcher({ id, onPick }: { id: number | null; onPick: (id: number
   }))
   return <>
     <span className="app-crumb-sep" aria-hidden="true">/</span>
-    <Dropdown onOpenChange={(open) => { if (open && failed) setAttempt((n) => n + 1) }} menu={{ items: items?.length ? items : [{ key: 'empty', disabled: true, label: failed ? '加载失败，请重试' : '加载中…' }], onClick: ({ key }) => { if (key !== 'empty') onPick(Number(key)) } }}>
+    <Dropdown onOpenChange={(open) => { if (open) setAttempt((n) => n + 1) }} menu={{ items: items?.length ? items : [{ key: 'empty', disabled: true, label: failed ? '加载失败，请重试' : '加载中…' }], onClick: ({ key }) => { if (key !== 'empty') onPick(Number(key)) } }}>
       <button type="button" className="app-switch" aria-label="切换服务器">
         <i className={`app-dot${current && !current.online ? ' is-off' : ''}`} />
         <span className="app-switch-name">{current?.name ?? (failed ? '服务器' : '…')}</span>

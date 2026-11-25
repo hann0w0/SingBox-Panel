@@ -335,6 +335,9 @@ export default function ServerDetail() {
     const drag = pointerRuleDragRef.current
     if (!drag || drag.pointerId !== event.pointerId) return
     event.preventDefault()
+    const edgeMargin = 48
+    if (event.clientY < edgeMargin) window.scrollBy?.(0, -16)
+    else if (window.innerHeight - event.clientY < edgeMargin) window.scrollBy?.(0, 16)
     const row = document.elementFromPoint(event.clientX, event.clientY)?.closest('tr[data-row-key]')
     const rowID = Number(row?.getAttribute('data-row-key'))
     const targetIndex = ruleOrderRef.current.findIndex((rule) => rule.id === rowID)

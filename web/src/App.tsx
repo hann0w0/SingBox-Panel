@@ -30,13 +30,28 @@ function LegacyServerTab({ tab }: { tab: 'traffic' | 'logs' }) {
 function Protected({ children }: { children: JSX.Element }) {
   const token = useAuth((s) => s.token)
   const user = useAuth((s) => s.user)
+  const needsRevalidation = useAuth((s) => s.needsRevalidation)
   const setUser = useAuth((s) => s.setUser)
+  const clearRevalidation = useAuth((s) => s.clearRevalidation)
+  const logout = useAuth((s) => s.logout)
   const location = useLocation()
   const [hydrateError, setHydrateError] = useState<string | null>(null)
   const [attempt, setAttempt] = useState(0)
 
   useEffect(() => {
-    if (!token || user) return
+    if (!token) return
+    if (user) {
+      if (!needsRevalidation) return
+      const controller = new AbortController()
+      getMe(controller.signal)
+        .then((res) => {
+          if (!controller.signal.aborted) setUser(res.user)
+        })
+        .catch(() => {
+          if (!controller.signal.aborted) clearRevalidation()
+        })
+      return () => controller.abort()
+    }
     const controller = new AbortController()
     setHydrateError(null)
     getMe(controller.signal)
@@ -47,7 +62,7 @@ function Protected({ children }: { children: JSX.Element }) {
         if (!controller.signal.aborted) setHydrateError(errMsg(err))
       })
     return () => controller.abort()
-  }, [token, user, setUser, attempt])
+  }, [token, user, needsRevalidation, setUser, clearRevalidation, attempt])
 
   if (!token) {
     const from = `${location.pathname}${location.search}${location.hash}`
@@ -58,7 +73,10 @@ function Protected({ children }: { children: JSX.Element }) {
       return (
         <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: 12, minHeight: '50vh', padding: 24, textAlign: 'center' }}>
           <div style={{ fontSize: 14, color: 'var(--console-muted)' }}>加载用户信息失败：{hydrateError}</div>
-          <button type="button" className="ui-btn ui-btn-default" onClick={() => setAttempt((n) => n + 1)}>重试</button>
+          <div style={{ display: 'flex', gap: 8 }}>
+            <button type="button" className="ui-btn ui-btn-default" onClick={() => setAttempt((n) => n + 1)}>重试</button>
+            <button type="button" className="ui-btn ui-btn-default" onClick={() => logout()}>退出登录</button>
+          </div>
         </div>
       )
     }

@@ -96,7 +96,7 @@ self.addEventListener('fetch', (event) => {
 
 async function handleNavigation(request) {
   try {
-    const response = await fetch(request)
+    const response = await fetch(request, { cache: 'no-cache' })
     // Only a real HTML shell is worth keeping; a plain-text "backend is
     // running" placeholder or an error page must not become the offline app.
     const type = response.headers.get('Content-Type') || ''

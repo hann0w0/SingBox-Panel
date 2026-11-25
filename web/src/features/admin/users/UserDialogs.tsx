@@ -45,7 +45,7 @@ export function UserAccountDialog({ user, onClose, onSaved }: {
   }
   return <Modal title={pending ? '关闭转发权限？' : user ? '编辑用户' : '新增用户'} width={MODAL_SM} open onCancel={() => pending ? setPending(null) : onClose()} onOk={submit} confirmLoading={saving} okText={pending ? '确认关闭并保存' : '确定'} cancelText={pending ? '继续编辑' : '取消'} okButtonProps={{ danger: !!pending }}>
     {pending && <Alert type="warning" showIcon message="将删除此用户的全部转发" description="保存后将删除此用户的所有转发配置、由转发生成的订阅节点及其排序记录，以及各服务器上关联的转发路由规则。重新开启权限不会恢复这些配置，需要重新创建。" />}
-    <Form form={form} layout="vertical" hidden={!!pending}>
+    <Form form={form} layout="vertical" hidden={!!pending} onFinish={submit}>
       <Form.Item name="email" label="用户名" rules={[{ required: true }]}>
         <Input maxLength={191} autoComplete="off" />
       </Form.Item>

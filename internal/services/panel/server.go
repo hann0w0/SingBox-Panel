@@ -193,6 +193,8 @@ func (a *App) routes() *gin.Engine {
 		user.GET("/user/me", a.handleMe)
 		user.GET("/user/nodes", a.handleUserNodes)
 		user.GET("/user/outbounds", a.listUserOutbounds)
+		user.POST("/user/outbounds", a.createUserOutbound)
+		user.POST("/user/outbounds/preview", a.previewUserOutbound)
 		user.GET("/user/inbounds", a.listUserInbounds)
 		user.GET("/user/traffic", a.handleUserTraffic)
 		user.GET("/user/forwards", a.listUserForwards)

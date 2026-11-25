@@ -921,6 +921,8 @@ func (s *InboundSettings) SyncFromRaw(typ string) {
 	}
 	if trMap := mMap(m, "transport"); trMap != nil {
 		s.Transport = parseTransport(trMap)
+	} else if hasMapKey(m, "transport") || hasMapKey(m, "type") {
+		s.Transport = TransportSettings{}
 	}
 	switch typ {
 	case "vless":
@@ -956,6 +958,11 @@ func (s *InboundSettings) SyncFromRaw(typ string) {
 			s.ObfsPassword = mStr(obfs, "password")
 			s.GeckoMinPacketSize = mInt(obfs, "min_packet_size")
 			s.GeckoMaxPacketSize = mInt(obfs, "max_packet_size")
+		} else if hasMapKey(m, "obfs") || hasMapKey(m, "type") {
+			s.ObfsType = ""
+			s.ObfsPassword = ""
+			s.GeckoMinPacketSize = 0
+			s.GeckoMaxPacketSize = 0
 		}
 	case "tuic":
 		if cc := mStr(m, "congestion_control"); cc != "" {
@@ -969,6 +976,9 @@ func (s *InboundSettings) SyncFromRaw(typ string) {
 		}
 		if hb := mStr(m, "heartbeat"); hb != "" {
 			s.Heartbeat = hb
+		}
+		if hasMapKey(m, "udp_relay_mode") {
+			s.TUICUDPRelayMode = mStr(m, "udp_relay_mode")
 		}
 	case "snell":
 		if hasMapKey(m, "version") {
@@ -986,6 +996,8 @@ func (s *InboundSettings) SyncFromRaw(typ string) {
 	case "trojan":
 		if fb := mMap(m, "fallback"); fb != nil {
 			s.TrojanFallback = &FallbackSettings{Server: mStr(fb, "server"), ServerPort: mInt(fb, "server_port")}
+		} else if hasMapKey(m, "fallback") || hasMapKey(m, "type") {
+			s.TrojanFallback = nil
 		}
 	}
 }

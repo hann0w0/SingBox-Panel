@@ -338,10 +338,6 @@ func (ac *agentConn) close() {
 	}
 }
 
-func (ac *agentConn) readPump() {
-	ac.readPumpRegistered(false)
-}
-
 func (ac *agentConn) readPumpRegistered(registered bool) {
 	defer func() {
 		ac.close()

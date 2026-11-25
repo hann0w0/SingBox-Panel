@@ -14,7 +14,8 @@ func clashProxy(n node, seen map[string]int) map[string]any {
 	st := n.settings
 	u := n.getUserIdentity()
 	tlsOn := nodeTLSOn(st)
-	sni := sniOf(st, n.server)
+	serverHost := strings.Trim(strings.TrimSpace(n.server), "[]")
+	sni := sniOf(st, serverHost)
 	net := "tcp"
 	switch st.Transport.Type {
 	case "ws":
@@ -52,7 +53,7 @@ func clashProxy(n node, seen map[string]int) map[string]any {
 		fp = "chrome"
 	}
 
-	base := map[string]any{"name": name, "server": n.server, "port": n.port}
+	base := map[string]any{"name": name, "server": serverHost, "port": n.port}
 	switch n.typ {
 	case "vless":
 		base["type"] = "vless"

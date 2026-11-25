@@ -426,15 +426,6 @@ func selectAlpineAssetCandidates(assets []githubReleaseAsset, version, arch stri
 	return out
 }
 
-func selectAlpineAssetURLs(assets []githubReleaseAsset, version, arch string) []string {
-	candidates := selectAlpineAssetCandidates(assets, version, arch)
-	urls := make([]string, 0, len(candidates))
-	for _, c := range candidates {
-		urls = append(urls, c.url)
-	}
-	return urls
-}
-
 func alpineReleaseDownloadURLs(downloadBase, version, arch string) []string {
 	base := strings.TrimRight(downloadBase, "/")
 	names := alpineReleaseAssetNames(version, arch)

@@ -2,6 +2,7 @@ package singbox
 
 import (
 	"encoding/json"
+	"strings"
 	"testing"
 )
 
@@ -283,5 +284,46 @@ func TestValidateInboundRawEnforcesActualType(t *testing.T) {
 	}
 	if err := s.Validate("vless"); err == nil {
 		t.Fatal("expected Raw validation to enforce actual inbound type vless")
+	}
+}
+
+func TestSyncFromRawClearsRemovedNestedFieldsAndBuildOutboundCleansStaleRaw(t *testing.T) {
+	st := InboundSettings{
+		Transport:      TransportSettings{Type: "ws", Path: "/old"},
+		ObfsType:       "salamander",
+		ObfsPassword:   "secret",
+		TrojanFallback: &FallbackSettings{Server: "127.0.0.1", ServerPort: 8080},
+		Raw:            map[string]any{"type": "hysteria2", "listen": "::"},
+	}
+	st.SyncFromRaw("hysteria2")
+	if st.Transport.Type != "" || st.ObfsType != "" || st.ObfsPassword != "" {
+		t.Fatalf("SyncFromRaw did not clear removed transport/obfs: %+v", st)
+	}
+	trSt := InboundSettings{
+		TrojanFallback: &FallbackSettings{Server: "127.0.0.1", ServerPort: 8080},
+		Raw:            map[string]any{"type": "trojan", "listen": "::"},
+	}
+	trSt.SyncFromRaw("trojan")
+	if trSt.TrojanFallback != nil {
+		t.Fatalf("SyncFromRaw did not clear removed trojan fallback: %+v", trSt.TrojanFallback)
+	}
+
+	// buildOutbound cleans stale ws path/headers when transport switched to grpc and preserves raw udp_relay_mode on tuic.
+	rawOut, err := buildOutbound(OutboundInput{
+		Tag: "grpc-out", Type: "vless", Server: "example.com", ServerPort: 443,
+		UUID: "11111111-2222-4333-8444-555555555555",
+		Settings: InboundSettings{
+			Transport: TransportSettings{Type: "grpc", ServiceName: "svc"},
+			Raw: map[string]any{
+				"type":      "vless",
+				"transport": map[string]any{"type": "ws", "path": "/stale", "headers": map[string]any{"Host": "stale.example"}},
+			},
+		},
+	})
+	if err != nil {
+		t.Fatalf("BuildOutbound grpc: %v", err)
+	}
+	if strings.Contains(string(rawOut), "/stale") || !strings.Contains(string(rawOut), `"service_name":"svc"`) {
+		t.Fatalf("BuildOutbound kept stale ws fields on grpc outbound: %s", rawOut)
 	}
 }

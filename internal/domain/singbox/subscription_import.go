@@ -1001,6 +1001,9 @@ func parseClashProxy(m map[string]any) (ImportedNode, error) {
 	var transport map[string]any
 	if network == "ws" {
 		transport = yamlMap(getAny(m, "ws-opts", "ws_opts"))
+		if transport != nil && getBool(transport, "v2ray-http-upgrade", "v2ray_http_upgrade") {
+			network = "httpupgrade"
+		}
 	} else if network == "http-upgrade" || network == "httpupgrade" {
 		network = "httpupgrade"
 		transport = yamlMap(getAny(m, "http-upgrade-opts", "http_upgrade_opts"))

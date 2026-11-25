@@ -3,6 +3,7 @@ package singbox
 import (
 	"encoding/base64"
 	"encoding/json"
+	"strings"
 	"testing"
 )
 
@@ -279,5 +280,58 @@ func TestParseShareLinkTrimsALPNItems(t *testing.T) {
 	}
 	if len(node.Settings.TLS.ALPN) != 2 || node.Settings.TLS.ALPN[1] != "http/1.1" {
 		t.Fatalf("ALPN = %#v", node.Settings.TLS.ALPN)
+	}
+}
+
+func TestShareLinkHysteriaV1ObfsBase64SocksAndTransportSNI(t *testing.T) {
+	// Hysteria v1 emits standard obfs=xplus&obfsParam=... and parses both standard and legacy forms.
+	hyLink, err := BuildShareLink(ClientNode{
+		Name: "hy1", Server: "hy.example.com", ServerPort: 443, Type: "hysteria",
+		User:     ProxyUser{Password: "authpw"},
+		Settings: InboundSettings{ObfsPassword: "xplus-key", TLS: TLSSettings{Enabled: true}},
+	})
+	if err != nil {
+		t.Fatalf("BuildShareLink hysteria: %v", err)
+	}
+	if !strings.Contains(hyLink, "obfs=xplus") || !strings.Contains(hyLink, "obfsParam=xplus-key") {
+		t.Fatalf("hysteria v1 link missing xplus obfsParam: %s", hyLink)
+	}
+	parsedHy, err := ParseShareLink(hyLink)
+	if err != nil || parsedHy.Settings.ObfsPassword != "xplus-key" {
+		t.Fatalf("ParseShareLink hysteria standard = %+v, err=%v", parsedHy, err)
+	}
+	legacyHy, err := ParseShareLink("hysteria://hy.example.com:443?auth=authpw&obfs=legacy-key#hy")
+	if err != nil || legacyHy.Settings.ObfsPassword != "legacy-key" {
+		t.Fatalf("ParseShareLink hysteria legacy = %+v, err=%v", legacyHy, err)
+	}
+
+	// Base64 userinfo in socks:// share links.
+	b64Creds := base64.RawURLEncoding.EncodeToString([]byte("alice:s3cr3t"))
+	socksNode, err := ParseShareLink("socks://" + b64Creds + "@proxy.example.com:1080#socks-b64")
+	if err != nil {
+		t.Fatalf("ParseShareLink base64 socks: %v", err)
+	}
+	if socksNode.Settings.Username != "alice" || socksNode.Settings.Password != "s3cr3t" {
+		t.Fatalf("socks credentials = %q / %q", socksNode.Settings.Username, socksNode.Settings.Password)
+	}
+
+	// Empty sni falls back to WS Host header when TLS is enabled.
+	uuid := "a2b0c3d4-e5f6-4a7b-8c9d-0e1f2a3b4c5d"
+	wsNode, err := ParseShareLink("vless://" + uuid + "@104.16.1.1:443?type=ws&security=tls&host=cdn.example.com&path=%2Fws#cdn")
+	if err != nil || wsNode.Settings.TLS.ServerName != "cdn.example.com" {
+		t.Fatalf("expected SNI fallback to transport host, got %q (err=%v)", wsNode.Settings.TLS.ServerName, err)
+	}
+
+	// BuildShareLink emits serviceName for server gRPC inbounds.
+	grpcLink, err := BuildShareLink(ClientNode{
+		Name: "grpc-in", Server: "grpc.example.com", ServerPort: 443, Type: "vless",
+		User: ProxyUser{UUID: uuid},
+		Settings: InboundSettings{
+			TLS:       TLSSettings{Enabled: true, ServerName: "grpc.example.com"},
+			Transport: TransportSettings{Type: "grpc", ServiceName: "gunService"},
+		},
+	})
+	if err != nil || !strings.Contains(grpcLink, "serviceName=gunService") {
+		t.Fatalf("gRPC share link = %q, err=%v", grpcLink, err)
 	}
 }

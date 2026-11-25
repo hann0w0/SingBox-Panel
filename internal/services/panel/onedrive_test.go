@@ -799,8 +799,7 @@ func TestOneDriveRestoreFollowsRedirectAndMigratesV43BackupWithCursors(t *testin
 		_ = sqlDB.Close()
 	}
 
-	var downloadServer *httptest.Server
-	downloadServer = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	downloadServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Header.Get("Authorization") != "" {
 			t.Errorf("redirected download request leaked Authorization header")
 		}

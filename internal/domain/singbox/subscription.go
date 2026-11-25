@@ -39,6 +39,10 @@ func fingerprintOf(t TLSSettings) string {
 
 // clientSNI resolves the server_name used by the client.
 func clientSNI(t TLSSettings, server string) string {
+	return clientSNIWithTransport(t, TransportSettings{}, server)
+}
+
+func clientSNIWithTransport(t TLSSettings, tr TransportSettings, server string) string {
 	if t.ServerName != "" {
 		return t.ServerName
 	}
@@ -48,7 +52,10 @@ func clientSNI(t TLSSettings, server string) string {
 	if t.ACMEDomain != "" {
 		return t.ACMEDomain
 	}
-	return server
+	if h := tr.Host(); h != "" && net.ParseIP(strings.Trim(strings.TrimSpace(server), "[]")) != nil {
+		return h
+	}
+	return strings.Trim(strings.TrimSpace(server), "[]")
 }
 
 // tlsEnabled reports whether the inbound carries TLS/REALITY/ACME.
@@ -108,13 +115,14 @@ func BuildClientOutbound(n ClientNode) (json.RawMessage, error) {
 	if err := n.Settings.ValidateMultiUser(n.Type); err != nil {
 		return nil, err
 	}
+	serverHost := strings.Trim(strings.TrimSpace(n.Server), "[]")
 	base := map[string]any{
 		"type":        n.Type,
 		"tag":         n.Name,
-		"server":      n.Server,
+		"server":      serverHost,
 		"server_port": n.ServerPort,
 	}
-	tls := buildClientTLS(n.Settings.TLS, n.Server, n.Type)
+	tls := buildClientTLS(n.Settings.TLS, clientSNIWithTransport(n.Settings.TLS, n.Settings.Transport, serverHost), n.Type)
 	tr := buildTransport(n.Settings.Transport)
 
 	switch n.Type {
@@ -328,18 +336,19 @@ func BuildShareLink(n ClientNode) (string, error) {
 				q.Set("sid", sid)
 			}
 			q.Set("fp", fingerprintOf(t))
-			q.Set("sni", clientSNI(t, host))
+			q.Set("sni", clientSNIWithTransport(t, n.Settings.Transport, host))
 		case t.tlsEnabled():
 			q.Set("security", "tls")
 			q.Set("fp", fingerprintOf(t))
-			q.Set("sni", clientSNI(t, host))
+			q.Set("sni", clientSNIWithTransport(t, n.Settings.Transport, host))
 		default:
 			q.Set("security", "none")
 		}
 		if n.Settings.Flow != "" {
 			q.Set("flow", n.Settings.Flow)
 		}
-		if networkOf(n.Settings.Transport) == "ws" || networkOf(n.Settings.Transport) == "httpupgrade" {
+		switch networkOf(n.Settings.Transport) {
+		case "ws", "httpupgrade":
 			if n.Settings.Transport.Path != "" {
 				q.Set("path", n.Settings.Transport.Path)
 			}
@@ -351,6 +360,17 @@ func BuildShareLink(n ClientNode) (string, error) {
 				if n.Settings.Transport.EarlyDataHeader != "" {
 					q.Set("earlyDataHeaderName", n.Settings.Transport.EarlyDataHeader)
 				}
+			}
+		case "grpc":
+			if n.Settings.Transport.ServiceName != "" {
+				q.Set("serviceName", n.Settings.Transport.ServiceName)
+			}
+		case "http":
+			if n.Settings.Transport.Path != "" {
+				q.Set("path", n.Settings.Transport.Path)
+			}
+			if h := n.Settings.Transport.Host(); h != "" {
+				q.Set("host", h)
 			}
 		}
 		if t.tlsEnabled() && len(t.ALPN) > 0 {
@@ -374,19 +394,23 @@ func BuildShareLink(n ClientNode) (string, error) {
 			"net": net, "type": "none", "host": "", "path": "",
 			"tls": "", "sni": "",
 		}
-		if net == "ws" || net == "httpupgrade" {
+		switch net {
+		case "ws", "httpupgrade", "http":
 			obj["path"] = n.Settings.Transport.Path
 			obj["host"] = n.Settings.Transport.Host()
+		case "grpc":
+			obj["path"] = n.Settings.Transport.ServiceName
+			obj["type"] = "gun"
 		}
 		if t.Reality.Enabled {
 			obj["tls"] = "reality"
-			obj["sni"] = clientSNI(t, host)
+			obj["sni"] = clientSNIWithTransport(t, n.Settings.Transport, host)
 			obj["fp"] = fingerprintOf(t)
 			obj["pbk"] = t.Reality.PublicKey
 			obj["sid"] = firstShortID(t.Reality.ShortID)
 		} else if t.tlsEnabled() {
 			obj["tls"] = "tls"
-			obj["sni"] = clientSNI(t, host)
+			obj["sni"] = clientSNIWithTransport(t, n.Settings.Transport, host)
 			obj["fp"] = fingerprintOf(t)
 		}
 		if len(t.ALPN) > 0 {
@@ -418,11 +442,12 @@ func BuildShareLink(n ClientNode) (string, error) {
 				q.Set("allowInsecure", "1")
 			}
 		}
-		q.Set("sni", clientSNI(t, host))
+		q.Set("sni", clientSNIWithTransport(t, n.Settings.Transport, host))
 		if len(t.ALPN) > 0 {
 			q.Set("alpn", strings.Join(t.ALPN, ","))
 		}
-		if networkOf(n.Settings.Transport) == "ws" || networkOf(n.Settings.Transport) == "httpupgrade" {
+		switch networkOf(n.Settings.Transport) {
+		case "ws", "httpupgrade":
 			if n.Settings.Transport.Path != "" {
 				q.Set("path", n.Settings.Transport.Path)
 			}
@@ -434,6 +459,17 @@ func BuildShareLink(n ClientNode) (string, error) {
 				if n.Settings.Transport.EarlyDataHeader != "" {
 					q.Set("earlyDataHeaderName", n.Settings.Transport.EarlyDataHeader)
 				}
+			}
+		case "grpc":
+			if n.Settings.Transport.ServiceName != "" {
+				q.Set("serviceName", n.Settings.Transport.ServiceName)
+			}
+		case "http":
+			if n.Settings.Transport.Path != "" {
+				q.Set("path", n.Settings.Transport.Path)
+			}
+			if h := n.Settings.Transport.Host(); h != "" {
+				q.Set("host", h)
 			}
 		}
 		return fmt.Sprintf("trojan://%s@%s?%s#%s", url.User(n.User.Password).String(), hostPort, q.Encode(), name), nil
@@ -594,7 +630,8 @@ func BuildShareLink(n ClientNode) (string, error) {
 		q.Set("upmbps", strconv.Itoa(up))
 		q.Set("downmbps", strconv.Itoa(down))
 		if n.Settings.ObfsPassword != "" {
-			q.Set("obfs", n.Settings.ObfsPassword)
+			q.Set("obfs", "xplus")
+			q.Set("obfsParam", n.Settings.ObfsPassword)
 		}
 		if t.ClientInsecure() {
 			q.Set("insecure", "1")

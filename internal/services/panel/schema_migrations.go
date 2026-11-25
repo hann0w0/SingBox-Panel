@@ -497,6 +497,20 @@ var applicationMigrations = []schemaMigration{
 				UpdateColumn("updated_at", now).Error
 		},
 	},
+	{
+		version: 46,
+		name:    "widen custom node link column to text",
+		up: func(tx *gorm.DB) error {
+			switch tx.Dialector.Name() {
+			case "mysql":
+				return tx.Exec("ALTER TABLE `custom_nodes` MODIFY COLUMN `link` TEXT").Error
+			case "postgres":
+				return tx.Exec(`ALTER TABLE "custom_nodes" ALTER COLUMN "link" TYPE TEXT`).Error
+			default:
+				return nil
+			}
+		},
+	},
 }
 
 // migrationReplaySafe records whether an interrupted attempt of each migration
@@ -561,6 +575,7 @@ var migrationReplaySafe = map[uint]bool{
 	43: true,  // AutoMigrate adds server log_level and staged config revision columns
 	44: true,  // MySQL LONGTEXT widening is idempotent and a no-op on SQLite/Postgres
 	45: true,  // AutoMigrate adds nullable updated_at and backfills unset cursor timestamps
+	46: true,  // widening custom_nodes.link to TEXT is idempotent across MySQL/Postgres and a no-op on SQLite
 }
 
 // dropRetiredCustomNodeSwitches removes the per-node and per-subscription

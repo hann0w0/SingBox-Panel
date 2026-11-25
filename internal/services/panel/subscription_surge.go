@@ -178,6 +178,7 @@ func surgeHasUnquotableValue(n node) bool {
 }
 
 func surgeProxyUnchecked(n node, name string) string {
+	n.server = strings.Trim(strings.TrimSpace(n.server), "[]")
 	st := n.settings
 	u := n.getUserIdentity()
 	sni := sniOf(st, n.server)
@@ -228,9 +229,27 @@ func surgeProxyUnchecked(n node, name string) string {
 		}
 		return line
 	case "trojan":
+		if st.TLS.Reality.Enabled {
+			return ""
+		}
+		tr := strings.ToLower(strings.TrimSpace(st.Transport.Type))
+		switch tr {
+		case "", "tcp", "ws":
+		default:
+			return ""
+		}
 		line := fmt.Sprintf("%s = trojan, %s, %d, password=%s, tls=true, sni=%s, skip-cert-verify=%t",
 			name, n.server, n.port, surgeValue(u.Password), surgeValue(sni), st.TLS.ClientInsecure())
 		line += surgeALPN(st.TLS.ALPN)
+		if tr == "ws" {
+			line += ", ws=true"
+			if st.Transport.Path != "" {
+				line += ", ws-path=" + surgeValue(st.Transport.Path)
+			}
+			if hdrs := surgeWSHeaders(st.Transport); hdrs != "" {
+				line += ", ws-headers=" + surgeValue(hdrs)
+			}
+		}
 		return fmt.Sprintf("%s, udp-relay=%t", line, n.udpEnabled())
 	case "anytls":
 		// Surge added AnyTLS support in iOS 5.17.0 / macOS 6.4.3; the shared TLS

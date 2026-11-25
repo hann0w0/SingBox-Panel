@@ -745,16 +745,6 @@ func (a *App) location() *time.Location {
 	return a.cfg.Location()
 }
 
-func (a *App) parseTrafficRange(c *gin.Context) (string, trafficRangeConfig, bool) {
-	rangeName := c.DefaultQuery("range", "24h")
-	rangeConfig, exists := trafficRanges[rangeName]
-	if !exists {
-		c.JSON(http.StatusBadRequest, gin.H{"error": fmt.Sprintf("unsupported range %q", rangeName)})
-		return "", trafficRangeConfig{}, false
-	}
-	return rangeName, rangeConfig, true
-}
-
 func (a *App) serverTraffic(c *gin.Context) {
 	serverID, ok := uintParam(c, "id")
 	if !ok {

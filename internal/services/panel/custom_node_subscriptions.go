@@ -469,7 +469,7 @@ func subscriptionCustomNode(source model.CustomNodeSubscription, item singbox.Im
 		return model.CustomNode{}, "", fmt.Errorf("节点 %q 参数无法保存: %w", item.Name, err)
 	}
 	link := strings.TrimSpace(item.Link)
-	if len(link) > 1024 {
+	if len(link) > 16384 {
 		link = ""
 	}
 	sourceName := normalizeSubscriptionSourceName(item.Name)

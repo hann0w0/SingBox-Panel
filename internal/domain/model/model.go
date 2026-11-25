@@ -512,7 +512,7 @@ type CustomNode struct {
 	// name-rewrite rules are applied. Manual nodes leave it empty.
 	SourceName string   `gorm:"size:1024" json:"source_name,omitempty"`
 	Group      string   `gorm:"size:64;index" json:"group"` // optional admin grouping (e.g. airport name)
-	Link       string   `gorm:"size:1024" json:"link"`      // share link (optional)
+	Link       string   `gorm:"type:text" json:"link"`      // share link (optional)
 	Protocol   string   `gorm:"size:32" json:"protocol"`    // structured node protocol, e.g. snell
 	Address    string   `gorm:"size:255" json:"address"`    // structured node host
 	Port       int      `json:"port"`

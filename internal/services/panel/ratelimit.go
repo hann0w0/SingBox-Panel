@@ -250,10 +250,6 @@ func getConfiguredTrustedProxies() []netip.Prefix {
 	return cp
 }
 
-func trustedProxyPeer(ip net.IP) bool {
-	return trustedProxyPeerWithPrefixes(ip, getConfiguredTrustedProxies())
-}
-
 func trustedProxyPeerWithPrefixes(ip net.IP, prefixes []netip.Prefix) bool {
 	if ip == nil {
 		return false

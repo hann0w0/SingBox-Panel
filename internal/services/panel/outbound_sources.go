@@ -162,11 +162,6 @@ func inboundOutboundClientFromModels(srv *model.Server, ib *model.Inbound, consu
 	}, nil
 }
 
-// customNodeOutboundClient renders an external node's client view.
-func (a *App) customNodeOutboundClient(id uint) (singbox.ClientNode, error) {
-	return a.customNodeOutboundClientWithDB(a.db, id)
-}
-
 func (a *App) customNodeOutboundClientWithDB(db *gorm.DB, id uint) (singbox.ClientNode, error) {
 	if db == nil {
 		db = a.db
@@ -187,16 +182,6 @@ func (a *App) customNodeOutboundClientFromModel(node *model.CustomNode) (singbox
 		return singbox.ClientNode{}, fmt.Errorf("来源外部节点 %q 参数无法解析", node.Name)
 	}
 	return n.clientNode(), nil
-}
-
-// outboundSourceReason reports why a source cannot be used right now, which is
-// surfaced in the picker instead of silently offering a broken choice.
-func (a *App) outboundSourceReason(kind string, id, targetServerID uint) string {
-	_, err := a.outboundSourceClient(&model.Outbound{ServerID: targetServerID, SourceKind: kind, SourceID: id}, targetServerID)
-	if err != nil {
-		return err.Error()
-	}
-	return ""
 }
 
 // listOutboundSources returns every selectable node for the import dialog. The

@@ -162,6 +162,11 @@ func parseVLESS(uri string) (ClientNode, error) {
 	if err := parseTLSSecurity(q.Get("security"), q.Get("sni"), q.Get("pbk"), q.Get("sid"), insecureFromQuery(q), q.Get("fp"), &cn.Settings.TLS); err != nil {
 		return ClientNode{}, err
 	}
+	if cn.Settings.TLS.Enabled && !cn.Settings.TLS.Reality.Enabled && cn.Settings.TLS.ServerName == "" {
+		if h := cn.Settings.Transport.Host(); h != "" {
+			cn.Settings.TLS.ServerName = h
+		}
+	}
 	if a := q.Get("alpn"); a != "" {
 		cn.Settings.TLS.ALPN = splitList(a)
 	}
@@ -252,6 +257,11 @@ func parseVMess(uri string) (ClientNode, error) {
 	case "tls":
 		cn.Settings.TLS.Enabled = true
 		cn.Settings.TLS.ServerName = strOf(obj, "sni")
+		if cn.Settings.TLS.ServerName == "" {
+			if h := cn.Settings.Transport.Host(); h != "" {
+				cn.Settings.TLS.ServerName = h
+			}
+		}
 		cn.Settings.TLS.Fingerprint = strOf(obj, "fp")
 		if insecureFromMap(obj) {
 			cn.Settings.TLS.Insecure = true
@@ -387,10 +397,20 @@ func parseTrojan(uri string) (ClientNode, error) {
 	if err := parseTLSSecurity(q.Get("security"), q.Get("sni"), q.Get("pbk"), q.Get("sid"), insecureFromQuery(q), q.Get("fp"), &cn.Settings.TLS); err != nil {
 		return ClientNode{}, err
 	}
+	if cn.Settings.TLS.Enabled && !cn.Settings.TLS.Reality.Enabled && cn.Settings.TLS.ServerName == "" {
+		if h := cn.Settings.Transport.Host(); h != "" {
+			cn.Settings.TLS.ServerName = h
+		}
+	}
 	// trojan is TLS by nature; a link without a security param still means TLS.
 	if !cn.Settings.TLS.Enabled && !cn.Settings.TLS.Reality.Enabled {
 		cn.Settings.TLS.Enabled = true
 		cn.Settings.TLS.ServerName = q.Get("sni")
+		if cn.Settings.TLS.ServerName == "" {
+			if h := cn.Settings.Transport.Host(); h != "" {
+				cn.Settings.TLS.ServerName = h
+			}
+		}
 		// insecure was already resolved by parseTLSSecurity above if security was set;
 		// for a link with no security param at all, check again here.
 		if insecureFromQuery(q) {
@@ -475,7 +495,9 @@ func parseHysteria(uri string) (ClientNode, error) {
 	}
 	cn.Settings.UpMbps = atoiSafe(q.Get("upmbps"))
 	cn.Settings.DownMbps = atoiSafe(q.Get("downmbps"))
-	if v := q.Get("obfs"); v != "" {
+	if obfsParam := firstQueryValue(q, "obfsParam", "obfs-password", "obfs_password"); obfsParam != "" {
+		cn.Settings.ObfsPassword = obfsParam
+	} else if v := q.Get("obfs"); v != "" && !strings.EqualFold(v, "xplus") {
 		cn.Settings.ObfsPassword = v
 	}
 	return cn, nil
@@ -571,8 +593,7 @@ func parseHTTP(uri string) (ClientNode, error) {
 	}
 	cn := ClientNode{Name: shareName(u), Server: host, ServerPort: port, Type: "http"}
 	if u.User != nil {
-		cn.Settings.Username = u.User.Username()
-		cn.Settings.Password, _ = u.User.Password()
+		cn.Settings.Username, cn.Settings.Password = parseUserinfoOrBase64(u.User)
 	}
 	q := u.Query()
 	cn.Settings.TLS = TLSSettings{
@@ -596,12 +617,25 @@ func parseSocks(uri string) (ClientNode, error) {
 	}
 	cn := ClientNode{Name: shareName(u), Server: host, ServerPort: port, Type: "socks"}
 	if u.User != nil {
-		cn.Settings.Username = u.User.Username()
-		if pw, ok := u.User.Password(); ok {
-			cn.Settings.Password = pw
-		}
+		cn.Settings.Username, cn.Settings.Password = parseUserinfoOrBase64(u.User)
 	}
 	return cn, nil
+}
+
+func parseUserinfoOrBase64(user *url.Userinfo) (string, string) {
+	if user == nil {
+		return "", ""
+	}
+	if pw, hasPassword := user.Password(); hasPassword {
+		return user.Username(), pw
+	}
+	rawUser := user.Username()
+	if decoded, ok := decodeSSBase64(unescapeSharePart(rawUser)); ok {
+		if u, p, found := strings.Cut(decoded, ":"); found {
+			return u, p
+		}
+	}
+	return rawUser, ""
 }
 
 func strOf(m map[string]any, k string) string {

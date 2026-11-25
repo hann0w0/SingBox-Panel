@@ -607,7 +607,7 @@ func (a *App) customNodeToNode(c *model.CustomNode) (node, bool) {
 	}
 	return node{
 		name:     name,
-		server:   c.Address,
+		server:   strings.Trim(strings.TrimSpace(c.Address), "[]"),
 		port:     c.Port,
 		typ:      protocol,
 		region:   regionFromName(name),
@@ -638,8 +638,27 @@ func headerValues(value any) []string {
 // in the SIP002 string used by share links and the internal node model.
 func mergeSSPluginOptions(plugin string, opts map[string]any) string {
 	plugin = strings.TrimSpace(plugin)
-	if plugin == "" || len(opts) == 0 {
-		return plugin
+	rawParts := strings.Split(plugin, ";")
+	pluginName := strings.TrimSpace(rawParts[0])
+	if pluginName == "" {
+		return ""
+	}
+	if pluginName == "obfs" {
+		pluginName = "obfs-local"
+	}
+	parts := []string{pluginName}
+	seenKeys := make(map[string]bool, len(opts)+len(rawParts))
+	for _, existing := range rawParts[1:] {
+		existing = strings.TrimSpace(existing)
+		if existing == "" {
+			continue
+		}
+		k, _, _ := strings.Cut(existing, "=")
+		seenKeys[strings.TrimSpace(k)] = true
+		parts = append(parts, existing)
+	}
+	if len(opts) == 0 {
+		return strings.Join(parts, ";")
 	}
 	keys := make([]string, 0, len(opts))
 	for key := range opts {
@@ -648,11 +667,61 @@ func mergeSSPluginOptions(plugin string, opts map[string]any) string {
 		}
 	}
 	sort.Strings(keys)
-	parts := []string{plugin}
 	for _, key := range keys {
-		value := strings.TrimSpace(fmt.Sprint(opts[key]))
+		rawVal := opts[key]
+		if rawVal == nil {
+			continue
+		}
+		mappedKey := key
+		if pluginName == "obfs-local" {
+			switch key {
+			case "mode":
+				mappedKey = "obfs"
+			case "host":
+				mappedKey = "obfs-host"
+			}
+		}
+		if seenKeys[mappedKey] {
+			continue
+		}
+		if pluginName == "v2ray-plugin" {
+			switch strings.ToLower(key) {
+			case "tls":
+				switch v := rawVal.(type) {
+				case bool:
+					if v {
+						parts = append(parts, "tls")
+						seenKeys["tls"] = true
+					}
+				default:
+					s := strings.ToLower(strings.TrimSpace(fmt.Sprint(v)))
+					if s == "true" || s == "1" {
+						parts = append(parts, "tls")
+						seenKeys["tls"] = true
+					}
+				}
+				continue
+			case "mux":
+				switch v := rawVal.(type) {
+				case bool:
+					if !v {
+						parts = append(parts, "mux=0")
+						seenKeys["mux"] = true
+					}
+				default:
+					s := strings.ToLower(strings.TrimSpace(fmt.Sprint(v)))
+					if s == "false" || s == "0" {
+						parts = append(parts, "mux=0")
+						seenKeys["mux"] = true
+					}
+				}
+				continue
+			}
+		}
+		value := strings.TrimSpace(fmt.Sprint(rawVal))
 		if value != "" {
-			parts = append(parts, key+"="+value)
+			parts = append(parts, mappedKey+"="+value)
+			seenKeys[mappedKey] = true
 		}
 	}
 	return strings.Join(parts, ";")
@@ -661,14 +730,40 @@ func mergeSSPluginOptions(plugin string, opts map[string]any) string {
 func splitSSPluginOptions(plugin string) (string, map[string]any) {
 	parts := strings.Split(plugin, ";")
 	name := strings.TrimSpace(parts[0])
+	isObfs := name == "obfs" || name == "obfs-local"
 	opts := map[string]any{}
 	for _, part := range parts[1:] {
+		part = strings.TrimSpace(part)
+		if part == "" {
+			continue
+		}
 		key, value, ok := strings.Cut(part, "=")
 		key = strings.TrimSpace(key)
-		if !ok || key == "" {
+		if key == "" {
+			continue
+		}
+		if !ok {
+			opts[key] = true
 			continue
 		}
 		value = strings.TrimSpace(value)
+		if isObfs {
+			switch key {
+			case "obfs":
+				key = "mode"
+			case "obfs-host":
+				key = "host"
+			}
+		}
+		if name == "v2ray-plugin" && key == "mux" {
+			switch strings.ToLower(value) {
+			case "0", "false":
+				opts["mux"] = false
+			default:
+				opts["mux"] = true
+			}
+			continue
+		}
 		switch strings.ToLower(value) {
 		case "true":
 			opts[key] = true

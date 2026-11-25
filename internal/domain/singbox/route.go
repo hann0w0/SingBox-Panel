@@ -211,11 +211,26 @@ func buildOutbound(o OutboundInput) (json.RawMessage, error) {
 	if _, hasPE := o.Settings.Raw["packet_encoding"]; !hasPE && o.Settings.PacketEncoding == "" {
 		delete(merged, "packet_encoding")
 	}
+	if o.Type == "hysteria2" && o.Settings.ObfsType == "" && o.Settings.ObfsPassword == "" {
+		delete(merged, "obfs")
+	}
+	if o.Type == "tuic" && o.Settings.TUICUDPRelayMode == "" {
+		if rawMode, ok := o.Settings.Raw["udp_relay_mode"].(string); ok {
+			if strings.TrimSpace(rawMode) != "" {
+				merged["udp_relay_mode"] = strings.TrimSpace(rawMode)
+			} else {
+				delete(merged, "udp_relay_mode")
+			}
+		}
+	}
 	if !o.Settings.TLS.Enabled && !o.Settings.TLS.Reality.Enabled && o.Settings.TLS.ACMEDomain == "" && !o.Settings.TLS.SelfSigned {
 		delete(merged, "tls")
 	}
 	if o.Settings.Transport.normalized() == nil {
 		delete(merged, "transport")
+	} else if trMap, ok := merged["transport"].(map[string]any); ok {
+		cleanStaleRawInboundTransport(merged, o.Settings.Transport)
+		_ = trMap
 	}
 	return json.Marshal(merged)
 }

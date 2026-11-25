@@ -899,7 +899,13 @@ func (a *App) updateUser(c *gin.Context) {
 		}
 	}
 	a.refreshUserProxyAccess(oldServerIDs, u.ServerIDs)
-	c.JSON(http.StatusOK, gin.H{"user": u})
+	resp := gin.H{"user": u}
+	if revokeSessions && u.ID == currentUID(c) && userActive(&u) {
+		if tok, tokErr := a.auth.Issue(&u, sessionTTL); tokErr == nil {
+			resp["token"] = tok
+		}
+	}
+	c.JSON(http.StatusOK, resp)
 }
 
 func duplicateDatabaseError(err error) bool {

@@ -97,7 +97,7 @@ function SchemaJsonObjectField({
           }
         }}
       />
-      {jsonError ? <div className="mt-1 text-[12px] text-[var(--console-danger)]">{jsonError}</div> : null}
+      {jsonError ? <div className="mt-1 text-[12px] text-[var(--console-error)]">{jsonError}</div> : null}
     </Field>
   )
 }
@@ -110,6 +110,7 @@ function SchemaLinesArrayField({
   isIntArray,
   current,
   onUpdate,
+  onErrorChange,
 }: {
   fieldId: string
   label: string
@@ -118,16 +119,24 @@ function SchemaLinesArrayField({
   isIntArray: boolean
   current: unknown
   onUpdate: (nextVal: unknown) => void
+  onErrorChange?: (error: string | null) => void
 }) {
   const externalText = joinLines(current)
   const [draft, setDraft] = useState(externalText)
   const [focused, setFocused] = useState(false)
+  const [inputError, setInputError] = useState('')
+  const onErrorChangeRef = useRef(onErrorChange)
+  onErrorChangeRef.current = onErrorChange
+
+  useEffect(() => () => {
+    onErrorChangeRef.current?.(null)
+  }, [])
 
   useEffect(() => {
-    if (!focused) {
+    if (!focused && !inputError) {
       setDraft(externalText)
     }
-  }, [externalText, focused])
+  }, [externalText, focused, inputError])
 
   return (
     <Field className={fullWidth ? 'fm-full' : undefined}>
@@ -141,20 +150,31 @@ function SchemaLinesArrayField({
         onFocus={() => setFocused(true)}
         onBlur={() => {
           setFocused(false)
-          setDraft(externalText)
+          if (!inputError) setDraft(externalText)
         }}
         onChange={(e) => {
           const raw = e.target.value
           setDraft(raw)
           const items = splitLines(raw)
           if (isIntArray) {
-            const nums = items.map(Number).filter((n) => !Number.isNaN(n) && Number.isInteger(n))
-            onUpdate(nums)
+            const invalid = items.some((item) => !/^-?\d+$/.test(item) || !Number.isSafeInteger(Number(item)))
+            if (invalid) {
+              const err = '请输入整数，每行或逗号分隔'
+              setInputError(err)
+              onErrorChangeRef.current?.(err)
+              return
+            }
+            setInputError('')
+            onErrorChangeRef.current?.(null)
+            onUpdate(items.map(Number))
           } else {
+            setInputError('')
+            onErrorChangeRef.current?.(null)
             onUpdate(items)
           }
         }}
       />
+      {inputError ? <div className="mt-1 text-[12px] text-[var(--console-error)]">{inputError}</div> : null}
     </Field>
   )
 }
@@ -244,8 +264,13 @@ export function SchemaFieldList({
                   value={Array.isArray(current) ? current.map(String) : []}
                   onChange={(vals: string[]) => {
                     if (isIntArray) {
-                      const nums = vals.map(Number).filter((n) => Number.isInteger(n))
-                      updateKey(key, nums)
+                      const valid = vals.every((item) => /^-?\d+$/.test(String(item).trim()) && Number.isSafeInteger(Number(item)))
+                      if (!valid) {
+                        onJsonErrorChange?.(`${idPrefix}.${key}`, `${label} 仅支持整数`)
+                        return
+                      }
+                      onJsonErrorChange?.(`${idPrefix}.${key}`, null)
+                      updateKey(key, vals.map(Number))
                     } else {
                       updateKey(key, vals)
                     }
@@ -271,6 +296,7 @@ export function SchemaFieldList({
               isIntArray={isIntArray}
               current={current}
               onUpdate={(nextVal) => updateKey(key, nextVal)}
+              onErrorChange={onJsonErrorChange ? (err) => onJsonErrorChange(`${idPrefix}.${key}`, err) : undefined}
             />
           )
         }

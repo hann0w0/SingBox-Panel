@@ -156,6 +156,9 @@ export function OutboundForm({
   const [source, setSource] = useState<OutboundSourceMode>('manual')
   const [submitting, setSubmitting] = useState(false)
   const [rawExtra, setRawExtra] = useState<Record<string, unknown>>({})
+  const [stickyTopKeys, setStickyTopKeys] = useState<Set<string>>(() => new Set())
+  const [stickyTransportKeys, setStickyTransportKeys] = useState<Set<string>>(() => new Set())
+  const [stickyTlsKeys, setStickyTlsKeys] = useState<Set<string>>(() => new Set())
   const [schemaJsonErrors, setSchemaJsonErrors] = useState<Record<string, string>>({})
   const [extraJsonErrorMsg, setExtraJsonErrorMsg] = useState('')
   const schemas = useSingboxSchemas(open)
@@ -182,7 +185,7 @@ export function OutboundForm({
     }
     return out
   }, [variantProps, type])
-  const otherParamsSchemaProps = useMemo(() => {
+  const topSchemaCandidates = useMemo(() => {
     const candidates: Record<string, JSONSchema> = {}
     for (const [k, v] of Object.entries(variantProps)) {
       if (SCHEMA_OUT_TOP_EXCLUDES.has(k)) continue
@@ -191,8 +194,18 @@ export function OutboundForm({
       if (SCHEMA_OUT_PRIMARY_PROTO_KEYS.has(k)) continue
       candidates[k] = k === 'multiplex' ? compactOutboundMultiplexSchema(v) : v
     }
-    return pickPopulatedSchemaProps(candidates, rawExtra)
-  }, [variantProps, type, rawExtra])
+    return candidates
+  }, [variantProps, type])
+  const otherParamsSchemaProps = useMemo(
+    () => pickPopulatedSchemaProps(topSchemaCandidates, rawExtra, stickyTopKeys),
+    [topSchemaCandidates, rawExtra, stickyTopKeys],
+  )
+  const availableTopParamOptions = useMemo(
+    () => Object.entries(topSchemaCandidates)
+      .filter(([k]) => !(k in otherParamsSchemaProps))
+      .map(([k, schema]) => ({ value: k, label: schema['x-ui']?.label ? `${k} · ${schema['x-ui'].label}` : k })),
+    [topSchemaCandidates, otherParamsSchemaProps],
+  )
   const transportSchemaProps = useMemo(() => {
     const trProps = variantProps.transport?.properties ?? {}
     const trRaw = (rawExtra.transport && typeof rawExtra.transport === 'object' ? rawExtra.transport : {}) as Record<string, unknown>
@@ -203,7 +216,7 @@ export function OutboundForm({
         ...(trProps.ping_timeout ? { ping_timeout: trProps.ping_timeout } : {}),
         ...(trProps.permit_without_stream ? { permit_without_stream: trProps.permit_without_stream } : {}),
       }
-      return pickPopulatedSchemaProps(candidates, trRaw, new Set(['service_name']))
+      return pickPopulatedSchemaProps(candidates, trRaw, new Set(['service_name', ...stickyTransportKeys]))
     }
     if (transportType === 'http') {
       const candidates = {
@@ -214,18 +227,64 @@ export function OutboundForm({
         ...(trProps.idle_timeout ? { idle_timeout: trProps.idle_timeout } : {}),
         ...(trProps.ping_timeout ? { ping_timeout: trProps.ping_timeout } : {}),
       }
-      return pickPopulatedSchemaProps(candidates, trRaw, new Set(['host', 'path']))
+      return pickPopulatedSchemaProps(candidates, trRaw, new Set(['host', 'path', ...stickyTransportKeys]))
     }
     return {}
-  }, [variantProps, transportType, rawExtra.transport])
+  }, [variantProps, transportType, rawExtra.transport, stickyTransportKeys])
   const tlsAdvSchemaProps = useMemo(() => {
     const tlsProps = variantProps.tls?.properties ?? {}
     const candidates: Record<string, JSONSchema> = {}
     for (const [k, v] of Object.entries(tlsProps)) {
       if (!SCHEMA_OUT_TLS_STANDARD_KEYS.has(k)) candidates[k] = v
     }
-    return pickPopulatedSchemaProps(candidates, (rawExtra.tls && typeof rawExtra.tls === 'object' ? rawExtra.tls : {}) as Record<string, unknown>)
-  }, [variantProps, rawExtra.tls])
+    return pickPopulatedSchemaProps(candidates, (rawExtra.tls && typeof rawExtra.tls === 'object' ? rawExtra.tls : {}) as Record<string, unknown>, stickyTlsKeys)
+  }, [variantProps, rawExtra.tls, stickyTlsKeys])
+
+  const updateRawExtra = (updater: Record<string, unknown> | ((prev: Record<string, unknown>) => Record<string, unknown>)) => {
+    setRawExtra((prev) => {
+      const next = typeof updater === 'function' ? updater(prev) : updater
+      const changed = Object.keys(next).filter((k) => next[k] !== prev[k])
+      if (changed.length > 0) {
+        setStickyTopKeys((s) => {
+          if (changed.every((k) => s.has(k))) return s
+          const copy = new Set(s)
+          for (const k of changed) copy.add(k)
+          return copy
+        })
+      }
+      return next
+    })
+  }
+  const updateRawTransport = (nextTr: Record<string, unknown>) => {
+    setRawExtra((prev) => {
+      const prevTr = (prev.transport && typeof prev.transport === 'object' ? prev.transport : {}) as Record<string, unknown>
+      const changed = Object.keys(nextTr).filter((k) => nextTr[k] !== prevTr[k])
+      if (changed.length > 0) {
+        setStickyTransportKeys((s) => {
+          if (changed.every((k) => s.has(k))) return s
+          const copy = new Set(s)
+          for (const k of changed) copy.add(k)
+          return copy
+        })
+      }
+      return { ...prev, transport: nextTr }
+    })
+  }
+  const updateRawTls = (nextTls: Record<string, unknown>) => {
+    setRawExtra((prev) => {
+      const prevTls = (prev.tls && typeof prev.tls === 'object' ? prev.tls : {}) as Record<string, unknown>
+      const changed = Object.keys(nextTls).filter((k) => nextTls[k] !== prevTls[k])
+      if (changed.length > 0) {
+        setStickyTlsKeys((s) => {
+          if (changed.every((k) => s.has(k))) return s
+          const copy = new Set(s)
+          for (const k of changed) copy.add(k)
+          return copy
+        })
+      }
+      return { ...prev, tls: nextTls }
+    })
+  }
 
   useLayoutEffect(() => {
     submitSessionRef.current += 1
@@ -249,6 +308,22 @@ export function OutboundForm({
     if (inner?.http_path && seededRaw.path === undefined) seededRaw.path = inner.http_path
     if (inner?.http_headers && Object.keys(inner.http_headers).length > 0 && seededRaw.headers === undefined) seededRaw.headers = cloneJson(inner.http_headers)
     setRawExtra(seededRaw)
+    const initProps = resolveVariantProperties(schemas.outbound, (outbound?.type ?? 'shadowsocks') as OutboundType)
+    const initTop: Record<string, JSONSchema> = {}
+    for (const [k, schema] of Object.entries(initProps)) {
+      if (!SCHEMA_OUT_TOP_EXCLUDES.has(k) && !SCHEMA_OUT_PRIMARY_PROTO_KEYS.has(k)) {
+        initTop[k] = k === 'multiplex' ? compactOutboundMultiplexSchema(schema) : schema
+      }
+    }
+    setStickyTopKeys(new Set(Object.keys(pickPopulatedSchemaProps(initTop, seededRaw))))
+    const seededTr = (seededRaw.transport && typeof seededRaw.transport === 'object' ? seededRaw.transport : {}) as Record<string, unknown>
+    setStickyTransportKeys(new Set(Object.keys(pickPopulatedSchemaProps(initProps.transport?.properties ?? {}, seededTr))))
+    const seededTls = (seededRaw.tls && typeof seededRaw.tls === 'object' ? seededRaw.tls : {}) as Record<string, unknown>
+    const initTls: Record<string, JSONSchema> = {}
+    for (const [k, schema] of Object.entries(initProps.tls?.properties ?? {})) {
+      if (!SCHEMA_OUT_TLS_STANDARD_KEYS.has(k)) initTls[k] = schema
+    }
+    setStickyTlsKeys(new Set(Object.keys(pickPopulatedSchemaProps(initTls, seededTls))))
     setSchemaJsonErrors({})
     setExtraJsonErrorMsg('')
   }, [open, outbound, form])
@@ -281,6 +356,17 @@ export function OutboundForm({
       const badJson = Object.values(schemaJsonErrors)[0]
       if (badJson) {
         setExtraJsonErrorMsg(badJson)
+        return
+      }
+      const schemaErr = validateObjectBySchema(schemas.outbound, {
+        ...rawExtra,
+        type: v.type,
+        ...(v.tag ? { tag: String(v.tag).trim() } : {}),
+        ...(v.server ? { server: String(v.server).trim() } : {}),
+        ...(v.server_port ? { server_port: v.server_port } : {}),
+      })
+      if (schemaErr) {
+        setExtraJsonErrorMsg(schemaErr)
         return
       }
       if (session !== submitSessionRef.current) return
@@ -358,6 +444,9 @@ export function OutboundForm({
               options={OUT_TYPES}
               onChange={(next: OutboundType) => {
                 setRawExtra({})
+                setStickyTopKeys(new Set())
+                setStickyTransportKeys(new Set())
+                setStickyTlsKeys(new Set())
                 setSchemaJsonErrors({})
                 setExtraJsonErrorMsg('')
                 if (TLS_REQUIRED_OUT.has(next)) form.setFieldValue('tls', true)
@@ -599,7 +688,7 @@ export function OutboundForm({
               <SchemaFieldList
                 properties={transportSchemaProps}
                 value={(rawExtra.transport && typeof rawExtra.transport === 'object' ? rawExtra.transport : {}) as Record<string, unknown>}
-                onChange={(nextTr) => setRawExtra((prev) => ({ ...prev, transport: nextTr }))}
+                onChange={updateRawTransport}
                 idPrefix="outbound-tr"
                 onJsonErrorChange={handleSchemaJsonError}
               />
@@ -681,13 +770,28 @@ export function OutboundForm({
             </div>
           </FormGroup>
         )}
-        {(Object.keys(otherParamsSchemaProps).length > 0 || Object.keys(tlsAdvSchemaProps).length > 0) && (
-          <FormGroup title="其他参数">
+        {(Object.keys(otherParamsSchemaProps).length > 0 || Object.keys(tlsAdvSchemaProps).length > 0 || availableTopParamOptions.length > 0) && (
+          <FormGroup
+            title="其他参数"
+            extra={availableTopParamOptions.length > 0 ? (
+              <Select
+                size="small"
+                aria-label="添加出站参数"
+                placeholder="+ 添加参数"
+                value={undefined}
+                options={availableTopParamOptions}
+                onChange={(key: string) => {
+                  if (!key) return
+                  setStickyTopKeys((prev) => new Set([...prev, key]))
+                }}
+              />
+            ) : undefined}
+          >
             {Object.keys(tlsAdvSchemaProps).length > 0 && (
               <SchemaFieldList
                 properties={tlsAdvSchemaProps}
                 value={(rawExtra.tls && typeof rawExtra.tls === 'object' ? rawExtra.tls : {}) as Record<string, unknown>}
-                onChange={(nextTls) => setRawExtra((prev) => ({ ...prev, tls: nextTls }))}
+                onChange={updateRawTls}
                 idPrefix="outbound-tls"
                 onJsonErrorChange={handleSchemaJsonError}
               />
@@ -696,7 +800,7 @@ export function OutboundForm({
               <SchemaFieldList
                 properties={otherParamsSchemaProps}
                 value={rawExtra}
-                onChange={setRawExtra}
+                onChange={updateRawExtra}
                 idPrefix="outbound-other"
                 onJsonErrorChange={handleSchemaJsonError}
               />
@@ -751,9 +855,21 @@ function extraParamDefaultValue(schema: JSONSchema): unknown {
   return ''
 }
 
-function parseArrayLineDraft(raw: string, isIntArray: boolean): (string | number)[] {
+function parseArrayLineDraft(raw: string, isIntArray: boolean): { values: (string | number)[]; error: string | null } {
   const vals = raw.split(/[\n,]/).map((x) => x.trim()).filter(Boolean)
-  return isIntArray ? vals.map(Number).filter((n) => Number.isInteger(n)) : vals
+  if (!isIntArray) return { values: vals, error: null }
+  const out: number[] = []
+  for (const item of vals) {
+    if (!/^-?\d+$/.test(item)) {
+      return { values: out, error: '请输入整数，多个值用逗号分隔' }
+    }
+    const n = Number(item)
+    if (!Number.isSafeInteger(n)) {
+      return { values: out, error: '请输入有效整数' }
+    }
+    out.push(n)
+  }
+  return { values: out, error: null }
 }
 
 function ArrayLineParamInput({
@@ -762,35 +878,60 @@ function ArrayLineParamInput({
   isIntArray,
   value,
   onChange,
+  onErrorChange,
 }: {
   label: string
   placeholder?: string
   isIntArray: boolean
   value: unknown
   onChange: (next: (string | number)[]) => void
+  onErrorChange?: (error: string | null) => void
 }) {
   const items = useMemo(() => (Array.isArray(value) ? value.map(String) : []), [value])
-  const serialized = useMemo(() => JSON.stringify(isIntArray ? items.map(Number).filter((n) => Number.isInteger(n)) : items), [items, isIntArray])
+  const serialized = useMemo(
+    () => JSON.stringify(isIntArray ? items.map(Number).filter((n) => Number.isInteger(n)) : items),
+    [items, isIntArray],
+  )
   const [draft, setDraft] = useState(() => items.join(', '))
+  const [inputError, setInputError] = useState('')
+  const lastEmittedRef = useRef<string>(serialized)
+  const onErrorChangeRef = useRef(onErrorChange)
+  onErrorChangeRef.current = onErrorChange
+
+  useEffect(() => () => {
+    onErrorChangeRef.current?.(null)
+  }, [])
 
   useEffect(() => {
-    if (JSON.stringify(parseArrayLineDraft(draft, isIntArray)) !== serialized) {
+    if (serialized !== lastEmittedRef.current) {
+      lastEmittedRef.current = serialized
       setDraft(items.join(', '))
+      setInputError('')
+      onErrorChangeRef.current?.(null)
     }
-  }, [serialized, items, isIntArray])
+  }, [serialized, items])
 
   return (
-    <Input
-      aria-label={label}
-      className="mono"
-      placeholder={placeholder}
-      value={draft}
-      onChange={(e) => {
-        const nextDraft = e.target.value
-        setDraft(nextDraft)
-        onChange(parseArrayLineDraft(nextDraft, isIntArray))
-      }}
-    />
+    <div className="space-y-1">
+      <Input
+        aria-label={label}
+        className="mono"
+        placeholder={placeholder}
+        value={draft}
+        onChange={(e) => {
+          const nextDraft = e.target.value
+          setDraft(nextDraft)
+          const parsed = parseArrayLineDraft(nextDraft, isIntArray)
+          setInputError(parsed.error || '')
+          onErrorChangeRef.current?.(parsed.error)
+          if (!parsed.error) {
+            lastEmittedRef.current = JSON.stringify(parsed.values)
+            onChange(parsed.values)
+          }
+        }}
+      />
+      {inputError && <div className="text-[12px] text-[var(--console-error)]">{inputError}</div>}
+    </div>
   )
 }
 
@@ -860,7 +1001,7 @@ function JsonObjectParamInput({
           }
         }}
       />
-      {parseError && <div className="text-[12px] text-[var(--console-danger)]">{parseError}</div>}
+      {parseError && <div className="text-[12px] text-[var(--console-error)]">{parseError}</div>}
     </div>
   )
 }
@@ -903,7 +1044,13 @@ function ExtraParamValueEditor({
           value={items}
           onChange={(vals: string[]) => {
             if (isIntArray) {
-              onChange(vals.map(Number).filter((n) => Number.isInteger(n)))
+              const valid = vals.every((item) => /^-?\d+$/.test(String(item).trim()) && Number.isSafeInteger(Number(item)))
+              if (!valid) {
+                onErrorChange?.(`${label} 仅支持整数`)
+                return
+              }
+              onErrorChange?.(null)
+              onChange(vals.map(Number))
             } else {
               onChange(vals)
             }
@@ -921,6 +1068,7 @@ function ExtraParamValueEditor({
         isIntArray={isIntArray}
         value={value}
         onChange={onChange}
+        onErrorChange={onErrorChange}
       />
     )
   }
@@ -1256,48 +1404,43 @@ function buildRulePayload(
   if (act === 'resolve' && typeof v.strategy === 'string' && v.strategy) {
     match.strategy = v.strategy
   }
-  if (act === 'sniff' || act === 'hijack-dns') {
-    for (const row of rows) {
-      if (row.field === 'auth_user' && row.list.length) match.auth_user = row.list
-    }
-  }
-  if (act === 'route' || act === 'reject' || act === 'resolve' || act === 'route-options') {
-    for (const row of rows) {
-      if (row.field === 'auth_user' && row.list.length) match.auth_user = row.list
-      else if (row.field === 'inbound' && row.list.length) match.inbound = row.list
-      else if (row.field === 'rule_set' && row.list.length) {
-        match.rule_set = row.list
-        if (row.ruleSetSource) match.rule_set_ip_cidr_match_source = true
-      }
-      else if (row.field === 'protocol' && row.list.length) match.protocol = row.list
-      else if (row.field === 'network' && row.list.length) match.network = row.list
-      else if (row.field === 'ip_is_private') match.ip_is_private = true
-      else if (row.field === 'source_ip_is_private') match.source_ip_is_private = true
-      else if (row.field === 'domain') {
-        const items = splitLines(row.text)
-        if (items.length) match.domain = items
-      } else if (row.field === 'domain_suffix') {
-        const items = splitLines(row.text)
-        if (items.length) match.domain_suffix = items
-      } else if (row.field === 'domain_keyword') {
-        const items = splitLines(row.text)
-        if (items.length) match.domain_keyword = items
-      } else if (row.field === 'domain_regex') {
-        const items = splitLines(row.text)
-        if (items.length) match.domain_regex = items
-      } else if (row.field === 'ip_cidr') {
-        const items = splitLines(row.text)
-        if (items.length) match.ip_cidr = items
-      } else if (row.field === 'source_ip_cidr') {
-        const items = splitLines(row.text)
-        if (items.length) match.source_ip_cidr = items
-      } else if (row.field === 'port') {
-        const ports = splitLines(row.text).map((x) => Number(x))
-        if (ports.length) match.port = ports
-      } else if (row.field === 'port_range') {
-        const items = splitLines(row.text)
-        if (items.length) match.port_range = items
-      }
+  for (const row of rows) {
+    if (row.field === 'auth_user' && row.list.length) match.auth_user = row.list
+    else if (row.field === 'inbound' && row.list.length) match.inbound = row.list
+    else if (row.field === 'rule_set' && row.list.length) {
+      match.rule_set = row.list
+      if (row.ruleSetSource) match.rule_set_ip_cidr_match_source = true
+    } else if (row.field === 'protocol' && row.list.length && act !== 'hijack-dns') match.protocol = row.list
+    else if (row.field === 'network' && row.list.length) match.network = row.list
+    else if (row.field === 'ip_is_private') match.ip_is_private = true
+    else if (row.field === 'source_ip_is_private') match.source_ip_is_private = true
+    else if (row.field === 'domain') {
+      const items = splitLines(row.text)
+      if (items.length) match.domain = items
+    } else if (row.field === 'domain_suffix') {
+      const items = splitLines(row.text)
+      if (items.length) match.domain_suffix = items
+    } else if (row.field === 'domain_keyword') {
+      const items = splitLines(row.text)
+      if (items.length) match.domain_keyword = items
+    } else if (row.field === 'domain_regex') {
+      const items = splitLines(row.text)
+      if (items.length) match.domain_regex = items
+    } else if (row.field === 'ip_cidr') {
+      const items = splitLines(row.text)
+      if (items.length) match.ip_cidr = items
+    } else if (row.field === 'source_ip_cidr') {
+      const items = splitLines(row.text)
+      if (items.length) match.source_ip_cidr = items
+    } else if (row.field === 'port') {
+      const ports = splitLines(row.text)
+        .filter((x) => /^\d+$/.test(x))
+        .map((x) => Number(x))
+        .filter((n) => Number.isInteger(n) && n >= 1 && n <= 65535)
+      if (ports.length) match.port = ports
+    } else if (row.field === 'port_range') {
+      const items = splitLines(row.text)
+      if (items.length) match.port_range = items
     }
   }
 
@@ -1406,8 +1549,16 @@ export function RuleForm({
       form.setFieldValue('no_drop', false)
     }
   }, [action, rejectMethod, form])
-  const showConditions = action === 'route' || action === 'reject' || action === 'resolve' || action === 'route-options'
+  const showConditions = true
   const requiresCondition = action === 'route' || action === 'reject'
+  const availableFieldOptions = useMemo(
+    () => MATCH_FIELD_OPTIONS.filter((opt) => {
+      if ((action === 'sniff' || action === 'hijack-dns') && opt.value === 'inbound') return false
+      if (action === 'hijack-dns' && opt.value === 'protocol') return false
+      return true
+    }),
+    [action],
+  )
 
   const schemaProps = useMemo(() => schemas.route_rule.properties ?? {}, [schemas.route_rule])
   const previewSummary = useMemo(() => {
@@ -1479,7 +1630,7 @@ export function RuleForm({
   }
 
   const usedFields = useMemo(() => new Set(conditions.map((c) => c.field)), [conditions])
-  const nextAvailableField = MATCH_FIELD_OPTIONS.find((opt) => !usedFields.has(opt.value))?.value
+  const nextAvailableField = availableFieldOptions.find((opt) => !usedFields.has(opt.value))?.value
 
   const addConditionRow = () => {
     if (!nextAvailableField) return
@@ -1541,6 +1692,11 @@ export function RuleForm({
     setJsonError('')
     setConditionError('')
     if (nextMode === 'json') {
+      const condErr = validateConditionRows(conditions)
+      if (condErr) {
+        setConditionError(condErr)
+        return
+      }
       const v = form.getFieldsValue()
       const { match, outbound } = buildRulePayload(v, conditions, extraMatch, schemaProps)
       setJsonText(JSON.stringify(ruleToNativeJson(match, outbound), null, 2))
@@ -1633,6 +1789,12 @@ export function RuleForm({
         const act = built.match.action || 'route'
         if ((act === 'route' || act === 'reject') && !ruleMatchHasCondition(built.match)) {
           setConditionError(act === 'route' ? '路由规则至少需要一个匹配条件，如需兜底请修改默认出站' : '拒绝规则至少需要一个匹配条件')
+          return
+        }
+        const nativeRule = ruleToNativeJson(built.match, built.outbound)
+        const schemaErr = validateObjectBySchema(schemas.route_rule, nativeRule)
+        if (schemaErr) {
+          setConditionError(schemaErr)
           return
         }
         match = built.match
@@ -1953,7 +2115,7 @@ export function RuleForm({
                             ruleSetSource: false,
                           })
                         }}
-                        options={MATCH_FIELD_OPTIONS.map((opt) => ({
+                        options={availableFieldOptions.map((opt) => ({
                           ...opt,
                           disabled: opt.value !== row.field && usedFields.has(opt.value),
                         }))}

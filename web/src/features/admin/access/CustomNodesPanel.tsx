@@ -1021,7 +1021,7 @@ export function CustomNodesPanel({ nodes, loading, error, onNodesChange }: {
                       <Input />
                     </Form.Item>
                     <Form.Item name="snell_version" label="版本">
-                      <Select options={[{ value: 5, label: 'v5' }, { value: 6, label: 'v6' }]} />
+                      <Select options={[{ value: 4, label: 'v4' }, { value: 5, label: 'v5' }, { value: 6, label: 'v6' }]} />
                     </Form.Item>
                     {nodeSnellVersion === 6 ? (
                       <Form.Item name="snell_mode" label="模式">

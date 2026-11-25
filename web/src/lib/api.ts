@@ -430,7 +430,21 @@ export const getUser = (id: number, signal?: AbortSignal) =>
 export const createUser = (body: UserBody) =>
   http.post<{ user: User }>('/api/admin/users', body).then((r) => r.data.user)
 export const updateUser = (id: number, body: UserBody) =>
-  http.put<{ user: User }>(`/api/admin/users/${id}`, body).then((r) => r.data.user)
+  http.put<{ user: User; token?: string }>(`/api/admin/users/${id}`, body).then((r) => {
+    const auth = useAuth.getState()
+    if (r.data.token && auth.user?.id === r.data.user.id) {
+      auth.setAuth(r.data.token, r.data.user)
+    }
+    return r.data.user
+  })
+export const changeMyPassword = (old_password: string, new_password: string) =>
+  http.post<{ ok: boolean; token?: string }>('/api/user/change-password', { old_password, new_password }).then((r) => {
+    const auth = useAuth.getState()
+    if (r.data.token && auth.user) {
+      auth.setAuth(r.data.token, auth.user)
+    }
+    return r.data
+  })
 export const deleteUser = (id: number) => http.delete(`/api/admin/users/${id}`).then((r) => r.data)
 
 export interface SubscriptionFetch {

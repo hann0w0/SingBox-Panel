@@ -53,6 +53,13 @@ describe('buildCustomNodeParams', () => {
     expect(buildCustomNodeParams(node, { protocol: 'snell', snell_version: 6, snell_mode: 'unshaped' })).toEqual({ psk: 'example-password', version: 6, mode: 'unshaped', reuse: true })
   })
 
+  it('preserves Snell v4 version and obfuscation settings', () => {
+    const node = { ...importedNode, protocol: 'snell', params: { psk: 'example-password', version: 4, obfs_mode: 'http', obfs_host: 'example.com', reuse: true } }
+    expect(buildCustomNodeParams(node, { protocol: 'snell', snell_version: 4, snell_obfs_mode: 'http', snell_obfs_host: 'example.com' })).toEqual({
+      psk: 'example-password', version: 4, obfs_mode: 'http', obfs_host: 'example.com', reuse: true,
+    })
+  })
+
   it('clears Hysteria2 obfuscation credentials only when none is explicitly selected', () => {
     const node = { ...importedNode, protocol: 'hysteria2', params: { password: 'secret', obfs: 'gecko', obfs_password: 'old-key', gecko_min_packet_size: 512, gecko_max_packet_size: 1024, up_mbps: 100 } }
     expect(buildCustomNodeParams(node, { protocol: 'hysteria2', obfs: '' })).toEqual({ password: 'secret', obfs: '', up_mbps: 100 })

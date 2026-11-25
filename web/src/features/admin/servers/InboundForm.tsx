@@ -419,6 +419,9 @@ export default function InboundForm({
   const [submitting, setSubmitting] = useState(false)
   const [editorMode, setEditorMode] = useState<'form' | 'json'>('form')
   const [rawExtra, setRawExtra] = useState<Record<string, unknown>>({})
+  const [stickyTopKeys, setStickyTopKeys] = useState<Set<string>>(() => new Set())
+  const [stickyTransportKeys, setStickyTransportKeys] = useState<Set<string>>(() => new Set())
+  const [stickyTlsKeys, setStickyTlsKeys] = useState<Set<string>>(() => new Set())
   const [schemaJsonErrors, setSchemaJsonErrors] = useState<Record<string, string>>({})
   const [jsonText, setJsonText] = useState('')
   const [jsonError, setJsonError] = useState('')
@@ -461,9 +464,10 @@ export default function InboundForm({
       if (type !== 'shadowsocks' && SCHEMA_INBOUND_PRIMARY_PROTO_KEYS.has(k)) continue
       candidates[k] = k === 'multiplex' ? compactMultiplexSchema(v) : v
     }
-    const alwaysInclude = type === 'hysteria2' ? new Set(['masquerade']) : undefined
+    const alwaysInclude = new Set<string>(stickyTopKeys)
+    if (type === 'hysteria2') alwaysInclude.add('masquerade')
     return pickPopulatedSchemaProps(candidates, rawExtra, alwaysInclude)
-  }, [variantProps, type, rawExtra])
+  }, [variantProps, type, rawExtra, stickyTopKeys])
   const transportSchemaProps = useMemo(() => {
     const trProps = variantProps.transport?.properties ?? {}
     const trRaw = (rawExtra.transport && typeof rawExtra.transport === 'object' ? rawExtra.transport : {}) as Record<string, unknown>
@@ -474,7 +478,7 @@ export default function InboundForm({
         ...(trProps.ping_timeout ? { ping_timeout: trProps.ping_timeout } : {}),
         ...(trProps.permit_without_stream ? { permit_without_stream: trProps.permit_without_stream } : {}),
       }
-      return pickPopulatedSchemaProps(candidates, trRaw, new Set(['service_name']))
+      return pickPopulatedSchemaProps(candidates, trRaw, new Set(['service_name', ...stickyTransportKeys]))
     }
     if (transportType === 'http') {
       const candidates = {
@@ -485,18 +489,82 @@ export default function InboundForm({
         ...(trProps.idle_timeout ? { idle_timeout: trProps.idle_timeout } : {}),
         ...(trProps.ping_timeout ? { ping_timeout: trProps.ping_timeout } : {}),
       }
-      return pickPopulatedSchemaProps(candidates, trRaw, new Set(['host', 'path']))
+      return pickPopulatedSchemaProps(candidates, trRaw, new Set(['host', 'path', ...stickyTransportKeys]))
     }
     return {}
-  }, [variantProps, transportType, rawExtra.transport])
+  }, [variantProps, transportType, rawExtra.transport, stickyTransportKeys])
   const tlsAdvSchemaProps = useMemo(() => {
     const tlsProps = variantProps.tls?.properties ?? {}
     const candidates: Record<string, JSONSchema> = {}
     for (const [k, v] of Object.entries(tlsProps)) {
       if (!SCHEMA_TLS_STANDARD_KEYS.has(k)) candidates[k] = v
     }
-    return pickPopulatedSchemaProps(candidates, (rawExtra.tls && typeof rawExtra.tls === 'object' ? rawExtra.tls : {}) as Record<string, unknown>)
-  }, [variantProps, rawExtra.tls])
+    return pickPopulatedSchemaProps(candidates, (rawExtra.tls && typeof rawExtra.tls === 'object' ? rawExtra.tls : {}) as Record<string, unknown>, stickyTlsKeys)
+  }, [variantProps, rawExtra.tls, stickyTlsKeys])
+
+  const seedStickyFromRaw = (targetType: InboundType, raw: Record<string, unknown>) => {
+    const props = resolveVariantProperties(schemas.inbound, targetType)
+    const topCandidates: Record<string, JSONSchema> = {}
+    for (const [k, schema] of Object.entries(props)) {
+      if (SCHEMA_INBOUND_TOP_EXCLUDES.has(k)) continue
+      if (targetType !== 'shadowsocks' && SCHEMA_INBOUND_PRIMARY_PROTO_KEYS.has(k)) continue
+      topCandidates[k] = k === 'multiplex' ? compactMultiplexSchema(schema) : schema
+    }
+    setStickyTopKeys(new Set(Object.keys(pickPopulatedSchemaProps(topCandidates, raw))))
+    const trRaw = (raw.transport && typeof raw.transport === 'object' ? raw.transport : {}) as Record<string, unknown>
+    setStickyTransportKeys(new Set(Object.keys(pickPopulatedSchemaProps((props.transport?.properties ?? {}), trRaw))))
+    const tlsRaw = (raw.tls && typeof raw.tls === 'object' ? raw.tls : {}) as Record<string, unknown>
+    const tlsCandidates: Record<string, JSONSchema> = {}
+    for (const [k, schema] of Object.entries(props.tls?.properties ?? {})) {
+      if (!SCHEMA_TLS_STANDARD_KEYS.has(k)) tlsCandidates[k] = schema
+    }
+    setStickyTlsKeys(new Set(Object.keys(pickPopulatedSchemaProps(tlsCandidates, tlsRaw))))
+  }
+  const updateRawExtra = (updater: Record<string, unknown> | ((prev: Record<string, unknown>) => Record<string, unknown>)) => {
+    setRawExtra((prev) => {
+      const next = typeof updater === 'function' ? updater(prev) : updater
+      const changed = Object.keys(next).filter((k) => next[k] !== prev[k])
+      if (changed.length > 0) {
+        setStickyTopKeys((s) => {
+          if (changed.every((k) => s.has(k))) return s
+          const copy = new Set(s)
+          for (const k of changed) copy.add(k)
+          return copy
+        })
+      }
+      return next
+    })
+  }
+  const updateRawTransport = (nextTr: Record<string, unknown>) => {
+    setRawExtra((prev) => {
+      const prevTr = (prev.transport && typeof prev.transport === 'object' ? prev.transport : {}) as Record<string, unknown>
+      const changed = Object.keys(nextTr).filter((k) => nextTr[k] !== prevTr[k])
+      if (changed.length > 0) {
+        setStickyTransportKeys((s) => {
+          if (changed.every((k) => s.has(k))) return s
+          const copy = new Set(s)
+          for (const k of changed) copy.add(k)
+          return copy
+        })
+      }
+      return { ...prev, transport: nextTr }
+    })
+  }
+  const updateRawTls = (nextTls: Record<string, unknown>) => {
+    setRawExtra((prev) => {
+      const prevTls = (prev.tls && typeof prev.tls === 'object' ? prev.tls : {}) as Record<string, unknown>
+      const changed = Object.keys(nextTls).filter((k) => nextTls[k] !== prevTls[k])
+      if (changed.length > 0) {
+        setStickyTlsKeys((s) => {
+          if (changed.every((k) => s.has(k))) return s
+          const copy = new Set(s)
+          for (const k of changed) copy.add(k)
+          return copy
+        })
+      }
+      return { ...prev, tls: nextTls }
+    })
+  }
 
   useLayoutEffect(() => {
     submitSessionRef.current += 1
@@ -511,9 +579,11 @@ export default function InboundForm({
     // and without a reset those survive from the previously opened inbound —
     // 新增协议 would inherit the last one's tag and secrets.
     form.resetFields()
-    form.setFieldsValue(prefill ?? toForm(inbound))
+    const initialVals = prefill ?? toForm(inbound)
+    form.setFieldsValue(initialVals)
     const initialRaw = cloneJson((inbound?.settings?.raw ?? {}) as Record<string, unknown>)
     setRawExtra(initialRaw)
+    seedStickyFromRaw((initialVals.type ?? inbound?.type ?? 'shadowsocks') as InboundType, initialRaw)
     setSchemaJsonErrors({})
     setEditorMode('form')
     setJsonError('')
@@ -560,11 +630,20 @@ export default function InboundForm({
         setJsonError(`编辑已有入站时不能修改协议类型（当前为 ${inbound.type}）`)
         return
       }
-      const prevSettings = assembleSettings(inbound?.settings || {}, form.getFieldsValue() as FormVals, nextType, rawExtra)
+      const prevFormVals = form.getFieldsValue() as FormVals
+      const activeMethod = typeof parsed.method === 'string' ? parsed.method : prevFormVals.method
+      const isMultiUser = !!(prevFormVals.multi_user ?? inbound?.settings?.multi_user) && supportsMultiUser(nextType, activeMethod)
+      if (!isMultiUser && Array.isArray(parsed.users) && parsed.users.length > 1) {
+        setJsonError('当前处于单用户模式，不支持在 JSON 中配置多个 users；请开启“单端口多用户”或仅保留 1 条用户凭证')
+        return
+      }
+      const prevSettings = assembleSettings(inbound?.settings || {}, prevFormVals, nextType, rawExtra)
       const nextSettings = nativeJsonToInboundSettings(prevSettings, parsed)
       const nextTag = typeof parsed.tag === 'string' ? parsed.tag : ''
       const nextPort = typeof parsed.listen_port === 'number' ? parsed.listen_port : (form.getFieldValue('listen_port') || 0)
-      setRawExtra(cloneJson(nextSettings.raw ?? {}))
+      const nextRaw = cloneJson(nextSettings.raw ?? {})
+      setRawExtra(nextRaw)
+      seedStickyFromRaw(nextType, nextRaw)
       setSchemaJsonErrors({})
       form.setFieldsValue(
         toForm({
@@ -648,7 +727,14 @@ export default function InboundForm({
           setJsonError(`编辑已有入站时不能修改协议类型（当前为 ${inbound.type}）`)
           return
         }
-        const prevSettings = assembleSettings(inbound?.settings || {}, form.getFieldsValue() as FormVals, nextType, rawExtra)
+        const prevFormVals = form.getFieldsValue() as FormVals
+        const activeMethod = typeof parsed.method === 'string' ? parsed.method : prevFormVals.method
+        const isMultiUser = !!(prevFormVals.multi_user ?? inbound?.settings?.multi_user) && supportsMultiUser(nextType, activeMethod)
+        if (!isMultiUser && Array.isArray(parsed.users) && parsed.users.length > 1) {
+          setJsonError('当前处于单用户模式，不支持在 JSON 中配置多个 users；请开启“单端口多用户”或仅保留 1 条用户凭证')
+          return
+        }
+        const prevSettings = assembleSettings(inbound?.settings || {}, prevFormVals, nextType, rawExtra)
         const nextSettings = nativeJsonToInboundSettings(prevSettings, parsed)
         body = {
           type: nextType,
@@ -670,6 +756,12 @@ export default function InboundForm({
         const listenPort: number = v.type === 'tun' ? Number(v.listen_port || 0) : (v.listen_port || randomPort())
         if (v.type !== 'tun' && !v.listen_port && listenPort > 0) {
           form.setFieldValue('listen_port', listenPort)
+        }
+        const nativeObj = inboundSettingsToNativeJson(v.type as InboundType, String(v.tag || ''), v.type === 'tun' ? 0 : listenPort, settings)
+        const schemaErr = validateObjectBySchema(schemas.inbound, nativeObj)
+        if (schemaErr) {
+          setJsonError(schemaErr)
+          return
         }
         body = {
           type: v.type as InboundType,
@@ -752,6 +844,9 @@ export default function InboundForm({
               disabled={!!inbound}
               onChange={(t: InboundType) => {
                 setRawExtra({})
+                setStickyTopKeys(new Set())
+                setStickyTransportKeys(new Set())
+                setStickyTlsKeys(new Set())
                 setSchemaJsonErrors({})
                 setJsonError('')
                 const allowed = tlsModeOptions(t).map((o) => o.value)
@@ -1027,10 +1122,30 @@ export default function InboundForm({
               <Form.Item name="congestion_control" label="拥塞控制" rules={[{ required: true }]} className="fm-full">
                 <Select options={['cubic', 'new_reno', 'bbr'].map((v) => ({ value: v, label: v }))} />
               </Form.Item>
-              <Form.Item name="auth_timeout" label="认证超时" rules={[{ required: true }]}>
+              <Form.Item
+                name="auth_timeout"
+                label="认证超时"
+                rules={[
+                  { required: true },
+                  { validator: (_, value) => {
+                    const error = validateDuration(value, false)
+                    return error ? Promise.reject(new Error(error)) : Promise.resolve()
+                  } },
+                ]}
+              >
                 <Input className="mono" />
               </Form.Item>
-              <Form.Item name="heartbeat" label="心跳间隔" rules={[{ required: true }]}>
+              <Form.Item
+                name="heartbeat"
+                label="心跳间隔"
+                rules={[
+                  { required: true },
+                  { validator: (_, value) => {
+                    const error = validateDuration(value, false)
+                    return error ? Promise.reject(new Error(error)) : Promise.resolve()
+                  } },
+                ]}
+              >
                 <Input className="mono" />
               </Form.Item>
             </>
@@ -1118,7 +1233,7 @@ export default function InboundForm({
                 <SchemaFieldList
                   properties={transportSchemaProps}
                   value={(rawExtra.transport && typeof rawExtra.transport === 'object' ? rawExtra.transport : {}) as Record<string, unknown>}
-                  onChange={(nextTr) => setRawExtra((prev) => ({ ...prev, transport: nextTr }))}
+                  onChange={updateRawTransport}
                   idPrefix="inbound-tr"
                   onJsonErrorChange={handleSchemaJsonError}
                 />
@@ -1287,7 +1402,7 @@ export default function InboundForm({
             <SchemaFieldList
               properties={tlsAdvSchemaProps}
               value={(rawExtra.tls && typeof rawExtra.tls === 'object' ? rawExtra.tls : {}) as Record<string, unknown>}
-              onChange={(nextTls) => setRawExtra((prev) => ({ ...prev, tls: nextTls }))}
+              onChange={updateRawTls}
               idPrefix="inbound-tls"
               onJsonErrorChange={handleSchemaJsonError}
             />
@@ -1296,7 +1411,7 @@ export default function InboundForm({
             <SchemaFieldList
               properties={otherParamsSchemaProps}
               value={rawExtra}
-              onChange={setRawExtra}
+              onChange={updateRawExtra}
               idPrefix="inbound-other"
               onJsonErrorChange={handleSchemaJsonError}
             />

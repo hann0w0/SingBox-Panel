@@ -1,9 +1,10 @@
 import { useEffect, useState } from 'react'
-import { Dropdown } from './kit'
+import { Dropdown, Form, Input, Modal, message } from './kit'
 import type { MenuProps } from './kit'
-import { Check, Monitor, Download, ChevronDown, LogOut, Moon, Sun } from 'lucide-react'
+import { Check, Monitor, Download, ChevronDown, KeyRound, LogOut, Moon, Sun } from 'lucide-react'
 import { Link, NavLink, Outlet, useLocation, useNavigate } from 'react-router-dom'
-import { listServers, logoutSession } from '../lib/api'
+import { changeMyPassword, errMsg, listServers, logoutSession } from '../lib/api'
+import { MODAL_SM } from './kit/modal'
 import { useAuth } from '../lib/store'
 import { useInstallPrompt } from '../lib/pwa'
 import { getConsolePalette, parseConsoleTheme } from '../lib/theme'
@@ -77,20 +78,81 @@ function AccountBar({ scope }: { scope: 'admin' | 'user' }) {
   const navigate = useNavigate()
   const { canInstall, install } = useInstallPrompt()
   const [leaving, setLeaving] = useState(false)
+  const [pwOpen, setPwOpen] = useState(false)
+  const [pwSaving, setPwSaving] = useState(false)
+  const [pwForm] = Form.useForm<{ old_password: string; new_password: string; confirm_password: string }>()
   const name = user?.email || '用户'
   const role = user?.role === 'admin' ? '管理员' : '用户'
   const signOut = () => {
     setLeaving(true)
     void logoutSession().catch(() => undefined).finally(() => { logout(); navigate('/login') })
   }
-  return <div className="app-account" role="group" aria-label={`当前账号：${name}，${role}`}>
-    <span className="app-account-name" title={`${name} · ${role}`}>{name}</span>
-    <span className="app-account-sep" aria-hidden="true" />
-    <ThemeButton scope={scope} />
-    {canInstall && <button type="button" className="app-icon-btn" aria-label="安装到桌面" title="安装到桌面" onClick={() => void install().catch(() => undefined)}><Download /></button>}
-    <span className="app-account-sep" aria-hidden="true" />
-    <button type="button" className="app-icon-btn" aria-label="退出登录" title="退出登录" onClick={signOut} disabled={leaving}><LogOut /></button>
-  </div>
+  const openPasswordModal = () => {
+    pwForm.resetFields()
+    setPwOpen(true)
+  }
+  const submitPassword = async () => {
+    const values = await pwForm.validateFields()
+    setPwSaving(true)
+    try {
+      await changeMyPassword(values.old_password, values.new_password)
+      message.success('密码已更新，当前会话已自动续期')
+      setPwOpen(false)
+    } catch (cause) {
+      message.error(errMsg(cause))
+    } finally {
+      setPwSaving(false)
+    }
+  }
+  return <>
+    <div className="app-account" role="group" aria-label={`当前账号：${name}，${role}`}>
+      <span className="app-account-name" title={`${name} · ${role}`}>{name}</span>
+      <span className="app-account-sep" aria-hidden="true" />
+      <ThemeButton scope={scope} />
+      <button type="button" className="app-icon-btn" aria-label="修改密码" title="修改密码" onClick={openPasswordModal}><KeyRound /></button>
+      {canInstall && <button type="button" className="app-icon-btn" aria-label="安装到桌面" title="安装到桌面" onClick={() => void install().catch(() => undefined)}><Download /></button>}
+      <span className="app-account-sep" aria-hidden="true" />
+      <button type="button" className="app-icon-btn" aria-label="退出登录" title="退出登录" onClick={signOut} disabled={leaving}><LogOut /></button>
+    </div>
+    {pwOpen && (
+      <Modal
+        open
+        title="修改密码"
+        width={MODAL_SM}
+        okText="保存密码"
+        confirmLoading={pwSaving}
+        onOk={submitPassword}
+        onCancel={() => { if (!pwSaving) setPwOpen(false) }}
+        maskClosable={!pwSaving}
+        keyboard={!pwSaving}
+      >
+        <Form form={pwForm} layout="vertical" onFinish={submitPassword}>
+          <Form.Item name="old_password" label="当前密码" rules={[{ required: true, message: '请输入当前密码' }]}>
+            <Input.Password autoComplete="current-password" />
+          </Form.Item>
+          <Form.Item name="new_password" label="新密码" rules={[{ required: true, message: '请输入新密码' }]}>
+            <Input.Password autoComplete="new-password" />
+          </Form.Item>
+          <Form.Item
+            name="confirm_password"
+            label="确认新密码"
+            dependencies={['new_password']}
+            rules={[
+              { required: true, message: '请再次输入新密码' },
+              ({ getFieldValue }) => ({
+                validator(_, value) {
+                  if (!value || getFieldValue('new_password') === value) return Promise.resolve()
+                  return Promise.reject(new Error('两次输入的新密码不一致'))
+                },
+              }),
+            ]}
+          >
+            <Input.Password autoComplete="new-password" />
+          </Form.Item>
+        </Form>
+      </Modal>
+    )}
+  </>
 }
 
 export default function AppLayout() {

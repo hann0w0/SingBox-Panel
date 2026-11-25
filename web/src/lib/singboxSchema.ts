@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react'
 import * as api from './api'
 import type { InboundSettings, InboundType, OutboundSettings, OutboundType, TLSSettings, TransportSettings } from './types'
+import { validateGoDuration } from './util'
 
 export type UIMeta = {
   label?: string
@@ -544,6 +545,21 @@ export function validateObjectBySchema(schema: JSONSchema, obj: Record<string, u
   return null
 }
 
+const DURATION_SCHEMA_KEYS = new Set([
+  'connect_timeout',
+  'idle_timeout',
+  'ping_timeout',
+  'auth_timeout',
+  'heartbeat',
+  'timeout',
+  'fallback_delay',
+  'tls_fragment_fallback_delay',
+  'max_time_difference',
+  'udp_timeout',
+  'idle_session_check_interval',
+  'idle_session_timeout',
+])
+
 function validateValueBySchema(schema: JSONSchema, val: unknown, path: string): string | null {
   if (val === undefined || val === null) return null
   switch (schema.type) {
@@ -557,6 +573,16 @@ function validateValueBySchema(schema: JSONSchema, val: unknown, path: string): 
       }
       if (typeof val !== 'string') return `${path} 必须是字符串`
       if (schema.enum?.length && !schema.enum.includes(val)) return `${path} 的值 ${val} 不在允许范围内`
+      {
+        const leafKey = path.split('.').pop()?.replace(/\[\d+\]$/, '') ?? ''
+        if (DURATION_SCHEMA_KEYS.has(leafKey) && val.trim() !== '') {
+          const allowZero = leafKey === 'max_time_difference'
+          if (!(allowZero && val.trim() === '0')) {
+            const durErr = validateGoDuration(val)
+            if (durErr) return `${path}: ${durErr}`
+          }
+        }
+      }
       return null
     case 'boolean':
       if (typeof val !== 'boolean') return `${path} 必须是布尔值`
@@ -627,9 +653,61 @@ export function inboundSettingsToNativeJson(
     delete base.listen_port
   }
 
+  if (!settings.multi_user) {
+    const existingUsers = Array.isArray(base.users) ? base.users : []
+    const prevU0 = existingUsers[0] && typeof existingUsers[0] === 'object' && !Array.isArray(existingUsers[0])
+      ? (cloneJson(existingUsers[0]) as Record<string, unknown>)
+      : {}
+    if (type === 'vless') {
+      if (settings.uuid || settings.flow) {
+        const entry: Record<string, unknown> = { ...prevU0 }
+        if (settings.uuid) entry.uuid = settings.uuid
+        if (settings.flow) entry.flow = settings.flow
+        else delete entry.flow
+        base.users = [entry]
+      } else {
+        delete base.users
+      }
+    } else if (type === 'vmess') {
+      if (settings.uuid || settings.vmess_alter_id !== undefined) {
+        const entry: Record<string, unknown> = { ...prevU0 }
+        if (settings.uuid) entry.uuid = settings.uuid
+        if (settings.vmess_alter_id !== undefined) entry.alterId = settings.vmess_alter_id
+        base.users = [entry]
+      } else {
+        delete base.users
+      }
+    } else if (type === 'trojan' || type === 'hysteria2' || type === 'anytls') {
+      if (settings.password) {
+        base.users = [{ ...prevU0, password: settings.password }]
+      } else {
+        delete base.users
+      }
+    } else if (type === 'tuic') {
+      if (settings.uuid || settings.password) {
+        const entry: Record<string, unknown> = { ...prevU0 }
+        if (settings.uuid) entry.uuid = settings.uuid
+        if (settings.password) entry.password = settings.password
+        base.users = [entry]
+      } else {
+        delete base.users
+      }
+    } else if (type === 'socks' || type === 'mixed' || type === 'http') {
+      if (settings.username || settings.password) {
+        const entry: Record<string, unknown> = { ...prevU0 }
+        if (settings.username) entry.username = settings.username
+        else delete entry.username
+        if (settings.password) entry.password = settings.password
+        else delete entry.password
+        base.users = [entry]
+      } else {
+        delete base.users
+      }
+    }
+  }
+
   if (type === 'vless') {
-    if (settings.flow) base.flow = settings.flow
-    else delete base.flow
+    delete base.flow
     // packet_encoding belongs to client subscriptions, not server-side VLESS inbound JSON.
     delete base.packet_encoding
   } else if (type === 'shadowsocks') {
@@ -755,12 +833,38 @@ export function nativeJsonToInboundSettings(prev: InboundSettings, rawObj: Recor
   delete cleanRaw.users
   next.raw = cleanRaw
 
+  const usersArr = Array.isArray(rawObj.users) ? rawObj.users : undefined
+  if (!next.multi_user && usersArr && usersArr.length === 1 && usersArr[0] && typeof usersArr[0] === 'object' && !Array.isArray(usersArr[0])) {
+    const u0 = usersArr[0] as Record<string, unknown>
+    const typ = typeof rawObj.type === 'string' ? rawObj.type : ''
+    if (typ === 'vless') {
+      if (typeof u0.uuid === 'string') next.uuid = u0.uuid
+      if (typeof u0.flow === 'string') next.flow = u0.flow
+      else if (!rawObj.flow) delete next.flow
+    } else if (typ === 'vmess') {
+      if (typeof u0.uuid === 'string') next.uuid = u0.uuid
+      if (typeof u0.alterId === 'number') next.vmess_alter_id = u0.alterId
+    } else if (typ === 'trojan' || typ === 'hysteria2' || typ === 'anytls') {
+      if (typeof u0.password === 'string') next.password = u0.password
+    } else if (typ === 'tuic') {
+      if (typeof u0.uuid === 'string') next.uuid = u0.uuid
+      if (typeof u0.password === 'string') next.password = u0.password
+    } else if (typ === 'socks' || typ === 'mixed' || typ === 'http') {
+      if (typeof u0.username === 'string') next.username = u0.username
+      if (typeof u0.password === 'string') next.password = u0.password
+    }
+  } else if (!next.multi_user && usersArr && usersArr.length === 0) {
+    delete next.uuid
+    if (rawObj.type !== 'shadowsocks') delete next.password
+    delete next.username
+  }
+
   if (typeof rawObj.listen === 'string') {
     next.listen = rawObj.listen
     next.ipv6_only = rawObj.listen.includes(':') && rawObj.listen !== '::'
   }
   if (typeof rawObj.flow === 'string') next.flow = rawObj.flow
-  else delete next.flow
+  else if (!(usersArr && usersArr.length === 1 && typeof (usersArr[0] as Record<string, unknown>)?.flow === 'string')) delete next.flow
   // packet_encoding is a client-subscription option stripped from server inbound JSON;
   // only overwrite when explicitly present so toggling JSON mode preserves "none".
   if (typeof rawObj.packet_encoding === 'string') next.packet_encoding = rawObj.packet_encoding
@@ -1171,4 +1275,18 @@ export function pickPopulatedSchemaProps(
     }
   }
   return out
+}
+
+export function populatedSchemaKeys(
+  props: Record<string, JSONSchema>,
+  values: Record<string, unknown> | undefined,
+): Set<string> {
+  const keys = new Set<string>()
+  const data = values && typeof values === 'object' ? values : {}
+  for (const [k, v] of Object.entries(props)) {
+    if (hasPopulatedSchemaValue(data[k], v)) {
+      keys.add(k)
+    }
+  }
+  return keys
 }

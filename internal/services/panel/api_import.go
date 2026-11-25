@@ -222,7 +222,7 @@ func (a *App) resolveImportedView(db *gorm.DB, serverID uint, p *singbox.ParsedC
 	current.ConfigMode = model.ConfigModeManaged
 	current.ConfigOverlay = nil
 	current.ConfigResidual = nil
-	if generated, err := NewOrchestrator(db, nil).BuildServerConfig(&current); err == nil {
+	if generated, err := NewOrchestrator(db, nil).buildServerConfigReadOnly(&current, nil); err == nil {
 		if equivalentJSON(raw, generated) {
 			preserveManagedUsers = true
 		} else {

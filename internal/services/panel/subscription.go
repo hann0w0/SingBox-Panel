@@ -214,16 +214,36 @@ func (a *App) gatherNodesWithError(user *model.User) ([]node, error) {
 					return nil, err
 				}
 			}
+			inboundByID := make(map[uint]model.Inbound, len(inbounds))
+			for _, ib := range inbounds {
+				inboundByID[ib.ID] = ib
+			}
+			outboundByID := make(map[uint]model.Outbound, len(forwards))
+			if len(forwards) > 0 {
+				outboundIDs := make([]uint, 0, len(forwards))
+				for _, forward := range forwards {
+					outboundIDs = append(outboundIDs, forward.OutboundID)
+				}
+				if ids := normalizedIDs(outboundIDs); len(ids) > 0 {
+					var outbounds []model.Outbound
+					if err := a.db.Where("id IN ? AND owner_user_id = ?", ids, user.ID).Find(&outbounds).Error; err != nil {
+						return nil, err
+					}
+					for _, ob := range outbounds {
+						outboundByID[ob.ID] = ob
+					}
+				}
+			}
 			for _, forward := range forwards {
-				var ib model.Inbound
-				if err := a.db.Where("id = ? AND server_id = ? AND enabled = ?", forward.InboundID, srv.ID, true).First(&ib).Error; err != nil {
+				ib, ok := inboundByID[forward.InboundID]
+				if !ok {
 					continue
 				}
 				if !user.HasInbound(srv.ID, ib.ID) {
 					continue
 				}
-				var outbound model.Outbound
-				if err := a.db.Where("id = ? AND owner_user_id = ?", forward.OutboundID, user.ID).First(&outbound).Error; err != nil {
+				outbound, ok := outboundByID[forward.OutboundID]
+				if !ok {
 					continue
 				}
 				var st singbox.InboundSettings

@@ -69,11 +69,28 @@ func proxyUsersForInbound(db *gorm.DB, inbound *model.Inbound, settings singbox.
 	if err := db.Where("enabled = ?", true).Order("id").Find(&users).Error; err != nil {
 		return nil, err
 	}
+	return resolveProxyUsersForInbound(db, inbound, settings, users, nil, false, true)
+}
+
+func resolveProxyUsersForInbound(
+	db *gorm.DB,
+	inbound *model.Inbound,
+	settings singbox.InboundSettings,
+	users []model.User,
+	preloadedForwards []model.UserForward,
+	hasPreloadedForwards bool,
+	persistIdentities bool,
+) ([]singbox.ProxyUser, error) {
+	if !settings.UseMultiUser(string(inbound.Type)) {
+		return nil, nil
+	}
 	now := time.Now()
 	identities := make([]singbox.ProxyUser, 0, len(users))
 	trafficIdentities := make([]model.UserTrafficIdentity, 0, len(users))
+	usersByID := make(map[uint]model.User, len(users))
 	for i := range users {
 		user := &users[i]
+		usersByID[user.ID] = *user
 		if user.Expired(now) || !user.HasInbound(inbound.ServerID, inbound.ID) {
 			continue
 		}
@@ -85,16 +102,27 @@ func proxyUsersForInbound(db *gorm.DB, inbound *model.Inbound, settings singbox.
 			UserID: user.ID, UserKey: identity.Name,
 		})
 	}
-	forwards, forwardBindings, err := forwardIdentitiesForInbound(db, inbound)
-	if err != nil {
-		return nil, err
+	var (
+		forwards        []singbox.ProxyUser
+		forwardBindings []model.UserTrafficIdentity
+		err             error
+	)
+	if hasPreloadedForwards {
+		forwards, forwardBindings = forwardIdentitiesFromPreloaded(inbound, preloadedForwards, usersByID, now)
+	} else {
+		forwards, forwardBindings, err = forwardIdentitiesForInbound(db, inbound)
+		if err != nil {
+			return nil, err
+		}
 	}
 	identities = append(identities, forwards...)
 	trafficIdentities = append(trafficIdentities, forwardBindings...)
 	// One insert covers both the per-user and per-forward identities; the
-	// helper is insert-only and idempotent.
-	if err := rememberProxyTrafficIdentities(db, trafficIdentities); err != nil {
-		return nil, fmt.Errorf("register proxy traffic identities: %w", err)
+	// helper is insert-only and idempotent. Read-only previews skip persistence.
+	if persistIdentities {
+		if err := rememberProxyTrafficIdentities(db, trafficIdentities); err != nil {
+			return nil, fmt.Errorf("register proxy traffic identities: %w", err)
+		}
 	}
 	if len(identities) == 0 {
 		// Several protocols interpret an omitted/empty users list as anonymous or
@@ -114,6 +142,27 @@ func proxyUsersForInbound(db *gorm.DB, inbound *model.Inbound, settings singbox.
 		identities = append(identities, lockout)
 	}
 	return identities, nil
+}
+
+func forwardIdentitiesFromPreloaded(inbound *model.Inbound, forwards []model.UserForward, usersByID map[uint]model.User, now time.Time) ([]singbox.ProxyUser, []model.UserTrafficIdentity) {
+	if len(forwards) == 0 {
+		return nil, nil
+	}
+	out := make([]singbox.ProxyUser, 0, len(forwards))
+	bindings := make([]model.UserTrafficIdentity, 0, len(forwards))
+	for _, forward := range forwards {
+		user, ok := usersByID[forward.UserID]
+		if !ok || !user.ForwardingEnabled || !user.Enabled || user.Expired(now) || !user.HasInbound(inbound.ServerID, inbound.ID) {
+			continue
+		}
+		identity := forwardProxyIdentity(&user, forward.ID, inbound.ID)
+		out = append(out, identity)
+		bindings = append(bindings, model.UserTrafficIdentity{
+			ServerID: inbound.ServerID, InboundID: inbound.ID, Name: identity.Name,
+			UserID: user.ID, UserKey: proxyTrafficName(&user),
+		})
+	}
+	return out, bindings
 }
 
 // forwardIdentitiesForInbound provisions one additional user on each inbound

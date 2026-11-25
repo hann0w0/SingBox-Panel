@@ -329,6 +329,7 @@ func (m *customNodeSubscriptionManager) sync(ctx context.Context, id uint) (cust
 		// old definitions. One malformed node must not keep every deleted or
 		// renamed node from all previous refreshes.
 		retained := 0
+		var staleIDs []uint
 		for _, stale := range byKey {
 			sourceName := stale.SourceName
 			if sourceName == "" {
@@ -338,6 +339,7 @@ func (m *customNodeSubscriptionManager) sync(ctx context.Context, id uint) (cust
 				retained++
 				continue
 			}
+			staleIDs = append(staleIDs, stale.ID)
 			if err := tx.Delete(stale).Error; err != nil {
 				return err
 			}
@@ -346,6 +348,13 @@ func (m *customNodeSubscriptionManager) sync(ctx context.Context, id uint) (cust
 			}
 			changedNodeIDs = append(changedNodeIDs, stale.ID)
 			result.Deleted++
+		}
+		if len(staleIDs) > 0 {
+			if err := tx.Model(&model.Outbound{}).
+				Where("source_kind = ? AND source_id IN ?", model.OutboundSourceCustomNode, staleIDs).
+				Updates(map[string]any{"source_kind": "", "source_id": 0}).Error; err != nil {
+				return err
+			}
 		}
 		var actualVisible int64
 		if err := tx.Model(&model.CustomNode{}).

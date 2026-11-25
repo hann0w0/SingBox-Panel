@@ -36,7 +36,7 @@ func (a *App) remoteConfig(c *gin.Context) {
 	defer cancel()
 	res, err := a.hub.SendCommand(ctx, id, protocol.CmdGetConfig, nil)
 	if errors.Is(err, ErrAgentOffline) {
-		raw, buildErr := a.orch.BuildServerConfig(&srv)
+		raw, buildErr := a.orch.buildServerConfigReadOnly(&srv, nil)
 		if buildErr != nil {
 			c.JSON(http.StatusInternalServerError, gin.H{"error": buildErr.Error()})
 			return

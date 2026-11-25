@@ -972,6 +972,11 @@ func (a *App) deleteUser(c *gin.Context) {
 		if err != nil {
 			return err
 		}
+		for _, sid := range routeServers {
+			if err := syncServerRuleSets(tx, sid); err != nil {
+				return err
+			}
+		}
 		affectedServerIDs = append(affectedServerIDs, routeServers...)
 		if err := tx.Delete(&model.User{}, id).Error; err != nil {
 			return err
@@ -980,6 +985,9 @@ func (a *App) deleteUser(c *gin.Context) {
 			return err
 		}
 		if err := tx.Where("user_id = ?", id).Delete(&model.TrafficUserHourly{}).Error; err != nil {
+			return err
+		}
+		if err := tx.Where("user_id = ?", id).Delete(&model.SubscriptionFetch{}).Error; err != nil {
 			return err
 		}
 		// Drop the deleted user from every custom node's audience lists so no

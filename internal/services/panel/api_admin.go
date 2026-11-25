@@ -457,6 +457,15 @@ func (a *App) deleteServer(c *gin.Context) {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
+	if len(inboundIDs) > 0 {
+		if err := tx.Model(&model.Outbound{}).
+			Where("server_id <> ? AND source_kind = ? AND source_id IN ?", id, model.OutboundSourceInbound, inboundIDs).
+			Updates(map[string]any{"source_kind": "", "source_id": 0}).Error; err != nil {
+			tx.Rollback()
+			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+			return
+		}
+	}
 	var forwards []model.UserForward
 	if err := tx.Where("server_id = ?", id).Find(&forwards).Error; err != nil {
 		tx.Rollback()
@@ -495,6 +504,14 @@ func (a *App) deleteServer(c *gin.Context) {
 	if err := tx.Delete(&model.Server{}, id).Error; err != nil {
 		tx.Rollback()
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+	a.serverOrderMu.Lock()
+	orderErr := pruneDeletedServerOrder(tx, id)
+	a.serverOrderMu.Unlock()
+	if orderErr != nil {
+		tx.Rollback()
+		c.JSON(http.StatusInternalServerError, gin.H{"error": orderErr.Error()})
 		return
 	}
 	if err := tx.Commit().Error; err != nil {

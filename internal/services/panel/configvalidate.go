@@ -521,25 +521,6 @@ func referencedRuleSetIDsForServer(db *gorm.DB, serverID uint) ([]uint, error) {
 	for tag := range preserved {
 		tags[tag] = struct{}{}
 	}
-	var imported model.Server
-	if err := db.Select("id", "config_overlay").First(&imported, serverID).Error; err != nil {
-		return nil, err
-	}
-	if singbox.HasConfigOverlay(imported.ConfigOverlay) {
-		var overlay singbox.ConfigOverlay
-		if err := json.Unmarshal(imported.ConfigOverlay, &overlay); err != nil {
-			return nil, err
-		}
-		var definitions []model.RuleSet
-		if len(overlay.Baseline.IDs["rule_set"]) > 0 {
-			if err := db.Where("id IN ?", overlay.Baseline.IDs["rule_set"]).Find(&definitions).Error; err != nil {
-				return nil, err
-			}
-			for _, definition := range definitions {
-				tags[definition.Tag] = struct{}{}
-			}
-		}
-	}
 	for _, row := range rows {
 		var rule singbox.RuleInput
 		if len(row.Match) == 0 || json.Unmarshal(row.Match, &rule) != nil {

@@ -794,6 +794,8 @@ func (a *App) createSharedRuleSet(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
+	a.ruleSetMu.Lock()
+	defer a.ruleSetMu.Unlock()
 	var duplicate int64
 	if err := a.db.Model(&model.RuleSet{}).Where("tag = ?", req.Tag).Count(&duplicate).Error; err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
@@ -816,17 +818,27 @@ func (a *App) updateSharedRuleSet(c *gin.Context) {
 	if !ok {
 		return
 	}
-	var rs model.RuleSet
-	if err := a.db.First(&rs, rsid).Error; err != nil {
-		c.JSON(http.StatusNotFound, gin.H{"error": "ruleset not found"})
-		return
-	}
 	var req ruleSetReq
 	if !bindJSON(c, &req) {
 		return
 	}
 	if err := normalizeRuleSetReq(&req); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+	a.ruleSetMu.Lock()
+	defer a.ruleSetMu.Unlock()
+	var serverIDs []uint
+	if err := a.db.Model(&model.Server{}).Order("id").Pluck("id", &serverIDs).Error; err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+	unlockServers := a.lockServerOperations(serverIDs)
+	defer unlockServers()
+
+	var rs model.RuleSet
+	if err := a.db.First(&rs, rsid).Error; err != nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "ruleset not found"})
 		return
 	}
 	var duplicate int64
@@ -880,6 +892,16 @@ func (a *App) deleteSharedRuleSet(c *gin.Context) {
 	if !ok {
 		return
 	}
+	a.ruleSetMu.Lock()
+	defer a.ruleSetMu.Unlock()
+	var serverIDs []uint
+	if err := a.db.Model(&model.Server{}).Order("id").Pluck("id", &serverIDs).Error; err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+	unlockServers := a.lockServerOperations(serverIDs)
+	defer unlockServers()
+
 	var (
 		assignments       []model.ServerRuleSet
 		errRuleSetMissing = errors.New("ruleset not found")

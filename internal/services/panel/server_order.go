@@ -58,6 +58,8 @@ func (a *App) updateServerOrder(c *gin.Context) {
 	if rejectTooManyIDs(c, req.IDs) {
 		return
 	}
+	a.serverOrderMu.Lock()
+	defer a.serverOrderMu.Unlock()
 	var current []uint
 	if err := a.db.Model(&model.Server{}).Order("id").Pluck("id", &current).Error; err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
@@ -89,4 +91,28 @@ func (a *App) updateServerOrder(c *gin.Context) {
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"ok": true})
+}
+
+func pruneDeletedServerOrder(db *gorm.DB, deletedID uint) error {
+	if deletedID == 0 {
+		return nil
+	}
+	var setting model.Setting
+	result := db.Where("key = ?", serverOrderSettingKey).Limit(1).Find(&setting)
+	if result.Error != nil || result.RowsAffected == 0 {
+		return result.Error
+	}
+	var ids []uint
+	if json.Unmarshal([]byte(setting.Value), &ids) != nil {
+		return nil
+	}
+	filtered := removeID(ids, deletedID)
+	if len(filtered) == len(ids) {
+		return nil
+	}
+	raw, err := json.Marshal(filtered)
+	if err != nil {
+		return err
+	}
+	return db.Save(&model.Setting{Key: serverOrderSettingKey, Value: string(raw)}).Error
 }

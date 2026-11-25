@@ -68,11 +68,15 @@ func routingOutboundIdentity(source *model.Server, inboundID, consumerServerID u
 // consumerServerID is the outbound's owning server, which scopes the issued
 // credential.
 func (a *App) outboundSourceClient(ob *model.Outbound, consumerServerID uint) (singbox.ClientNode, error) {
+	return a.outboundSourceClientWithDB(a.db, ob, consumerServerID)
+}
+
+func (a *App) outboundSourceClientWithDB(db *gorm.DB, ob *model.Outbound, consumerServerID uint) (singbox.ClientNode, error) {
 	switch ob.SourceKind {
 	case model.OutboundSourceInbound:
-		return a.inboundOutboundClient(ob.SourceID, consumerServerID)
+		return a.inboundOutboundClientWithDB(db, ob.SourceID, consumerServerID)
 	case model.OutboundSourceCustomNode:
-		return a.customNodeOutboundClient(ob.SourceID)
+		return a.customNodeOutboundClientWithDB(db, ob.SourceID)
 	default:
 		return singbox.ClientNode{}, fmt.Errorf("出站 %q 不是节点导入", ob.Tag)
 	}
@@ -82,14 +86,25 @@ func (a *App) outboundSourceClient(ob *model.Outbound, consumerServerID uint) (s
 // consumed by consumerServerID. Multi-user inbounds issue the dedicated routing
 // identity; single-credential inbounds reuse their fixed credential.
 func (a *App) inboundOutboundClient(inboundID, consumerServerID uint) (singbox.ClientNode, error) {
+	return a.inboundOutboundClientWithDB(a.db, inboundID, consumerServerID)
+}
+
+func (a *App) inboundOutboundClientWithDB(db *gorm.DB, inboundID, consumerServerID uint) (singbox.ClientNode, error) {
+	if db == nil {
+		db = a.db
+	}
 	var ib model.Inbound
-	if err := a.db.First(&ib, inboundID).Error; err != nil {
+	if err := db.First(&ib, inboundID).Error; err != nil {
 		return singbox.ClientNode{}, fmt.Errorf("来源节点已被删除")
 	}
 	var srv model.Server
-	if err := a.db.First(&srv, ib.ServerID).Error; err != nil {
+	if err := db.First(&srv, ib.ServerID).Error; err != nil {
 		return singbox.ClientNode{}, fmt.Errorf("来源节点所属服务器已被删除")
 	}
+	return inboundOutboundClientFromModels(&srv, &ib, consumerServerID)
+}
+
+func inboundOutboundClientFromModels(srv *model.Server, ib *model.Inbound, consumerServerID uint) (singbox.ClientNode, error) {
 	if consumerServerID != 0 && ib.ServerID == consumerServerID {
 		return singbox.ClientNode{}, fmt.Errorf("不能把节点自身作为出站")
 	}
@@ -112,7 +127,7 @@ func (a *App) inboundOutboundClient(inboundID, consumerServerID uint) (singbox.C
 	if err := st.ValidateMultiUser(string(ib.Type)); err != nil {
 		return singbox.ClientNode{}, err
 	}
-	host, err := inboundNodeAddress(&srv, &st)
+	host, err := inboundNodeAddress(srv, &st)
 	if err != nil {
 		return singbox.ClientNode{}, nodeAddressError(err)
 	}
@@ -120,7 +135,7 @@ func (a *App) inboundOutboundClient(inboundID, consumerServerID uint) (singbox.C
 	var identity singbox.ProxyUser
 	if st.UseMultiUser(string(ib.Type)) {
 		st.SingleUser = false
-		identity, err = routingOutboundIdentity(&srv, ib.ID, consumerServerID)
+		identity, err = routingOutboundIdentity(srv, ib.ID, consumerServerID)
 		if err != nil {
 			return singbox.ClientNode{}, err
 		}
@@ -141,14 +156,25 @@ func (a *App) inboundOutboundClient(inboundID, consumerServerID uint) (singbox.C
 
 // customNodeOutboundClient renders an external node's client view.
 func (a *App) customNodeOutboundClient(id uint) (singbox.ClientNode, error) {
+	return a.customNodeOutboundClientWithDB(a.db, id)
+}
+
+func (a *App) customNodeOutboundClientWithDB(db *gorm.DB, id uint) (singbox.ClientNode, error) {
+	if db == nil {
+		db = a.db
+	}
 	var node model.CustomNode
-	if err := a.db.First(&node, id).Error; err != nil {
+	if err := db.First(&node, id).Error; err != nil {
 		return singbox.ClientNode{}, fmt.Errorf("来源外部节点已被删除")
 	}
+	return a.customNodeOutboundClientFromModel(&node)
+}
+
+func (a *App) customNodeOutboundClientFromModel(node *model.CustomNode) (singbox.ClientNode, error) {
 	if node.HiddenBySubscriptionRule {
 		return singbox.ClientNode{}, fmt.Errorf("来源外部节点 %q 已被订阅规则隐藏", node.Name)
 	}
-	n, ok := a.customNodeToNode(&node)
+	n, ok := a.customNodeToNode(node)
 	if !ok {
 		return singbox.ClientNode{}, fmt.Errorf("来源外部节点 %q 参数无法解析", node.Name)
 	}
@@ -206,10 +232,10 @@ func (a *App) outboundSourceRows(targetServerID uint) ([]outboundSource, error) 
 			if srv.ID == targetServerID {
 				row.Disabled = true
 				row.Reason = "不能把节点自身作为出站"
-			} else if reason := a.outboundSourceReason(model.OutboundSourceInbound, ib.ID, targetServerID); reason != "" {
+			} else if client, err := inboundOutboundClientFromModels(srv, &ib, targetServerID); err != nil {
 				row.Disabled = true
-				row.Reason = reason
-			} else if client, err := a.inboundOutboundClient(ib.ID, targetServerID); err == nil {
+				row.Reason = err.Error()
+			} else {
 				row.Server, row.Port = client.Server, client.ServerPort
 			}
 			rows = append(rows, row)
@@ -228,11 +254,11 @@ func (a *App) outboundSourceRows(targetServerID uint) ([]outboundSource, error) 
 			Name:  node.Name,
 			Group: node.Group,
 		}
-		if reason := a.outboundSourceReason(model.OutboundSourceCustomNode, node.ID, targetServerID); reason != "" {
+		if client, err := a.customNodeOutboundClientFromModel(node); err != nil {
 			row.Disabled = true
-			row.Reason = reason
+			row.Reason = err.Error()
 			row.Type = node.Protocol
-		} else if client, err := a.customNodeOutboundClient(node.ID); err == nil {
+		} else {
 			row.Type, row.Server, row.Port = client.Type, client.Server, client.ServerPort
 		}
 		rows = append(rows, row)
@@ -336,6 +362,10 @@ func routingIdentitiesForInbound(db *gorm.DB, srv *model.Server, inboundID uint)
 	if err != nil {
 		return nil, err
 	}
+	return routingIdentitiesFromConsumers(srv, inboundID, consumers)
+}
+
+func routingIdentitiesFromConsumers(srv *model.Server, inboundID uint, consumers []uint) ([]singbox.ProxyUser, error) {
 	identities := make([]singbox.ProxyUser, 0, len(consumers))
 	for _, consumer := range consumers {
 		if consumer == 0 || consumer == srv.ID {

@@ -178,6 +178,23 @@ func (a *App) listCustomNodes(c *gin.Context) {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
+	allUIDs := make([]uint, 0)
+	for i := range nodes {
+		if !nodes[i].AllUsers && len(nodes[i].UserIDs) > 0 {
+			allUIDs = append(allUIDs, nodes[i].UserIDs...)
+		}
+	}
+	emailByID := make(map[uint]string)
+	if ids := normalizedIDs(allUIDs); len(ids) > 0 {
+		var users []model.User
+		if err := a.db.Select("id", "email").Where("id IN ?", ids).Find(&users).Error; err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+			return
+		}
+		for _, u := range users {
+			emailByID[u.ID] = u.Email
+		}
+	}
 	out := make([]customNodeRow, 0, len(nodes))
 	for i := range nodes {
 		row := customNodeRow{CustomNode: nodes[i]}
@@ -193,13 +210,10 @@ func (a *App) listCustomNodes(c *gin.Context) {
 			}
 		}
 		if !nodes[i].AllUsers && len(nodes[i].UserIDs) > 0 {
-			var users []model.User
-			if err := a.db.Select("email").Where("id IN ?", nodes[i].UserIDs).Find(&users).Error; err != nil {
-				c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
-				return
-			}
-			for _, u := range users {
-				row.UserEmails = append(row.UserEmails, u.Email)
+			for _, uid := range nodes[i].UserIDs {
+				if email, ok := emailByID[uid]; ok {
+					row.UserEmails = append(row.UserEmails, email)
+				}
 			}
 		}
 		out = append(out, row)

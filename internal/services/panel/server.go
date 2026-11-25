@@ -12,6 +12,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"sync"
 	"time"
@@ -65,6 +66,8 @@ type App struct {
 	logSessionLocks   keyedMutex[uint]
 	serverOperations  *keyedMutex[uint]
 	userAccessMu      sync.Mutex
+	ruleSetMu         sync.Mutex
+	serverOrderMu     sync.Mutex
 	ipLocationsOnce   sync.Once
 	ipLocations       *ipLocationService
 	embeddedWebFS     fs.FS
@@ -136,6 +139,29 @@ func (a *App) lockServerOperation(serverID uint) func() {
 		return func() {}
 	}
 	return a.serverOperations.lock(serverID)
+}
+
+// lockServerOperations acquires per-server operation locks in ascending server
+// ID order to avoid lock-order inversion across multi-server updates.
+func (a *App) lockServerOperations(serverIDs []uint) func() {
+	if a.serverOperations == nil || len(serverIDs) == 0 {
+		return func() {}
+	}
+	ids := append([]uint(nil), serverIDs...)
+	slices.Sort(ids)
+	ids = slices.Compact(ids)
+	unlocks := make([]func(), 0, len(ids))
+	for _, id := range ids {
+		if id == 0 {
+			continue
+		}
+		unlocks = append(unlocks, a.serverOperations.lock(id))
+	}
+	return func() {
+		for i := len(unlocks) - 1; i >= 0; i-- {
+			unlocks[i]()
+		}
+	}
 }
 
 func (a *App) routes() *gin.Engine {

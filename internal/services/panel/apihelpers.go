@@ -78,7 +78,10 @@ func uintParam(c *gin.Context, name string) (uint, bool) {
 func (a *App) stageConfigAndRespond(c *gin.Context, serverID uint, payload gin.H) {
 	if err := a.db.Model(&model.Server{}).
 		Where("id = ?", serverID).
-		Update("config_revision", gorm.Expr("config_revision + 1")).Error; err != nil {
+		Updates(map[string]any{
+			"config_revision":    gorm.Expr("config_revision + 1"),
+			"config_initialized": true,
+		}).Error; err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}

@@ -111,13 +111,19 @@ func cleanupDeletedUserRouteIdentities(tx *gorm.DB, user *model.User) ([]uint, e
 			continue
 		}
 		affected = append(affected, rule.ServerID)
-		if len(remaining) == 0 {
+		invert, _ := match.Extra["invert"].(bool)
+		if len(remaining) == 0 && !invert {
 			if err := tx.Delete(&model.RouteRule{}, rule.ID).Error; err != nil {
 				return nil, err
 			}
 			continue
 		}
-		match.AuthUser = remaining
+		if len(remaining) == 0 {
+			match.AuthUser = nil
+			delete(match.Extra, "invert")
+		} else {
+			match.AuthUser = remaining
+		}
 		raw, err := json.Marshal(match)
 		if err != nil {
 			return nil, err

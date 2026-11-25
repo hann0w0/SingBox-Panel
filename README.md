@@ -7,17 +7,52 @@
 
 <p align="center">面向官方 sing-box 的多节点管理面板，统一管理配置、用户、订阅与流量。</p>
 
+<p align="center">
+  <a href="#工作模式">工作模式</a> ·
+  <a href="#安装">安装</a> ·
+  <a href="#卸载">卸载</a> ·
+  <a href="docs/docker.md">Docker 部署说明</a> ·
+  <a href="#开源许可">开源许可</a>
+</p>
+
+## 工作模式
+
+```mermaid
+flowchart LR
+    Browser["浏览器 / 订阅客户端"]
+    Proxy["反向代理"]
+
+    subgraph Control["主控 · Binary / Docker"]
+        Panel["主控面板"] --- Database[("数据库")]
+    end
+
+    subgraph Node["节点宿主机"]
+        Agent["节点 Agent"] -->|配置下发 · 服务管理 · 数据采集| SingBox["官方 sing-box"]
+    end
+
+    Browser -->|HTTPS| Proxy
+    Agent -->|主动建立 WSS 连接| Proxy
+    Proxy -->|HTTP / WebSocket| Panel
+    Browser -->|代理连接| SingBox
+```
+
+- **部署边界**：主控支持 Binary 或 Docker 运行；Agent 与官方 `sing-box` 运行在节点宿主机。
+- **主动建连**：Agent 主动向主控建立 WSS 连接，节点无需额外开放管理端口。
+- **流量直连**：代理流量由节点上的官方 `sing-box` 直接处理。
+
 ## 安装
+
+主控支持 Linux `amd64` / `arm64`，需配合域名与 HTTPS 反向代理访问（支持 WebSocket 并覆盖 `X-Real-IP`）。
 
 ### Binary
 
-支持 Linux amd64 / arm64，主控需要 systemd。准备域名及支持 WebSocket 的 HTTPS 反向代理，然后执行：
+适用于 `systemd` 主机。执行安装脚本并按提示完成配置：
 
 ```bash
 curl -fsSL https://github.com/hann0w0/SingBox-Panel/releases/latest/download/install.sh | sudo bash
 ```
 
-按提示完成配置，默认监听 `127.0.0.1:32334`，数据保存在 `/opt/singbox-panel`。
+默认监听 `127.0.0.1:32334`，数据保存在 `/opt/singbox-panel`。
 
 ### Docker
 
@@ -36,39 +71,55 @@ docker run -d \
   ghcr.io/hann0w0/singbox-panel:latest
 ```
 
-镜像支持 amd64 / arm64。通过 HTTPS 反向代理访问，需支持 WebSocket 并覆盖 `X-Real-IP`。Compose、反向代理与更新步骤见 [Docker 部署说明](docs/docker.md)。
+Compose 配置、反向代理示例与更新步骤见 [Docker 部署说明](docs/docker.md)。
 
-两种方式安装后，均在面板创建服务器，复制节点详情页生成的 Agent 安装命令，到目标 VPS 执行。节点支持 systemd 和 Alpine OpenRC。
+### 接入节点
+
+Binary 与 Docker 主控均按以下步骤接入节点（支持 `systemd` 与 Alpine `OpenRC`）：
+
+1. 在面板中创建服务器。
+2. 复制服务器详情页生成的 Agent 安装命令。
+3. 在目标 VPS 执行该命令。
 
 ## 卸载
 
+卸载主控不会卸载节点上的 Agent 和 `sing-box`。
+
 ### Binary 主控
 
-```bash
-# 卸载服务，保留配置与数据库
-curl -fsSL https://github.com/hann0w0/SingBox-Panel/releases/latest/download/install.sh | sudo bash -s -- --uninstall --yes
+卸载服务，保留配置与数据库：
 
-# 完整卸载，删除配置与数据库
+```bash
+curl -fsSL https://github.com/hann0w0/SingBox-Panel/releases/latest/download/install.sh | sudo bash -s -- --uninstall --yes
+```
+
+完整卸载，删除配置与数据库：
+
+```bash
 curl -fsSL https://github.com/hann0w0/SingBox-Panel/releases/latest/download/install.sh | sudo bash -s -- --uninstall --purge --yes
 ```
 
 ### Docker 主控
 
-```bash
-# docker run 部署
-docker stop singbox-panel && docker rm singbox-panel
+`docker run` 部署：
 
-# Docker Compose 部署：在配置目录执行
+```bash
+docker stop singbox-panel && docker rm singbox-panel
+```
+
+Docker Compose 部署（在配置目录执行）：
+
+```bash
 docker compose down
 ```
 
-默认保留数据卷；`docker compose down -v` 或删除数据卷会清空面板数据。卸载主控不会卸载节点上的 Agent 和 sing-box。
+以上操作默认保留数据卷；执行 `docker compose down -v` 或删除数据卷会清空面板数据。
 
 ### 节点 Agent
 
-可在面板服务器详情页卸载，也可在目标节点执行以下命令。仅删除 Agent 及其配置，保留 sing-box。
+可在面板服务器详情页直接卸载，或在目标节点手动执行以下命令。仅删除 Agent 及其配置，保留 `sing-box`。
 
-**systemd：**
+**systemd**
 
 ```bash
 sudo systemctl disable --now singbox-panel-agent.service && \
@@ -77,7 +128,7 @@ sudo rm -rf /etc/singbox-panel-agent && \
 sudo systemctl daemon-reload
 ```
 
-**Alpine / OpenRC（以 root 执行）：**
+**Alpine / OpenRC**（以 `root` 执行）
 
 ```sh
 rc-service singbox-panel-agent stop && \
@@ -86,21 +137,7 @@ rm -f /etc/init.d/singbox-panel-agent /run/singbox-panel-agent.pid /usr/local/bi
 rm -rf /etc/singbox-panel-agent
 ```
 
-如需同时卸载 sing-box，请先在面板执行「卸载 sing-box」，再卸载 Agent。
-
-## 工作模式
-
-```mermaid
-flowchart LR
-    Browser["浏览器 / 订阅客户端"] -->|HTTPS| Proxy["反向代理"]
-    Proxy -->|HTTP / WebSocket| Panel["主控面板"]
-    Panel --- Database[("数据库")]
-    Agent["节点 Agent"] -->|主动建立 WSS 连接| Proxy
-    Agent -->|配置下发 · 服务管理 · 数据采集| SingBox["官方 sing-box"]
-    Browser -->|代理连接| SingBox
-```
-
-主控支持 Binary 或 Docker 部署；Agent 与 sing-box 在节点宿主机运行。Agent 主动连接主控，节点无需额外开放管理端口，代理流量由节点上的 sing-box 直接处理。
+如需同时卸载 `sing-box`，请先在面板执行「卸载 sing-box」，再卸载 Agent。
 
 ## 开源许可
 

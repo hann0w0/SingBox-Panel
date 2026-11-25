@@ -5,6 +5,8 @@ import (
 	"bytes"
 	"compress/gzip"
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -42,6 +44,11 @@ func buildSingboxTarGz(t *testing.T, dirName, binaryContent string) []byte {
 	return buf.Bytes()
 }
 
+func sha256DigestField(data []byte) string {
+	sum := sha256.Sum256(data)
+	return "sha256:" + hex.EncodeToString(sum[:])
+}
+
 func TestAlpineReleaseInstallerStableBetaAndVersionPin(t *testing.T) {
 	stableArchive := buildSingboxTarGz(t, "sing-box-1.14.4-linux-amd64-musl", "#!/bin/sh\necho 'sing-box version 1.14.4'\n")
 	betaArchive := buildSingboxTarGz(t, "sing-box-1.15.0-alpha.13-linux-amd64-musl", "#!/bin/sh\necho 'sing-box version 1.15.0-alpha.13'\n")
@@ -54,7 +61,7 @@ func TestAlpineReleaseInstallerStableBetaAndVersionPin(t *testing.T) {
 			_ = json.NewEncoder(w).Encode(githubReleasePayload{
 				TagName: "v1.14.4",
 				Assets: []githubReleaseAsset{
-					{Name: "sing-box-1.14.4-linux-amd64-musl.tar.gz", BrowserDownloadURL: server.URL + "/assets/stable-musl.tar.gz"},
+					{Name: "sing-box-1.14.4-linux-amd64-musl.tar.gz", BrowserDownloadURL: server.URL + "/assets/stable-musl.tar.gz", Digest: sha256DigestField(stableArchive)},
 				},
 			})
 		case "/repos/SagerNet/sing-box/releases":
@@ -62,8 +69,16 @@ func TestAlpineReleaseInstallerStableBetaAndVersionPin(t *testing.T) {
 				{
 					TagName: "v1.15.0-alpha.13",
 					Assets: []githubReleaseAsset{
-						{Name: "sing-box-1.15.0-alpha.13-linux-amd64-musl.tar.gz", BrowserDownloadURL: server.URL + "/assets/beta-musl.tar.gz"},
+						{Name: "sing-box-1.15.0-alpha.13-linux-amd64-musl.tar.gz", BrowserDownloadURL: server.URL + "/assets/beta-musl.tar.gz", Digest: sha256DigestField(betaArchive)},
 					},
+				},
+			})
+		case "/repos/SagerNet/sing-box/releases/tags/v1.13.9":
+			_ = json.NewEncoder(w).Encode(githubReleasePayload{
+				TagName: "v1.13.9",
+				Assets: []githubReleaseAsset{
+					{Name: "sing-box-1.13.9-linux-arm64-musl.tar.gz", BrowserDownloadURL: server.URL + "/SagerNet/sing-box/releases/download/v1.13.9/sing-box-1.13.9-linux-arm64-musl.tar.gz", Digest: sha256DigestField([]byte("missing"))},
+					{Name: "sing-box-1.13.9-linux-arm64.tar.gz", BrowserDownloadURL: server.URL + "/SagerNet/sing-box/releases/download/v1.13.9/sing-box-1.13.9-linux-arm64.tar.gz", Digest: sha256DigestField(fallbackArchive)},
 				},
 			})
 		case "/assets/stable-musl.tar.gz":

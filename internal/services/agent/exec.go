@@ -59,13 +59,13 @@ func run(ctx context.Context, name string, args ...string) (string, error) {
 		if cmd.Process == nil {
 			return os.ErrProcessDone
 		}
-		err := syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL)
+		err := syscall.Kill(-cmd.Process.Pid, syscall.SIGTERM)
 		if errors.Is(err, syscall.ESRCH) {
 			return os.ErrProcessDone
 		}
 		return err
 	}
-	cmd.WaitDelay = 2 * time.Second
+	cmd.WaitDelay = 5 * time.Second
 	var buf cappedCommandOutput
 	cmd.Stdout = &buf
 	cmd.Stderr = &buf

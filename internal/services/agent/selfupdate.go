@@ -167,9 +167,11 @@ func SelfUpdate(ctx context.Context, panelURL, token string, insecure bool) (str
 	}
 	req.Header.Set("Authorization", "Bearer "+token)
 	transport := http.DefaultTransport.(*http.Transport).Clone()
+	transport.DialContext = dialIPv4First
 	if insecure {
 		transport.TLSClientConfig = &tls.Config{InsecureSkipVerify: true}
 	}
+	defer transport.CloseIdleConnections()
 	client := &http.Client{Timeout: 3 * time.Minute, Transport: transport}
 	resp, err := client.Do(req)
 	if err != nil {

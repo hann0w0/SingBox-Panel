@@ -66,19 +66,33 @@ type agentConn struct {
 	pending                      map[string]chan protocol.CommandResultEvt
 	closed                       bool
 	restrictedOutboundValidation bool
+	initialRegister              *protocol.RegisterEvt
 }
 
 // register installs a connection for a server, displacing any previous one.
 func (h *Hub) register(serverID uint, remoteIP string, conn *websocket.Conn) *agentConn {
+	return h.registerWithEvent(serverID, remoteIP, conn, nil)
+}
+
+func (h *Hub) registerWithEvent(serverID uint, remoteIP string, conn *websocket.Conn, reg *protocol.RegisterEvt) *agentConn {
+	var initialCopy *protocol.RegisterEvt
+	restrictedValidation := false
+	if reg != nil {
+		copied := *reg
+		initialCopy = &copied
+		restrictedValidation = reg.RestrictedOutboundValidation
+	}
 	ac := &agentConn{
-		serverID: serverID,
-		remoteIP: remoteIP,
-		conn:     conn,
-		send:     make(chan protocol.Envelope, 64),
-		hub:      h,
-		done:     make(chan struct{}),
-		stopped:  make(chan struct{}),
-		pending:  map[string]chan protocol.CommandResultEvt{},
+		serverID:                     serverID,
+		remoteIP:                     remoteIP,
+		conn:                         conn,
+		send:                         make(chan protocol.Envelope, 64),
+		hub:                          h,
+		done:                         make(chan struct{}),
+		stopped:                      make(chan struct{}),
+		pending:                      map[string]chan protocol.CommandResultEvt{},
+		restrictedOutboundValidation: restrictedValidation,
+		initialRegister:              initialCopy,
 	}
 	unlockState := h.state.lock(serverID)
 	h.mu.Lock()
@@ -264,7 +278,14 @@ func (ac *agentConn) serve() {
 		defer close(ac.stopped)
 	}
 	go ac.writePump()
-	ac.readPump()
+	if ac.initialRegister != nil {
+		reg := *ac.initialRegister
+		ac.initialRegister = nil
+		ac.hub.onRegister(ac, reg)
+		ac.readPumpRegistered(true)
+		return
+	}
+	ac.readPumpRegistered(false)
 }
 
 func (ac *agentConn) close() {
@@ -282,6 +303,10 @@ func (ac *agentConn) close() {
 }
 
 func (ac *agentConn) readPump() {
+	ac.readPumpRegistered(false)
+}
+
+func (ac *agentConn) readPumpRegistered(registered bool) {
 	defer func() {
 		ac.close()
 		ac.hub.unregister(ac)
@@ -291,7 +316,6 @@ func (ac *agentConn) readPump() {
 	ac.conn.SetPongHandler(func(string) error {
 		return ac.conn.SetReadDeadline(time.Now().Add(hubPongWait))
 	})
-	registered := false
 	for {
 		_, data, err := ac.conn.ReadMessage()
 		if err != nil {
@@ -493,7 +517,11 @@ func (h *Hub) onRegister(ac *agentConn, e protocol.RegisterEvt) {
 		"agent_url":         e.PanelURL,
 	}
 	h.db.Model(&model.Server{}).Where("id = ?", serverID).Updates(updates)
-	if h.updatePublicAddresses(serverID, e.PublicIP, e.PublicIPv4, e.PublicIPv6) && h.AfterAddressChange != nil {
+	fallbackIP := e.PublicIP
+	if fallbackIP == "" && e.PublicIPv4 == nil {
+		fallbackIP = ac.remoteIP
+	}
+	if h.updatePublicAddresses(serverID, fallbackIP, e.PublicIPv4, e.PublicIPv6) && h.AfterAddressChange != nil {
 		h.AfterAddressChange(serverID)
 	}
 	if h.AfterRegister != nil {

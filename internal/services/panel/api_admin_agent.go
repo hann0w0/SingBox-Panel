@@ -50,6 +50,19 @@ func (a *App) installSingbox(c *gin.Context) {
 	// Invalidate the release cache so the UI immediately reflects the new
 	// version instead of comparing against a stale "latest" until cache expiry.
 	invalidateSingboxReleaseCache()
+	var installInfo protocol.InstallSingboxData
+	if len(res.Data) > 0 {
+		_ = json.Unmarshal(res.Data, &installInfo)
+	}
+	if ver := strings.TrimSpace(installInfo.SingboxVersion); ver != "" {
+		if err := a.db.Model(&model.Server{}).Where("id = ?", id).Updates(map[string]any{
+			"singbox_installed": true,
+			"singbox_version":   ver,
+		}).Error; err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "更新节点 Sing-box 版本失败"})
+			return
+		}
+	}
 	// Once installed, push the panel's config ONLY if this server has protocols
 	// configured in the panel — never overwrite an existing config with an empty one.
 	a.orch.PushConfigIfManaged(id)

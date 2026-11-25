@@ -1,6 +1,8 @@
 package panel
 
 import (
+	"encoding/json"
+	"errors"
 	"net/http"
 	"sync"
 	"time"
@@ -9,6 +11,7 @@ import (
 	"github.com/gorilla/websocket"
 
 	"github.com/hann0w0/singbox-panel/internal/domain/model"
+	"github.com/hann0w0/singbox-panel/internal/domain/protocol"
 )
 
 var agentUpgrader = websocket.Upgrader{
@@ -122,14 +125,44 @@ func (a *App) handleAgentWS(c *gin.Context) {
 	if err != nil {
 		return // Upgrade already wrote the error response
 	}
-	ac := a.registerAuthenticatedAgent(srv.ID, token, clientIP(c), conn)
+	reg, err := readInitialAgentRegistration(conn)
+	if err != nil {
+		_ = conn.Close()
+		return
+	}
+	ac := a.registerAuthenticatedAgentWithEvent(srv.ID, token, clientIP(c), conn, reg)
 	if ac == nil {
 		return
 	}
 	ac.serve()
 }
 
+func readInitialAgentRegistration(conn *websocket.Conn) (*protocol.RegisterEvt, error) {
+	conn.SetReadLimit(maxPanelAgentMessageSize)
+	_ = conn.SetReadDeadline(time.Now().Add(15 * time.Second))
+	_, data, err := conn.ReadMessage()
+	if err != nil {
+		return nil, err
+	}
+	var env protocol.Envelope
+	if err := json.Unmarshal(data, &env); err != nil {
+		return nil, err
+	}
+	if len(env.Payload) > maxPanelAgentPayloadSize || env.Type != protocol.EvtRegister {
+		return nil, errors.New("unexpected initial agent frame")
+	}
+	var reg protocol.RegisterEvt
+	if err := env.Decode(&reg); err != nil {
+		return nil, err
+	}
+	return &reg, nil
+}
+
 func (a *App) registerAuthenticatedAgent(serverID uint, token, publicIP string, conn *websocket.Conn) *agentConn {
+	return a.registerAuthenticatedAgentWithEvent(serverID, token, publicIP, conn, nil)
+}
+
+func (a *App) registerAuthenticatedAgentWithEvent(serverID uint, token, publicIP string, conn *websocket.Conn, reg *protocol.RegisterEvt) *agentConn {
 	// Keep the final credential check and Hub registration in the same
 	// per-server critical section used by credential resets. This
 	// prevents a handshake validated with an old token from registering after
@@ -144,11 +177,6 @@ func (a *App) registerAuthenticatedAgent(serverID uint, token, publicIP string, 
 		}
 		return nil
 	}
-	// Record the observed public IP (used for display; share links use the
-	// admin-configured Address).
-	if publicIP != "" {
-		a.db.Model(&model.Server{}).Where("id = ?", serverID).Update("public_ip", publicIP)
-	}
 
-	return a.hub.register(serverID, publicIP, conn)
+	return a.hub.registerWithEvent(serverID, publicIP, conn, reg)
 }

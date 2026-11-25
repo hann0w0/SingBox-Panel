@@ -99,7 +99,7 @@ func (i singboxInstaller) install(ctx context.Context, channel, version, method 
 	}
 	alpine := i.isAlpine != nil && i.isAlpine()
 	wasActive := false
-	if alpine && i.serviceActive != nil {
+	if i.serviceActive != nil {
 		wasActive = i.serviceActive(ctx)
 	}
 	var output string

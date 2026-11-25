@@ -11,6 +11,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -44,6 +45,7 @@ type githubReleaseAsset struct {
 }
 
 type alpineReleaseCandidate struct {
+	name           string
 	url            string
 	expectedSHA256 string
 }
@@ -142,8 +144,33 @@ func (a alpineReleaseInstaller) install(ctx context.Context, channel, version st
 			return "", fmt.Errorf("unexpected sing-box release version %q", rel.TagName)
 		}
 		candidates = selectAlpineAssetCandidates(rel.Assets, targetVersion, arch)
+		if err := a.attachReleaseChecksums(ctx, rel.Assets, candidates); err != nil {
+			return "", err
+		}
+	} else if strings.TrimSpace(a.apiBaseURL) != "" {
+		queryCtx, cancel := context.WithTimeout(ctx, alpineReleaseQueryTimeout)
+		rel, err := a.resolveReleaseByTag(queryCtx, targetVersion)
+		cancel()
+		if err != nil {
+			return "", err
+		}
+		candidates = selectAlpineAssetCandidates(rel.Assets, targetVersion, arch)
+		if err := a.attachReleaseChecksums(ctx, rel.Assets, candidates); err != nil {
+			return "", err
+		}
 	}
-	if len(candidates) == 0 {
+	if strings.TrimSpace(a.apiBaseURL) != "" {
+		verified := make([]alpineReleaseCandidate, 0, len(candidates))
+		for _, candidate := range candidates {
+			if candidate.expectedSHA256 != "" {
+				verified = append(verified, candidate)
+			}
+		}
+		if len(verified) == 0 {
+			return "", fmt.Errorf("download sing-box %s (%s): missing SHA256 digest in release metadata", targetVersion, arch)
+		}
+		candidates = verified
+	} else if len(candidates) == 0 {
 		for _, u := range alpineReleaseDownloadURLs(a.downloadBaseURL, targetVersion, arch) {
 			candidates = append(candidates, alpineReleaseCandidate{url: u})
 		}
@@ -225,6 +252,96 @@ func (a alpineReleaseInstaller) newRequest(ctx context.Context, url string) (*ht
 	return req, nil
 }
 
+func (a alpineReleaseInstaller) resolveReleaseByTag(ctx context.Context, version string) (githubReleasePayload, error) {
+	base := strings.TrimRight(a.apiBaseURL, "/")
+	tag := "v" + strings.TrimPrefix(strings.TrimSpace(version), "v")
+	endpoint := fmt.Sprintf("%s/repos/SagerNet/sing-box/releases/tags/%s", base, url.PathEscape(tag))
+	req, err := a.newRequest(ctx, endpoint)
+	if err != nil {
+		return githubReleasePayload{}, fmt.Errorf("build tag release query: %w", err)
+	}
+	req.Header.Set("Accept", "application/vnd.github+json")
+	resp, err := a.client().Do(req)
+	if err != nil {
+		return githubReleasePayload{}, fmt.Errorf("query sing-box release %s: %w", tag, err)
+	}
+	defer resp.Body.Close()
+	body, err := io.ReadAll(io.LimitReader(resp.Body, maxGitHubReleasePayloadSize))
+	if err != nil {
+		return githubReleasePayload{}, fmt.Errorf("read sing-box release %s response: %w", tag, err)
+	}
+	if resp.StatusCode != http.StatusOK {
+		return githubReleasePayload{}, fmt.Errorf("query sing-box release %s: HTTP %d: %s", tag, resp.StatusCode, strings.TrimSpace(string(body)))
+	}
+	var release githubReleasePayload
+	if err := json.Unmarshal(body, &release); err != nil {
+		return githubReleasePayload{}, fmt.Errorf("parse sing-box release %s: %w", tag, err)
+	}
+	return release, nil
+}
+
+func (a alpineReleaseInstaller) attachReleaseChecksums(ctx context.Context, assets []githubReleaseAsset, candidates []alpineReleaseCandidate) error {
+	if len(candidates) == 0 {
+		return nil
+	}
+	missing := false
+	for _, c := range candidates {
+		if c.expectedSHA256 == "" {
+			missing = true
+			break
+		}
+	}
+	if !missing {
+		return nil
+	}
+	checksums := make(map[string]string)
+	for _, asset := range assets {
+		lower := strings.ToLower(asset.Name)
+		if asset.BrowserDownloadURL == "" || (!strings.Contains(lower, "checksum") && !strings.HasSuffix(lower, ".sha256") && !strings.HasSuffix(lower, ".sha256sum")) {
+			continue
+		}
+		qCtx, cancel := context.WithTimeout(ctx, alpineReleaseQueryTimeout)
+		req, err := a.newRequest(qCtx, asset.BrowserDownloadURL)
+		if err != nil {
+			cancel()
+			continue
+		}
+		resp, err := a.client().Do(req)
+		if err != nil {
+			cancel()
+			continue
+		}
+		body, readErr := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
+		_ = resp.Body.Close()
+		cancel()
+		if readErr != nil || resp.StatusCode != http.StatusOK {
+			continue
+		}
+		for _, line := range strings.Split(string(body), "\n") {
+			fields := strings.Fields(line)
+			if len(fields) < 2 {
+				continue
+			}
+			hash := parseSHA256Digest("sha256:" + fields[0])
+			if hash == "" {
+				continue
+			}
+			target := filepath.Base(strings.TrimPrefix(fields[len(fields)-1], "*"))
+			if target != "" {
+				checksums[target] = hash
+			}
+		}
+	}
+	for i := range candidates {
+		if candidates[i].expectedSHA256 == "" && candidates[i].name != "" {
+			if hash := checksums[candidates[i].name]; hash != "" {
+				candidates[i].expectedSHA256 = hash
+			}
+		}
+	}
+	return nil
+}
+
 func (a alpineReleaseInstaller) resolveLatestRelease(ctx context.Context, channel string) (githubReleasePayload, error) {
 	base := strings.TrimRight(a.apiBaseURL, "/")
 	endpoint := base + "/repos/SagerNet/sing-box/releases/latest"
@@ -300,6 +417,7 @@ func selectAlpineAssetCandidates(assets []githubReleaseAsset, version, arch stri
 	for _, name := range alpineReleaseAssetNames(version, arch) {
 		if asset, ok := byName[name]; ok {
 			out = append(out, alpineReleaseCandidate{
+				name:           name,
 				url:            asset.BrowserDownloadURL,
 				expectedSHA256: parseSHA256Digest(asset.Digest),
 			})

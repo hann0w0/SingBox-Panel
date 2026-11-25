@@ -92,6 +92,11 @@ type InstallSingboxCmd struct {
 	Method  string `json:"method"`            // script | apt | dnf
 }
 
+// InstallSingboxData reports post-install binary details back to the panel.
+type InstallSingboxData struct {
+	SingboxVersion string `json:"singbox_version,omitempty"`
+}
+
 // ApplyConfigCmd delivers a full official config.json to write to /etc/sing-box.
 type ApplyConfigCmd struct {
 	Config                 json.RawMessage `json:"config"` // full sing-box config.json; Agent validates then restarts sing-box

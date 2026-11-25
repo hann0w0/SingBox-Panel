@@ -45,10 +45,11 @@ type Client struct {
 	heartbeatInterval time.Duration
 
 	// Callbacks wired by the Agent orchestrator.
-	Register     func() protocol.RegisterEvt
-	Heartbeat    func() protocol.HeartbeatEvt
-	OnCommand    func(ctx context.Context, env protocol.Envelope) protocol.CommandResultEvt
-	OnTrafficAck func(protocol.TrafficAck)
+	Register          func() protocol.RegisterEvt
+	Heartbeat         func() protocol.HeartbeatEvt
+	OnCommand         func(ctx context.Context, env protocol.Envelope) protocol.CommandResultEvt
+	IsMutatingCommand func(protocol.MessageType) bool
+	OnTrafficAck      func(protocol.TrafficAck)
 	// OnConnected runs after registration has been written successfully. The
 	// self-updater uses it as a local readiness signal for automatic rollback.
 	OnConnected    func()
@@ -63,6 +64,15 @@ type Client struct {
 	// eventMu makes non-blocking event enqueue atomic with session shutdown,
 	// so receipt-bearing events cannot arrive after the disconnect drain.
 	eventMu sync.Mutex
+
+	mutatingMu       sync.Mutex
+	mutatingCommands chan mutatingCommand
+	mutatingCancel   context.CancelFunc
+}
+
+type mutatingCommand struct {
+	session uint64
+	env     protocol.Envelope
 }
 
 type sessionEnvelope struct {
@@ -166,6 +176,24 @@ func (c *Client) SendEventForContext(ctx context.Context, t protocol.MessageType
 	c.SendEventForSession(session, t, id, payload)
 }
 
+// SendControlForSession delivers a command result on controlSend if session
+// matches the active WebSocket session.
+func (c *Client) sendControlForSession(session uint64, env protocol.Envelope) {
+	if session == 0 {
+		return
+	}
+	c.eventMu.Lock()
+	defer c.eventMu.Unlock()
+	if c.activeSession.Load() != session {
+		return
+	}
+	select {
+	case c.controlSend <- sessionEnvelope{session: session, env: env}:
+	default:
+		log.Printf("agent: control queue full; dropping reply %s without disconnecting", env.ID)
+	}
+}
+
 // SendEventForSession is used by streams that intentionally outlive the short
 // command context that created them. The explicit session id still ensures a
 // reconnect immediately invalidates the stream's events.
@@ -267,6 +295,12 @@ func dialIPv4First(ctx context.Context, _ string, address string) (net.Conn, err
 // Run connects and stays connected, reconnecting with exponential backoff until
 // ctx is cancelled.
 func (c *Client) Run(ctx context.Context) {
+	var mutatingWG sync.WaitGroup
+	c.startMutatingWorker(ctx, &mutatingWG)
+	defer func() {
+		c.stopMutatingWorker()
+		mutatingWG.Wait()
+	}()
 	backoff := minReconnectBackoff
 	for ctx.Err() == nil {
 		connectedFor, err := c.connectOnce(ctx)
@@ -413,10 +447,56 @@ func (c *Client) connectOnce(ctx context.Context) (time.Duration, error) {
 	return time.Since(connectedAt), err
 }
 
+func (c *Client) startMutatingWorker(rootCtx context.Context, wg *sync.WaitGroup) {
+	workerCtx, workerCancel := context.WithCancel(rootCtx)
+	ch := make(chan mutatingCommand, maxQueuedCommands)
+	c.mutatingMu.Lock()
+	c.mutatingCommands = ch
+	c.mutatingCancel = workerCancel
+	c.mutatingMu.Unlock()
+
+	wg.Go(func() {
+		for {
+			select {
+			case <-workerCtx.Done():
+				return
+			case task, ok := <-ch:
+				if !ok || workerCtx.Err() != nil {
+					return
+				}
+				if c.OnCommand == nil {
+					continue
+				}
+				taskCtx := context.WithValue(workerCtx, clientSessionContextKey{}, task.session)
+				res := c.OnCommand(taskCtx, task.env)
+				if out, err := protocol.NewEnvelope(protocol.EvtCommandResult, task.env.ID, res); err == nil {
+					c.sendControlForSession(task.session, out)
+				}
+			}
+		}
+	})
+}
+
+func (c *Client) stopMutatingWorker() {
+	c.mutatingMu.Lock()
+	cancel := c.mutatingCancel
+	c.mutatingCommands = nil
+	c.mutatingCancel = nil
+	c.mutatingMu.Unlock()
+	if cancel != nil {
+		cancel()
+	}
+}
+
 func (c *Client) readLoop(ctx context.Context, conn *websocket.Conn) error {
 	ctx, cancel := context.WithCancel(ctx)
+	session, _ := ctx.Value(clientSessionContextKey{}).(uint64)
 	commands := make(chan protocol.Envelope, maxQueuedCommands)
 	var workers sync.WaitGroup
+	c.mutatingMu.Lock()
+	persistentMutating := c.mutatingCommands
+	c.mutatingMu.Unlock()
+	var localMutating chan protocol.Envelope
 	if c.OnCommand != nil {
 		for worker := 0; worker < maxSessionCommands; worker++ {
 			workers.Go(func() {
@@ -425,6 +505,25 @@ func (c *Client) readLoop(ctx context.Context, conn *websocket.Conn) error {
 					case <-ctx.Done():
 						return
 					case env := <-commands:
+						if ctx.Err() != nil {
+							return
+						}
+						res := c.OnCommand(ctx, env)
+						if out, err := protocol.NewEnvelope(protocol.EvtCommandResult, env.ID, res); err == nil {
+							c.trySend(ctx, out)
+						}
+					}
+				}
+			})
+		}
+		if persistentMutating == nil && c.IsMutatingCommand != nil {
+			localMutating = make(chan protocol.Envelope, maxQueuedCommands)
+			workers.Go(func() {
+				for {
+					select {
+					case <-ctx.Done():
+						return
+					case env := <-localMutating:
 						if ctx.Err() != nil {
 							return
 						}
@@ -467,27 +566,52 @@ func (c *Client) readLoop(ctx context.Context, conn *websocket.Conn) error {
 		if c.OnCommand == nil {
 			continue
 		}
+		if c.IsMutatingCommand != nil && c.IsMutatingCommand(env.Type) {
+			if persistentMutating != nil {
+				select {
+				case <-ctx.Done():
+					return ctx.Err()
+				case persistentMutating <- mutatingCommand{session: session, env: env}:
+				default:
+					c.sendQueueFullReply(ctx, env.ID)
+				}
+				continue
+			}
+			if localMutating != nil {
+				select {
+				case <-ctx.Done():
+					return ctx.Err()
+				case localMutating <- env:
+				default:
+					c.sendQueueFullReply(ctx, env.ID)
+				}
+				continue
+			}
+		}
 		select {
 		case <-ctx.Done():
 			return ctx.Err()
 		case commands <- env:
 		default:
-			out, err := protocol.NewEnvelope(protocol.EvtCommandResult, env.ID, protocol.CommandResultEvt{
-				ID: env.ID, OK: false, Error: "agent command queue is full; retry later",
-			})
-			if err != nil {
-				log.Printf("agent: encode command queue overflow reply for %s: %v", env.ID, err)
-				continue
-			}
-			session, _ := ctx.Value(clientSessionContextKey{}).(uint64)
-			select {
-			case <-ctx.Done():
-				return ctx.Err()
-			case c.controlSend <- sessionEnvelope{session: session, env: out}:
-			default:
-				log.Printf("agent: control queue full; dropping overflow reply for command %s without disconnecting", env.ID)
-			}
+			c.sendQueueFullReply(ctx, env.ID)
 		}
+	}
+}
+
+func (c *Client) sendQueueFullReply(ctx context.Context, id string) {
+	out, err := protocol.NewEnvelope(protocol.EvtCommandResult, id, protocol.CommandResultEvt{
+		ID: id, OK: false, Error: "agent command queue is full; retry later",
+	})
+	if err != nil {
+		log.Printf("agent: encode command queue overflow reply for %s: %v", id, err)
+		return
+	}
+	session, _ := ctx.Value(clientSessionContextKey{}).(uint64)
+	select {
+	case <-ctx.Done():
+	case c.controlSend <- sessionEnvelope{session: session, env: out}:
+	default:
+		log.Printf("agent: control queue full; dropping overflow reply for command %s without disconnecting", id)
 	}
 }
 

@@ -51,6 +51,7 @@ func New(cfg Config) *Agent {
 	a.client.Register = a.register
 	a.client.Heartbeat = a.heartbeat
 	a.client.OnCommand = a.onCommand
+	a.client.IsMutatingCommand = commandMutates
 	a.client.OnTrafficAck = a.traffic.acknowledgeReport
 	a.client.OnConnected = func() {
 		if err := markAgentReady(a.cfg.AgentVersion); err != nil {
@@ -247,8 +248,11 @@ func (a *Agent) onCommand(ctx context.Context, env protocol.Envelope) protocol.C
 		out, err := InstallSingbox(ctx, c.Channel, c.Version, c.Method)
 		if err != nil {
 			a.client.SendEventForContext(ctx, protocol.EvtProgress, env.ID, protocol.ProgressEvt{ID: env.ID, Line: err.Error(), Stream: "stderr"})
+			return cmdResult(env.ID, out, err)
 		}
-		return cmdResult(env.ID, out, err)
+		_, ver := DetectVersion(ctx)
+		data, _ := json.Marshal(protocol.InstallSingboxData{SingboxVersion: ver})
+		return protocol.CommandResultEvt{ID: env.ID, OK: true, Output: out, Data: data}
 
 	case protocol.CmdApplyConfig:
 		var c protocol.ApplyConfigCmd
@@ -406,12 +410,8 @@ func (a *Agent) publicAddresses(ctx context.Context, force bool) publicAddresses
 		a.addressMu.Lock()
 		if ctx.Err() == nil && (addresses.IPv4 != nil || addresses.IPv6 != nil) {
 			a.addressCached = addresses
-			if addresses.IPv4 != nil {
-				a.addressProbeAt = time.Now()
-				a.addressFailureAt = time.Time{}
-			} else {
-				a.addressFailureAt = time.Now()
-			}
+			a.addressProbeAt = time.Now()
+			a.addressFailureAt = time.Time{}
 		} else {
 			a.addressFailureAt = time.Now()
 		}

@@ -13,7 +13,7 @@
  *    cached copy only answers when the backend is genuinely unreachable.
  * 4. Everything else (icons, manifest, logos) revalidates in the background.
  */
-const VERSION = 'v2'
+const VERSION = 'v3'
 const SHELL_CACHE = `sbp-shell-${VERSION}`
 const ASSET_CACHE = `sbp-assets-${VERSION}`
 const CURRENT_CACHES = [SHELL_CACHE, ASSET_CACHE]
@@ -96,7 +96,7 @@ self.addEventListener('fetch', (event) => {
 
 async function handleNavigation(request) {
   try {
-    const response = await fetch(request, { cache: 'no-cache' })
+    const response = await fetch(request)
     // Only a real HTML shell is worth keeping; a plain-text "backend is
     // running" placeholder or an error page must not become the offline app.
     const type = response.headers.get('Content-Type') || ''

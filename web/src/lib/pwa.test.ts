@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest'
+import swSource from '../../public/sw.js?raw'
 import {
   DISPLAY_MODE_STANDALONE,
   isSecureContextForWorker,
@@ -75,5 +76,66 @@ describe('shouldRegisterServiceWorker', () => {
   it('skips insecure origins', () => {
     const insecure = fakeWindow({ protocol: 'http:', hostname: 'node.hannn.de' })
     expect(shouldRegisterServiceWorker(insecure, true)).toBe(false)
+  })
+})
+
+describe('public/sw.js navigation handling', () => {
+  it('fetches navigate requests without RequestInit so WHATWG Fetch does not throw', async () => {
+    const listeners = new Map<string, (event: any) => void>()
+    const store = new Map<string, Map<string, Response>>()
+    const cachesStub = {
+      keys: async () => [...store.keys()],
+      delete: async (name: string) => store.delete(name),
+      open: async (name: string) => {
+        let bucket = store.get(name)
+        if (!bucket) {
+          bucket = new Map()
+          store.set(name, bucket)
+        }
+        return {
+          match: async (key: Request | string) => bucket!.get(typeof key === 'string' ? key : key.url),
+          put: async (key: Request | string, resp: Response) => {
+            bucket!.set(typeof key === 'string' ? key : key.url, resp)
+          },
+          keys: async () => [...bucket!.keys()],
+          delete: async (key: string) => bucket!.delete(key),
+        }
+      },
+    }
+
+    const fetchStub = async (input: any, init?: RequestInit) => {
+      // WHATWG Fetch Standard: constructing/fetching a navigate Request with a
+      // non-empty RequestInit synchronously throws TypeError in all browsers.
+      if (input && typeof input === 'object' && input.mode === 'navigate' && init !== undefined) {
+        throw new TypeError("Cannot construct a Request with a Request whose mode is 'navigate' and a non-empty RequestInit.")
+      }
+      return new Response('<!doctype html><title>SingBox Panel</title>', {
+        status: 200,
+        headers: { 'Content-Type': 'text/html; charset=utf-8' },
+      })
+    }
+
+    const selfStub = {
+      location: new URL('https://panel.example.com/sw.js'),
+      skipWaiting: async () => {},
+      clients: { claim: async () => {} },
+      addEventListener: (type: string, fn: (event: any) => void) => listeners.set(type, fn),
+    }
+    // Evaluate the worker script in an isolated scope with spec-checked globals.
+    const runWorker = new Function('self', 'caches', 'fetch', 'URL', 'Response', swSource)
+    runWorker(selfStub, cachesStub, fetchStub, URL, Response)
+
+    const onFetch = listeners.get('fetch')
+    expect(onFetch).toBeTypeOf('function')
+
+    let responded: Promise<Response> | undefined
+    onFetch!({
+      request: { method: 'GET', url: 'https://panel.example.com/admin/servers', mode: 'navigate' },
+      respondWith: (p: Promise<Response>) => { responded = p },
+    })
+    expect(responded).toBeDefined()
+    const res = await responded!
+    expect(res.status).toBe(200)
+    expect(await res.text()).toContain('SingBox Panel')
   })
 })

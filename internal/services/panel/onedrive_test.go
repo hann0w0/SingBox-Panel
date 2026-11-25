@@ -681,3 +681,183 @@ func TestOneDriveStatusIsReadOnlyAndDoesNotRequireMaintenanceLock(t *testing.T) 
 		t.Fatal("read-only status query created remote backup folder")
 	}
 }
+
+func TestValidateOneDriveUploadURLAcceptsPersonalAndSovereignDomains(t *testing.T) {
+	accepted := []string{
+		"https://my.microsoftpersonalcontent.com/_api/v2.0/drives/b!abc/items/01ABC/uploadSession?guid=%271234%27&overwrite=True&tempauth=v1.token",
+		"https://sn3302.up.1drv.com/up/fe6987415ace7X4e1eF866337",
+		"https://public.dm.files.1drv.com/session",
+		"https://contoso-my.sharepoint.com/_api/v2.0/drives/123/items/456/uploadSession",
+		"https://contoso-my.sharepoint.cn/_api/v2.0/drives/123/items/456/uploadSession",
+		"https://contoso-my.sharepoint.us/_api/v2.0/drives/123/items/456/uploadSession",
+		"https://onedrive.cloud.microsoft/_api/v2.0/drives/123/items/456/uploadSession",
+		"https://eastasia1-mediap.svc.ms/uploadSession",
+		"https://storage.live.com/uploadSession",
+		"https://account.blob.core.windows.net/container/blob?sig=abc",
+	}
+	for _, raw := range accepted {
+		got, err := validateOneDriveUploadURL(raw)
+		if err != nil {
+			t.Fatalf("validateOneDriveUploadURL(%q) returned unexpected error: %v", raw, err)
+		}
+		if got != raw {
+			t.Fatalf("validateOneDriveUploadURL(%q) altered URL to %q", raw, got)
+		}
+	}
+
+	rejected := []struct {
+		raw        string
+		wantSubstr string
+		forbid     string
+	}{
+		{raw: "http://my.microsoftpersonalcontent.com/upload", wantSubstr: "HTTPS"},
+		{raw: "https://user:pass@my.microsoftpersonalcontent.com/upload", wantSubstr: "用户信息"},
+		{raw: "https://my.microsoftpersonalcontent.com/upload#frag", wantSubstr: "片段"},
+		{raw: "https://169.254.169.254/upload", wantSubstr: "IP"},
+		{raw: "https://evil-microsoftpersonalcontent.com/upload?tempauth=secret-token", wantSubstr: "evil-microsoftpersonalcontent.com", forbid: "secret-token"},
+		{raw: "https://my.microsoftpersonalcontent.com.evil.com/upload?tempauth=secret-token", wantSubstr: "my.microsoftpersonalcontent.com.evil.com", forbid: "secret-token"},
+	}
+	for _, tc := range rejected {
+		_, err := validateOneDriveUploadURL(tc.raw)
+		if err == nil {
+			t.Fatalf("validateOneDriveUploadURL(%q) unexpectedly succeeded", tc.raw)
+		}
+		if !strings.Contains(err.Error(), tc.wantSubstr) {
+			t.Fatalf("validateOneDriveUploadURL(%q) error = %q, want substring %q", tc.raw, err.Error(), tc.wantSubstr)
+		}
+		if tc.forbid != "" && strings.Contains(err.Error(), tc.forbid) {
+			t.Fatalf("validateOneDriveUploadURL(%q) leaked %q in error %q", tc.raw, tc.forbid, err.Error())
+		}
+	}
+}
+
+func TestOneDriveRestoreFollowsRedirectAndMigratesV43BackupWithCursors(t *testing.T) {
+	oldOAuthURL, oldGraphURL := oneDriveOAuthBaseURL, oneDriveGraphBaseURL
+	defer func() {
+		oneDriveOAuthBaseURL = oldOAuthURL
+		oneDriveGraphBaseURL = oldGraphURL
+	}()
+
+	// Build a schema-v43 (v1.0.17) backup archive with pre-v45 traffic_report_cursors
+	// (no updated_at column) and real backup.json metadata.
+	srcDir := t.TempDir()
+	srcDBPath := filepath.Join(srcDir, "singbox-panel.db")
+	srcDB := testDBAt(t, srcDBPath)
+	if err := srcDB.AutoMigrate(&model.SchemaMigration{}); err != nil {
+		t.Fatal(err)
+	}
+	for _, m := range applicationMigrations {
+		if m.version > 43 {
+			continue
+		}
+		if err := srcDB.Create(&model.SchemaMigration{Version: m.version, Name: m.name, AppliedAt: time.Now()}).Error; err != nil {
+			t.Fatal(err)
+		}
+	}
+	// Recreate traffic_report_cursors in its v1.0.17 shape (without updated_at).
+	if err := srcDB.Exec(`DROP TABLE IF EXISTS traffic_report_cursors`).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := srcDB.Exec(`CREATE TABLE traffic_report_cursors (server_id integer, session text, sequence integer NOT NULL, PRIMARY KEY (server_id, session))`).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := srcDB.Exec(`INSERT INTO traffic_report_cursors (server_id, session, sequence) VALUES (1, 'sess-v1017', 42)`).Error; err != nil {
+		t.Fatal(err)
+	}
+	srv := model.Server{Name: "from-v1017", AgentToken: "agent-v1017"}
+	if err := srcDB.Create(&srv).Error; err != nil {
+		t.Fatal(err)
+	}
+	adminHash, err := hashPassword("v1017-admin-pass")
+	if err != nil {
+		t.Fatal(err)
+	}
+	admin := model.User{
+		Email: "admin", Password: adminHash, Role: model.RoleAdmin,
+		Enabled: true, SubToken: "sub-v1017", ProxyToken: "proxy-v1017",
+		ServerIDs: []uint{srv.ID},
+	}
+	if err := srcDB.Create(&admin).Error; err != nil {
+		t.Fatal(err)
+	}
+	srcApp := &App{
+		cfg:     config.PanelConfig{JWTSecret: testRestoredJWTSecret, Database: config.DatabaseConfig{Driver: "sqlite", DSN: srcDBPath}},
+		db:      srcDB,
+		version: "v1.0.17",
+	}
+	archivePath, _, cleanup, err := srcApp.createBackupArchive()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer cleanup()
+	archiveBytes, err := os.ReadFile(archivePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if sqlDB, err := srcDB.DB(); err == nil {
+		_ = sqlDB.Close()
+	}
+
+	var downloadServer *httptest.Server
+	downloadServer = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Header.Get("Authorization") != "" {
+			t.Errorf("redirected download request leaked Authorization header")
+		}
+		w.Header().Set("Content-Length", strconv.Itoa(len(archiveBytes)))
+		_, _ = w.Write(archiveBytes)
+	}))
+	defer downloadServer.Close()
+	redirectBase := strings.Replace(downloadServer.URL, "http://127.0.0.1:", "http://localhost:", 1)
+
+	graphServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/token":
+			_ = json.NewEncoder(w).Encode(oneDriveTokenResponse{AccessToken: "access-token", RefreshToken: "refresh-token"})
+		case "/me/drive/root:/singbox-panel-backups:":
+			_ = json.NewEncoder(w).Encode(oneDriveFile{ID: "folder-id", Name: oneDriveBackupFolder, Folder: &struct{}{}})
+		case "/me/drive/items/folder-id/children":
+			_ = json.NewEncoder(w).Encode(map[string]any{"value": []map[string]any{{
+				"id": "backup-id", "name": oneDriveBackupName, "size": len(archiveBytes), "file": map[string]any{},
+			}}})
+		case "/me/drive/items/backup-id/content":
+			http.Redirect(w, r, redirectBase+"/download?tempauth=1", http.StatusFound)
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer graphServer.Close()
+	oneDriveOAuthBaseURL = graphServer.URL
+	oneDriveGraphBaseURL = graphServer.URL
+
+	liveDir := t.TempDir()
+	liveDBPath := filepath.Join(liveDir, "singbox-panel.db")
+	liveDB := testDBAt(t, liveDBPath)
+	a := &App{
+		cfg: config.PanelConfig{JWTSecret: testLiveJWTSecret, Database: config.DatabaseConfig{Driver: "sqlite", DSN: liveDBPath}},
+		db:  liveDB,
+	}
+	if err := a.saveOneDriveSettings(oneDriveSettings{RefreshToken: "refresh-token", AutoSync: true}); err != nil {
+		t.Fatal(err)
+	}
+
+	origRestart := scheduleRestartFn
+	scheduleRestartFn = func() {}
+	t.Cleanup(func() { scheduleRestartFn = origRestart })
+
+	router := gin.New()
+	router.POST("/onedrive/backups/:id/restore", a.restoreOneDriveBackup)
+	rec := httptest.NewRecorder()
+	router.ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/onedrive/backups/backup-id/restore", nil))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("restoreOneDriveBackup status = %d body = %s", rec.Code, rec.Body.String())
+	}
+
+	restored := testDBAt(t, liveDBPath)
+	var cursor model.TrafficReportCursor
+	if err := restored.Where("server_id = ? AND session = ?", 1, "sess-v1017").First(&cursor).Error; err != nil {
+		t.Fatalf("restored cursor query failed: %v", err)
+	}
+	if cursor.Sequence != 42 || cursor.UpdatedAt.IsZero() {
+		t.Fatalf("restored cursor = %+v, want sequence=42 with backfilled updated_at", cursor)
+	}
+}

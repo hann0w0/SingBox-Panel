@@ -792,21 +792,54 @@ func (a *App) oneDriveBackupByID(id string) (oneDriveFile, error) {
 	return a.oneDriveBackupByIDContext(context.Background(), id)
 }
 
+var oneDriveTrustedUploadDomains = []string{
+	"onedrive.com",
+	"1drv.com",
+	"microsoftpersonalcontent.com",
+	"microsoftusercontent.com",
+	"sharepoint.com",
+	"sharepoint.cn",
+	"sharepoint.de",
+	"sharepoint.us",
+	"sharepoint-mil.us",
+	"sharepointonline.com",
+	"cloud.microsoft",
+	"microsoft.com",
+	"microsoft.us",
+	"live.com",
+	"office.com",
+	"office.net",
+	"office365.com",
+	"svc.ms",
+	"windows.net",
+	"chinacloudapi.cn",
+	"usgovcloudapi.net",
+}
+
+func isTrustedOneDriveUploadHost(host string) bool {
+	for _, domain := range oneDriveTrustedUploadDomains {
+		if host == domain || strings.HasSuffix(host, "."+domain) {
+			return true
+		}
+	}
+	return false
+}
+
 func validateOneDriveUploadURL(raw string) (string, error) {
 	trimmed := strings.TrimSpace(raw)
 	if trimmed == "" || strings.ContainsAny(trimmed, "\r\n") {
 		return "", errors.New("OneDrive 上传地址无效")
 	}
-	u, err := url.ParseRequestURI(trimmed)
+	u, err := url.Parse(trimmed)
 	if err != nil || u == nil || u.Scheme == "" || u.Host == "" {
 		return "", errors.New("OneDrive 上传地址格式无效")
 	}
-	if u.User != nil || u.Fragment != "" {
+	if u.User != nil || u.Fragment != "" || strings.Contains(trimmed, "#") {
 		return "", errors.New("OneDrive 上传地址不能包含用户信息或片段")
 	}
 	if base, err := url.Parse(oneDriveGraphBaseURL); err == nil && base.Scheme != "" && base.Host != "" &&
 		strings.EqualFold(u.Scheme, base.Scheme) && strings.EqualFold(u.Host, base.Host) {
-		return u.String(), nil
+		return trimmed, nil
 	}
 	if !strings.EqualFold(u.Scheme, "https") {
 		return "", errors.New("OneDrive 上传地址必须使用 HTTPS")
@@ -818,17 +851,10 @@ func validateOneDriveUploadURL(raw string) (string, error) {
 	if _, err := netip.ParseAddr(host); err == nil {
 		return "", errors.New("OneDrive 上传地址不能使用 IP 字面量")
 	}
-	trusted := false
-	for _, suffix := range []string{".onedrive.com", ".1drv.com", ".sharepoint.com", ".microsoft.com", ".live.com", ".office.com", ".windows.net"} {
-		if host == strings.TrimPrefix(suffix, ".") || strings.HasSuffix(host, suffix) {
-			trusted = true
-			break
-		}
+	if !isTrustedOneDriveUploadHost(host) {
+		return "", fmt.Errorf("OneDrive 上传地址域名不受信任（%s）", host)
 	}
-	if !trusted {
-		return "", errors.New("OneDrive 上传地址域名不受信任")
-	}
-	return u.String(), nil
+	return trimmed, nil
 }
 
 func (a *App) uploadOneDriveBackupContext(ctx context.Context, archivePath string) error {

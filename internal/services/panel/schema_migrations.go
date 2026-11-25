@@ -777,7 +777,12 @@ func runSchemaMigrations(db *gorm.DB, cfg config.DatabaseConfig) error {
 	}
 
 	for _, migration := range pending {
-		dirty := model.SchemaMigration{Version: migration.version, Name: migration.name, Dirty: true}
+		dirty := model.SchemaMigration{
+			Version:   migration.version,
+			Name:      migration.name,
+			Dirty:     true,
+			AppliedAt: time.Now().UTC(),
+		}
 		if err := db.Create(&dirty).Error; err != nil {
 			return fmt.Errorf("mark schema migration %d dirty: %w", migration.version, err)
 		}
@@ -787,7 +792,7 @@ func runSchemaMigrations(db *gorm.DB, cfg config.DatabaseConfig) error {
 			}
 			return tx.Model(&model.SchemaMigration{}).Where("version = ?", migration.version).Updates(map[string]any{
 				"dirty":      false,
-				"applied_at": time.Now(),
+				"applied_at": time.Now().UTC(),
 			}).Error
 		})
 		if err != nil {

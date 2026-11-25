@@ -762,3 +762,21 @@ func TestMultipleInterruptedMigrationsAreRejected(t *testing.T) {
 		t.Fatal("two interrupted migrations must stop startup")
 	}
 }
+
+func TestSchemaMigrationsNeverInsertZeroAppliedAt(t *testing.T) {
+	databaseFile := filepath.Join(t.TempDir(), "strict-dates.db")
+	db, err := gorm.Open(sqlite.Open(databaseFile), &gorm.Config{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Callback().Create().Before("gorm:create").Register("strict_mysql_no_zero_date", func(tx *gorm.DB) {
+		if sm, ok := tx.Statement.Dest.(*model.SchemaMigration); ok && sm.AppliedAt.IsZero() {
+			tx.AddError(os.ErrInvalid)
+		}
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := runSchemaMigrations(db, config.DatabaseConfig{Driver: "mysql", DSN: databaseFile, SkipMigrationBackup: true}); err != nil {
+		t.Fatalf("runSchemaMigrations inserted zero AppliedAt (MySQL NO_ZERO_DATE failure): %v", err)
+	}
+}

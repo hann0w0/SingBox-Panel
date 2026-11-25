@@ -570,33 +570,28 @@ func (o *Orchestrator) applyRawConfigUnlocked(ctx context.Context, serverID uint
 	if err != nil {
 		return protocol.CommandResultEvt{}, err
 	}
-	var old model.Server
-	if err := o.db.Select("id", "config_mode", "raw_config", "config_residual", "config_overlay", "config_initialized").First(&old, serverID).Error; err != nil {
+	var existing model.Server
+	if err := o.db.Select("id").First(&existing, serverID).Error; err != nil {
 		return protocol.CommandResultEvt{}, err
+	}
+	// Apply on the Agent before flipping config_mode to raw so any concurrent
+	// EvtTraffic arriving while the previous managed config is still active does
+	// not drop per-user traffic deltas.
+	res, err := o.hub.SendCommand(ctx, serverID, protocol.CmdApplyConfig, command)
+	if err != nil {
+		return res, err
 	}
 	if err := o.db.Model(&model.Server{}).Where("id = ?", serverID).Updates(map[string]any{
 		"config_mode": model.ConfigModeRaw,
 		"raw_config":  model.JSONText(append([]byte(nil), raw...)),
 		// The residual belongs to the previous managed view; raw mode re-applies
 		// this JSON verbatim, so leaving a stale patch would be misleading.
-		"config_residual": model.JSONText(nil),
-		"config_overlay":  model.JSONText(nil),
+		"config_residual":         model.JSONText(nil),
+		"config_overlay":          model.JSONText(nil),
+		"config_applied_revision": gorm.Expr("config_revision"),
 	}).Error; err != nil {
-		return protocol.CommandResultEvt{}, err
-	}
-	res, err := o.hub.SendCommand(ctx, serverID, protocol.CmdApplyConfig, command)
-	if err != nil {
-		if rollbackErr := o.db.Model(&model.Server{}).Where("id = ?", serverID).Updates(map[string]any{
-			"config_mode":     old.ConfigMode,
-			"raw_config":      old.RawConfig,
-			"config_residual": old.ConfigResidual,
-			"config_overlay":  old.ConfigOverlay,
-		}).Error; rollbackErr != nil {
-			return res, fmt.Errorf("apply raw config: %v; restore raw snapshot: %w", err, rollbackErr)
-		}
 		return res, err
 	}
-	_ = o.db.Model(&model.Server{}).Where("id = ?", serverID).Update("config_applied_revision", gorm.Expr("config_revision")).Error
 	return res, nil
 }
 
@@ -647,12 +642,12 @@ func (o *Orchestrator) SwitchToManagedConfig(ctx context.Context, serverID uint)
 	}
 
 	var command protocol.ApplyConfigCmd
+	if parsed != nil {
+		app.userAccessMu.Lock()
+	}
 	dryErr := o.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		if parsed != nil {
-			app.userAccessMu.Lock()
-			_, importErr := app.applyImportTx(tx, &old, parsed, old.RawConfig)
-			app.userAccessMu.Unlock()
-			if importErr != nil {
+			if _, importErr := app.applyImportTx(tx, &old, parsed, old.RawConfig); importErr != nil {
 				return importErr
 			}
 		} else {
@@ -678,6 +673,9 @@ func (o *Orchestrator) SwitchToManagedConfig(ctx context.Context, serverID uint)
 		}
 		return errDryRunRollback
 	})
+	if parsed != nil {
+		app.userAccessMu.Unlock()
+	}
 	if dryErr != nil && !errors.Is(dryErr, errDryRunRollback) {
 		return dryErr
 	}

@@ -146,7 +146,8 @@ func migrateRawConfigOverlays(tx *gorm.DB) error {
 		return err
 	}
 	for _, srv := range servers {
-		if len(srv.RawConfig) == 0 {
+		trimmed := strings.TrimSpace(string(srv.RawConfig))
+		if trimmed == "" || trimmed == "null" {
 			continue
 		}
 		parsed, err := singbox.ParseServerConfig(srv.RawConfig)

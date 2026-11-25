@@ -5,10 +5,14 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
+	"time"
 
 	"github.com/gin-gonic/gin"
+	"gorm.io/gorm"
 
 	"github.com/hann0w0/singbox-panel/internal/domain/model"
 	"github.com/hann0w0/singbox-panel/internal/domain/singbox"
@@ -154,6 +158,21 @@ func TestMigrateRawConfigOverlayRetainsSourceAndUnlocks(t *testing.T) {
 	}
 }
 
+func TestMigrateRawConfigOverlaySkipsNullAndBlankRawConfig(t *testing.T) {
+	db := testDB(t)
+	sNull := model.Server{Name: "raw-null", AgentToken: "raw-null", ConfigMode: model.ConfigModeRaw, RawConfig: model.JSONText("null")}
+	sBlank := model.Server{Name: "raw-blank", AgentToken: "raw-blank", ConfigMode: model.ConfigModeRaw, RawConfig: model.JSONText("   ")}
+	if err := db.Create(&sNull).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Create(&sBlank).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Transaction(migrateRawConfigOverlays); err != nil {
+		t.Fatalf("migrateRawConfigOverlays failed on null/blank RawConfig: %v", err)
+	}
+}
+
 func TestConfigOverlayAPIEditAndCustomReferenceProtection(t *testing.T) {
 	db := testDB(t)
 	srv := model.Server{Name: "api-overlay", AgentToken: "api-overlay"}
@@ -290,5 +309,60 @@ func TestConfigOverlayRejectsHiddenPrivateOutboundScopeChanges(t *testing.T) {
 	}
 	if _, err := f.app.orch.BuildServerConfig(&f.server); err == nil || !strings.Contains(err.Error(), "取反") {
 		t.Fatalf("merged private scope was not checked: %v", err)
+	}
+}
+
+func TestSwitchToManagedConfigDoesNotDeadlockWithUserAccessMuUnderSingleConnSQLite(t *testing.T) {
+	dbPath := filepath.Join(t.TempDir(), "single-conn.db")
+	db := testDBAt(t, dbPath)
+	sqlDB, err := db.DB()
+	if err != nil {
+		t.Fatal(err)
+	}
+	sqlDB.SetMaxOpenConns(1)
+	sqlDB.SetMaxIdleConns(1)
+
+	raw := model.JSONText(`{"inbounds":[{"type":"vless","tag":"in-vless","listen":"::","listen_port":443}],"outbounds":[{"type":"direct","tag":"direct"}]}`)
+	srv := model.Server{Name: "lock-order", AgentToken: "lock-order", ConfigMode: model.ConfigModeRaw, RawConfig: raw}
+	if err := db.Create(&srv).Error; err != nil {
+		t.Fatal(err)
+	}
+	hub := NewHub(db)
+	orch := NewOrchestrator(db, hub)
+	app := &App{db: db, hub: hub, orch: orch}
+	orch.app = app
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	var wg sync.WaitGroup
+	wg.Add(2)
+	go func() {
+		defer wg.Done()
+		for i := 0; i < 25; i++ {
+			_ = orch.SwitchToManagedConfig(ctx, srv.ID)
+		}
+	}()
+	go func() {
+		defer wg.Done()
+		for i := 0; i < 25; i++ {
+			app.userAccessMu.Lock()
+			_ = db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+				var count int64
+				return tx.Model(&model.User{}).Count(&count).Error
+			})
+			app.userAccessMu.Unlock()
+		}
+	}()
+
+	done := make(chan struct{})
+	go func() {
+		wg.Wait()
+		close(done)
+	}()
+	select {
+	case <-done:
+	case <-ctx.Done():
+		t.Fatal("SwitchToManagedConfig deadlocked with userAccessMu under MaxOpenConns(1)")
 	}
 }

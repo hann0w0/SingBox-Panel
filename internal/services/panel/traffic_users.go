@@ -195,6 +195,15 @@ func writeUserTrafficBuckets(db *gorm.DB, values map[userBucketKey]userBucketVal
 	if len(values) == 0 {
 		return nil
 	}
+	return db.Transaction(func(tx *gorm.DB) error {
+		return upsertUserTrafficBucketsWithDB(tx, values)
+	})
+}
+
+func upsertUserTrafficBucketsWithDB(tx *gorm.DB, values map[userBucketKey]userBucketValue) error {
+	if len(values) == 0 {
+		return nil
+	}
 	userIDs := make([]uint, 0, len(values))
 	seen := map[uint]bool{}
 	for key := range values {
@@ -203,44 +212,42 @@ func writeUserTrafficBuckets(db *gorm.DB, values map[userBucketKey]userBucketVal
 			userIDs = append(userIDs, key.UserID)
 		}
 	}
-	return db.Transaction(func(tx *gorm.DB) error {
-		var existing []uint
-		if err := tx.Model(&model.User{}).Where("id IN ?", userIDs).Pluck("id", &existing).Error; err != nil {
-			return err
+	var existing []uint
+	if err := tx.Model(&model.User{}).Where("id IN ?", userIDs).Pluck("id", &existing).Error; err != nil {
+		return err
+	}
+	alive := make(map[uint]bool, len(existing))
+	for _, id := range existing {
+		alive[id] = true
+	}
+	rows := make([]model.TrafficUserHourly, 0, len(values))
+	for key, value := range values {
+		if !alive[key.UserID] || (value.Upload == 0 && value.Download == 0) {
+			continue
 		}
-		alive := make(map[uint]bool, len(existing))
-		for _, id := range existing {
-			alive[id] = true
-		}
-		rows := make([]model.TrafficUserHourly, 0, len(values))
-		for key, value := range values {
-			if !alive[key.UserID] || (value.Upload == 0 && value.Download == 0) {
-				continue
-			}
-			rows = append(rows, model.TrafficUserHourly{
-				ServerID: key.ServerID, InboundID: key.InboundID, UserID: key.UserID, Bucket: key.Bucket,
-				Upload: value.Upload, Download: value.Download,
-			})
-		}
-		if len(rows) == 0 {
-			return nil
-		}
-		sort.Slice(rows, func(i, j int) bool {
-			a, b := rows[i], rows[j]
-			if a.ServerID != b.ServerID {
-				return a.ServerID < b.ServerID
-			}
-			if a.InboundID != b.InboundID {
-				return a.InboundID < b.InboundID
-			}
-			if a.UserID != b.UserID {
-				return a.UserID < b.UserID
-			}
-			return a.Bucket.Before(b.Bucket)
+		rows = append(rows, model.TrafficUserHourly{
+			ServerID: key.ServerID, InboundID: key.InboundID, UserID: key.UserID, Bucket: key.Bucket,
+			Upload: value.Upload, Download: value.Download,
 		})
-		return tx.Clauses(clause.OnConflict{Columns: userTrafficConflictColumns, DoUpdates: userTrafficUpsertSet(tx)}).
-			CreateInBatches(&rows, 200).Error
+	}
+	if len(rows) == 0 {
+		return nil
+	}
+	sort.Slice(rows, func(i, j int) bool {
+		a, b := rows[i], rows[j]
+		if a.ServerID != b.ServerID {
+			return a.ServerID < b.ServerID
+		}
+		if a.InboundID != b.InboundID {
+			return a.InboundID < b.InboundID
+		}
+		if a.UserID != b.UserID {
+			return a.UserID < b.UserID
+		}
+		return a.Bucket.Before(b.Bucket)
 	})
+	return tx.Clauses(clause.OnConflict{Columns: userTrafficConflictColumns, DoUpdates: userTrafficUpsertSet(tx)}).
+		CreateInBatches(&rows, 200).Error
 }
 
 // ---------- admin read path ----------

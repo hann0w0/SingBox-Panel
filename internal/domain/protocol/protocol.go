@@ -226,8 +226,9 @@ type TrafficReport struct {
 }
 
 type TrafficAck struct {
-	Session  string `json:"session"`
-	Sequence uint64 `json:"sequence"`
+	Session    string `json:"session"`
+	Sequence   uint64 `json:"sequence"`
+	ServerTime int64  `json:"server_time,omitempty"`
 }
 
 // TrafficTimeBucket keeps collection time even when the control connection

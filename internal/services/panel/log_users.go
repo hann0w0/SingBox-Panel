@@ -85,10 +85,14 @@ func (r *logUserResolver) load(ctx context.Context) error {
 			name = "u" + strconv.FormatUint(uint64(user.ID), 10)
 		}
 		// Preserve the single-line [user] log format for legacy or unusual names.
-		quoted := strconv.QuoteToGraphic(name)
-		r.names[row.Name] = strings.NewReplacer("[", `\u005b`, "]", `\u005d`).Replace(quoted[1 : len(quoted)-1])
+		r.names[row.Name] = sanitizeLogUserLabel(name)
 	}
 	return nil
+}
+
+func sanitizeLogUserLabel(name string) string {
+	quoted := strconv.QuoteToGraphic(name)
+	return strings.NewReplacer("[", `\u005b`, "]", `\u005d`).Replace(quoted[1 : len(quoted)-1])
 }
 
 // forwardUserDisplayName resolves a derived forward identity to the owning
@@ -124,7 +128,7 @@ func (r *logUserResolver) forwardUserDisplayName(ctx context.Context, token stri
 	if name == "" {
 		name = "u" + parts[0]
 	}
-	return name + " → 转发"
+	return sanitizeLogUserLabel(name) + " → 转发"
 }
 
 func (r *logUserResolver) event(ctx context.Context, event liveEvent) liveEvent {

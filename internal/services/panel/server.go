@@ -7,6 +7,7 @@ import (
 	"io/fs"
 	"log"
 	"mime"
+	"net"
 	"net/http"
 	"net/netip"
 	"net/url"
@@ -526,6 +527,7 @@ func (a *App) Run(ctx context.Context) error {
 	go a.runOneDriveBackupScheduler(ctx)
 
 	srv := newPanelHTTPServer(a.cfg.Listen, a.engine)
+	srv.BaseContext = func(net.Listener) context.Context { return ctx }
 	go func() {
 		<-ctx.Done()
 		shutCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
@@ -535,8 +537,17 @@ func (a *App) Run(ctx context.Context) error {
 
 	log.Printf("panel listening on %s (base URL %s)", a.cfg.Listen, a.cfg.BaseURL)
 	err := srv.ListenAndServe()
+	a.stopLogSessions()
+	if a.hub != nil {
+		a.hub.Close()
+	}
 	// Persist buffered traffic history before the process exits.
 	a.flushTraffic()
+	if a.db != nil {
+		if sqlDB, dbErr := a.db.DB(); dbErr == nil {
+			_ = sqlDB.Close()
+		}
+	}
 	if err != nil && err != http.ErrServerClosed {
 		return err
 	}

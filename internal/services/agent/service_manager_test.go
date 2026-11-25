@@ -205,7 +205,7 @@ func TestOpenRCServiceManagerUsesNativeCommandsAndLogFile(t *testing.T) {
 		t.Fatalf("OpenRC enable call missing: %q", calls)
 	}
 	command, args := manager.LogCommand(40, true)
-	if command != "tail" || !reflect.DeepEqual(args, []string{"-n", "40", "-f", openRCSingboxLog}) {
+	if command != "tail" || !reflect.DeepEqual(args, []string{"-n", "40", "-F", openRCSingboxLog}) {
 		t.Fatalf("OpenRC log command = %s %q", command, args)
 	}
 }

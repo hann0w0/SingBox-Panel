@@ -312,6 +312,12 @@ func upgradeWatchdogActive(ctx context.Context) bool {
 }
 
 func pidFileAlive(path string) bool {
+	return pidFileMatchesAt("/proc", path, "singbox-panel-agent-upgrade", func(pid int) bool {
+		return syscall.Kill(pid, 0) == nil
+	})
+}
+
+func pidFileMatchesAt(procRoot, path, cmdlineMarker string, aliveFn func(int) bool) bool {
 	raw, err := os.ReadFile(path)
 	if err != nil {
 		return false
@@ -320,7 +326,19 @@ func pidFileAlive(path string) bool {
 	if err != nil || pid <= 1 {
 		return false
 	}
-	return syscall.Kill(pid, 0) == nil
+	if aliveFn != nil && !aliveFn(pid) {
+		return false
+	}
+	if cmdlineMarker == "" {
+		return true
+	}
+	if info, err := os.Stat(procRoot); err == nil && info.IsDir() {
+		cmdline, err := os.ReadFile(filepath.Join(procRoot, strconv.Itoa(pid), "cmdline"))
+		if err != nil || !strings.Contains(strings.ReplaceAll(string(cmdline), "\x00", " "), cmdlineMarker) {
+			return false
+		}
+	}
+	return true
 }
 
 func scheduleAgentUpgrade(ctx context.Context, expectedSHA string) error {

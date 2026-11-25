@@ -163,6 +163,21 @@ func (h *Hub) IsOnline(serverID uint) bool {
 	return ok
 }
 
+// Close terminates all active agent WebSocket connections during server shutdown.
+func (h *Hub) Close() {
+	h.mu.RLock()
+	conns := make([]*agentConn, 0, len(h.conns))
+	for _, ac := range h.conns {
+		if ac != nil {
+			conns = append(conns, ac)
+		}
+	}
+	h.mu.RUnlock()
+	for _, ac := range conns {
+		ac.close()
+	}
+}
+
 // Disconnect closes a node connection after its database record has been
 // deleted. A removed Agent cannot reconnect because its token no longer exists.
 func (h *Hub) Disconnect(serverID uint) {
@@ -410,12 +425,24 @@ func (h *Hub) handleEvent(ac *agentConn, env protocol.Envelope) {
 	case protocol.EvtTraffic:
 		var e protocol.TrafficEvt
 		if env.Decode(&e) == nil && e.Traffic != nil {
-			if err := h.traffic.record(serverID, e.Traffic); err != nil {
-				log.Printf("traffic: record server %d: %v", serverID, err)
+			recordErr := h.traffic.record(serverID, e.Traffic)
+			if recordErr != nil && !errors.Is(recordErr, errFutureTrafficBucket) {
+				log.Printf("traffic: record server %d: %v", serverID, recordErr)
 				return
 			}
+			if recordErr != nil {
+				log.Printf("traffic: record server %d: %v", serverID, recordErr)
+			}
 			if report := e.Traffic.Report; e.Traffic.AccountingVersion >= 2 && report != nil {
-				ack, err := protocol.NewEnvelope(protocol.EvtTrafficAck, "", protocol.TrafficAck{Session: report.Session, Sequence: report.Sequence})
+				ackSeq := report.Sequence
+				if recordErr != nil {
+					ackSeq = 0
+				}
+				ack, err := protocol.NewEnvelope(protocol.EvtTrafficAck, "", protocol.TrafficAck{
+					Session:    report.Session,
+					Sequence:   ackSeq,
+					ServerTime: time.Now().UTC().Unix(),
+				})
 				if err == nil {
 					select {
 					case ac.send <- ack:
@@ -488,7 +515,6 @@ func (h *Hub) handleEvent(ac *agentConn, env protocol.Envelope) {
 		var e protocol.LogEvt
 		if env.Decode(&e) == nil {
 			h.live.publishLog(serverID, e)
-			log.Printf("agent[%d] %s: %s", serverID, e.Level, e.Msg)
 		}
 	}
 }

@@ -394,6 +394,15 @@ var trafficConflictColumns = []clause.Column{{Name: "server_id"}, {Name: "inboun
 
 // writeTrafficBuckets upserts minute buckets and their hourly rollups.
 func writeTrafficBuckets(db *gorm.DB, deltas []trafficBucketDelta) error {
+	if len(deltas) == 0 {
+		return nil
+	}
+	return db.Transaction(func(tx *gorm.DB) error {
+		return upsertTrafficBucketsWithDB(tx, deltas)
+	})
+}
+
+func upsertTrafficBucketsWithDB(tx *gorm.DB, deltas []trafficBucketDelta) error {
 	minuteByKey := map[trafficBucketKey]trafficBucketValue{}
 	hourlyByKey := map[trafficBucketKey]trafficBucketValue{}
 	for _, delta := range deltas {
@@ -449,17 +458,15 @@ func writeTrafficBuckets(db *gorm.DB, deltas []trafficBucketDelta) error {
 		return trafficRowLess(hourly[i].ServerID, hourly[i].InboundID, hourly[i].Bucket, hourly[j].ServerID, hourly[j].InboundID, hourly[j].Bucket)
 	})
 
-	return db.Transaction(func(tx *gorm.DB) error {
-		if err := tx.Clauses(clause.OnConflict{Columns: trafficConflictColumns, DoUpdates: trafficUpsertSet(tx, "traffic_records", false)}).
-			CreateInBatches(&minute, 200).Error; err != nil {
-			return fmt.Errorf("upsert minute buckets: %w", err)
-		}
-		if err := tx.Clauses(clause.OnConflict{Columns: trafficConflictColumns, DoUpdates: trafficUpsertSet(tx, "traffic_hourly", true)}).
-			CreateInBatches(&hourly, 200).Error; err != nil {
-			return fmt.Errorf("upsert hourly buckets: %w", err)
-		}
-		return nil
-	})
+	if err := tx.Clauses(clause.OnConflict{Columns: trafficConflictColumns, DoUpdates: trafficUpsertSet(tx, "traffic_records", false)}).
+		CreateInBatches(&minute, 200).Error; err != nil {
+		return fmt.Errorf("upsert minute buckets: %w", err)
+	}
+	if err := tx.Clauses(clause.OnConflict{Columns: trafficConflictColumns, DoUpdates: trafficUpsertSet(tx, "traffic_hourly", true)}).
+		CreateInBatches(&hourly, 200).Error; err != nil {
+		return fmt.Errorf("upsert hourly buckets: %w", err)
+	}
+	return nil
 }
 
 func trafficRowLess(aServer, aInbound uint, aBucket time.Time, bServer, bInbound uint, bBucket time.Time) bool {
@@ -849,7 +856,11 @@ func pruneTrafficRecords(db *gorm.DB, now time.Time) error {
 	if err := db.Where("bucket < ?", hourlyCutoff).Delete(&model.TrafficHourly{}).Error; err != nil {
 		return err
 	}
-	return db.Where("bucket < ?", hourlyCutoff).Delete(&model.TrafficUserHourly{}).Error
+	if err := db.Where("bucket < ?", hourlyCutoff).Delete(&model.TrafficUserHourly{}).Error; err != nil {
+		return err
+	}
+	cursorCutoff := now.UTC().Add(-14 * 24 * time.Hour)
+	return db.Where("updated_at < ?", cursorCutoff).Delete(&model.TrafficReportCursor{}).Error
 }
 
 // backfillTrafficHourly rebuilds hourly rollups from existing minute rows.

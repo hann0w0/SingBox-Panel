@@ -37,7 +37,24 @@ func resolveRestrictedOutbound(ctx context.Context, host string) ([]netip.Addr, 
 	return net.DefaultResolver.LookupNetIP(ctx, "ip", host)
 }
 
+func preferIPv6RestrictedOutbound() bool {
+	// Zero-packet UDP sockets consult only the kernel routing table.
+	if conn4, err := net.Dial("udp4", "1.1.1.1:53"); err == nil {
+		_ = conn4.Close()
+		return false
+	}
+	if conn6, err := net.Dial("udp6", "[2606:4700:4700::1111]:53"); err == nil {
+		_ = conn6.Close()
+		return true
+	}
+	return false
+}
+
 func prepareRestrictedOutbounds(ctx context.Context, raw []byte, tags []string, resolve restrictedOutboundResolver) ([]byte, error) {
+	return prepareRestrictedOutboundsWithPreference(ctx, raw, tags, resolve, false)
+}
+
+func prepareRestrictedOutboundsWithPreference(ctx context.Context, raw []byte, tags []string, resolve restrictedOutboundResolver, preferIPv6 bool) ([]byte, error) {
 	if len(tags) == 0 {
 		return raw, nil
 	}
@@ -83,7 +100,7 @@ func prepareRestrictedOutbounds(ctx context.Context, raw []byte, tags []string, 
 		if !found {
 			return nil, fmt.Errorf("restricted outbound %q is missing from config; regenerate the configuration", tag)
 		}
-		prepared, err := pinRestrictedOutbound(ctx, outbounds[index], tag, resolve)
+		prepared, err := pinRestrictedOutbound(ctx, outbounds[index], tag, resolve, preferIPv6)
 		if err != nil {
 			return nil, err
 		}
@@ -96,7 +113,7 @@ func prepareRestrictedOutbounds(ctx context.Context, raw []byte, tags []string, 
 	return json.Marshal(root)
 }
 
-func pinRestrictedOutbound(ctx context.Context, raw json.RawMessage, tag string, resolve restrictedOutboundResolver) (json.RawMessage, error) {
+func pinRestrictedOutbound(ctx context.Context, raw json.RawMessage, tag string, resolve restrictedOutboundResolver, preferIPv6 bool) (json.RawMessage, error) {
 	var outbound map[string]json.RawMessage
 	if err := json.Unmarshal(raw, &outbound); err != nil {
 		return nil, fmt.Errorf("restricted outbound %q has invalid settings: %w", tag, err)
@@ -150,6 +167,12 @@ func pinRestrictedOutbound(ctx context.Context, raw json.RawMessage, tag string,
 	}
 	slices.SortFunc(validated, func(left, right netip.Addr) int {
 		if left.Is4() != right.Is4() {
+			if preferIPv6 {
+				if left.Is6() {
+					return -1
+				}
+				return 1
+			}
 			if left.Is4() {
 				return -1
 			}
@@ -221,9 +244,33 @@ func pinRestrictedOutbound(ctx context.Context, raw json.RawMessage, tag string,
 				transport["host"], _ = json.Marshal(host)
 				outbound["transport"], _ = json.Marshal(transport)
 			}
+		case "http":
+			if !hasNonEmptyTransportHost(transport["host"]) {
+				transport["host"], _ = json.Marshal([]string{host})
+				outbound["transport"], _ = json.Marshal(transport)
+			}
 		}
 	}
 	return json.Marshal(outbound)
+}
+
+func hasNonEmptyTransportHost(raw json.RawMessage) bool {
+	if len(raw) == 0 {
+		return false
+	}
+	var single string
+	if json.Unmarshal(raw, &single) == nil {
+		return strings.TrimSpace(single) != ""
+	}
+	var list []string
+	if json.Unmarshal(raw, &list) == nil {
+		for _, item := range list {
+			if strings.TrimSpace(item) != "" {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 func publicRestrictedOutboundAddress(address netip.Addr) bool {

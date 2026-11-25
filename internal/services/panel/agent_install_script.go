@@ -267,7 +267,9 @@ if [ "$SERVICE_MANAGER" = systemd ]; then
   rm -f /etc/systemd/system/singbox-panel-agent-upgrade.service
 elif [ -f /run/singbox-panel-agent-upgrade.pid ]; then
   UPGRADE_PID="$(cat /run/singbox-panel-agent-upgrade.pid 2>/dev/null || true)"
-  if [ -n "$UPGRADE_PID" ]; then kill "$UPGRADE_PID" >/dev/null 2>&1 || true; fi
+  if [ -n "$UPGRADE_PID" ] && [ -r "/proc/$UPGRADE_PID/cmdline" ] && grep -aq 'singbox-panel-agent-upgrade' "/proc/$UPGRADE_PID/cmdline" 2>/dev/null; then
+    kill "$UPGRADE_PID" >/dev/null 2>&1 || true
+  fi
 fi
 rm -f /run/singbox-panel-agent-upgrade.sh /run/singbox-panel-agent-upgrade.pid
 
@@ -321,6 +323,7 @@ command="/usr/local/bin/singbox-panel-agent"
 command_args="--config /etc/singbox-panel-agent/agent.conf"
 command_user="root"
 pidfile="/run/singbox-panel-agent.pid"
+rc_cgroup_cleanup="NO"
 respawn_delay=5
 respawn_max=0
 output_log="/var/log/singbox-panel-agent.log"

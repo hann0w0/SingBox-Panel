@@ -20,7 +20,9 @@ if [ "$SERVICE_MANAGER" = systemd ]; then
 else
   if [ -f /run/singbox-panel-agent-upgrade.pid ]; then
     UPGRADE_PID=$(cat /run/singbox-panel-agent-upgrade.pid 2>/dev/null || true)
-    if [ -n "$UPGRADE_PID" ]; then kill "$UPGRADE_PID" >/dev/null 2>&1 || true; fi
+    if [ -n "$UPGRADE_PID" ] && [ -r "/proc/$UPGRADE_PID/cmdline" ] && grep -aq 'singbox-panel-agent-upgrade' "/proc/$UPGRADE_PID/cmdline" 2>/dev/null; then
+      kill "$UPGRADE_PID" >/dev/null 2>&1 || true
+    fi
   fi
   rc-service singbox-panel-agent stop >/dev/null 2>&1 || true
   rc-update del singbox-panel-agent default >/dev/null 2>&1 || true

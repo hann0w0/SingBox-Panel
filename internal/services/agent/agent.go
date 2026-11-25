@@ -40,11 +40,15 @@ type Agent struct {
 	addressInFlight       chan struct{}
 }
 
+var defaultTrafficSpoolPath = "/var/lib/singbox-panel-agent/traffic-spool.json"
+
 // New builds an Agent and wires the client callbacks.
 func New(cfg Config) *Agent {
+	sampler := newTrafficSampler()
+	sampler.spoolPath = defaultTrafficSpoolPath
 	a := &Agent{
 		cfg:       cfg,
-		traffic:   newTrafficSampler(),
+		traffic:   sampler,
 		logStream: newLogStreamer(),
 	}
 	a.client = NewClient(cfg.PanelURL, cfg.Token, cfg.Insecure)
@@ -259,7 +263,7 @@ func (a *Agent) onCommand(ctx context.Context, env protocol.Envelope) protocol.C
 		if err := env.Decode(&c); err != nil {
 			return decodeResult(env.ID, err)
 		}
-		out, err := applyRequestedConfig(ctx, c, resolveRestrictedOutbound, ApplyConfig, requestedConfigSourceFile)
+		out, err := applyRequestedConfigWithPreference(ctx, c, resolveRestrictedOutbound, preferIPv6RestrictedOutbound(), ApplyConfig, requestedConfigSourceFile)
 		return cmdResult(env.ID, out, err)
 
 	case protocol.CmdServiceAction:

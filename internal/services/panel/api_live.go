@@ -100,6 +100,39 @@ func (a *App) expireLogSession(serverID uint, sessionID string, deadline time.Ti
 	}
 }
 
+func (a *App) stopLogSessions() {
+	a.logSessionsMu.Lock()
+	defer a.logSessionsMu.Unlock()
+	for serverID, sessions := range a.logSessions {
+		for sessionID, lease := range sessions {
+			if lease.Timer != nil {
+				lease.Timer.Stop()
+			}
+			delete(sessions, sessionID)
+		}
+		delete(a.logSessions, serverID)
+	}
+}
+
+const sseWriteDeadline = 10 * time.Second
+
+func drainLiveEvents(ch <-chan liveEvent, first liveEvent, maxBatch int) ([]liveEvent, bool) {
+	batch := make([]liveEvent, 1, min(maxBatch, 16))
+	batch[0] = first
+	for len(batch) < maxBatch {
+		select {
+		case evt, ok := <-ch:
+			if !ok {
+				return batch, false
+			}
+			batch = append(batch, evt)
+		default:
+			return batch, true
+		}
+	}
+	return batch, true
+}
+
 // handleTrafficSSE opens a Server-Sent Events stream that pushes real-time
 // traffic, progress, and log events for a specific server.
 // The browser receives real-time events via SSE (fetch + ReadableStream);
@@ -132,19 +165,23 @@ func (a *App) handleTrafficSSE(c *gin.Context) {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "streaming not supported"})
 		return
 	}
-	_ = http.NewResponseController(c.Writer).SetReadDeadline(time.Time{})
+	rc := http.NewResponseController(c.Writer)
+	_ = rc.SetReadDeadline(time.Time{})
 
 	sub, backlog := a.hub.live.subscribe(serverID)
 	defer a.hub.live.unsubscribe(serverID, sub)
 	logUsers := logUserResolver{db: a.db, serverID: serverID}
 
-	// Send initial backlog so the chart isn't empty on connect.
-	for _, evt := range backlog {
+	_ = rc.SetWriteDeadline(time.Now().Add(sseWriteDeadline))
+	if len(backlog) > 0 {
 		if !a.auth.sessionActive(ctx, claims) {
 			return
 		}
-		if _, err := io.WriteString(c.Writer, logUsers.event(ctx, evt).SSE()); err != nil {
-			return
+		// Send initial backlog so the chart isn't empty on connect.
+		for _, evt := range backlog {
+			if _, err := io.WriteString(c.Writer, logUsers.event(ctx, evt).SSE()); err != nil {
+				return
+			}
 		}
 	}
 	flusher.Flush()
@@ -162,17 +199,28 @@ func (a *App) handleTrafficSSE(c *gin.Context) {
 		case <-expires.C:
 			return
 		case evt, ok := <-sub.ch:
-			if !ok || !a.auth.sessionActive(ctx, claims) {
+			if !ok {
 				return
 			}
-			if _, err := io.WriteString(c.Writer, logUsers.event(ctx, evt).SSE()); err != nil {
+			batch, open := drainLiveEvents(sub.ch, evt, 64)
+			if !a.auth.sessionActive(ctx, claims) {
 				return
+			}
+			_ = rc.SetWriteDeadline(time.Now().Add(sseWriteDeadline))
+			for _, item := range batch {
+				if _, err := io.WriteString(c.Writer, logUsers.event(ctx, item).SSE()); err != nil {
+					return
+				}
 			}
 			flusher.Flush()
+			if !open {
+				return
+			}
 		case <-heartbeat.C:
 			if !a.auth.sessionActive(ctx, claims) {
 				return
 			}
+			_ = rc.SetWriteDeadline(time.Now().Add(sseWriteDeadline))
 			if _, err := io.WriteString(c.Writer, ": heartbeat\n\n"); err != nil {
 				return
 			}
@@ -202,11 +250,13 @@ func (a *App) handleServersLiveSSE(c *gin.Context) {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "streaming not supported"})
 		return
 	}
-	_ = http.NewResponseController(c.Writer).SetReadDeadline(time.Time{})
+	rc := http.NewResponseController(c.Writer)
+	_ = rc.SetReadDeadline(time.Time{})
 
 	sub := a.hub.live.subscribeAll()
 	defer a.hub.live.unsubscribeAll(sub)
 
+	_ = rc.SetWriteDeadline(time.Now().Add(sseWriteDeadline))
 	if _, err := io.WriteString(c.Writer, ": connected\n\n"); err != nil {
 		return
 	}
@@ -224,17 +274,28 @@ func (a *App) handleServersLiveSSE(c *gin.Context) {
 		case <-expires.C:
 			return
 		case evt, ok := <-sub.ch:
-			if !ok || !a.auth.sessionActive(ctx, claims) {
+			if !ok {
 				return
 			}
-			if _, err := io.WriteString(c.Writer, evt.SSE()); err != nil {
+			batch, open := drainLiveEvents(sub.ch, evt, 64)
+			if !a.auth.sessionActive(ctx, claims) {
 				return
+			}
+			_ = rc.SetWriteDeadline(time.Now().Add(sseWriteDeadline))
+			for _, item := range batch {
+				if _, err := io.WriteString(c.Writer, item.SSE()); err != nil {
+					return
+				}
 			}
 			flusher.Flush()
+			if !open {
+				return
+			}
 		case <-heartbeat.C:
 			if !a.auth.sessionActive(ctx, claims) {
 				return
 			}
+			_ = rc.SetWriteDeadline(time.Now().Add(sseWriteDeadline))
 			if _, err := io.WriteString(c.Writer, ": heartbeat\n\n"); err != nil {
 				return
 			}

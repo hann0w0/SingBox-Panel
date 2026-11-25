@@ -1,6 +1,7 @@
 package panel
 
 import (
+	"errors"
 	"fmt"
 	"time"
 
@@ -11,6 +12,21 @@ import (
 	"github.com/hann0w0/singbox-panel/internal/domain/model"
 	"github.com/hann0w0/singbox-panel/internal/domain/protocol"
 )
+
+var (
+	errFutureTrafficBucket  = errors.New("future traffic bucket timestamp")
+	errInvalidTrafficBucket = errors.New("invalid traffic bucket timestamp")
+)
+
+func validateTrafficBucketTime(bucketTime int64, now time.Time) error {
+	if bucketTime <= 0 || bucketTime%60 != 0 {
+		return errInvalidTrafficBucket
+	}
+	if bucketTime > now.Add(maxAgentClockSkew).Unix() {
+		return errFutureTrafficBucket
+	}
+	return nil
+}
 
 func validateTrafficReport(report *protocol.TrafficReport, now time.Time) error {
 	if report == nil {
@@ -25,8 +41,8 @@ func validateTrafficReport(report *protocol.TrafficReport, now time.Time) error 
 	for _, bucket := range report.Buckets {
 		// Old samples are expected after an outage. Never clamp them to receive
 		// time: doing so would move pre-reset usage into the new billing cycle.
-		if bucket.Time <= 0 || bucket.Time%60 != 0 || bucket.Time > now.Add(maxAgentClockSkew).Unix() {
-			return fmt.Errorf("invalid traffic bucket timestamp")
+		if err := validateTrafficBucketTime(bucket.Time, now); err != nil {
+			return err
 		}
 	}
 	return nil
@@ -116,10 +132,10 @@ func recordTimestampedTraffic(db *gorm.DB, serverID uint, snapshot *protocol.Tra
 		if err != nil {
 			return err
 		}
-		if err := writeTrafficBuckets(tx, deltas); err != nil {
+		if err := upsertTrafficBucketsWithDB(tx, deltas); err != nil {
 			return err
 		}
-		if err := writeUserTrafficBuckets(tx, resolved); err != nil {
+		if err := upsertUserTrafficBucketsWithDB(tx, resolved); err != nil {
 			return err
 		}
 		if err := tx.Model(&model.Server{}).Where("id = ?", serverID).Updates(map[string]any{

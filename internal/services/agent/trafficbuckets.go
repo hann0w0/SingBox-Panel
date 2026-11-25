@@ -1,6 +1,10 @@
 package agent
 
 import (
+	"encoding/json"
+	"errors"
+	"os"
+	"path/filepath"
 	"sort"
 	"time"
 
@@ -18,7 +22,7 @@ const maxBufferedTrafficMinutes = 10080 // 7 days of minute buckets
 
 // Callers hold s.mu. Collection runs regardless of panel connectivity.
 func (s *trafficSampler) bucket(now time.Time) *collectedTrafficBucket {
-	key := now.UTC().Truncate(time.Minute).Unix()
+	key := s.effectiveNowLocked(now).UTC().Truncate(time.Minute).Unix()
 	s.rebaseFutureClockLocked(key)
 	return s.bucketAtLocked(key)
 }
@@ -306,7 +310,140 @@ func (s *trafficSampler) accountingSnapshot() *protocol.TrafficSnapshot {
 func (s *trafficSampler) acknowledgeReport(ack protocol.TrafficAck) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if s.report != nil && s.report.Session == ack.Session && s.report.Sequence == ack.Sequence {
+	if ack.ServerTime > 0 {
+		serverNow := time.Unix(ack.ServerTime, 0).UTC()
+		s.clockOffset = serverNow.Sub(s.sampleNow().UTC())
+		s.rebaseFutureClockLocked(serverNow.Truncate(time.Minute).Unix())
+	}
+	if ack.Sequence > 0 && s.report != nil && s.report.Session == ack.Session && s.report.Sequence == ack.Sequence {
 		s.report = nil
 	}
+}
+
+type trafficSpoolState struct {
+	AccountingSession string                       `json:"accounting_session,omitempty"`
+	ReportSequence    uint64                       `json:"report_sequence,omitempty"`
+	Report            *protocol.TrafficReport      `json:"report,omitempty"`
+	Buckets           []protocol.TrafficTimeBucket `json:"buckets,omitempty"`
+}
+
+func (s *trafficSampler) saveSpool() error {
+	return s.saveSpoolToPath(s.spoolPath)
+}
+
+func (s *trafficSampler) saveSpoolToPath(path string) error {
+	if path == "" {
+		return nil
+	}
+	s.mu.Lock()
+	state := trafficSpoolState{
+		AccountingSession: s.accountingSession,
+		ReportSequence:    s.reportSequence,
+		Report:            cloneTrafficReport(s.report),
+	}
+	if len(s.buckets) > 0 {
+		keys := make([]int64, 0, len(s.buckets))
+		for k := range s.buckets {
+			keys = append(keys, k)
+		}
+		sort.Slice(keys, func(i, j int) bool { return keys[i] < keys[j] })
+		for _, k := range keys {
+			b := s.buckets[k]
+			item := b.TrafficTimeBucket
+			for _, p := range b.ports {
+				item.Ports = append(item.Ports, p)
+			}
+			for _, u := range b.users {
+				item.Users = append(item.Users, u)
+			}
+			sort.Slice(item.Ports, func(i, j int) bool { return item.Ports[i].Inbound < item.Ports[j].Inbound })
+			sort.Slice(item.Users, func(i, j int) bool {
+				if item.Users[i].Inbound != item.Users[j].Inbound {
+					return item.Users[i].Inbound < item.Users[j].Inbound
+				}
+				return item.Users[i].User < item.Users[j].User
+			})
+			state.Buckets = append(state.Buckets, item)
+		}
+	}
+	s.mu.Unlock()
+
+	if state.Report == nil && len(state.Buckets) == 0 {
+		err := os.Remove(path)
+		if errors.Is(err, os.ErrNotExist) || errors.Is(err, os.ErrPermission) {
+			return nil
+		}
+		return err
+	}
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+		if errors.Is(err, os.ErrPermission) {
+			return nil
+		}
+		return err
+	}
+	raw, err := json.Marshal(state)
+	if err != nil {
+		return err
+	}
+	if err := writeAtomicFile(path, raw, 0o600); err != nil {
+		if errors.Is(err, os.ErrPermission) {
+			return nil
+		}
+		return err
+	}
+	return nil
+}
+
+func (s *trafficSampler) loadSpool() error {
+	return s.loadSpoolFromPath(s.spoolPath)
+}
+
+func (s *trafficSampler) loadSpoolFromPath(path string) error {
+	if path == "" {
+		return nil
+	}
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		if errors.Is(err, os.ErrNotExist) || errors.Is(err, os.ErrPermission) {
+			return nil
+		}
+		return err
+	}
+	var state trafficSpoolState
+	if err := json.Unmarshal(raw, &state); err != nil {
+		return err
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.accountingSession == "" && state.AccountingSession != "" {
+		s.accountingSession = state.AccountingSession
+	}
+	if state.ReportSequence > s.reportSequence {
+		s.reportSequence = state.ReportSequence
+	}
+	if s.report == nil && state.Report != nil {
+		s.report = cloneTrafficReport(state.Report)
+	}
+	if len(state.Buckets) > 0 {
+		if s.buckets == nil {
+			s.buckets = make(map[int64]*collectedTrafficBucket, len(state.Buckets))
+		}
+		for _, b := range state.Buckets {
+			dst := s.bucketAtLocked(b.Time)
+			src := &collectedTrafficBucket{
+				TrafficTimeBucket: b,
+				ports:             make(map[string]protocol.PortTrafficSnapshot, len(b.Ports)),
+				users:             make(map[userTrafficKey]protocol.UserTrafficSnapshot, len(b.Users)),
+			}
+			for _, p := range b.Ports {
+				src.ports[p.Inbound] = p
+			}
+			for _, u := range b.Users {
+				src.users[userTrafficKey{inbound: u.Inbound, user: u.User}] = u
+			}
+			mergeCollectedTrafficBucket(dst, src)
+		}
+	}
+	_ = os.Remove(path)
+	return nil
 }

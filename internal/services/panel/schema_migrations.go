@@ -484,6 +484,19 @@ var applicationMigrations = []schemaMigration{
 			return nil
 		},
 	},
+	{
+		version: 45,
+		name:    "traffic report cursor retention timestamp",
+		up: func(tx *gorm.DB) error {
+			if err := tx.AutoMigrate(&model.TrafficReportCursor{}); err != nil {
+				return err
+			}
+			now := time.Now().UTC()
+			return tx.Model(&model.TrafficReportCursor{}).
+				Where("updated_at IS NULL OR updated_at <= ?", time.Date(1970, 1, 2, 0, 0, 0, 0, time.UTC)).
+				UpdateColumn("updated_at", now).Error
+		},
+	},
 }
 
 // migrationReplaySafe records whether an interrupted attempt of each migration
@@ -547,6 +560,7 @@ var migrationReplaySafe = map[uint]bool{
 	42: true,  // only initializes raw servers without an overlay, in a transaction
 	43: true,  // AutoMigrate adds server log_level and staged config revision columns
 	44: true,  // MySQL LONGTEXT widening is idempotent and a no-op on SQLite/Postgres
+	45: true,  // AutoMigrate adds nullable updated_at and backfills unset cursor timestamps
 }
 
 // dropRetiredCustomNodeSwitches removes the per-node and per-subscription

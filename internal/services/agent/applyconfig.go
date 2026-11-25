@@ -74,6 +74,7 @@ func ApplyConfig(ctx context.Context, configBytes []byte) (string, error) {
 	// must also have started after this file was written and explicitly load the
 	// managed config path. Otherwise continue below and perform a real restart.
 	if existing, err := readConfigFile(); err == nil &&
+		hasNoStrayConfigsAt(ConfigDir) &&
 		bytes.Equal(existing, configBytes) && manager.Active(ctx) {
 		if _, err := currentServiceConfigEvidence(ctx, manager, expectedHash); err == nil {
 			return "config unchanged; running sing-box verified", nil
@@ -454,6 +455,23 @@ func (m *strayMove) restore() error {
 		}
 	}
 	return errors.Join(errs...)
+}
+
+func hasNoStrayConfigsAt(configDir string) bool {
+	entries, err := os.ReadDir(configDir)
+	if err != nil {
+		return false
+	}
+	for _, e := range entries {
+		if e.IsDir() {
+			continue
+		}
+		name := e.Name()
+		if strings.HasSuffix(name, ".json") && name != "config.json" {
+			return false
+		}
+	}
+	return true
 }
 
 // moveStrayConfigsAt relocates every *.json other than config.json into a

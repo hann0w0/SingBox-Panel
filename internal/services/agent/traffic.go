@@ -29,6 +29,9 @@ type trafficSampler struct {
 	accountingSession string
 	reportSequence    uint64
 	report            *protocol.TrafficReport
+	clockOffset       time.Duration
+	spoolPath         string
+	nowFunc           func() time.Time
 
 	endpoint     string
 	lastUpload   uint64
@@ -122,6 +125,7 @@ func countProcSockets(path string, excludeListen bool) int {
 
 func newTrafficSampler() *trafficSampler {
 	return &trafficSampler{
+		nowFunc:      time.Now,
 		ledger:       make(map[string]*ledgerEntry),
 		tombstones:   make(map[string]*ledgerEntry),
 		startedAt:    time.Now(),
@@ -220,12 +224,18 @@ func counterDelta(current, previous uint64) uint64 {
 // but short-lived connections are observed here instead of only at heartbeat
 // time.
 func (s *trafficSampler) run(ctx context.Context) {
+	if s.spoolPath != "" {
+		_ = s.loadSpool()
+	}
 	s.poll(ctx)
 	ticker := time.NewTicker(time.Second)
 	defer ticker.Stop()
 	for {
 		select {
 		case <-ctx.Done():
+			if s.spoolPath != "" {
+				_ = s.saveSpool()
+			}
 			return
 		case <-ticker.C:
 			s.poll(ctx)
@@ -299,6 +309,13 @@ func (s *trafficSampler) ingestAt(endpoint string, counters clashTrafficResponse
 	}
 	if !s.haveSample {
 		s.startedAt = now
+	}
+
+	if s.haveSample && s.endpoint == endpoint && (counters.UploadTotal < s.lastUpload || counters.DownloadTotal < s.lastDownload) {
+		// Any counter regression means sing-box restarted; reset both baselines
+		// together so the other direction doesn't drop post-restart traffic.
+		s.lastUpload = 0
+		s.lastDownload = 0
 	}
 
 	uploadRate := uint64(0)
@@ -393,7 +410,7 @@ func (s *trafficSampler) snapshot() *protocol.TrafficSnapshot {
 		DownloadRate:     s.downloadRate,
 		TCPConnections:   s.tcpConnections,
 		UDPConnections:   s.udpConnections,
-		SampledAt:        s.lastSample.Unix(),
+		SampledAt:        s.effectiveNowLocked(s.lastSample).Unix(),
 		PeakUploadRate:   s.peakUpload,
 		PeakDownloadRate: s.peakDownload,
 	}
@@ -427,8 +444,19 @@ func (s *trafficSampler) summarySnapshot() *protocol.TrafficSnapshot {
 		DownloadRate:      s.downloadRate,
 		TCPConnections:    s.tcpConnections,
 		UDPConnections:    s.udpConnections,
-		SampledAt:         s.lastSample.Unix(),
+		SampledAt:         s.effectiveNowLocked(s.lastSample).Unix(),
 	}
+}
+
+func (s *trafficSampler) sampleNow() time.Time {
+	if s.nowFunc != nil {
+		return s.nowFunc()
+	}
+	return time.Now()
+}
+
+func (s *trafficSampler) effectiveNowLocked(t time.Time) time.Time {
+	return t.Add(s.clockOffset)
 }
 
 // liveRates returns the latest instantaneous rates without allocating snapshots.

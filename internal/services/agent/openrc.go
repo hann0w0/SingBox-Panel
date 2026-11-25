@@ -109,7 +109,7 @@ func (m openRCServiceManager) waitForConfigStart(ctx context.Context) error {
 func (m openRCServiceManager) LogCommand(lines int, follow bool) (string, []string) {
 	args := []string{"-n", strconv.Itoa(lines)}
 	if follow {
-		args = append(args, "-f")
+		args = append(args, "-F")
 	}
 	args = append(args, openRCLogPath())
 	return "tail", args
@@ -161,6 +161,7 @@ func openRCSingboxServiceScript(binary string) string {
 # %s. This service is removed only when it still carries this marker.
 description="sing-box service"
 supervisor="supervise-daemon"
+rc_cgroup_cleanup="NO"
 command=%q
 command_args="run --disable-color -D /var/lib/sing-box -C /etc/sing-box"
 extra_commands="checkconfig"
@@ -189,26 +190,63 @@ reload() {
 `, openRCManagedMarker, binary)
 }
 
+var openRCLogrotatePath = "/etc/logrotate.d/sing-box"
+
+func openRCLogrotateContent(logPath string) string {
+	return fmt.Sprintf(`%s /var/log/singbox-panel-agent.log {
+	size 10M
+	rotate 4
+	missingok
+	notifempty
+	copytruncate
+}
+`, logPath)
+}
+
+func ensureOpenRCLogrotateAt(path, logPath string) error {
+	content := openRCLogrotateContent(logPath)
+	if existing, err := os.ReadFile(path); err == nil && string(existing) == content {
+		return nil
+	} else if err != nil && !errors.Is(err, os.ErrNotExist) {
+		if errors.Is(err, os.ErrPermission) {
+			return nil
+		}
+		return fmt.Errorf("inspect OpenRC logrotate config: %w", err)
+	}
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		if errors.Is(err, os.ErrPermission) {
+			return nil
+		}
+		return fmt.Errorf("create OpenRC logrotate directory: %w", err)
+	}
+	if err := writeAtomicFile(path, []byte(content), 0o644); err != nil {
+		if errors.Is(err, os.ErrPermission) {
+			return nil
+		}
+		return fmt.Errorf("write OpenRC logrotate config: %w", err)
+	}
+	return nil
+}
+
 func ensureOpenRCLogging() error {
 	raw, err := os.ReadFile(openRCSingboxConf)
 	if err != nil && !errors.Is(err, os.ErrNotExist) {
 		return fmt.Errorf("read OpenRC sing-box configuration: %w", err)
 	}
 	updated := appendOpenRCLogging(raw)
-	if string(updated) == string(raw) {
-		return nil
+	if string(updated) != string(raw) {
+		if err := os.MkdirAll(filepath.Dir(openRCSingboxConf), 0o755); err != nil {
+			return fmt.Errorf("create OpenRC configuration directory: %w", err)
+		}
+		mode := os.FileMode(0o644)
+		if info, statErr := os.Stat(openRCSingboxConf); statErr == nil {
+			mode = info.Mode().Perm()
+		}
+		if err := writeAtomicFile(openRCSingboxConf, updated, mode); err != nil {
+			return fmt.Errorf("configure OpenRC sing-box logs: %w", err)
+		}
 	}
-	if err := os.MkdirAll(filepath.Dir(openRCSingboxConf), 0o755); err != nil {
-		return fmt.Errorf("create OpenRC configuration directory: %w", err)
-	}
-	mode := os.FileMode(0o644)
-	if info, statErr := os.Stat(openRCSingboxConf); statErr == nil {
-		mode = info.Mode().Perm()
-	}
-	if err := writeAtomicFile(openRCSingboxConf, updated, mode); err != nil {
-		return fmt.Errorf("configure OpenRC sing-box logs: %w", err)
-	}
-	return nil
+	return ensureOpenRCLogrotateAt(openRCLogrotatePath, openRCLogPathFromConfig(string(updated)))
 }
 
 func appendOpenRCLogging(raw []byte) []byte {

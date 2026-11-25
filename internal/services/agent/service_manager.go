@@ -107,6 +107,48 @@ func startSystemdAgentTask(ctx context.Context, unit string, runner commandRunne
 type systemdServiceManager struct {
 	run      commandRunner
 	procRoot string
+	now      func() time.Time
+}
+
+func (m systemdServiceManager) nowOrDefault() func() time.Time {
+	if m.now != nil {
+		return m.now
+	}
+	return time.Now
+}
+
+func (m systemdServiceManager) waitForConfigStart(ctx context.Context) error {
+	out, err := m.run(ctx, "busctl", "get-property", "org.freedesktop.systemd1", systemdUnitPath,
+		"org.freedesktop.systemd1.Service", "ExecMainStartTimestamp")
+	if err == nil {
+		if _, parseErr := parseSystemdTimestamp(out); parseErr == nil {
+			return nil
+		}
+	}
+	return waitUntilNextWholeSecond(ctx, ConfigFile, m.nowOrDefault())
+}
+
+func waitUntilNextWholeSecond(ctx context.Context, configPath string, nowFn func() time.Time) error {
+	now := nowFn()
+	floor := now.Truncate(time.Second)
+	if info, err := os.Stat(configPath); err == nil {
+		if modFloor := info.ModTime().Truncate(time.Second); modFloor.After(floor) {
+			floor = modFloor
+		}
+	}
+	target := floor.Add(time.Second + 15*time.Millisecond)
+	wait := target.Sub(now)
+	if wait <= 0 {
+		return nil
+	}
+	timer := time.NewTimer(wait)
+	defer timer.Stop()
+	select {
+	case <-timer.C:
+		return nil
+	case <-ctx.Done():
+		return ctx.Err()
+	}
 }
 
 func (m systemdServiceManager) procRootOrDefault() string {

@@ -21,7 +21,11 @@ type requestedConfigSource struct {
 }
 
 func applyRequestedConfig(ctx context.Context, command protocol.ApplyConfigCmd, resolve restrictedOutboundResolver, apply func(context.Context, []byte) (string, error), sourcePath string) (string, error) {
-	prepared, err := prepareRestrictedOutbounds(ctx, command.Config, command.RestrictedOutboundTags, resolve)
+	return applyRequestedConfigWithPreference(ctx, command, resolve, false, apply, sourcePath)
+}
+
+func applyRequestedConfigWithPreference(ctx context.Context, command protocol.ApplyConfigCmd, resolve restrictedOutboundResolver, preferIPv6 bool, apply func(context.Context, []byte) (string, error), sourcePath string) (string, error) {
+	prepared, err := prepareRestrictedOutboundsWithPreference(ctx, command.Config, command.RestrictedOutboundTags, resolve, preferIPv6)
 	if err != nil {
 		return "", err
 	}

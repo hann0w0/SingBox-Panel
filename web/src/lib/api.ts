@@ -153,7 +153,7 @@ export interface UserForward {
 export const getUserForwards = (signal?: AbortSignal) =>
   http.get<{ forwards: UserForward[] }>('/api/user/forwards', { signal }).then((r) => r.data.forwards)
 export const createUserForward = (body: { inbound_server_id: number; inbound_tag: string; outbound_id: number; remark?: string }) =>
-  http.post<{ forward: RouteRule } & ConfigApplyResult>('/api/user/forwards', body).then((r) => r.data)
+  http.post<{ forward: UserForward } & ConfigApplyResult>('/api/user/forwards', body).then((r) => r.data)
 export const deleteUserForward = (id: number) =>
   http.delete<ConfigApplyResult>(`/api/user/forwards/${id}`).then((r) => r.data)
 export const importUserOutbound = (body: { uri?: string; url?: string; tag?: string }) =>

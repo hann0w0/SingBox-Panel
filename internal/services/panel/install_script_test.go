@@ -139,7 +139,7 @@ func TestBinaryInstallerUninstallAndInstallSuccessPaths(t *testing.T) {
 		t.Fatalf("read install.sh: %v", err)
 	}
 
-	installDir := filepath.Join(root, "opt-singbox-panel")
+	installDir := filepath.Join(root, "opt", "singbox-panel")
 	panelBin := filepath.Join(root, "usr-local-bin-singbox-panel")
 	serviceFile := filepath.Join(root, "etc-systemd-singbox-panel.service")
 	binDir := filepath.Join(root, "bin")

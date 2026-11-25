@@ -412,9 +412,32 @@ confirm_uninstall() {
 }
 
 panel_process_running() {
+  local bin_name target_bin pid exe cmd cmd_bin cmd_real
+  bin_name="$(basename "$PANEL_BIN")"
+  target_bin="$(readlink -f "$PANEL_BIN" 2>/dev/null || printf '%s' "$PANEL_BIN")"
   if command -v pgrep >/dev/null 2>&1; then
-    pgrep -x singbox-panel >/dev/null 2>&1 && return 0
-    pgrep -f '(^|/)singbox-panel([[:space:]]|$)' >/dev/null 2>&1 && return 0
+    while IFS= read -r pid; do
+      [[ -z "$pid" || "$pid" == "$$" || "$pid" == "$PPID" ]] && continue
+      if [[ -r "/proc/$pid/exe" ]]; then
+        exe="$(readlink -f "/proc/$pid/exe" 2>/dev/null || true)"
+        exe="${exe% (deleted)}"
+        if [[ -n "$exe" && ( "$exe" == "$PANEL_BIN" || "$exe" == "$target_bin" ) ]]; then
+          return 0
+        fi
+        continue
+      fi
+      cmd="$(ps -o command= -p "$pid" 2>/dev/null || true)"
+      cmd_bin="${cmd%% *}"
+      if [[ -n "$cmd_bin" ]]; then
+        if [[ "$cmd_bin" == "$PANEL_BIN" || "$cmd_bin" == "$target_bin" ]]; then
+          return 0
+        fi
+        cmd_real="$(readlink -f "$cmd_bin" 2>/dev/null || true)"
+        if [[ -n "$cmd_real" && ( "$cmd_real" == "$PANEL_BIN" || "$cmd_real" == "$target_bin" ) ]]; then
+          return 0
+        fi
+      fi
+    done < <(pgrep -x "$bin_name" 2>/dev/null || true)
   fi
   return 1
 }

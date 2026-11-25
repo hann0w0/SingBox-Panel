@@ -35,3 +35,13 @@ export function inboundConnectionPort(inbound: { listen_port: number; settings?:
     ? inbound.settings.client_port
     : inbound.listen_port
 }
+
+/** Format host and optional port, bracketing literal IPv6 addresses when a port is shown. */
+export function formatHostPort(host?: string | null, port?: number | string | null, emptyFallback = ''): string {
+  const raw = (host ?? '').trim()
+  if (!raw) return emptyFallback
+  const clean = trimBrackets(raw)
+  const portText = port !== undefined && port !== null && port !== 0 ? String(port).trim() : ''
+  if (!portText) return clean
+  return isIPv6(clean) ? `[${clean}]:${portText}` : `${clean}:${portText}`
+}

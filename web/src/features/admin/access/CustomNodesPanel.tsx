@@ -47,6 +47,7 @@ import type { CustomNode, CustomNodeSubscription, NameRewriteRule } from '../../
 import { RegionFlag, regionCodeFromFlag, removeRegionFlag } from '../../../components/RegionFlag'
 import { RequestState } from '../../../components/RequestState'
 import { buildCustomNodeParams } from '../../../lib/customNodeForm'
+import { formatHostPort } from '../../../lib/nodeAddress'
 import { EXTERNAL_NODE_PROTOCOL_TYPES, toProtocolOptions } from '../../../lib/protocols'
 import { SHADOWSOCKS_METHODS } from '../../../lib/util'
 import { MODAL_MD } from '../../../components/kit/modal'
@@ -196,7 +197,7 @@ export function CustomNodesPanel({ nodes, loading, error, onNodesChange }: {
     setEditingNode(null)
     setNodeMode('manual')
     nodeForm.resetFields()
-    nodeForm.setFieldsValue({ link: '', tls_mode: 'tls', transport: 'tcp', snell_version: 5, snell_obfs_mode: 'none', snell_mode: '', method: '2022-blake3-aes-128-gcm', group: '' })
+    nodeForm.setFieldsValue({ name: '', link: '', tls_mode: 'tls', transport: 'tcp', snell_version: 5, snell_obfs_mode: 'none', snell_mode: '', method: '2022-blake3-aes-128-gcm', group: '' })
     setNodeOpen(true)
   }
 
@@ -310,6 +311,7 @@ export function CustomNodesPanel({ nodes, loading, error, onNodesChange }: {
   }
 
   const openNodeEdit = (n: CustomNode) => {
+    if (n.subscription_id) return
     setEditingNode(n)
     setNodeMode(n.link?.trim() ? 'uri' : 'manual')
     const p = n.params ?? {}
@@ -363,8 +365,9 @@ export function CustomNodesPanel({ nodes, loading, error, onNodesChange }: {
     setNodeSaving(true)
     try {
       const v = await nodeForm.validateFields()
+      const typedName = typeof v.name === 'string' ? v.name.trim() : ''
       const body: Record<string, unknown> = {
-      name: editingNode?.name,
+      name: nodeMode === 'manual' ? (typedName || editingNode?.name || '') : editingNode?.name,
       group: typeof v.group === 'string' ? v.group.trim() : '',
       // 归属在「节点分配」里统一管理：新增默认不分配给任何用户，
       // 管理员在节点分配弹窗里勾选后才对指定用户可见；编辑保持原受众。
@@ -406,7 +409,7 @@ export function CustomNodesPanel({ nodes, loading, error, onNodesChange }: {
   }
 
   const removeNode = (n: CustomNode) => {
-    const label = n.name || n.link.slice(0, 24) || (n.address ? `${n.address}:${n.port}` : '未命名')
+    const label = n.name || n.link.slice(0, 24) || formatHostPort(n.address, n.port, '未命名')
     Modal.confirm({
       title: '删除节点',
       content: `确认删除「${label}」？`,
@@ -491,7 +494,7 @@ export function CustomNodesPanel({ nodes, loading, error, onNodesChange }: {
   const nodeAddress = (node: CustomNode) => {
     const address = node.detail?.address || node.address
     const port = node.detail?.port || node.port
-    return address ? `${address}${port ? `:${port}` : ''}` : ''
+    return formatHostPort(address, port)
   }
 
   const nodeColumns: ColumnsType<CustomNode> = [
@@ -578,7 +581,7 @@ export function CustomNodesPanel({ nodes, loading, error, onNodesChange }: {
       render: (_: unknown, n: CustomNode) => (
         <span className="ui-row-actions custom-node-row-action">
           <Button size="small" type="text" icon={<Eye />} title="详情" aria-label={`查看 ${n.name || '节点'}`} onClick={() => setDetailNode(n)} />
-          <Button size="small" type="text" icon={<Pencil />} title="编辑" aria-label={`编辑 ${n.name || '节点'}`} onClick={() => openNodeEdit(n)} />
+          <Button size="small" type="text" icon={<Pencil />} disabled={!!n.subscription_id} title={n.subscription_id ? '由外部订阅托管，无法直接编辑' : '编辑'} aria-label={`编辑 ${n.name || '节点'}`} onClick={() => openNodeEdit(n)} />
           <Button size="small" type="text" icon={<Trash2 />} title="删除" aria-label={`删除 ${n.name || '节点'}`} onClick={() => removeNode(n)} />
         </span>
       ),
@@ -897,6 +900,9 @@ export function CustomNodesPanel({ nodes, loading, error, onNodesChange }: {
             </TabsContent>
             <TabsContent value="manual" className="mt-5">
               <FormGroup title="基本">
+                <Form.Item name="name" label="名称" className="fm-full">
+                  <Input aria-label="名称" placeholder="留空默认使用地址或协议名" />
+                </Form.Item>
                 <Form.Item name="protocol" label="协议" rules={[{ required: true, message: '请选择协议' }]}>
                   <Select
                     placeholder="选择协议"

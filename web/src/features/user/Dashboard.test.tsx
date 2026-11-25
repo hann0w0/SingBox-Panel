@@ -4,7 +4,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import Dashboard from './Dashboard'
 import { createUserForward, deleteUserForward, deleteUserOutbound, getMe, getMyTraffic, getSubscriptionSync, getUserForwards, getUserInbounds, getUserNodes, getUserOutbounds, importUserOutbound, resetSub } from '../../lib/api'
 import type { UserForward, UserInboundOption, UserNode, UserPrivateOutbound } from '../../lib/api'
-import type { RouteRule, User, UserTrafficSeries } from '../../lib/types'
+import type { User, UserTrafficSeries } from '../../lib/types'
 import { useAuth } from '../../lib/store'
 import { copyToClipboard } from '../../lib/util'
 import { TooltipProvider } from '../../components/ui/tooltip'
@@ -339,7 +339,7 @@ describe('user subscription dashboard', () => {
     fireEvent.submit(dialog.querySelector('form')!)
     await waitFor(() => expect(createUserForward).toHaveBeenCalledTimes(1))
     expect(createUserForward).toHaveBeenCalledWith({ inbound_server_id: 1, inbound_tag: 'vless-in', outbound_id: 7 })
-    await act(async () => pending.resolve({ forward: { id: 9 } as RouteRule, apply_state, apply_error: 'agent rejected config' }))
+    await act(async () => pending.resolve({ forward: { id: 9 } as UserForward, apply_state, apply_error: 'agent rejected config' }))
     await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull())
     if (apply_state === 'failed') expect(warning).toHaveBeenCalledWith(expect.objectContaining({ content: '已保存，但节点下发失败：agent rejected config' }))
     else expect(info).toHaveBeenCalledWith(expect.objectContaining({ content: '已保存；节点当前离线，重连后会自动下发' }))
@@ -349,7 +349,7 @@ describe('user subscription dashboard', () => {
   it('keeps a failed forward draft available for retry', async () => {
     vi.mocked(getUserInbounds).mockResolvedValue([inbound])
     vi.mocked(getUserOutbounds).mockResolvedValue([outbound])
-    vi.mocked(createUserForward).mockRejectedValueOnce(new Error('保存转发失败')).mockResolvedValueOnce({ forward: { id: 9 } as RouteRule, apply_state: 'applied' })
+    vi.mocked(createUserForward).mockRejectedValueOnce(new Error('保存转发失败')).mockResolvedValueOnce({ forward: { id: 9 } as UserForward, apply_state: 'applied' })
     const error = vi.spyOn(message, 'error')
     mount()
     await openForward()

@@ -59,6 +59,7 @@ import { ServerOverviewCard } from './ServerOverviewCard'
 import ServerTraffic from './ServerTraffic'
 import Logs from '../logs/Logs'
 import { copyToClipboard, formatBytes } from '../../../lib/util'
+import { formatHostPort } from '../../../lib/nodeAddress'
 import { Pills, Stats, Status } from '../../../components/kit/Page'
 import '../../../styles/server-detail.css'
 import { RequestState } from '../../../components/RequestState'
@@ -111,7 +112,8 @@ export default function ServerDetail() {
         if (controller.signal.aborted) return
         setServer((previous) => previous?.id === sid ? { ...previous, ipv4_available: result.server.ipv4_available, ipv6_available: result.server.ipv6_available } : previous)
       } catch {
-        if (!controller.signal.aborted) setServer((previous) => previous?.id === sid ? { ...previous, ipv6_available: false } : previous)
+        // Keep the last known IPv4/IPv6 capability on transient poll errors so
+        // an open inbound form does not lose IPv6 controls during a brief blip.
       }
     }
     void refresh()
@@ -865,7 +867,7 @@ export default function ServerDetail() {
       columns={[
         { title: '标签', dataIndex: 'tag', width: 160, ellipsis: true, render: (v: string) => <span className="sd-strong">{v}</span> },
         { title: '类型', dataIndex: 'type', width: 120, render: (v: string) => <ProtocolTag type={v} /> },
-        { title: '地址', width: 240, ellipsis: true, render: (_, o: Outbound) => <span className="mono">{`${o.settings?.server || '—'}:${o.settings?.server_port || ''}`}</span> },
+        { title: '地址', width: 240, ellipsis: true, render: (_, o: Outbound) => <span className="mono">{formatHostPort(o.settings?.server, o.settings?.server_port, '—')}</span> },
         {
           title: '连通性',
           width: 150,

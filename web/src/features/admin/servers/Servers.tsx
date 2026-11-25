@@ -192,7 +192,7 @@ export default function Servers() {
     singboxBatchAbortRef.current = controller
     message.info(`已开始向 ${onlineServers.length} 台在线节点下发 sing-box 更新，完成后会汇总结果`)
     setUpdatingSingbox(true)
-    const failures: { name: string; error: string }[] = []
+    const failures: { id: number; name: string; error: string }[] = []
     let succeeded = 0
     const concurrency = Math.min(4, onlineServers.length)
     let cursor = 0
@@ -204,7 +204,7 @@ export default function Servers() {
           succeeded += 1
         } catch (err) {
           if (isCanceledRequest(err)) return
-          failures.push({ name: srv.name, error: errMsg(err) })
+          failures.push({ id: srv.id, name: srv.name, error: errMsg(err) })
         }
       }
     }
@@ -220,7 +220,7 @@ export default function Servers() {
         content: (
           <ul className="space-y-1 text-sm">
             {failures.map((item) => (
-              <li key={item.name}><strong>{item.name}</strong>：{item.error}</li>
+              <li key={item.id}><strong>{item.name}</strong>：{item.error}</li>
             ))}
           </ul>
         ),
@@ -270,19 +270,22 @@ export default function Servers() {
   }, [])
   useSSE('/api/admin/servers/live', true, onSSEMessage)
 
+  const sortingRef = useRef(sorting)
+  sortingRef.current = sorting
+
   useEffect(() => {
     load()
     // Live rates, load, memory and online state stream over SSE; keep a slow
     // background sync for user counts, versions and added/removed servers.
     const timer = window.setInterval(() => {
-      if (pointerDragRef.current === null && !sorting) load(true)
+      if (pointerDragRef.current === null && !sortingRef.current) load(true)
     }, 60000)
     return () => {
       window.clearInterval(timer)
       loadRef.current.generation++
       loadRef.current.controller?.abort()
     }
-  }, [sorting])
+  }, [])
 
   const openCreate = () => {
     setEditing(null)

@@ -3,7 +3,7 @@ import react from '@vitejs/plugin-react'
 import tailwindcss from '@tailwindcss/vite'
 import { fileURLToPath, URL } from 'node:url'
 
-// Dev server proxies API + subscription paths to the Go panel on :8080.
+// Dev server proxies /api requests to the Go panel (default http://127.0.0.1:32334).
 // In production the built assets in dist/ are served by the panel itself.
 export default defineConfig({
   plugins: [react(), tailwindcss()],

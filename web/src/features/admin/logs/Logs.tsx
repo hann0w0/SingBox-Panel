@@ -351,6 +351,8 @@ export default function Logs({
 
   const serversRef = useRef(servers)
   serversRef.current = servers
+  const serverOnlineRef = useRef(serverOnline)
+  serverOnlineRef.current = serverOnline
 
   const load = useCallback(async (quiet = false) => {
     if (!sid) return
@@ -378,7 +380,7 @@ export default function Logs({
       scrollToLatest()
       // Live tail is the default view; it only pauses when the stream fails
       // or the node goes offline.
-      const online = serverOnline ?? serversRef.current.find((s) => s.id === sid)?.online
+      const online = serverOnlineRef.current ?? serversRef.current.find((s) => s.id === sid)?.online
       if (online !== false) setLive(true)
     } catch (e) {
       if (!quiet && !isCanceledRequest(e)) message.error(errMsg(e))
@@ -388,7 +390,7 @@ export default function Logs({
         if (!quiet) setLoading(false)
       }
     }
-  }, [lines, scrollToLatest, serverOnline, sid])
+  }, [lines, scrollToLatest, sid])
 
   useEffect(() => () => {
     loadGenerationRef.current += 1

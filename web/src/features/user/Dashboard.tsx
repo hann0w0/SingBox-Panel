@@ -8,6 +8,7 @@ import {
 } from '../../lib/api'
 import type { SubscriptionSyncResult, UserForward, UserInboundOption, UserNode, UserPrivateOutbound } from '../../lib/api'
 import type { UserTrafficRange, UserTrafficSeries } from '../../lib/types'
+import { formatHostPort } from '../../lib/nodeAddress'
 import { formatBytes } from '../../lib/util'
 import { SubscriptionLinks } from './SubscriptionLinks'
 import { SubscriptionSyncStatus } from './SubscriptionSyncStatus'
@@ -220,7 +221,7 @@ export default function Dashboard() {
   const renderNode = (n: UserNode, index = 0) => (
     <div onClick={() => setSelectedNode(n)} onKeyDown={(event) => { if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); setSelectedNode(n) } }} role="button" tabIndex={0} className={`sub-node${index === 0 ? ' is-first' : ''}`}>
       <RegionFlag code={n.region} size={15} fallback={false} />
-      <div className="sub-node-main"><span className="sub-node-name">{n.name}</span><span className="sub-node-meta">{labelOf(n.region || '') && <span>{labelOf(n.region || '')}</span>}<span className="mono">{n.server}:{n.port}</span></span></div>
+      <div className="sub-node-main"><span className="sub-node-name">{n.name}</span><span className="sub-node-meta">{labelOf(n.region || '') && <span>{labelOf(n.region || '')}</span>}<span className="mono">{formatHostPort(n.server, n.port)}</span></span></div>
       <span className="ui-tag sub-node-type">{n.type}</span><ChevronRight className="sub-node-chev" aria-hidden="true" />
     </div>
   )

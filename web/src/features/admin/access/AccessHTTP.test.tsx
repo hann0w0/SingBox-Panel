@@ -229,7 +229,7 @@ describe('subscription editor', () => {
     })
   })
 
-  it('allows choosing update interval in minutes when automatic update is enabled', async () => {
+  it('allows setting custom update interval quantity and unit when automatic update is enabled', async () => {
     vi.mocked(createCustomNodeSubscription).mockResolvedValue({
       subscription: {} as CustomNodeSubscription,
       sync: { created: 0, updated: 0, deleted: 0, total: 0, skipped: 0, filtered: 0 },
@@ -238,14 +238,17 @@ describe('subscription editor', () => {
     fireEvent.click(screen.getByRole('button', { name: '新增订阅' }))
     fireEvent.change(screen.getByLabelText(/^名称/), { target: { value: '定时订阅' } })
     fireEvent.change(screen.getByLabelText(/^订阅链接/), { target: { value: 'https://provider.example.com/sub' } })
-    expect(screen.getByLabelText('更新间隔').textContent).toContain('60 分钟')
-    await select('更新间隔', '180 分钟')
+    const amountInput = screen.getByLabelText('更新间隔') as HTMLInputElement
+    expect(amountInput.value).toBe('1')
+    expect(screen.getByLabelText('更新间隔单位').textContent).toContain('小时')
+    fireEvent.change(amountInput, { target: { value: '2' } })
+    await select('更新间隔单位', '天')
     fireEvent.click(screen.getByRole('button', { name: '保存并同步' }))
     await waitFor(() => expect(createCustomNodeSubscription).toHaveBeenCalledOnce())
     expect(vi.mocked(createCustomNodeSubscription).mock.calls[0][0]).toMatchObject({
       name: '定时订阅',
       auto_update: true,
-      update_interval_minutes: 180,
+      update_interval_minutes: 2880,
     })
   })
 })

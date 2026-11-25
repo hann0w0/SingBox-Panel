@@ -97,25 +97,28 @@ it('keeps full rule-set details and editing available across mobile and desktop 
   expect(screen.queryByRole('list', { name: '规则集', hidden: true })).toBeNull()
   expect((within(dialog).getByRole('textbox', { name: /^URL/ }) as HTMLInputElement).value).toBe('https://example.com/updated.srs')
   fireEvent.click(within(dialog).getByRole('button', { name: '确定' }))
-  await waitFor(() => expect(updateSharedRuleSet).toHaveBeenCalledWith(1, expect.objectContaining({ tag, url: 'https://example.com/updated.srs', update_interval: '1440m' })))
+  await waitFor(() => expect(updateSharedRuleSet).toHaveBeenCalledWith(1, expect.objectContaining({ tag, url: 'https://example.com/updated.srs', update_interval: '1d' })))
 })
 
-it('normalizes legacy rule-set update_interval into minutes and submits preset minutes', async () => {
+it('edits rule-set update_interval with custom quantity and unit controls', async () => {
   vi.mocked(listSharedRuleSets).mockResolvedValue([{
     id: 5, tag: 'geosite-ads', type: 'remote', format: 'binary',
     url: 'https://example.com/ads.srs', update_interval: '12h', server_ids: [],
   }])
   vi.mocked(updateSharedRuleSet).mockResolvedValue({
-    ruleset: { id: 5, tag: 'geosite-ads', type: 'remote', format: 'binary', url: 'https://example.com/ads.srs', update_interval: '60m' },
+    ruleset: { id: 5, tag: 'geosite-ads', type: 'remote', format: 'binary', url: 'https://example.com/ads.srs', update_interval: '45m' },
   })
   render(<MemoryRouter><RuleSetsPage /></MemoryRouter>)
   await screen.findByText('geosite-ads')
   fireEvent.click(screen.getByRole('button', { name: '编辑规则集 geosite-ads' }))
   const dialog = screen.getByRole('dialog', { name: '编辑规则集' })
-  const intervalSelect = within(dialog).getByLabelText('更新间隔')
-  expect(intervalSelect.textContent).toContain('720 分钟')
-  await act(async () => { fireEvent.click(intervalSelect) })
-  await act(async () => { fireEvent.click(screen.getByRole('option', { name: '60 分钟' })) })
+  const amountInput = within(dialog).getByLabelText('更新间隔') as HTMLInputElement
+  const unitSelect = within(dialog).getByLabelText('更新间隔单位')
+  expect(amountInput.value).toBe('12')
+  expect(unitSelect.textContent).toContain('小时')
+  fireEvent.change(amountInput, { target: { value: '45' } })
+  await act(async () => { fireEvent.click(unitSelect) })
+  await act(async () => { fireEvent.click(screen.getByRole('option', { name: '分钟' })) })
   fireEvent.click(within(dialog).getByRole('button', { name: '确定' }))
-  await waitFor(() => expect(updateSharedRuleSet).toHaveBeenCalledWith(5, expect.objectContaining({ update_interval: '60m' })))
+  await waitFor(() => expect(updateSharedRuleSet).toHaveBeenCalledWith(5, expect.objectContaining({ update_interval: '45m' })))
 })

@@ -89,6 +89,8 @@ input.ui-input-lg, .ui-input-affix-wrapper-lg { height: 40px; }
 .ui-space-compact > :not(:first-child) { border-top-left-radius: 0; border-bottom-left-radius: 0; }
 .ui-space-compact > :not(:last-child) { border-top-right-radius: 0; border-bottom-right-radius: 0; }
 .ui-space-compact > .ui-btn { flex: none; height: auto; }
+.ui-interval-input { display: inline-grid; grid-template-columns: 96px 96px; gap: 8px; max-width: 100%; }
+.ui-interval-input > .ui-input-number, .ui-interval-input > .ui-select { width: 100%; }
 .ui-form-item { min-width: 0; margin-bottom: 18px; }
 .ui-form-item-label { padding-bottom: 6px; }
 .ui-form-item-label label { display: inline-flex; gap: 4px; font-size: 13px; font-weight: 500; line-height: 20px; }

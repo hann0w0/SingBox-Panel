@@ -49,7 +49,12 @@ import { RequestState } from '../../../components/RequestState'
 import { buildCustomNodeParams } from '../../../lib/customNodeForm'
 import { formatHostPort } from '../../../lib/nodeAddress'
 import { EXTERNAL_NODE_PROTOCOL_TYPES, toProtocolOptions } from '../../../lib/protocols'
-import { buildUpdateIntervalMinuteOptions } from '../../../lib/updateInterval'
+import {
+  intervalValueToMinutes,
+  minutesToIntervalValue,
+  validateUpdateInterval,
+} from '../../../lib/updateInterval'
+import { UpdateIntervalInput } from '../../../components/UpdateIntervalInput'
 import { SHADOWSOCKS_METHODS } from '../../../lib/util'
 import { MODAL_MD } from '../../../components/kit/modal'
 import { FormGroup } from '../servers/InboundForm'
@@ -141,7 +146,6 @@ export function CustomNodesPanel({ nodes, loading, error, onNodesChange }: {
   const [syncingSubscriptionID, setSyncingSubscriptionID] = useState<number | null>(null)
   const subscriptionRules = Form.useWatch('name_rewrite_rules', subscriptionForm) as NameRewriteRule[] | undefined
   const subscriptionAutoUpdate = Form.useWatch('auto_update', subscriptionForm) as boolean | undefined
-  const subscriptionIntervalMinutes = Form.useWatch('update_interval_minutes', subscriptionForm) as number | undefined
   // Inline group quick-edit on the group column (Popover).
   const [quickGroup, setQuickGroup] = useState<CustomNode | null>(null)
   const [quickGroupValue, setQuickGroupValue] = useState('')
@@ -207,7 +211,7 @@ export function CustomNodesPanel({ nodes, loading, error, onNodesChange }: {
   const openSubscriptionCreate = () => {
     setEditingSubscription(null)
     subscriptionForm.resetFields()
-    subscriptionForm.setFieldsValue({ auto_update: true, update_interval_minutes: 60, group: '', name_rewrite_rules: [] })
+    subscriptionForm.setFieldsValue({ auto_update: true, update_interval: { amount: 1, unit: 'h' }, group: '', name_rewrite_rules: [] })
     setSubscriptionOpen(true)
   }
 
@@ -219,7 +223,7 @@ export function CustomNodesPanel({ nodes, loading, error, onNodesChange }: {
       url: subscription.url,
       group: subscription.group || '',
       auto_update: subscription.auto_update,
-      update_interval_minutes: subscription.update_interval_minutes || 60,
+      update_interval: minutesToIntervalValue(subscription.update_interval_minutes, { amount: 1, unit: 'h' }),
       name_rewrite_rules: (subscription.name_rewrite_rules || []).map((rule) => {
         const action = rule.action === 'replace_text' ? 'rename' : (rule.action || 'rename')
         return {
@@ -244,7 +248,7 @@ export function CustomNodesPanel({ nodes, loading, error, onNodesChange }: {
         url: values.url.trim(),
         group: typeof values.group === 'string' ? values.group.trim() : '',
         auto_update: values.auto_update !== false,
-        update_interval_minutes: Number(values.update_interval_minutes) || editingSubscription?.update_interval_minutes || 60,
+        update_interval_minutes: intervalValueToMinutes(values.update_interval) ?? editingSubscription?.update_interval_minutes ?? 60,
         base_sort_order: editingSubscription?.base_sort_order ?? 0,
         name_rewrite_rules: (values.name_rewrite_rules || []).map((rule: NameRewriteRule) => {
           const action = rule.action === 'replace_text' ? 'rename' : (rule.action || 'rename')
@@ -836,8 +840,17 @@ export function CustomNodesPanel({ nodes, loading, error, onNodesChange }: {
             <FieldLabel htmlFor={`${subscriptionForm._id}-auto_update`}>自动更新</FieldLabel>
           </Field>
           {subscriptionAutoUpdate !== false ? (
-            <Form.Item name="update_interval_minutes" label="更新间隔">
-              <Select options={buildUpdateIntervalMinuteOptions(subscriptionIntervalMinutes)} />
+            <Form.Item
+              name="update_interval"
+              label="更新间隔"
+              rules={[{
+                validator: async (_, value) => {
+                  const err = validateUpdateInterval(value, { minMinutes: 15, maxMinutes: 10080 })
+                  if (err) throw new Error(err)
+                },
+              }]}
+            >
+              <UpdateIntervalInput maxMinutes={10080} />
             </Form.Item>
           ) : null}
           </FieldGroup>

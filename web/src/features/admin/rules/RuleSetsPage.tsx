@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { Button, Form, Grid, Input, Modal, Segmented, Select, Table, message } from '../../../components/kit'
+import { Button, Form, Grid, Input, Modal, Segmented, Table, message } from '../../../components/kit'
 import { Pencil, Plus, Trash2 } from 'lucide-react'
 import {
   createSharedRuleSet, deleteSharedRuleSet, errMsg, isCanceledRequest,
@@ -7,7 +7,13 @@ import {
 } from '../../../lib/api'
 import type { RuleSetBody } from '../../../lib/api'
 import type { RuleSet, Server } from '../../../lib/types'
-import { buildUpdateIntervalMinuteOptions, parseDurationToMinutes } from '../../../lib/updateInterval'
+import {
+  formatIntervalDuration,
+  parseDurationToIntervalValue,
+  validateUpdateInterval,
+  type UpdateIntervalValue,
+} from '../../../lib/updateInterval'
+import { UpdateIntervalInput } from '../../../components/UpdateIntervalInput'
 import { PageHeader } from '../../../components/kit/Page'
 import { RequestState } from '../../../components/RequestState'
 import { MODAL_SM } from '../../../components/kit/modal'
@@ -26,7 +32,6 @@ export default function RuleSetsPage() {
   const [saving, setSaving] = useState(false)
   const [rsType, setRsType] = useState<'remote' | 'local'>('remote')
   const [form] = Form.useForm()
-  const watchedIntervalMinutes = Form.useWatch('update_interval_minutes', form) as number | undefined
   const loadRef = useRef<{ generation: number; controller: AbortController | null }>({ generation: 0, controller: null })
 
   const load = useCallback(() => {
@@ -65,7 +70,7 @@ export default function RuleSetsPage() {
     setEditing(null)
     setRsType('remote')
     form.resetFields()
-    form.setFieldsValue({ type: 'remote', format: 'binary', update_interval_minutes: 1440 })
+    form.setFieldsValue({ type: 'remote', format: 'binary', update_interval: { amount: 1, unit: 'd' } })
     setOpen(true)
   }
 
@@ -75,7 +80,7 @@ export default function RuleSetsPage() {
     form.setFieldsValue({
       tag: rs.tag, type: rs.type || 'remote', format: rs.format || 'binary',
       url: rs.url || '', path: rs.path || '',
-      update_interval_minutes: parseDurationToMinutes(rs.update_interval, 1440),
+      update_interval: parseDurationToIntervalValue(rs.update_interval, { amount: 1, unit: 'd' }),
     })
     setOpen(true)
   }
@@ -83,11 +88,10 @@ export default function RuleSetsPage() {
   const submit = async () => {
     setSaving(true)
     try {
-      const values = await form.validateFields() as RuleSetBody & { update_interval_minutes?: number }
-      const minutes = Number(values.update_interval_minutes) || 1440
+      const values = await form.validateFields() as Omit<RuleSetBody, 'update_interval'> & { update_interval?: UpdateIntervalValue }
       const payload: RuleSetBody = values.type === 'local'
         ? { tag: values.tag, type: 'local', format: values.format, path: values.path }
-        : { tag: values.tag, type: 'remote', format: values.format, url: values.url, update_interval: `${minutes}m` }
+        : { tag: values.tag, type: 'remote', format: values.format, url: values.url, update_interval: formatIntervalDuration(values.update_interval, '1d') }
       if (editing) await updateSharedRuleSet(editing.id, payload)
       else await createSharedRuleSet(payload)
       setOpen(false)
@@ -187,8 +191,17 @@ export default function RuleSetsPage() {
             ]}>
               <Input />
             </Form.Item>
-            <Form.Item name="update_interval_minutes" label="更新间隔">
-              <Select options={buildUpdateIntervalMinuteOptions(watchedIntervalMinutes)} />
+            <Form.Item
+              name="update_interval"
+              label="更新间隔"
+              rules={[{
+                validator: async (_, value) => {
+                  const err = validateUpdateInterval(value, { minMinutes: 1, maxMinutes: 43200 })
+                  if (err) throw new Error(err)
+                },
+              }]}
+            >
+              <UpdateIntervalInput maxMinutes={43200} />
             </Form.Item>
           </> : (
             <Form.Item name="path" label="路径" rules={[{ required: true, message: '请输入服务器上的本地文件路径' }]}>

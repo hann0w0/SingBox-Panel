@@ -159,11 +159,18 @@ func (s *trafficSampler) observeConnection(id, inbound, user string, total [2]ui
 	pending.Download += userDelta[1]
 	s.pendingUsers[key] = pending
 	// A user may become known after Clash already counted its bytes. Attribute
-	// those bytes to their original collection buckets, not the discovery time.
+	// those bytes to their original collection buckets, not the discovery time,
+	// without rebasing live minute buckets back to the historical hour key.
+	nowKey := now.UTC().Truncate(time.Minute).Unix()
+	s.rebaseFutureClockLocked(nowKey)
 	remaining := userDelta
 	for bucket, value := range entry.unassigned {
 		credit := [2]uint64{min(value[0], remaining[0]), min(value[1], remaining[1])}
-		s.addUserBucket(time.Unix(bucket, 0), key, credit)
+		if credit[0] == 0 && credit[1] == 0 {
+			continue
+		}
+		targetBucket := min(bucket, nowKey)
+		s.addHistoricalUserBucket(targetBucket, key, credit)
 		remaining[0] -= credit[0]
 		remaining[1] -= credit[1]
 	}

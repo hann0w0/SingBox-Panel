@@ -18,11 +18,19 @@ const maxBufferedTrafficMinutes = 10080 // 7 days of minute buckets
 
 // Callers hold s.mu. Collection runs regardless of panel connectivity.
 func (s *trafficSampler) bucket(now time.Time) *collectedTrafficBucket {
+	key := now.UTC().Truncate(time.Minute).Unix()
+	s.rebaseFutureClockLocked(key)
+	return s.bucketAtLocked(key)
+}
+
+// bucketAtLocked returns (or creates) a bucket for an explicit UTC timestamp
+// without rebasing newer buckets. Historical attributions (such as late user
+// identity replay from unassigned hour buckets) must use this so an earlier
+// timestamp never masquerades as a backward clock jump.
+func (s *trafficSampler) bucketAtLocked(key int64) *collectedTrafficBucket {
 	if s.buckets == nil {
 		s.buckets = make(map[int64]*collectedTrafficBucket)
 	}
-	key := now.UTC().Truncate(time.Minute).Unix()
-	s.rebaseFutureClockLocked(key)
 	b := s.buckets[key]
 	if b == nil {
 		b = &collectedTrafficBucket{TrafficTimeBucket: protocol.TrafficTimeBucket{Time: key},
@@ -184,11 +192,41 @@ func (s *trafficSampler) addPortBucket(now time.Time, inbound string, delta [2]u
 
 func (s *trafficSampler) addUserBucket(now time.Time, key userTrafficKey, delta [2]uint64) {
 	b := s.bucket(now)
+	addUserDeltaToBucket(b, key, delta)
+}
+
+func (s *trafficSampler) addHistoricalUserBucket(bucketUnix int64, key userTrafficKey, delta [2]uint64) {
+	b := s.bucketAtLocked(bucketUnix)
+	addUserDeltaToBucket(b, key, delta)
+}
+
+func addUserDeltaToBucket(b *collectedTrafficBucket, key userTrafficKey, delta [2]uint64) {
 	u := b.users[key]
 	u.Inbound, u.User = key.inbound, key.user
 	u.Upload += delta[0]
 	u.Download += delta[1]
 	b.users[key] = u
+}
+
+func cloneTrafficReport(src *protocol.TrafficReport) *protocol.TrafficReport {
+	if src == nil {
+		return nil
+	}
+	dst := *src
+	if len(src.Buckets) > 0 {
+		dst.Buckets = make([]protocol.TrafficTimeBucket, len(src.Buckets))
+		for i, b := range src.Buckets {
+			copied := b
+			if len(b.Ports) > 0 {
+				copied.Ports = append([]protocol.PortTrafficSnapshot(nil), b.Ports...)
+			}
+			if len(b.Users) > 0 {
+				copied.Users = append([]protocol.UserTrafficSnapshot(nil), b.Users...)
+			}
+			dst.Buckets[i] = copied
+		}
+	}
+	return &dst
 }
 
 // accountingSnapshot freezes one bounded batch, leaving newly collected
@@ -260,7 +298,7 @@ func (s *trafficSampler) accountingSnapshot() *protocol.TrafficSnapshot {
 		s.peakUpload, s.peakDownload = 0, 0
 	}
 	snapshot.AccountingVersion = 2
-	snapshot.Report = s.report
+	snapshot.Report = cloneTrafficReport(s.report)
 	snapshot.Ports, snapshot.Users = nil, nil
 	return snapshot
 }

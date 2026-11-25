@@ -190,6 +190,44 @@ func TestRestrictedOutboundPublicLiteralsDoNotResolveOrInventTLSName(t *testing.
 	}
 }
 
+func TestRestrictedOutboundPreservesTransportHostOnDomainPin(t *testing.T) {
+	resolve := func(context.Context, string) ([]netip.Addr, error) {
+		return []netip.Addr{netip.MustParseAddr("1.1.1.1")}, nil
+	}
+
+	wsProxy := restrictedProxy("cdn.example.com")
+	wsProxy["transport"] = map[string]any{"type": "ws", "path": "/ws"}
+	prepared, err := prepareRestrictedOutbounds(context.Background(), restrictedConfig(t, wsProxy), []string{"private"}, resolve)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var wsTransport struct {
+		Headers map[string]string `json:"headers"`
+	}
+	if err := json.Unmarshal(decodeRestrictedOutbounds(t, prepared)[0]["transport"], &wsTransport); err != nil {
+		t.Fatal(err)
+	}
+	if wsTransport.Headers["Host"] != "cdn.example.com" {
+		t.Fatalf("ws Host header = %q, want cdn.example.com", wsTransport.Headers["Host"])
+	}
+
+	upgradeProxy := restrictedProxy("edge.example.com")
+	upgradeProxy["transport"] = map[string]any{"type": "httpupgrade", "path": "/up"}
+	prepared, err = prepareRestrictedOutbounds(context.Background(), restrictedConfig(t, upgradeProxy), []string{"private"}, resolve)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var upTransport struct {
+		Host string `json:"host"`
+	}
+	if err := json.Unmarshal(decodeRestrictedOutbounds(t, prepared)[0]["transport"], &upTransport); err != nil {
+		t.Fatal(err)
+	}
+	if upTransport.Host != "edge.example.com" {
+		t.Fatalf("httpupgrade host = %q, want edge.example.com", upTransport.Host)
+	}
+}
+
 func TestRestrictedOutboundFailsClosedForInvalidConfigOrMetadata(t *testing.T) {
 	for _, scenario := range []struct {
 		name string

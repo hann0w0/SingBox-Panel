@@ -178,6 +178,49 @@ func pinRestrictedOutbound(ctx context.Context, raw json.RawMessage, tag string,
 			outbound["tls"], _ = json.Marshal(tls)
 		}
 	}
+	if literalErr != nil && len(outbound["transport"]) > 0 {
+		var transport map[string]json.RawMessage
+		if err := json.Unmarshal(outbound["transport"], &transport); err != nil {
+			return nil, fmt.Errorf("restricted outbound %q has invalid transport settings: %w", tag, err)
+		}
+		var trType string
+		if len(transport["type"]) > 0 {
+			_ = json.Unmarshal(transport["type"], &trType)
+		}
+		switch trType {
+		case "ws":
+			var headers map[string]any
+			if len(transport["headers"]) > 0 {
+				if err := json.Unmarshal(transport["headers"], &headers); err != nil {
+					return nil, fmt.Errorf("restricted outbound %q has invalid transport headers: %w", tag, err)
+				}
+			}
+			if headers == nil {
+				headers = map[string]any{}
+			}
+			hasHost := false
+			for k := range headers {
+				if strings.EqualFold(k, "host") {
+					hasHost = true
+					break
+				}
+			}
+			if !hasHost {
+				headers["Host"] = host
+				transport["headers"], _ = json.Marshal(headers)
+				outbound["transport"], _ = json.Marshal(transport)
+			}
+		case "httpupgrade":
+			var trHost string
+			if len(transport["host"]) > 0 {
+				_ = json.Unmarshal(transport["host"], &trHost)
+			}
+			if strings.TrimSpace(trHost) == "" {
+				transport["host"], _ = json.Marshal(host)
+				outbound["transport"], _ = json.Marshal(transport)
+			}
+		}
+	}
 	return json.Marshal(outbound)
 }
 

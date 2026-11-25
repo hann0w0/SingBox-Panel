@@ -30,6 +30,7 @@ export type JSONSchema = {
   additionalProperties?: boolean
   'x-discriminator'?: string
   'x-variants'?: Record<string, JSONSchema>
+  'x-listable'?: boolean
   'x-ui'?: UIMeta
 }
 
@@ -179,7 +180,7 @@ const TRANSPORT_SUBSCHEMA: JSONSchema = {
   properties: {
     type: { type: 'string', default: 'tcp', enum: ['tcp', 'ws', 'http', 'grpc', 'httpupgrade', 'quic'], 'x-ui': { label: '传输层', order: 1, widget: 'select' } },
     path: { type: 'string', 'x-ui': { label: '路径', order: 2, placeholder: '/ws' } },
-    host: { type: 'string', 'x-ui': { label: 'Host', order: 3 } },
+    host: { type: 'string', 'x-listable': true, 'x-ui': { label: 'Host', order: 3 } },
     method: { type: 'string', 'x-ui': { label: 'HTTP 方法', order: 4, advanced: true } },
     service_name: { type: 'string', 'x-ui': { label: 'gRPC Service Name', order: 6, placeholder: 'TunService' } },
     idle_timeout: { type: 'string', 'x-ui': { label: '空闲超时', order: 7, placeholder: '15s', advanced: true } },
@@ -547,6 +548,13 @@ function validateValueBySchema(schema: JSONSchema, val: unknown, path: string): 
   if (val === undefined || val === null) return null
   switch (schema.type) {
     case 'string':
+      if (schema['x-listable'] && Array.isArray(val)) {
+        for (let i = 0; i < val.length; i += 1) {
+          const itemErr = validateValueBySchema({ type: 'string', enum: schema.enum }, val[i], `${path}[${i}]`)
+          if (itemErr) return itemErr
+        }
+        return null
+      }
       if (typeof val !== 'string') return `${path} 必须是字符串`
       if (schema.enum?.length && !schema.enum.includes(val)) return `${path} 的值 ${val} 不在允许范围内`
       return null
@@ -562,7 +570,12 @@ function validateValueBySchema(schema: JSONSchema, val: unknown, path: string): 
       if (schema.enum?.length && !schema.enum.includes(val)) return `${path} 的值 ${val} 不在允许范围内`
       return null
     case 'array':
-      if (!Array.isArray(val)) return `${path} 必须是数组`
+      if (!Array.isArray(val)) {
+        if (schema['x-listable'] && schema.items) {
+          return validateValueBySchema(schema.items, val, path)
+        }
+        return `${path} 必须是数组`
+      }
       if (schema.items) {
         for (let i = 0; i < val.length; i += 1) {
           const itemErr = validateValueBySchema(schema.items, val[i], `${path}[${i}]`)

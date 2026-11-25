@@ -90,7 +90,7 @@ func (a *App) importRemoteConfig(c *gin.Context) {
 		return
 	}
 	var req importReq
-	if !bindJSON(c, &req) {
+	if !bindJSONLimit(c, &req, maxPanelAgentMessageSize) {
 		return
 	}
 

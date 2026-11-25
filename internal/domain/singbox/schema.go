@@ -33,6 +33,7 @@ type JSONSchema struct {
 	Schema               string                 `json:"$schema,omitempty"`
 	Title                string                 `json:"title,omitempty"`
 	Type                 string                 `json:"type,omitempty"`
+	Listable             bool                   `json:"x-listable,omitempty"`
 	Description          string                 `json:"description,omitempty"`
 	Default              any                    `json:"default,omitempty"`
 	Enum                 []any                  `json:"enum,omitempty"`
@@ -83,9 +84,19 @@ func stringArraySchema(ui *UIMeta) *JSONSchema {
 	}
 }
 
+func listableStringArraySchema(ui *UIMeta) *JSONSchema {
+	return &JSONSchema{
+		Type:     "array",
+		Listable: true,
+		Items:    &JSONSchema{Type: "string"},
+		UI:       ui,
+	}
+}
+
 func intArraySchema(minV, maxV float64, ui *UIMeta) *JSONSchema {
 	return &JSONSchema{
-		Type: "array",
+		Type:     "array",
+		Listable: true,
 		Items: &JSONSchema{
 			Type:    "integer",
 			Minimum: ptrFloat(minV),
@@ -106,7 +117,7 @@ func tlsInboundSubSchema(includeReality bool) *JSONSchema {
 			Type: "string",
 			UI:   &UIMeta{Label: "SNI", Group: "TLS", Order: 2},
 		},
-		"alpn": stringArraySchema(&UIMeta{Label: "ALPN", Group: "TLS", Order: 3, Widget: "tags"}),
+		"alpn": listableStringArraySchema(&UIMeta{Label: "ALPN", Group: "TLS", Order: 3, Widget: "tags"}),
 		"min_version": {
 			Type: "string",
 			Enum: strEnum("", "1.0", "1.1", "1.2", "1.3"),
@@ -133,14 +144,16 @@ func tlsInboundSubSchema(includeReality bool) *JSONSchema {
 			UI:   &UIMeta{Label: "私钥路径", Group: "TLS", Order: 11, Placeholder: "/etc/sing-box/key.pem"},
 		},
 		"certificate": {
-			Type: "array",
+			Type:     "array",
+			Listable: true,
 			Items: &JSONSchema{
 				Type: "string",
 			},
 			UI: &UIMeta{Label: "内联证书 PEM", Group: "TLS", Order: 12, Widget: "lines", FullWidth: true, Advanced: true},
 		},
 		"key": {
-			Type: "array",
+			Type:     "array",
+			Listable: true,
 			Items: &JSONSchema{
 				Type: "string",
 			},
@@ -151,7 +164,7 @@ func tlsInboundSubSchema(includeReality bool) *JSONSchema {
 			AdditionalProperties: ptrBool(true),
 			Properties: map[string]*JSONSchema{
 				"enabled":  {Type: "boolean", UI: &UIMeta{Label: "启用服务端 ECH", Widget: "switch"}},
-				"key":      stringArraySchema(&UIMeta{Label: "ECH 私钥 PEM", Widget: "lines", FullWidth: true}),
+				"key":      listableStringArraySchema(&UIMeta{Label: "ECH 私钥 PEM", Widget: "lines", FullWidth: true}),
 				"key_path": {Type: "string", UI: &UIMeta{Label: "ECH 密钥路径"}},
 			},
 			UI: &UIMeta{Label: "ECH", Group: "TLS", Order: 16, Advanced: true},
@@ -161,7 +174,7 @@ func tlsInboundSubSchema(includeReality bool) *JSONSchema {
 			AdditionalProperties: ptrBool(true),
 			Properties: map[string]*JSONSchema{
 				"type":           {Type: "string", Default: "acme", Enum: strEnum("acme", "cloudflare", "tailscale")},
-				"domain":         stringArraySchema(&UIMeta{Label: "ACME 域名", Widget: "tags"}),
+				"domain":         listableStringArraySchema(&UIMeta{Label: "ACME 域名", Widget: "tags"}),
 				"email":          {Type: "string", UI: &UIMeta{Label: "ACME 邮箱"}},
 				"data_directory": {Type: "string", UI: &UIMeta{Label: "ACME 数据目录"}},
 				"provider":       {Type: "string", UI: &UIMeta{Label: "ACME CA"}},
@@ -187,7 +200,7 @@ func tlsInboundSubSchema(includeReality bool) *JSONSchema {
 					},
 				},
 				"private_key":         {Type: "string", UI: &UIMeta{Label: "私钥", Generator: "reality-keypair"}},
-				"short_id":            stringArraySchema(&UIMeta{Label: "Short ID", Generator: "short-id", Widget: "tags"}),
+				"short_id":            listableStringArraySchema(&UIMeta{Label: "Short ID", Generator: "short-id", Widget: "tags"}),
 				"max_time_difference": {Type: "string", UI: &UIMeta{Label: "时间差限制", Placeholder: "1m"}},
 			},
 			UI: &UIMeta{Label: "REALITY", Group: "TLS", Order: 18},
@@ -238,7 +251,7 @@ func tlsOutboundSubSchema(includeReality bool) *JSONSchema {
 			AdditionalProperties: ptrBool(true),
 			Properties: map[string]*JSONSchema{
 				"enabled":                        {Type: "boolean", UI: &UIMeta{Label: "启用 ECH", Widget: "switch"}},
-				"config":                         stringArraySchema(&UIMeta{Label: "ECH 配置", Widget: "lines", FullWidth: true}),
+				"config":                         listableStringArraySchema(&UIMeta{Label: "ECH 配置", Widget: "lines", FullWidth: true}),
 				"config_path":                    {Type: "string", UI: &UIMeta{Label: "ECH 配置路径"}},
 				"query_server_name":              {Type: "string", UI: &UIMeta{Label: "ECH 查询域名"}},
 				"pq_signature_schemes_enabled":   {Type: "boolean", UI: &UIMeta{Label: "启用后量子签名", Widget: "switch"}},
@@ -283,8 +296,9 @@ func transportSubSchema() *JSONSchema {
 				UI:   &UIMeta{Label: "路径", Order: 2, Placeholder: "/ws"},
 			},
 			"host": {
-				Type: "string",
-				UI:   &UIMeta{Label: "Host", Order: 3},
+				Type:     "string",
+				Listable: true,
+				UI:       &UIMeta{Label: "Host", Order: 3},
 			},
 			"method": {
 				Type: "string",
@@ -525,15 +539,15 @@ func InboundSchema() *JSONSchema {
 		}),
 		"tun": inboundVariant(map[string]*JSONSchema{
 			"interface_name":           {Type: "string", UI: &UIMeta{Label: "网卡名称", Group: "协议参数", Order: 1, Placeholder: "tun0"}},
-			"address":                  stringArraySchema(&UIMeta{Label: "TUN 地址 CIDR", Group: "协议参数", Order: 2, Widget: "tags", Placeholder: "172.19.0.1/30"}),
+			"address":                  listableStringArraySchema(&UIMeta{Label: "TUN 地址 CIDR", Group: "协议参数", Order: 2, Widget: "tags", Placeholder: "172.19.0.1/30"}),
 			"mtu":                      {Type: "integer", Default: 9000, Minimum: ptrFloat(576), Maximum: ptrFloat(65535), UI: &UIMeta{Label: "MTU", Group: "协议参数", Order: 3}},
 			"stack":                    {Type: "string", Enum: strEnum("", "system", "gvisor", "mixed"), UI: &UIMeta{Label: "网络栈", Group: "协议参数", Order: 4, Widget: "select"}},
 			"auto_route":               {Type: "boolean", Default: true, UI: &UIMeta{Label: "自动路由", Group: "协议参数", Order: 5, Widget: "switch"}},
 			"strict_route":             {Type: "boolean", UI: &UIMeta{Label: "严格路由", Group: "协议参数", Order: 6, Widget: "switch"}},
 			"auto_redirect":            {Type: "boolean", UI: &UIMeta{Label: "Auto Redirect", Group: "协议参数", Order: 7, Widget: "switch", Advanced: true}},
 			"endpoint_independent_nat": {Type: "boolean", UI: &UIMeta{Label: "独立端点 NAT", Group: "协议参数", Order: 8, Widget: "switch", Advanced: true}},
-			"route_address":            stringArraySchema(&UIMeta{Label: "路由网段", Group: "协议参数", Order: 9, Widget: "tags", Advanced: true}),
-			"route_exclude_address":    stringArraySchema(&UIMeta{Label: "排除网段", Group: "协议参数", Order: 10, Widget: "tags", Advanced: true}),
+			"route_address":            listableStringArraySchema(&UIMeta{Label: "路由网段", Group: "协议参数", Order: 9, Widget: "tags", Advanced: true}),
+			"route_exclude_address":    listableStringArraySchema(&UIMeta{Label: "排除网段", Group: "协议参数", Order: 10, Widget: "tags", Advanced: true}),
 			"udp_timeout":              {Type: "string", UI: &UIMeta{Label: "UDP 超时", Group: "协议参数", Order: 11, Placeholder: "5m"}},
 		}),
 		"direct": inboundVariantWithListen(true, true, map[string]*JSONSchema{
@@ -588,7 +602,7 @@ func InboundSchema() *JSONSchema {
 			"tls":       tlsInboundSubSchema(false),
 		}),
 		"anytls": inboundVariantWithListen(true, false, map[string]*JSONSchema{
-			"padding_scheme": stringArraySchema(&UIMeta{Label: "Padding 方案", Group: "协议参数", Widget: "lines", FullWidth: true, Advanced: true}),
+			"padding_scheme": listableStringArraySchema(&UIMeta{Label: "Padding 方案", Group: "协议参数", Widget: "lines", FullWidth: true, Advanced: true}),
 			"tls":            tlsInboundSubSchema(false),
 		}),
 		"vless": inboundVariantWithListen(true, true, map[string]*JSONSchema{
@@ -788,7 +802,7 @@ func OutboundSchema() *JSONSchema {
 			"password":     {Type: "string", UI: &UIMeta{Label: "密码", Group: "认证", Order: 1, Widget: "password"}},
 			"up_mbps":      {Type: "integer", Minimum: ptrFloat(0), UI: &UIMeta{Label: "上行 Mbps", Group: "协议参数", Order: 1}},
 			"down_mbps":    {Type: "integer", Minimum: ptrFloat(0), UI: &UIMeta{Label: "下行 Mbps", Group: "协议参数", Order: 2}},
-			"server_ports": stringArraySchema(&UIMeta{Label: "端口跳跃", Group: "协议参数", Order: 3, Widget: "tags", Placeholder: "20000:50000", Advanced: true}),
+			"server_ports": listableStringArraySchema(&UIMeta{Label: "端口跳跃", Group: "协议参数", Order: 3, Widget: "tags", Placeholder: "20000:50000", Advanced: true}),
 			"hop_interval": {Type: "string", UI: &UIMeta{Label: "跳跃间隔", Group: "协议参数", Order: 4, Placeholder: "30s", Advanced: true}},
 			"network":      {Type: "string", Enum: strEnum("", "tcp", "udp"), UI: &UIMeta{Label: "网络限制", Group: "协议参数", Order: 5, Widget: "select", Advanced: true}},
 			"obfs": {
@@ -839,20 +853,20 @@ func RouteRuleSchema() *JSONSchema {
 			Type: "boolean",
 			UI:   &UIMeta{Label: "禁用自动降级", Group: "动作", Order: 3, Widget: "switch", Actions: []string{"reject"}, Advanced: true},
 		},
-		"sniffer": stringArraySchema(&UIMeta{
+		"sniffer": listableStringArraySchema(&UIMeta{
 			Label: "嗅探协议", Group: "动作", Order: 3, Widget: "multiselect", Actions: []string{"sniff"},
 		}),
 		"timeout": {
 			Type: "string",
 			UI:   &UIMeta{Label: "嗅探超时", Group: "动作", Order: 4, Placeholder: "300ms", Actions: []string{"sniff", "resolve"}},
 		},
-		"inbound": stringArraySchema(&UIMeta{
+		"inbound": listableStringArraySchema(&UIMeta{
 			Label: "入站来源", Group: "来源与身份", Order: 10, Widget: "multiselect",
 		}),
-		"auth_user": stringArraySchema(&UIMeta{
+		"auth_user": listableStringArraySchema(&UIMeta{
 			Label: "认证用户", Group: "来源与身份", Order: 11, Widget: "multiselect",
 		}),
-		"rule_set": stringArraySchema(&UIMeta{
+		"rule_set": listableStringArraySchema(&UIMeta{
 			Label: "规则集", Group: "规则集", Order: 20, Widget: "multiselect", Actions: routeActions,
 		}),
 		"rule_set_ip_cidr_match_source": {
@@ -863,26 +877,26 @@ func RouteRuleSchema() *JSONSchema {
 			Type: "boolean",
 			UI:   &UIMeta{Label: "规则集空 IP 也视为匹配", Group: "规则集", Order: 22, Widget: "switch", Actions: routeActions, Advanced: true},
 		},
-		"domain": stringArraySchema(&UIMeta{
+		"domain": listableStringArraySchema(&UIMeta{
 			Label: "完整域名", Group: "域名匹配", Order: 30, Widget: "lines", FullWidth: true, Actions: routeActions,
 		}),
-		"domain_suffix": stringArraySchema(&UIMeta{
+		"domain_suffix": listableStringArraySchema(&UIMeta{
 			Label: "域名后缀", Group: "域名匹配", Order: 31, Widget: "lines", FullWidth: true, Actions: routeActions,
 		}),
-		"domain_keyword": stringArraySchema(&UIMeta{
+		"domain_keyword": listableStringArraySchema(&UIMeta{
 			Label: "域名关键词", Group: "域名匹配", Order: 32, Widget: "lines", FullWidth: true, Actions: routeActions,
 		}),
-		"domain_regex": stringArraySchema(&UIMeta{
+		"domain_regex": listableStringArraySchema(&UIMeta{
 			Label: "域名正则", Group: "域名匹配", Order: 33, Widget: "lines", FullWidth: true, Actions: routeActions, Advanced: true,
 		}),
-		"ip_cidr": stringArraySchema(&UIMeta{
+		"ip_cidr": listableStringArraySchema(&UIMeta{
 			Label: "目标 IP / CIDR", Group: "IP 与端口", Order: 40, Widget: "lines", FullWidth: true, Actions: routeActions,
 		}),
 		"ip_is_private": {
 			Type: "boolean",
 			UI:   &UIMeta{Label: "目标为内网/私有 IP", Group: "IP 与端口", Order: 41, Widget: "switch", Actions: routeActions, Advanced: true},
 		},
-		"source_ip_cidr": stringArraySchema(&UIMeta{
+		"source_ip_cidr": listableStringArraySchema(&UIMeta{
 			Label: "来源 IP / CIDR", Group: "IP 与端口", Order: 42, Widget: "lines", FullWidth: true, Actions: routeActions,
 		}),
 		"source_ip_is_private": {
@@ -892,17 +906,18 @@ func RouteRuleSchema() *JSONSchema {
 		"port": intArraySchema(1, 65535, &UIMeta{
 			Label: "目标端口", Group: "IP 与端口", Order: 44, Widget: "lines", Actions: routeActions,
 		}),
-		"port_range": stringArraySchema(&UIMeta{
+		"port_range": listableStringArraySchema(&UIMeta{
 			Label: "目标端口范围", Group: "IP 与端口", Order: 45, Widget: "tags", Placeholder: "1000:2000", Actions: routeActions, Advanced: true,
 		}),
 		"source_port": intArraySchema(1, 65535, &UIMeta{
 			Label: "来源端口", Group: "IP 与端口", Order: 46, Widget: "lines", Actions: routeActions, Advanced: true,
 		}),
-		"source_port_range": stringArraySchema(&UIMeta{
+		"source_port_range": listableStringArraySchema(&UIMeta{
 			Label: "来源端口范围", Group: "IP 与端口", Order: 47, Widget: "tags", Placeholder: "1000:2000", Actions: routeActions, Advanced: true,
 		}),
 		"network": {
-			Type: "array",
+			Type:     "array",
+			Listable: true,
 			Items: &JSONSchema{
 				Type: "string",
 				Enum: strEnum("tcp", "udp", "icmp"),
@@ -914,36 +929,37 @@ func RouteRuleSchema() *JSONSchema {
 			Enum: intEnum(4, 6),
 			UI:   &UIMeta{Label: "IP 版本", Group: "协议与版本", Order: 51, Widget: "select", Actions: routeActions, Advanced: true},
 		},
-		"protocol": stringArraySchema(&UIMeta{
+		"protocol": listableStringArraySchema(&UIMeta{
 			Label: "应用协议", Group: "协议与版本", Order: 52, Widget: "tags", Actions: routeActions,
 		}),
-		"client": stringArraySchema(&UIMeta{
+		"client": listableStringArraySchema(&UIMeta{
 			Label: "识别客户端", Group: "协议与版本", Order: 53, Widget: "tags", Actions: routeActions, Advanced: true,
 		}),
-		"process_name": stringArraySchema(&UIMeta{
+		"process_name": listableStringArraySchema(&UIMeta{
 			Label: "进程名", Group: "进程与环境", Order: 60, Widget: "tags", Actions: routeActions, Advanced: true,
 		}),
-		"process_path": stringArraySchema(&UIMeta{
+		"process_path": listableStringArraySchema(&UIMeta{
 			Label: "进程路径", Group: "进程与环境", Order: 61, Widget: "lines", FullWidth: true, Actions: routeActions, Advanced: true,
 		}),
-		"process_path_regex": stringArraySchema(&UIMeta{
+		"process_path_regex": listableStringArraySchema(&UIMeta{
 			Label: "进程路径正则", Group: "进程与环境", Order: 62, Widget: "lines", FullWidth: true, Actions: routeActions, Advanced: true,
 		}),
-		"package_name": stringArraySchema(&UIMeta{
+		"package_name": listableStringArraySchema(&UIMeta{
 			Label: "应用包名", Group: "进程与环境", Order: 63, Widget: "tags", Actions: routeActions, Advanced: true,
 		}),
-		"package_name_regex": stringArraySchema(&UIMeta{
+		"package_name_regex": listableStringArraySchema(&UIMeta{
 			Label: "应用包名正则", Group: "进程与环境", Order: 64, Widget: "lines", FullWidth: true, Actions: routeActions, Advanced: true,
 		}),
-		"user": stringArraySchema(&UIMeta{
+		"user": listableStringArraySchema(&UIMeta{
 			Label: "系统用户", Group: "进程与环境", Order: 65, Widget: "tags", Actions: routeActions, Advanced: true,
 		}),
 		"user_id": {
-			Type:  "array",
-			Items: &JSONSchema{Type: "integer"},
-			UI:    &UIMeta{Label: "系统用户 ID", Group: "进程与环境", Order: 66, Widget: "lines", Actions: routeActions, Advanced: true},
+			Type:     "array",
+			Listable: true,
+			Items:    &JSONSchema{Type: "integer"},
+			UI:       &UIMeta{Label: "系统用户 ID", Group: "进程与环境", Order: 66, Widget: "lines", Actions: routeActions, Advanced: true},
 		},
-		"network_type": stringArraySchema(&UIMeta{
+		"network_type": listableStringArraySchema(&UIMeta{
 			Label: "网络类型", Group: "进程与环境", Order: 67, Widget: "tags", Actions: routeActions, Advanced: true,
 		}),
 		"network_is_expensive": {
@@ -954,19 +970,19 @@ func RouteRuleSchema() *JSONSchema {
 			Type: "boolean",
 			UI:   &UIMeta{Label: "低数据模式", Group: "进程与环境", Order: 69, Widget: "switch", Actions: routeActions, Advanced: true},
 		},
-		"wifi_ssid": stringArraySchema(&UIMeta{
+		"wifi_ssid": listableStringArraySchema(&UIMeta{
 			Label: "Wi-Fi SSID", Group: "进程与环境", Order: 70, Widget: "tags", Actions: routeActions, Advanced: true,
 		}),
-		"wifi_bssid": stringArraySchema(&UIMeta{
+		"wifi_bssid": listableStringArraySchema(&UIMeta{
 			Label: "Wi-Fi BSSID", Group: "进程与环境", Order: 71, Widget: "tags", Actions: routeActions, Advanced: true,
 		}),
-		"source_mac_address": stringArraySchema(&UIMeta{
+		"source_mac_address": listableStringArraySchema(&UIMeta{
 			Label: "来源 MAC 地址", Group: "进程与环境", Order: 72, Widget: "tags", Actions: routeActions, Advanced: true,
 		}),
-		"source_hostname": stringArraySchema(&UIMeta{
+		"source_hostname": listableStringArraySchema(&UIMeta{
 			Label: "来源主机名", Group: "进程与环境", Order: 73, Widget: "tags", Actions: routeActions, Advanced: true,
 		}),
-		"preferred_by": stringArraySchema(&UIMeta{
+		"preferred_by": listableStringArraySchema(&UIMeta{
 			Label: "优先出站类型", Group: "进程与环境", Order: 74, Widget: "tags", Actions: routeActions, Advanced: true,
 		}),
 		"interface_address": {
@@ -979,7 +995,7 @@ func RouteRuleSchema() *JSONSchema {
 			AdditionalProperties: ptrBool(true),
 			UI:                   &UIMeta{Label: "网络接口地址", Group: "进程与环境", Order: 76, Widget: "json", FullWidth: true, Actions: routeActions, Advanced: true},
 		},
-		"default_interface_address": stringArraySchema(&UIMeta{
+		"default_interface_address": listableStringArraySchema(&UIMeta{
 			Label: "默认接口地址", Group: "进程与环境", Order: 77, Widget: "tags", Actions: routeActions, Advanced: true,
 		}),
 		"clash_mode": {
@@ -1146,6 +1162,15 @@ func validateValueAgainstSchema(path string, schema *JSONSchema, val any) error 
 	}
 	switch schema.Type {
 	case "string":
+		if rv := reflect.ValueOf(val); schema.Listable && rv.IsValid() && (rv.Kind() == reflect.Slice || rv.Kind() == reflect.Array) {
+			itemSchema := &JSONSchema{Type: "string", Enum: schema.Enum}
+			for i := 0; i < rv.Len(); i++ {
+				if err := validateValueAgainstSchema(fmt.Sprintf("%s[%d]", path, i), itemSchema, rv.Index(i).Interface()); err != nil {
+					return err
+				}
+			}
+			return nil
+		}
 		s, ok := val.(string)
 		if !ok {
 			return fmt.Errorf("%s 必须是字符串", path)
@@ -1177,6 +1202,9 @@ func validateValueAgainstSchema(path string, schema *JSONSchema, val any) error 
 	case "array":
 		rv := reflect.ValueOf(val)
 		if !rv.IsValid() || (rv.Kind() != reflect.Slice && rv.Kind() != reflect.Array) {
+			if schema.Listable && schema.Items != nil {
+				return validateValueAgainstSchema(path, schema.Items, val)
+			}
 			return fmt.Errorf("%s 必须是数组", path)
 		}
 		if schema.Items != nil {

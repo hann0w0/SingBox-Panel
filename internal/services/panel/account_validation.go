@@ -46,7 +46,7 @@ func validateUsername(value string) (string, string, error) {
 			return "", "", errUsernameControl
 		}
 	}
-	if normalizeUsername(display) == lockoutProxyUserName {
+	if norm := normalizeUsername(display); norm == lockoutProxyUserName || norm == routingOutboundUserName || strings.HasPrefix(norm, routingOutboundUserName+":") {
 		return "", "", errUsernameReserved
 	}
 	return display, normalizeUsername(display), nil

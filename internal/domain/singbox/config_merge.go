@@ -20,17 +20,16 @@ func mergeConfigValue(original, before, after any) any {
 				if merged, ok := mergeConfigObjectList(source, oldList, newList); ok {
 					return merged
 				}
-			}
-		}
-		if newList, ok := after.([]any); ok && len(oldList) == len(newList) {
-			if source, ok := original.([]any); ok && len(source) >= len(oldList) {
-				result := append([]any(nil), source...)
-				for i := range oldList {
-					result[i] = mergeConfigValue(source[i], oldList[i], newList[i])
+				if len(source) == len(oldList) && len(oldList) == len(newList) && !listObjectsHaveIdentity(source, oldList, newList) {
+					result := append([]any(nil), source...)
+					for i := range oldList {
+						result[i] = mergeConfigValue(source[i], oldList[i], newList[i])
+					}
+					return result
 				}
-				return result
 			}
 		}
+		return after
 	}
 	oldObject, oldOK := before.(map[string]any)
 	newObject, newOK := after.(map[string]any)
@@ -173,6 +172,23 @@ func mergeConfigObjectList(source, before, after []any) ([]any, bool) {
 		return result, true
 	}
 	return nil, false
+}
+
+func listObjectsHaveIdentity(lists ...[]any) bool {
+	for _, list := range lists {
+		for _, item := range list {
+			obj, ok := item.(map[string]any)
+			if !ok {
+				continue
+			}
+			for _, key := range []string{"tag", "name", "id", "username", "uuid"} {
+				if id, ok := obj[key].(string); ok && id != "" {
+					return true
+				}
+			}
+		}
+	}
+	return false
 }
 
 // mergeConfigJSON compares projections made using the same version of the

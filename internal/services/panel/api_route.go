@@ -327,6 +327,18 @@ func (a *App) testOutbound(c *gin.Context) {
 	if len(ob.Settings) > 0 {
 		_ = json.Unmarshal(ob.Settings, &st)
 	}
+	if ob.Referenced() {
+		if client, err := a.outboundSourceClient(&ob, sid); err == nil {
+			ob.Type = client.Type
+			st = outboundStoredSettings{
+				Server: client.Server, ServerPort: client.ServerPort,
+				Settings: client.Settings,
+			}
+		} else if errors.Is(err, errNodeAddress) {
+			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+			return
+		}
+	}
 	if st.Server == "" || st.ServerPort == 0 {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "该出站没有落地地址或端口"})
 		return

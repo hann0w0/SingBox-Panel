@@ -33,12 +33,15 @@ type ProxyUser struct {
 	Password string // trojan / ss / hysteria2 / tuic
 }
 
-// TransportSettings configures an optional stream transport. tcp (empty), ws
-// and httpupgrade are supported (official sing-box builds omit with_grpc).
+// TransportSettings configures an optional stream transport. tcp (empty), ws,
+// httpupgrade, http, grpc and quic are modeled for server configs/outbounds.
 type TransportSettings struct {
-	Type    string            `json:"type,omitempty"` // "" (tcp) | "ws" | "httpupgrade"
-	Path    string            `json:"path,omitempty"`
-	Headers map[string]string `json:"headers,omitempty"`
+	Type        string            `json:"type,omitempty"` // "" (tcp) | "ws" | "httpupgrade" | "http" | "grpc" | "quic"
+	Path        string            `json:"path,omitempty"`
+	Method      string            `json:"method,omitempty"`
+	ServiceName string            `json:"service_name,omitempty"`
+	HostList    []string          `json:"host,omitempty"`
+	Headers     map[string]string `json:"headers,omitempty"`
 	// HeaderValues keeps repeated HTTP header values lossless. Headers remains
 	// the compatibility view used by the panel's existing Host field and API.
 	// JSON accepts both "Header": "value" and "Header": ["value", "value"].
@@ -51,12 +54,15 @@ type TransportSettings struct {
 	EarlyDataHeader string `json:"early_data_header,omitempty"`
 }
 
-// MarshalJSON preserves the official sing-box HTTPHeader shape while keeping
-// the historical single-value Headers field usable by older panel data.
+// MarshalJSON preserves the official sing-box HTTPHeader and Listable host shapes
+// while keeping the historical single-value Headers field usable by older panel data.
 func (t TransportSettings) MarshalJSON() ([]byte, error) {
 	type transportJSON struct {
 		Type            string         `json:"type,omitempty"`
 		Path            string         `json:"path,omitempty"`
+		Method          string         `json:"method,omitempty"`
+		ServiceName     string         `json:"service_name,omitempty"`
+		Host            any            `json:"host,omitempty"`
 		Headers         map[string]any `json:"headers,omitempty"`
 		MaxEarlyData    int            `json:"max_early_data,omitempty"`
 		EarlyDataHeader string         `json:"early_data_header,omitempty"`
@@ -78,18 +84,27 @@ func (t TransportSettings) MarshalJSON() ([]byte, error) {
 			headers[key] = values
 		}
 	}
+	var host any
+	if len(t.HostList) == 1 {
+		host = t.HostList[0]
+	} else if len(t.HostList) > 1 {
+		host = t.HostList
+	}
 	return json.Marshal(transportJSON{
-		Type: t.Type, Path: t.Path, Headers: headers,
+		Type: t.Type, Path: t.Path, Method: t.Method, ServiceName: t.ServiceName, Host: host, Headers: headers,
 		MaxEarlyData: t.MaxEarlyData, EarlyDataHeader: t.EarlyDataHeader,
 	})
 }
 
 // UnmarshalJSON accepts both the old single-string header form and sing-box's
-// repeated-value array form.
+// repeated-value array form, as well as string or []string transport hosts.
 func (t *TransportSettings) UnmarshalJSON(data []byte) error {
 	type transportJSON struct {
 		Type            string                     `json:"type,omitempty"`
 		Path            string                     `json:"path,omitempty"`
+		Method          string                     `json:"method,omitempty"`
+		ServiceName     string                     `json:"service_name,omitempty"`
+		Host            json.RawMessage            `json:"host,omitempty"`
 		Headers         map[string]json.RawMessage `json:"headers,omitempty"`
 		MaxEarlyData    int                        `json:"max_early_data,omitempty"`
 		EarlyDataHeader string                     `json:"early_data_header,omitempty"`
@@ -99,8 +114,22 @@ func (t *TransportSettings) UnmarshalJSON(data []byte) error {
 		return err
 	}
 	*t = TransportSettings{
-		Type: raw.Type, Path: raw.Path, MaxEarlyData: raw.MaxEarlyData,
-		EarlyDataHeader: raw.EarlyDataHeader,
+		Type: raw.Type, Path: raw.Path, Method: raw.Method, ServiceName: raw.ServiceName,
+		MaxEarlyData: raw.MaxEarlyData, EarlyDataHeader: raw.EarlyDataHeader,
+	}
+	if len(raw.Host) > 0 && string(raw.Host) != "null" {
+		var single string
+		if err := json.Unmarshal(raw.Host, &single); err == nil {
+			if single != "" {
+				t.HostList = []string{single}
+			}
+		} else {
+			var multiple []string
+			if err := json.Unmarshal(raw.Host, &multiple); err != nil {
+				return fmt.Errorf("host: expected string or string array: %w", err)
+			}
+			t.HostList = multiple
+		}
 	}
 	for key, value := range raw.Headers {
 		var single string
@@ -158,6 +187,9 @@ func (t TransportSettings) Host() string {
 		if strings.EqualFold(key, "host") && len(host) > 0 {
 			return host[0]
 		}
+	}
+	if len(t.HostList) > 0 {
+		return t.HostList[0]
 	}
 	return ""
 }

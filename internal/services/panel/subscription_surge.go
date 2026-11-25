@@ -157,7 +157,7 @@ func surgeHasUnquotableValue(n node) bool {
 	for _, v := range []string{
 		n.server, st.Method, st.Username, st.Password, u.Password, u.UUID,
 		st.Flow, st.TLS.Reality.PublicKey, firstOf(st.TLS.Reality.ShortID),
-		st.ObfsPassword, st.Transport.Path, st.Transport.Host(), sniOf(st, n.server),
+		st.ObfsPassword, st.SnellObfsHost, st.Transport.Path, st.Transport.Host(), sniOf(st, n.server),
 		singbox.SSClientPassword(st, u.Password), singbox.SnellClientPSK(st, u.Password),
 	} {
 		if strings.Contains(v, `"`) {
@@ -281,8 +281,11 @@ func surgeProxyUnchecked(n node, name string) string {
 		if st.SnellVersion > 0 {
 			line += fmt.Sprintf(", version=%d", st.SnellVersion)
 		}
-		if st.SnellVersion == 5 && st.SnellObfsMode != "" && st.SnellObfsMode != "none" {
+		if (st.SnellVersion == 4 || st.SnellVersion == 5) && st.SnellObfsMode != "" && st.SnellObfsMode != "none" {
 			line += ", obfs=" + st.SnellObfsMode
+			if st.SnellObfsHost != "" {
+				line += ", obfs-host=" + surgeValue(st.SnellObfsHost)
+			}
 		}
 		return fmt.Sprintf("%s, udp-relay=%t", line, n.udpEnabled())
 	case "tuic":

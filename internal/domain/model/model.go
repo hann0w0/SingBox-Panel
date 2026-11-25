@@ -7,10 +7,25 @@ import (
 	"errors"
 	"fmt"
 	"time"
+
+	"gorm.io/gorm"
+	"gorm.io/gorm/schema"
 )
 
 // JSONText is a JSON-valued DB column stored as text, usable as json.RawMessage.
 type JSONText []byte
+
+// GormDataType declares the logical GORM data type for cross-dialect mapping.
+func (JSONText) GormDataType() string { return "json_text" }
+
+// GormDBDataType selects LONGTEXT on MySQL so multi-kilobyte configs/overlays
+// do not hit MySQL's 64 KiB TEXT column limit.
+func (JSONText) GormDBDataType(db *gorm.DB, _ *schema.Field) string {
+	if db != nil && db.Dialector != nil && db.Dialector.Name() == "mysql" {
+		return "LONGTEXT"
+	}
+	return "TEXT"
+}
 
 // Value implements driver.Valuer.
 func (j JSONText) Value() (driver.Value, error) {
@@ -228,15 +243,15 @@ type Server struct {
 	// and re-applies the administrator's complete JSON without dropping fields the
 	// panel does not understand.
 	ConfigMode string   `gorm:"size:16;default:managed" json:"config_mode"`
-	RawConfig  JSONText `gorm:"type:text" json:"-"`
+	RawConfig  JSONText `json:"-"`
 	// ConfigResidual holds the parts of an imported config.json the panel has no
 	// editor for (see singbox.Residual). Managed pushes merge it back so a server
 	// whose config uses fields outside the panel's model stays editable instead
 	// of degrading to raw mode and locking every control.
-	ConfigResidual JSONText `gorm:"type:text" json:"-"`
+	ConfigResidual JSONText `json:"-"`
 	// ConfigOverlay stores the original JSON, panel input baseline and stable
 	// array identities. Both projections use the current renderer on every push.
-	ConfigOverlay JSONText `gorm:"type:text" json:"-"`
+	ConfigOverlay JSONText `json:"-"`
 	// ConfigInitialized distinguishes a brand-new node (whose existing
 	// sing-box config must not be touched) from a deliberately empty managed
 	// config after the administrator deletes the last structured record.
@@ -296,7 +311,7 @@ type Inbound struct {
 	Type       InboundType `gorm:"size:32" json:"type"`
 	ListenPort int         `json:"listen_port"`
 	Enabled    bool        `gorm:"index" json:"enabled"`
-	Settings   JSONText    `gorm:"type:text" json:"settings"`
+	Settings   JSONText    `json:"settings"`
 	Remark     string      `gorm:"size:255" json:"remark"`
 
 	CreatedAt time.Time `json:"created_at"`
@@ -322,7 +337,7 @@ type Outbound struct {
 	OwnerUserID uint     `gorm:"index;not null;default:0" json:"owner_user_id,omitempty"`
 	Tag         string   `gorm:"size:64" json:"tag"`
 	Type        string   `gorm:"size:32" json:"type"` // direct | vless | vmess | trojan | shadowsocks | hysteria2 | tuic
-	Settings    JSONText `gorm:"type:text" json:"settings"`
+	Settings    JSONText `json:"settings"`
 	// SourceKind/SourceID are set for outbounds imported from a panel node.
 	// Manual entries and URI imports leave both empty and carry their own
 	// credential in Settings; URI imports are independent snapshots.
@@ -346,7 +361,7 @@ type RouteRule struct {
 	ID        uint      `gorm:"primaryKey" json:"id"`
 	ServerID  uint      `gorm:"index" json:"server_id"`
 	Sort      int       `json:"sort"`
-	Match     JSONText  `gorm:"type:text" json:"match"`
+	Match     JSONText  `json:"match"`
 	Outbound  string    `gorm:"size:64" json:"outbound"`
 	Remark    string    `gorm:"size:255" json:"remark"`
 	Enabled   bool      `gorm:"index" json:"enabled"`
@@ -501,7 +516,7 @@ type CustomNode struct {
 	Protocol   string   `gorm:"size:32" json:"protocol"`    // structured node protocol, e.g. snell
 	Address    string   `gorm:"size:255" json:"address"`    // structured node host
 	Port       int      `json:"port"`
-	Params     JSONText `gorm:"type:text" json:"params"` // protocol-specific JSON (psk, version, obfs...)
+	Params     JSONText `json:"params"` // protocol-specific JSON (psk, version, obfs...)
 	SortOrder  int      `json:"sort_order"`
 	// HiddenBySubscriptionRule keeps a filtered subscription node in storage so
 	// removing the filter restores its stable row and per-user assignments.

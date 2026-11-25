@@ -461,6 +461,29 @@ var applicationMigrations = []schemaMigration{
 		name:    "server log level and staged configuration revisions",
 		up:      func(tx *gorm.DB) error { return tx.AutoMigrate(&model.Server{}) },
 	},
+	{
+		version: 44,
+		name:    "expand mysql json text columns to longtext",
+		up: func(tx *gorm.DB) error {
+			if tx.Dialector.Name() != "mysql" {
+				return nil
+			}
+			for _, stmt := range []string{
+				"ALTER TABLE `servers` MODIFY COLUMN `raw_config` LONGTEXT",
+				"ALTER TABLE `servers` MODIFY COLUMN `config_residual` LONGTEXT",
+				"ALTER TABLE `servers` MODIFY COLUMN `config_overlay` LONGTEXT",
+				"ALTER TABLE `inbounds` MODIFY COLUMN `settings` LONGTEXT",
+				"ALTER TABLE `outbounds` MODIFY COLUMN `settings` LONGTEXT",
+				"ALTER TABLE `route_rules` MODIFY COLUMN `match` LONGTEXT",
+				"ALTER TABLE `custom_nodes` MODIFY COLUMN `params` LONGTEXT",
+			} {
+				if err := tx.Exec(stmt).Error; err != nil {
+					return err
+				}
+			}
+			return nil
+		},
+	},
 }
 
 // migrationReplaySafe records whether an interrupted attempt of each migration
@@ -523,6 +546,7 @@ var migrationReplaySafe = map[uint]bool{
 	41: true,  // AutoMigrate adds the config residual column
 	42: true,  // only initializes raw servers without an overlay, in a transaction
 	43: true,  // AutoMigrate adds server log_level and staged config revision columns
+	44: true,  // MySQL LONGTEXT widening is idempotent and a no-op on SQLite/Postgres
 }
 
 // dropRetiredCustomNodeSwitches removes the per-node and per-subscription

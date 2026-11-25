@@ -45,7 +45,10 @@ func forwardTrafficName(user *model.User, forwardID uint) string {
 
 func reservedTrafficUsername(name string) bool {
 	name = normalizeUsername(name)
-	return strings.HasPrefix(name, proxyTrafficNamePrefix) || strings.HasPrefix(name, forwardTrafficNamePrefix)
+	return strings.HasPrefix(name, proxyTrafficNamePrefix) ||
+		strings.HasPrefix(name, forwardTrafficNamePrefix) ||
+		name == routingOutboundUserName ||
+		strings.HasPrefix(name, routingOutboundUserName+":")
 }
 
 // rememberProxyTrafficIdentities is called before publishing a managed config.

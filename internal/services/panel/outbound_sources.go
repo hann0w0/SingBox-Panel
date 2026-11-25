@@ -53,14 +53,22 @@ type outboundSource struct {
 // byte-identical, so no needless sing-box restart) and scoped to both the
 // inbound and the consumer, so two servers routing through the same inbound
 // never share a credential.
+func routingOutboundUsername(consumerServerID uint) string {
+	if consumerServerID == 0 {
+		return routingOutboundUserName
+	}
+	return fmt.Sprintf("%s:%d", routingOutboundUserName, consumerServerID)
+}
+
 func routingOutboundIdentity(source *model.Server, inboundID, consumerServerID uint) (singbox.ProxyUser, error) {
 	if source.AgentToken == "" {
 		return singbox.ProxyUser{}, fmt.Errorf("服务器 %d 缺少内部路由凭据种子", source.ID)
 	}
 	seed := &model.User{ProxyToken: fmt.Sprintf("route:%s:%d", source.AgentToken, consumerServerID)}
 	identity := proxyIdentity(seed, inboundID)
-	identity.Name = routingOutboundUserName
-	identity.Username = routingOutboundUserName
+	routeUser := routingOutboundUsername(consumerServerID)
+	identity.Name = routeUser
+	identity.Username = routeUser
 	return identity, nil
 }
 

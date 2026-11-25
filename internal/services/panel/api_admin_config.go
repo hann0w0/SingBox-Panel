@@ -66,7 +66,7 @@ func (a *App) applyRawConfig(c *gin.Context) {
 	unlockOperation := a.lockServerOperation(id)
 	defer unlockOperation()
 	var req rawConfigReq
-	if !bindJSON(c, &req) {
+	if !bindJSONLimit(c, &req, maxPanelAgentMessageSize) {
 		return
 	}
 	raw := []byte(req.Config)

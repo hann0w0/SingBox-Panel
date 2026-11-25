@@ -214,7 +214,13 @@ func parseTransport(t map[string]any) TransportSettings {
 	if t == nil {
 		return TransportSettings{}
 	}
-	out := TransportSettings{Type: mStr(t, "type"), Path: mStr(t, "path")}
+	out := TransportSettings{
+		Type:        mStr(t, "type"),
+		Path:        mStr(t, "path"),
+		Method:      mStr(t, "method"),
+		ServiceName: mStr(t, "service_name"),
+		HostList:    mStrSlice(t, "host"),
+	}
 	if out.Type == "ws" {
 		out.MaxEarlyData = mInt(t, "max_early_data")
 		out.EarlyDataHeader = mStr(t, "early_data_header_name")

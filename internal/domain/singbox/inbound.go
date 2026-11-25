@@ -63,8 +63,10 @@ func pemLines(pem string) []string {
 
 type v2rayTransport struct {
 	Type            string         `json:"type"`
-	Host            string         `json:"host,omitempty"`
+	Host            any            `json:"host,omitempty"`
 	Path            string         `json:"path,omitempty"`
+	Method          string         `json:"method,omitempty"`
+	ServiceName     string         `json:"service_name,omitempty"`
 	Headers         map[string]any `json:"headers,omitempty"`
 	MaxEarlyData    int            `json:"max_early_data,omitempty"`
 	EarlyDataHeader string         `json:"early_data_header_name,omitempty"`
@@ -135,21 +137,41 @@ func transportHeaders(t TransportSettings, omitHost bool) map[string]any {
 	return out
 }
 
-// buildTransport renders a WebSocket or HTTPUpgrade transport, or nil for TCP.
+// buildTransport renders a supported v2ray transport using only the wire fields
+// legal for its type, or nil for TCP.
 func buildTransport(t TransportSettings) *v2rayTransport {
 	if t.normalized() == nil {
 		return nil
 	}
 	typ := strings.ToLower(t.Type)
-	out := &v2rayTransport{Type: typ, Path: t.Path}
-	if typ == "ws" {
+	out := &v2rayTransport{Type: typ}
+	switch typ {
+	case "ws":
+		out.Path = t.Path
 		out.Headers = transportHeaders(t, false)
 		out.MaxEarlyData = t.MaxEarlyData
 		out.EarlyDataHeader = t.EarlyDataHeader
-	} else if typ == "httpupgrade" {
-		out.Host = t.Host()
+	case "httpupgrade":
+		out.Path = t.Path
+		if host := t.Host(); host != "" {
+			out.Host = host
+		}
 		out.Headers = transportHeaders(t, true)
-	} else {
+	case "http":
+		if len(t.HostList) > 0 {
+			out.Host = t.HostList
+		} else if host := t.Host(); host != "" {
+			out.Host = []string{host}
+		}
+		out.Path = t.Path
+		out.Method = t.Method
+		out.Headers = transportHeaders(t, true)
+	case "grpc":
+		out.ServiceName = t.ServiceName
+	case "quic":
+		// QUIC transport only accepts type.
+	default:
+		out.Path = t.Path
 		out.Headers = transportHeaders(t, false)
 	}
 	return out
@@ -624,6 +646,8 @@ func cleanStaleRawInboundTransport(base map[string]any, t TransportSettings) {
 	switch tr {
 	case "ws":
 		delete(trMap, "host")
+		delete(trMap, "method")
+		delete(trMap, "service_name")
 		delete(trMap, "early_data_header")
 		if transportHeaders(t, false) == nil {
 			delete(trMap, "headers")
@@ -635,6 +659,8 @@ func cleanStaleRawInboundTransport(base map[string]any, t TransportSettings) {
 			delete(trMap, "early_data_header_name")
 		}
 	case "httpupgrade":
+		delete(trMap, "method")
+		delete(trMap, "service_name")
 		delete(trMap, "max_early_data")
 		delete(trMap, "early_data_header_name")
 		delete(trMap, "early_data_header")
@@ -644,6 +670,40 @@ func cleanStaleRawInboundTransport(base map[string]any, t TransportSettings) {
 		if transportHeaders(t, true) == nil {
 			delete(trMap, "headers")
 		}
+	case "http":
+		delete(trMap, "service_name")
+		delete(trMap, "max_early_data")
+		delete(trMap, "early_data_header_name")
+		delete(trMap, "early_data_header")
+		if len(t.HostList) == 0 && t.Host() == "" {
+			delete(trMap, "host")
+		}
+		if t.Method == "" {
+			delete(trMap, "method")
+		}
+		if transportHeaders(t, true) == nil {
+			delete(trMap, "headers")
+		}
+	case "grpc":
+		delete(trMap, "path")
+		delete(trMap, "host")
+		delete(trMap, "method")
+		delete(trMap, "headers")
+		delete(trMap, "max_early_data")
+		delete(trMap, "early_data_header_name")
+		delete(trMap, "early_data_header")
+		if t.ServiceName == "" {
+			delete(trMap, "service_name")
+		}
+	case "quic":
+		delete(trMap, "path")
+		delete(trMap, "host")
+		delete(trMap, "method")
+		delete(trMap, "headers")
+		delete(trMap, "service_name")
+		delete(trMap, "max_early_data")
+		delete(trMap, "early_data_header_name")
+		delete(trMap, "early_data_header")
 	default:
 		if transportHeaders(t, false) == nil {
 			delete(trMap, "headers")

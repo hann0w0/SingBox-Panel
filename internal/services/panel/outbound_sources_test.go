@@ -175,8 +175,8 @@ func TestInboundOutboundImportFollowsLiveSourceAndIssuesCredential(t *testing.T)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(string(raw), routingOutboundUserName) {
-		t.Fatalf("source config lacks the routing credential: %s", raw)
+	if !strings.Contains(string(raw), routingOutboundUsername(f.target.ID)) {
+		t.Fatalf("source config lacks the consumer-scoped routing credential: %s", raw)
 	}
 
 	// Changing the source's TLS server name must reach the target's outbound

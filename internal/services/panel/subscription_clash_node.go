@@ -121,6 +121,13 @@ func clashProxy(n node, seen map[string]int) map[string]any {
 		if st.TLS.ClientInsecure() {
 			base["skip-cert-verify"] = true
 		}
+		if st.TLS.Reality.Enabled {
+			realityOpts := map[string]any{"public-key": st.TLS.Reality.PublicKey}
+			if sid := firstOf(st.TLS.Reality.ShortID); sid != "" {
+				realityOpts["short-id"] = sid
+			}
+			base["reality-opts"] = realityOpts
+		}
 		if net == "ws" {
 			base["network"] = "ws"
 			base["ws-opts"] = trOpts()
@@ -255,8 +262,12 @@ func clashProxy(n node, seen map[string]int) map[string]any {
 		if st.SnellVersion > 0 {
 			base["version"] = st.SnellVersion
 		}
-		if st.SnellVersion == 5 && st.SnellObfsMode != "" && st.SnellObfsMode != "none" {
-			base["obfs-opts"] = map[string]any{"mode": st.SnellObfsMode}
+		if (st.SnellVersion == 4 || st.SnellVersion == 5) && st.SnellObfsMode != "" && st.SnellObfsMode != "none" {
+			obfsOpts := map[string]any{"mode": st.SnellObfsMode}
+			if st.SnellObfsHost != "" {
+				obfsOpts["host"] = st.SnellObfsHost
+			}
+			base["obfs-opts"] = obfsOpts
 		}
 		base["udp"] = n.udpEnabled()
 	case "anytls":

@@ -712,17 +712,38 @@ func parseQuantumultSubscription(raw []byte) (SubscriptionParseResult, error) {
 		}
 		obfs := strings.ToLower(getString(m, "obfs"))
 		if obfs == "ws" || obfs == "wss" {
-			m["network"] = "ws"
-			wsOpts := map[string]any{}
-			if path := getString(m, "obfs-uri", "obfs_uri", "path"); path != "" {
-				wsOpts["path"] = path
-			}
-			if host := getString(m, "obfs-host", "obfs_host"); host != "" {
-				wsOpts["headers"] = map[string]any{"Host": host}
-			}
-			m["ws-opts"] = wsOpts
-			if obfs == "wss" {
-				m["tls"] = true
+			if protocol == "shadowsocks" {
+				pluginOpts := map[string]any{"mode": "websocket", "tls": obfs == "wss"}
+				pluginArgs := []string{"mode=websocket"}
+				if obfs == "wss" {
+					pluginArgs = append(pluginArgs, "tls")
+				}
+				if host := getString(m, "obfs-host", "obfs_host"); host != "" {
+					pluginOpts["host"] = host
+					pluginArgs = append(pluginArgs, "host="+host)
+				}
+				if path := getString(m, "obfs-uri", "obfs_uri", "path"); path != "" {
+					pluginOpts["path"] = path
+					pluginArgs = append(pluginArgs, "path="+path)
+				}
+				m["plugin"] = "v2ray-plugin;" + strings.Join(pluginArgs, ";")
+				m["plugin-opts"] = pluginOpts
+				delete(m, "obfs")
+				delete(m, "obfs-host")
+				delete(m, "obfs_host")
+			} else {
+				m["network"] = "ws"
+				wsOpts := map[string]any{}
+				if path := getString(m, "obfs-uri", "obfs_uri", "path"); path != "" {
+					wsOpts["path"] = path
+				}
+				if host := getString(m, "obfs-host", "obfs_host"); host != "" {
+					wsOpts["headers"] = map[string]any{"Host": host}
+				}
+				m["ws-opts"] = wsOpts
+				if obfs == "wss" {
+					m["tls"] = true
+				}
 			}
 		}
 		if len(result.Nodes) >= SubscriptionImportMaxNodes {
@@ -869,7 +890,7 @@ func decodeSubscriptionBase64(raw []byte) ([]byte, bool) {
 		// accepted decoded formats.
 		decodedPayload := []byte(text)
 		lower := strings.ToLower(text)
-		if strings.Contains(lower, "://") || strings.Contains(lower, "[proxy]") ||
+		if strings.Contains(lower, "://") || hasSurgeProxySection(decodedPayload) || looksLikeSurgeProxies(decodedPayload) ||
 			isClashYAML(decodedPayload) || hasQuantumultServerSection(decodedPayload) ||
 			isSingBoxJSON(decodedPayload) || isV2RayJSON(decodedPayload) || isSIP008JSON(decodedPayload) {
 			return []byte(text), true
@@ -1830,8 +1851,9 @@ func stringValuesMap(m map[string]any) map[string][]string {
 
 func truncateImportInput(s string) string {
 	const max = 240
-	if len(s) <= max {
+	runes := []rune(s)
+	if len(runes) <= max {
 		return s
 	}
-	return s[:max] + "…"
+	return string(runes[:max]) + "…"
 }

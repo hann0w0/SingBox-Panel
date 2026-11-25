@@ -850,7 +850,7 @@ func RouteRuleSchema() *JSONSchema {
 			Label: "入站来源", Group: "来源与身份", Order: 10, Widget: "multiselect",
 		}),
 		"auth_user": stringArraySchema(&UIMeta{
-			Label: "认证用户", Group: "来源与身份", Order: 11, Widget: "multiselect", Actions: routeActions,
+			Label: "认证用户", Group: "来源与身份", Order: 11, Widget: "multiselect",
 		}),
 		"rule_set": stringArraySchema(&UIMeta{
 			Label: "规则集", Group: "规则集", Order: 20, Widget: "multiselect", Actions: routeActions,
@@ -988,7 +988,7 @@ func RouteRuleSchema() *JSONSchema {
 		},
 		"invert": {
 			Type: "boolean",
-			UI:   &UIMeta{Label: "匹配结果取反", Group: "协议与版本", Order: 90, Widget: "switch", Actions: routeActions, Advanced: true},
+			UI:   &UIMeta{Label: "匹配结果取反", Group: "协议与版本", Order: 90, Widget: "switch", Advanced: true},
 		},
 		"override_address": {
 			Type: "string",

@@ -463,4 +463,83 @@ describe('RuleForm JSON Schema integration', () => {
     const savedMatch = vi.mocked(createRule).mock.calls[0][1].match
     expect(savedMatch).toEqual({ action: 'reject', method: 'drop', ip_is_private: true })
   })
+
+  it('preserves sniff auth_user and invert when saving in Form mode', async () => {
+    const sniffRule: RouteRule = {
+      id: 33,
+      server_id: 1,
+      sort: 1,
+      enabled: true,
+      outbound: 'sniff',
+      remark: '',
+      match: {
+        action: 'sniff',
+        inbound: ['vless-in'],
+        auth_user: ['alice'],
+        invert: true,
+        timeout: '300ms',
+      },
+    }
+
+    render(
+      <RuleForm
+        serverId={1}
+        rule={sniffRule}
+        outboundTags={['direct']}
+        inboundTags={['vless-in']}
+        open
+        onClose={vi.fn()}
+        onSaved={vi.fn()}
+      />,
+    )
+
+    fireEvent.click(screen.getByRole('button', { name: '保存' }))
+    await waitFor(() => expect(updateRule).toHaveBeenCalledOnce())
+    expect(vi.mocked(updateRule).mock.calls[0][2].match).toMatchObject({
+      action: 'sniff',
+      inbound: ['vless-in'],
+      auth_user: ['alice'],
+      invert: true,
+      timeout: '300ms',
+    })
+  })
+
+  it('blocks submission on invalid extra JSON object and missing outbound in JSON mode', async () => {
+    render(
+      <RuleForm
+        serverId={1}
+        rule={{
+          id: 40,
+          server_id: 1,
+          sort: 1,
+          enabled: true,
+          outbound: 'direct',
+          remark: '',
+          match: {
+            action: 'route',
+            domain_suffix: ['example.com'],
+            interface_address: { en0: ['10.0.0.1'] },
+          },
+        }}
+        outboundTags={['direct']}
+        inboundTags={['vless-in']}
+        open
+        onClose={vi.fn()}
+        onSaved={vi.fn()}
+      />,
+    )
+    fireEvent.change(await screen.findByLabelText('接口地址'), { target: { value: '{broken' } })
+    fireEvent.click(screen.getByRole('button', { name: '保存' }))
+    expect(await screen.findByText(/参数 interface_address/)).toBeTruthy()
+    expect(updateRule).not.toHaveBeenCalled()
+
+    // JSON mode without outbound for route action is rejected instead of silently defaulting to direct
+    fireEvent.click(screen.getByRole('radio', { name: 'JSON' }))
+    fireEvent.change(await screen.findByLabelText('rule.json'), {
+      target: { value: JSON.stringify({ action: 'route', domain_suffix: ['example.com'] }) },
+    })
+    fireEvent.click(screen.getByRole('button', { name: '保存' }))
+    expect(await screen.findByText(/必须指定目标出站 outbound/)).toBeTruthy()
+    expect(updateRule).not.toHaveBeenCalled()
+  })
 })

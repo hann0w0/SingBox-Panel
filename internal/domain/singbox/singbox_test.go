@@ -1086,4 +1086,24 @@ func TestRouteRuleNetworkArrayAndExtraMatchConditions(t *testing.T) {
 	if replied["no_drop"] != true {
 		t.Fatalf("reject reply rule lost no_drop: %#v", replied)
 	}
+
+	// Whitespace-only extra strings must not count as a match condition, and
+	// duration / client_subnet strings must be trimmed (or dropped when blank)
+	// before rendering to sing-box JSON.
+	if HasRuleMatch(RuleInput{Action: "route", Outbound: "direct", Extra: map[string]any{"clash_mode": "   "}}) {
+		t.Fatal("whitespace-only extra string must not count as a match condition")
+	}
+	trimmed := buildRouteRule(RuleInput{
+		Action: "resolve",
+		Extra: map[string]any{
+			"timeout":       " 300ms ",
+			"client_subnet": "  ",
+		},
+	})
+	if trimmed["timeout"] != "300ms" {
+		t.Fatalf("expected trimmed timeout 300ms, got %#v", trimmed["timeout"])
+	}
+	if _, has := trimmed["client_subnet"]; has {
+		t.Fatalf("expected blank client_subnet to be stripped, got %#v", trimmed["client_subnet"])
+	}
 }

@@ -764,10 +764,12 @@ function JsonObjectParamInput({
   label,
   value,
   onChange,
+  onErrorChange,
 }: {
   label: string
   value: unknown
   onChange: (next: Record<string, unknown> | undefined) => void
+  onErrorChange?: (error: string | null) => void
 }) {
   const serialized = useMemo(
     () => (value && typeof value === 'object' && !Array.isArray(value) ? JSON.stringify(value, null, 2) : ''),
@@ -776,12 +778,23 @@ function JsonObjectParamInput({
   const [draft, setDraft] = useState(() => serialized)
   const [parseError, setParseError] = useState('')
   const lastEmittedRef = useRef<string>(serialized)
+  const onErrorChangeRef = useRef(onErrorChange)
+  onErrorChangeRef.current = onErrorChange
+
+  const reportError = (next: string) => {
+    setParseError(next)
+    onErrorChangeRef.current?.(next || null)
+  }
+
+  useEffect(() => () => {
+    onErrorChangeRef.current?.(null)
+  }, [])
 
   useEffect(() => {
     if (serialized !== lastEmittedRef.current) {
       lastEmittedRef.current = serialized
       setDraft(serialized)
-      setParseError('')
+      reportError('')
     }
   }, [serialized])
 
@@ -794,7 +807,7 @@ function JsonObjectParamInput({
           setDraft(raw)
           const trimmed = raw.trim()
           if (!trimmed) {
-            setParseError('')
+            reportError('')
             lastEmittedRef.current = ''
             onChange(undefined)
             return
@@ -802,18 +815,18 @@ function JsonObjectParamInput({
           try {
             const parsed = JSON.parse(trimmed)
             if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
-              setParseError('')
+              reportError('')
               lastEmittedRef.current = JSON.stringify(parsed, null, 2)
               onChange(parsed as Record<string, unknown>)
             } else {
-              setParseError('请输入 JSON 对象，例如 {"en0": ["10.0.0.1"]}')
+              reportError('请输入 JSON 对象，例如 {"en0": ["10.0.0.1"]}')
             }
           } catch {
-            setParseError('JSON 格式不完整，补全后自动生效')
+            reportError('JSON 格式不完整，补全后自动生效')
           }
         }}
       />
-      {parseError && <div className="text-[12px] text-muted-foreground">{parseError}</div>}
+      {parseError && <div className="text-[12px] text-[var(--console-danger)]">{parseError}</div>}
     </div>
   )
 }
@@ -823,11 +836,13 @@ function ExtraParamValueEditor({
   schema,
   value,
   onChange,
+  onErrorChange,
 }: {
   fieldKey: string
   schema: JSONSchema
   value: unknown
   onChange: (next: unknown) => void
+  onErrorChange?: (error: string | null) => void
 }) {
   const ui = schema['x-ui']
   const label = ui?.label || fieldKey
@@ -877,7 +892,7 @@ function ExtraParamValueEditor({
   }
 
   if (schema.type === 'object' || ui?.widget === 'json') {
-    return <JsonObjectParamInput label={label} value={value} onChange={onChange} />
+    return <JsonObjectParamInput label={label} value={value} onChange={onChange} onErrorChange={onErrorChange} />
   }
 
   if (schema.enum && schema.enum.length > 0) {
@@ -1141,8 +1156,15 @@ function validateConditionRows(rows: ConditionRow[]): string | null {
     }
     if (row.field === 'port_range') {
       const ranges = splitLines(row.text)
-      if (ranges.some((r) => !/^\d+:\d+$/.test(r) && !/^\d+$/.test(r))) {
-        return '端口范围格式应为 start:end，例如 1000:2000'
+      const invalid = ranges.some((r) => {
+        const m = /^(\d+):(\d+)$/.exec(r)
+        if (!m) return true
+        const start = Number(m[1])
+        const end = Number(m[2])
+        return start < 0 || end < 1 || start > 65535 || end > 65535 || start > end
+      })
+      if (invalid) {
+        return '端口范围格式应为 start:end（0-65535 且起始不大于结束），例如 1000:2000'
       }
     }
   }
@@ -1200,6 +1222,11 @@ function buildRulePayload(
   if (act === 'resolve' && typeof v.strategy === 'string' && v.strategy) {
     match.strategy = v.strategy
   }
+  if (act === 'sniff' || act === 'hijack-dns') {
+    for (const row of rows) {
+      if (row.field === 'auth_user' && row.list.length) match.auth_user = row.list
+    }
+  }
   if (act === 'route' || act === 'reject' || act === 'resolve' || act === 'route-options') {
     for (const row of rows) {
       if (row.field === 'auth_user' && row.list.length) match.auth_user = row.list
@@ -1241,8 +1268,9 @@ function buildRulePayload(
   }
 
   for (const [k, val] of Object.entries(extraMatch)) {
-    if (STANDARD_RULE_MATCH_KEYS.has(k) || val === undefined || val === null || val === '') continue
+    if (STANDARD_RULE_MATCH_KEYS.has(k) || val === undefined || val === null || val === '' || val === false) continue
     if (Array.isArray(val) && val.length === 0) continue
+    if (typeof val === 'object' && !Array.isArray(val) && Object.keys(val as Record<string, unknown>).length === 0) continue
     const prop = schemaProps[k]
     const allowedActions = prop?.['x-ui']?.actions
     if (allowedActions && !allowedActions.includes(act)) continue
@@ -1329,6 +1357,7 @@ export function RuleForm({
   const [conditions, setConditions] = useState<ConditionRow[]>([])
   const [conditionError, setConditionError] = useState('')
   const [extraMatch, setExtraMatch] = useState<Record<string, unknown>>({})
+  const [extraJsonErrors, setExtraJsonErrors] = useState<Record<string, string>>({})
   const [jsonText, setJsonText] = useState('')
   const [jsonError, setJsonError] = useState('')
   const schemas = useSingboxSchemas(open)
@@ -1390,10 +1419,29 @@ export function RuleForm({
       delete next[key]
       return next
     })
+    setExtraJsonErrors((prev) => {
+      if (!(key in prev)) return prev
+      const next = { ...prev }
+      delete next[key]
+      return next
+    })
   }
 
   const setExtraParam = (key: string, value: unknown) => {
     setExtraMatch((prev) => ({ ...prev, [key]: value }))
+  }
+
+  const setExtraJsonError = (key: string, err: string | null) => {
+    setExtraJsonErrors((prev) => {
+      if (!err) {
+        if (!(key in prev)) return prev
+        const next = { ...prev }
+        delete next[key]
+        return next
+      }
+      if (prev[key] === err) return prev
+      return { ...prev, [key]: err }
+    })
   }
 
   const usedFields = useMemo(() => new Set(conditions.map((c) => c.field)), [conditions])
@@ -1437,6 +1485,7 @@ export function RuleForm({
     setEditorMode('form')
     setJsonError('')
     setConditionError('')
+    setExtraJsonErrors({})
     if (rule) {
       const m = (rule.match || {}) as Record<string, unknown>
       const act = inferRuleAction(m, rule.outbound)
@@ -1476,11 +1525,12 @@ export function RuleForm({
         setJsonError(schemaErr)
         return
       }
-      const outboundStr = typeof parsed.outbound === 'string' ? parsed.outbound : rule?.outbound
+      const outboundStr = typeof parsed.outbound === 'string' ? parsed.outbound : undefined
       const act = inferRuleAction(parsed, outboundStr)
       form.setFieldsValue(ruleToFormValues(parsed, outboundStr))
       setConditions(matchToConditionRows(parsed as RuleMatch, act, nextRowId))
       setExtraMatch(cloneMatchExtra(parsed))
+      setExtraJsonErrors({})
       setEditorMode('form')
     } catch (err) {
       setJsonError(err instanceof Error ? `JSON 解析失败: ${err.message}` : 'JSON 格式错误')
@@ -1516,6 +1566,10 @@ export function RuleForm({
         }
         const built = nativeJsonToRulePayload(parsed)
         const act = built.match.action || 'route'
+        if (act === 'route' && (typeof parsed.outbound !== 'string' || !parsed.outbound.trim())) {
+          setJsonError('路由规则必须指定目标出站 outbound')
+          return
+        }
         if ((act === 'route' || act === 'reject') && !ruleMatchHasCondition(built.match)) {
           setJsonError(act === 'route' ? '路由规则至少需要一个匹配条件，如需兜底请修改默认出站' : '拒绝规则至少需要一个匹配条件')
           return
@@ -1528,6 +1582,11 @@ export function RuleForm({
           scrollToFirstError(form, err)
           throw err
         })
+        const invalidJsonEntry = Object.entries(extraJsonErrors).find(([key]) => key in extraSchemaProps)
+        if (invalidJsonEntry) {
+          setConditionError(`参数 ${invalidJsonEntry[0]}：${invalidJsonEntry[1]}`)
+          return
+        }
         if (showConditions) {
           const condErr = validateConditionRows(conditions)
           if (condErr) {
@@ -1894,7 +1953,7 @@ export function RuleForm({
           </FormGroup>
         )}
 
-        {action !== 'sniff' && action !== 'hijack-dns' && (extraParamKeys.length > 0 || nextExtraKey) && (
+        {(extraParamKeys.length > 0 || (action !== 'sniff' && action !== 'hijack-dns' && nextExtraKey)) && (
           <FormGroup
             title="其他参数"
             panel="inbound"
@@ -1904,6 +1963,7 @@ export function RuleForm({
               </Button>
             ) : undefined}
           >
+            {!showConditions && conditionError && <div className="fm-full"><Alert type="error" showIcon message={conditionError} /></div>}
             {extraParamKeys.length === 0 ? (
               <div className="fm-full rounded-[7px] border border-dashed border-[var(--inbound-line-strong)] px-3 py-2.5 text-[13px] text-muted-foreground">
                 未设置其他参数
@@ -1926,6 +1986,7 @@ export function RuleForm({
                         onChange={(nextKey: string) => {
                           if (!nextKey || nextKey === key || nextKey in extraMatch) return
                           const nextSchema = extraSchemaProps[nextKey]
+                          setExtraJsonError(key, null)
                           setExtraMatch((prev) => {
                             const next: Record<string, unknown> = {}
                             for (const [k, v] of Object.entries(prev)) {
@@ -1946,6 +2007,7 @@ export function RuleForm({
                         schema={schema}
                         value={extraMatch[key]}
                         onChange={(next) => setExtraParam(key, next)}
+                        onErrorChange={(err) => setExtraJsonError(key, err)}
                       />
                       <Button
                         type="text"

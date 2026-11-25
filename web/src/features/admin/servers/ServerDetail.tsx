@@ -931,6 +931,7 @@ export default function ServerDetail() {
     for (const [k, v] of Object.entries(m)) {
       if (handledKeys.has(k) || v === undefined || v === null || v === false || v === '') continue
       if (Array.isArray(v) && v.length === 0) continue
+      if (typeof v === 'object' && !Array.isArray(v) && Object.keys(v as Record<string, unknown>).length === 0) continue
       const formatted = Array.isArray(v) ? v.map(String).join(', ') : (typeof v === 'object' ? JSON.stringify(v) : String(v))
       chips.push(<span key={`extra-${k}`} className="sd-chip"><span>{k}</span>{formatted}</span>)
     }

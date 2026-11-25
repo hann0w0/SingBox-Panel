@@ -248,8 +248,11 @@ func HasRuleMatch(r RuleInput) bool {
 }
 
 func isEmptyRuleExtraValue(val any) bool {
-	if val == nil || val == "" || val == false {
+	if val == nil || val == false {
 		return true
+	}
+	if s, ok := val.(string); ok {
+		return strings.TrimSpace(s) == ""
 	}
 	rv := reflect.ValueOf(val)
 	switch rv.Kind() {
@@ -423,6 +426,18 @@ func buildRouteRule(r RuleInput) map[string]any {
 	for key := range m {
 		if !ruleActionOptionAllowed(act, key) {
 			delete(m, key)
+			continue
+		}
+		switch key {
+		case "timeout", "udp_timeout", "fallback_delay", "tls_fragment_fallback_delay", "client_subnet":
+			if text, ok := m[key].(string); ok {
+				trimmed := strings.TrimSpace(text)
+				if trimmed == "" {
+					delete(m, key)
+				} else {
+					m[key] = trimmed
+				}
+			}
 		}
 	}
 	// The panel intentionally exposes only the meaningful match fields for these

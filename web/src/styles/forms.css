@@ -332,6 +332,7 @@
 /* ---------- Responsive ---------- */
 @media (max-width: 767px) {
   .fm-grid { grid-template-columns: minmax(0, 1fr); }
+  .rule-editor .fm-param-row { grid-template-columns: minmax(0, 1fr); row-gap: 8px; }
   .fm-node { flex-direction: column; align-items: stretch; gap: 10px; }
   .fm-node-main { flex-wrap: wrap; row-gap: 4px; }
   .fm-node-name { max-width: none; flex-shrink: 1; white-space: normal; overflow-wrap: anywhere; }

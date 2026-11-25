@@ -1,4 +1,4 @@
-import { useEffect, useId, useState } from 'react'
+import { useEffect, useId, useRef, useState } from 'react'
 import { Input, InputNumber, Select, Switch } from './kit'
 import { Field, FieldLabel } from '@/components/ui/field'
 import type { JSONSchema } from '../lib/singboxSchema'
@@ -28,27 +28,40 @@ function SchemaJsonObjectField({
   label,
   current,
   onUpdate,
+  onErrorChange,
 }: {
   fieldId: string
   label: string
   current: unknown
   onUpdate: (nextVal: unknown) => void
+  onErrorChange?: (error: string | null) => void
 }) {
   const externalText =
     current && typeof current === 'object' ? JSON.stringify(current, null, 2) : ''
   const [draft, setDraft] = useState(externalText)
   const [jsonError, setJsonError] = useState<string | null>(null)
+  const onErrorChangeRef = useRef(onErrorChange)
+  onErrorChangeRef.current = onErrorChange
+
+  const reportError = (next: string | null) => {
+    setJsonError(next)
+    onErrorChangeRef.current?.(next)
+  }
+
+  useEffect(() => () => {
+    onErrorChangeRef.current?.(null)
+  }, [])
 
   useEffect(() => {
     const trimmed = draft.trim()
     if (!trimmed) {
-      setJsonError(null)
+      reportError(null)
       if (externalText) setDraft(externalText)
       return
     }
     try {
       const parsed = JSON.parse(trimmed)
-      setJsonError(null)
+      reportError(null)
       if (JSON.stringify(parsed, null, 2) !== externalText) {
         setDraft(externalText)
       }
@@ -67,20 +80,20 @@ function SchemaJsonObjectField({
           setDraft(raw)
           const trimmed = raw.trim()
           if (!trimmed) {
-            setJsonError(null)
+            reportError(null)
             onUpdate(undefined)
             return
           }
           try {
             const parsed = JSON.parse(trimmed)
             if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
-              setJsonError(null)
+              reportError(null)
               onUpdate(parsed)
             } else {
-              setJsonError('请输入有效的 JSON 对象（{ ... }）')
+              reportError('请输入有效的 JSON 对象（{ ... }）')
             }
           } catch {
-            setJsonError('JSON 语法格式有误，修改尚未生效')
+            reportError('JSON 语法格式有误，修改尚未生效')
           }
         }}
       />
@@ -152,12 +165,14 @@ export function SchemaFieldList({
   onChange,
   excludeKeys,
   idPrefix = 'schema',
+  onJsonErrorChange,
 }: {
   properties: Record<string, JSONSchema>
   value: Record<string, unknown>
   onChange: (next: Record<string, unknown>) => void
   excludeKeys?: Set<string>
   idPrefix?: string
+  onJsonErrorChange?: (fieldKey: string, error: string | null) => void
 }) {
   const autoId = useId()
   const entries = sortSchemaEntries(
@@ -210,6 +225,7 @@ export function SchemaFieldList({
               label={label}
               current={current}
               onUpdate={(nextVal) => updateKey(key, nextVal)}
+              onErrorChange={onJsonErrorChange ? (err) => onJsonErrorChange(`${idPrefix}.${key}`, err) : undefined}
             />
           )
         }
@@ -385,6 +401,7 @@ export function SchemaFieldList({
                   }
                 }}
                 idPrefix={`${idPrefix}-${key}`}
+                onJsonErrorChange={onJsonErrorChange}
               />
             </div>
           </div>

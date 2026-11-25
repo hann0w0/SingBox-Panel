@@ -88,7 +88,14 @@ func probeDialer() net.Dialer {
 var disallowedProbePrefixes = []netip.Prefix{
 	netip.MustParsePrefix("0.0.0.0/8"),
 	netip.MustParsePrefix("100.100.100.200/32"), // Alibaba Cloud metadata
-	netip.MustParsePrefix("fd00:ec2::254/128"),  // AWS EC2 IPv6 IMDS
+	netip.MustParsePrefix("192.0.0.0/24"),
+	netip.MustParsePrefix("240.0.0.0/4"),
+	netip.MustParsePrefix("64:ff9b::/96"),
+	netip.MustParsePrefix("64:ff9b:1::/48"),
+	netip.MustParsePrefix("2001::/23"),
+	netip.MustParsePrefix("2002::/16"),
+	netip.MustParsePrefix("fec0::/10"),
+	netip.MustParsePrefix("fd00:ec2::254/128"), // AWS EC2 IPv6 IMDS
 }
 
 func isDisallowedProbeHost(raw string) bool {

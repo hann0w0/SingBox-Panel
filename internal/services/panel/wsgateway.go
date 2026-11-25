@@ -102,7 +102,7 @@ func (l *wsHandshakeLimiter) evictOldestLocked(preserve string) {
 // handleAgentWS authenticates an agent by its server token and runs the
 // connection through the hub until it disconnects.
 func (a *App) handleAgentWS(c *gin.Context) {
-	if wait := a.allowWSHandshake(clientIP(c), time.Now()); wait > 0 {
+	if wait := a.allowWSHandshake(rateLimitPeerKey(clientIP(c)), time.Now()); wait > 0 {
 		c.Header("Retry-After", "30")
 		c.AbortWithStatus(http.StatusTooManyRequests)
 		return

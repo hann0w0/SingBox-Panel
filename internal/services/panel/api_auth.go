@@ -72,11 +72,11 @@ func (a *App) handleLogin(c *gin.Context) {
 	// that is clearly hammering the endpoint — so whoever knows the password can
 	// always get in, and neither a stranger typing the owner's username nor the
 	// owner's own typos can lock the panel.
-	ip := clientIP(c)
-	ipKey := "ip:" + ip
+	peerKey := rateLimitPeerKey(clientIP(c))
+	ipKey := "ip:" + peerKey
 	accountSum := sha256.Sum256([]byte(account))
 	accountKey := hex.EncodeToString(accountSum[:])
-	pairKey := "ip:" + ip + "|acct:" + accountKey
+	pairKey := "ip:" + peerKey + "|acct:" + accountKey
 	acctKey := "acct:" + accountKey
 	if wait := a.login.retryAfterHard(ipKey, ipHardFails); wait > 0 {
 		tooMany(c, wait)

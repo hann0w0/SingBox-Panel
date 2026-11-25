@@ -586,9 +586,9 @@ func TestSQLiteDSNAddsPragmas(t *testing.T) {
 		input string
 		want  string
 	}{
-		{input: "panel.db", want: "panel.db?_pragma=busy_timeout(10000)&_pragma=journal_mode(WAL)"},
-		{input: "file:panel.db?cache=shared", want: "file:panel.db?cache=shared&_pragma=busy_timeout(10000)&_pragma=journal_mode(WAL)"},
-		{input: ":memory:", want: ":memory:?_pragma=busy_timeout(10000)&_pragma=journal_mode(WAL)"},
+		{input: "panel.db", want: "panel.db?_pragma=busy_timeout(10000)&_pragma=journal_mode(WAL)&_pragma=trusted_schema(0)&_pragma=cell_size_check(1)"},
+		{input: "file:panel.db?cache=shared", want: "file:panel.db?cache=shared&_pragma=busy_timeout(10000)&_pragma=journal_mode(WAL)&_pragma=trusted_schema(0)&_pragma=cell_size_check(1)"},
+		{input: ":memory:", want: ":memory:?_pragma=busy_timeout(10000)&_pragma=journal_mode(WAL)&_pragma=trusted_schema(0)&_pragma=cell_size_check(1)"},
 	} {
 		if got := sqliteDSN(tc.input); got != tc.want {
 			t.Fatalf("sqliteDSN(%q) = %q; want %q", tc.input, got, tc.want)

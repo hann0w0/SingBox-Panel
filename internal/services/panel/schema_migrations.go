@@ -919,6 +919,10 @@ func backupSQLiteBeforeMigration(db *gorm.DB, dsn string, targetVersion uint) (s
 		_ = os.Remove(backupFile)
 		return "", err
 	}
+	if err := os.Chmod(backupFile, 0o600); err != nil {
+		_ = os.Remove(backupFile)
+		return "", err
+	}
 	if err := pruneSQLiteBackups(backupDir, 5); err != nil {
 		log.Printf("warning: prune old SQLite migration backups: %v", err)
 	}

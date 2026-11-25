@@ -15,6 +15,7 @@ import (
 	"io"
 	"log"
 	"net/http"
+	"net/netip"
 	"net/url"
 	"os"
 	"strconv"
@@ -791,6 +792,45 @@ func (a *App) oneDriveBackupByID(id string) (oneDriveFile, error) {
 	return a.oneDriveBackupByIDContext(context.Background(), id)
 }
 
+func validateOneDriveUploadURL(raw string) (string, error) {
+	trimmed := strings.TrimSpace(raw)
+	if trimmed == "" || strings.ContainsAny(trimmed, "\r\n") {
+		return "", errors.New("OneDrive 上传地址无效")
+	}
+	u, err := url.ParseRequestURI(trimmed)
+	if err != nil || u == nil || u.Scheme == "" || u.Host == "" {
+		return "", errors.New("OneDrive 上传地址格式无效")
+	}
+	if u.User != nil || u.Fragment != "" {
+		return "", errors.New("OneDrive 上传地址不能包含用户信息或片段")
+	}
+	if base, err := url.Parse(oneDriveGraphBaseURL); err == nil && base.Scheme != "" && base.Host != "" &&
+		strings.EqualFold(u.Scheme, base.Scheme) && strings.EqualFold(u.Host, base.Host) {
+		return u.String(), nil
+	}
+	if !strings.EqualFold(u.Scheme, "https") {
+		return "", errors.New("OneDrive 上传地址必须使用 HTTPS")
+	}
+	host := strings.TrimSuffix(strings.ToLower(u.Hostname()), ".")
+	if host == "" || host == "localhost" || strings.HasSuffix(host, ".localhost") || isAmbiguousNumericHost(host) {
+		return "", errors.New("OneDrive 上传地址指向不受信任的主机")
+	}
+	if _, err := netip.ParseAddr(host); err == nil {
+		return "", errors.New("OneDrive 上传地址不能使用 IP 字面量")
+	}
+	trusted := false
+	for _, suffix := range []string{".onedrive.com", ".1drv.com", ".sharepoint.com", ".microsoft.com", ".live.com", ".office.com", ".windows.net"} {
+		if host == strings.TrimPrefix(suffix, ".") || strings.HasSuffix(host, suffix) {
+			trusted = true
+			break
+		}
+	}
+	if !trusted {
+		return "", errors.New("OneDrive 上传地址域名不受信任")
+	}
+	return u.String(), nil
+}
+
 func (a *App) uploadOneDriveBackupContext(ctx context.Context, archivePath string) error {
 	ctx, cancel := context.WithTimeout(ctx, oneDriveStreamTimeout)
 	defer cancel()
@@ -818,6 +858,16 @@ func (a *App) uploadOneDriveBackupContext(ctx context.Context, archivePath strin
 	if session.UploadURL == "" {
 		return errors.New("OneDrive 未返回上传地址")
 	}
+	uploadURL, err := validateOneDriveUploadURL(session.UploadURL)
+	if err != nil {
+		return err
+	}
+	uploadClient := &http.Client{
+		Timeout: 15 * time.Minute,
+		CheckRedirect: func(*http.Request, []*http.Request) error {
+			return http.ErrUseLastResponse
+		},
+	}
 	f, err := os.Open(archivePath)
 	if err != nil {
 		return err
@@ -843,13 +893,13 @@ func (a *App) uploadOneDriveBackupContext(ctx context.Context, archivePath strin
 			break
 		}
 		end := offset + int64(read) - 1
-		req, err := http.NewRequestWithContext(ctx, http.MethodPut, session.UploadURL, bytes.NewReader(buf[:read]))
+		req, err := http.NewRequestWithContext(ctx, http.MethodPut, uploadURL, bytes.NewReader(buf[:read]))
 		if err != nil {
 			return err
 		}
 		req.Header.Set("Content-Length", strconv.Itoa(read))
 		req.Header.Set("Content-Range", fmt.Sprintf("bytes %d-%d/%d", offset, end, total))
-		resp, err := (&http.Client{Timeout: 15 * time.Minute}).Do(req)
+		resp, err := uploadClient.Do(req)
 		if err != nil {
 			return fmt.Errorf("上传 OneDrive 备份失败：%w", err)
 		}

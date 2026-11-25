@@ -135,7 +135,7 @@ func sqliteDSN(dsn string) string {
 	if strings.Contains(dsn, "?") {
 		separator = "&"
 	}
-	return dsn + separator + "_pragma=busy_timeout(10000)&_pragma=journal_mode(WAL)"
+	return dsn + separator + "_pragma=busy_timeout(10000)&_pragma=journal_mode(WAL)&_pragma=trusted_schema(0)&_pragma=cell_size_check(1)"
 }
 
 func seed(db *gorm.DB, cfg config.PanelConfig) error {
@@ -180,9 +180,15 @@ func seed(db *gorm.DB, cfg config.PanelConfig) error {
 	}).Error
 }
 
+// bcryptSem bounds concurrent bcrypt hashing/verification so login or
+// password-change bursts cannot exhaust panel CPU.
+var bcryptSem = make(chan struct{}, 8)
+
 // hashPassword bcrypts a plaintext password.
 func hashPassword(plain string) (string, error) {
+	bcryptSem <- struct{}{}
 	h, err := bcrypt.GenerateFromPassword([]byte(plain), bcrypt.DefaultCost)
+	<-bcryptSem
 	return string(h), err
 }
 
@@ -199,7 +205,10 @@ var dummyHash = func() string {
 
 // checkPassword verifies a plaintext password against a bcrypt hash.
 func checkPassword(hash, plain string) bool {
-	return bcrypt.CompareHashAndPassword([]byte(hash), []byte(plain)) == nil
+	bcryptSem <- struct{}{}
+	err := bcrypt.CompareHashAndPassword([]byte(hash), []byte(plain))
+	<-bcryptSem
+	return err == nil
 }
 
 // touchServerSeen updates a server's online/last-seen bookkeeping.

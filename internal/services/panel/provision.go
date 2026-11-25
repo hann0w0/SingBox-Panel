@@ -169,10 +169,10 @@ func genSelfSignedCert(host string) (certPEM, keyPEM string, err error) {
 		Subject:               pkix.Name{CommonName: host},
 		NotBefore:             time.Now().Add(-1 * time.Hour), // tolerate node clock skew
 		NotAfter:              time.Now().AddDate(10, 0, 0),
-		KeyUsage:              x509.KeyUsageDigitalSignature | x509.KeyUsageKeyEncipherment | x509.KeyUsageCertSign,
+		KeyUsage:              x509.KeyUsageDigitalSignature,
 		ExtKeyUsage:           []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth},
 		BasicConstraintsValid: true,
-		IsCA:                  true,
+		IsCA:                  false,
 	}
 	if ip := net.ParseIP(host); ip != nil {
 		tmpl.IPAddresses = []net.IP{ip}

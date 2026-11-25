@@ -57,9 +57,10 @@ type App struct {
 	oneDriveSettingsMu sync.Mutex
 	oneDriveTokenMu    sync.Mutex
 
-	agentInstallMu    sync.Mutex
-	agentInstallCodes map[string]agentInstallCode
-	agentArtifactMu   sync.Mutex
+	agentInstallMu       sync.Mutex
+	agentInstallCodes    map[string]agentInstallCode
+	agentRegisterLimiter *loginGuard
+	agentArtifactMu      sync.Mutex
 	agentArtifacts    map[string]agentArtifactChecksum
 	logSessionsMu     sync.Mutex
 	logSessions       map[uint]map[string]logSessionLease
@@ -108,9 +109,10 @@ func NewApp(cfg config.PanelConfig, db *gorm.DB) *App {
 		login:               newLoginGuard(),
 		customSubscriptions: newCustomNodeSubscriptionManager(db),
 		wsLimiter:           newWSHandshakeLimiter(),
-		oneDrivePending:     make(map[string]oneDriveDeviceSession),
-		agentInstallCodes:   make(map[string]agentInstallCode),
-		agentArtifacts:      make(map[string]agentArtifactChecksum),
+		oneDrivePending:      make(map[string]oneDriveDeviceSession),
+		agentInstallCodes:    make(map[string]agentInstallCode),
+		agentRegisterLimiter: newLoginGuard(),
+		agentArtifacts:       make(map[string]agentArtifactChecksum),
 		logSessions:         make(map[uint]map[string]logSessionLease),
 		serverOperations:    newKeyedMutex[uint](),
 	}

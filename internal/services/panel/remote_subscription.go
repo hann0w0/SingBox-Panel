@@ -224,7 +224,9 @@ func isSpecialUseSubscriptionIP(ip net.IP) bool {
 		netip.MustParsePrefix("64:ff9b::/96"),
 		netip.MustParsePrefix("64:ff9b:1::/48"),
 		netip.MustParsePrefix("100::/64"),
+		netip.MustParsePrefix("2001::/23"),
 		netip.MustParsePrefix("2001:db8::/32"),
+		netip.MustParsePrefix("2002::/16"),
 		netip.MustParsePrefix("fec0::/10"),
 	} {
 		if prefix.Contains(addr) {

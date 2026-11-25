@@ -3,6 +3,7 @@ package panel
 import (
 	"net"
 	"net/netip"
+	"strings"
 	"sync"
 	"time"
 
@@ -142,20 +143,47 @@ func (g *loginGuard) sweepLocked(now time.Time) {
 
 func (g *loginGuard) evictOldestLocked(count int) {
 	for count > 0 {
-		var oldestKey string
-		var oldest time.Time
+		oldestIPKey := ""
+		var oldestIP time.Time
+		oldestAnyKey := ""
+		var oldestAny time.Time
 		for key, entry := range g.entries {
-			if oldestKey == "" || entry.lastFail.Before(oldest) {
-				oldestKey = key
-				oldest = entry.lastFail
+			if strings.HasPrefix(key, "ip:") || strings.HasPrefix(key, "agentreg:") {
+				if oldestIPKey == "" || entry.lastFail.Before(oldestIP) {
+					oldestIPKey = key
+					oldestIP = entry.lastFail
+				}
+			}
+			if oldestAnyKey == "" || entry.lastFail.Before(oldestAny) {
+				oldestAnyKey = key
+				oldestAny = entry.lastFail
 			}
 		}
-		if oldestKey == "" {
+		victim := oldestIPKey
+		if victim == "" {
+			victim = oldestAnyKey
+		}
+		if victim == "" {
 			return
 		}
-		delete(g.entries, oldestKey)
+		delete(g.entries, victim)
 		count--
 	}
+}
+
+// rateLimitPeerKey normalizes IPv6 client addresses to their /64 prefix so a
+// caller with an IPv6 allocation cannot bypass peer limits by rotating host
+// identifiers within the same subnet, while keeping IPv4 addresses unchanged.
+func rateLimitPeerKey(ipStr string) string {
+	addr, err := netip.ParseAddr(strings.TrimSpace(ipStr))
+	if err != nil {
+		return ipStr
+	}
+	addr = addr.Unmap()
+	if addr.Is6() {
+		return netip.PrefixFrom(addr, 64).Masked().String()
+	}
+	return addr.String()
 }
 
 // clientIP resolves the caller address behind the local reverse proxy.

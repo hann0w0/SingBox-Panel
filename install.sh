@@ -715,7 +715,7 @@ fi
   die "invalid release version: $PANEL_VERSION (expected vX.Y or vX.Y.Z)"
 [[ -n "$ADMIN_USERNAME" ]] || die "administrator username cannot be empty"
 [[ "$ADMIN_USERNAME" != *[[:cntrl:]]* ]] || die "administrator username cannot contain control characters"
-[[ "$ADMIN_PASSWORD" != *$'\n'* && "$ADMIN_PASSWORD" != *$'\r'* ]] || die "administrator password cannot contain a newline"
+[[ "$ADMIN_PASSWORD" != *[[:cntrl:]]* ]] || die "administrator password cannot contain control characters"
 
 random_hex() {
   local bytes="$1"

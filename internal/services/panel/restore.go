@@ -836,7 +836,7 @@ func validateSQLiteFile(path string) error {
 	if err != nil {
 		return fmt.Errorf("解析备份数据库路径失败：%w", err)
 	}
-	dsn := (&url.URL{Scheme: "file", Path: filepath.ToSlash(absPath), RawQuery: "mode=ro"}).String()
+	dsn := (&url.URL{Scheme: "file", Path: filepath.ToSlash(absPath), RawQuery: "mode=ro&_pragma=trusted_schema(0)&_pragma=cell_size_check(1)"}).String()
 	db, err := gorm.Open(sqlite.Open(dsn), &gorm.Config{Logger: logger.Default.LogMode(logger.Silent)})
 	if err != nil {
 		return fmt.Errorf("备份中的数据库无法打开：%w", err)
@@ -883,6 +883,14 @@ func validateSQLiteFile(path string) error {
 		if count != 1 {
 			return fmt.Errorf("备份中的数据库不是 SingBox Panel 数据库：缺少 %s 表", table)
 		}
+	}
+
+	var unsafeObjects int
+	if err := db.Raw(`SELECT COUNT(*) FROM sqlite_master WHERE type IN ('trigger', 'view')`).Scan(&unsafeObjects).Error; err != nil {
+		return fmt.Errorf("检查备份数据库对象失败：%w", err)
+	}
+	if unsafeObjects > 0 {
+		return fmt.Errorf("备份数据库包含不允许的触发器或视图")
 	}
 
 	return nil

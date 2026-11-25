@@ -12,6 +12,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"time"
 
@@ -39,6 +40,15 @@ type agentArtifactChecksum struct {
 	Checksum string
 }
 
+func (a *App) agentRegisterGuard() *loginGuard {
+	a.agentInstallMu.Lock()
+	defer a.agentInstallMu.Unlock()
+	if a.agentRegisterLimiter == nil {
+		a.agentRegisterLimiter = newLoginGuard()
+	}
+	return a.agentRegisterLimiter
+}
+
 func (a *App) newAgentInstallCommand(serverID uint) string {
 	var active int64
 	if a.db == nil || a.db.Model(&model.Server{}).
@@ -46,25 +56,44 @@ func (a *App) newAgentInstallCommand(serverID uint) string {
 		Count(&active).Error != nil || active != 1 {
 		return ""
 	}
-	code := randHex(24)
 	now := time.Now()
 	a.agentInstallMu.Lock()
 	if a.agentInstallCodes == nil {
 		a.agentInstallCodes = make(map[string]agentInstallCode)
 	}
+	var reusedCode string
+	var reusedExpires time.Time
 	for existing, entry := range a.agentInstallCodes {
 		if now.After(entry.Expires) {
 			delete(a.agentInstallCodes, existing)
+			continue
 		}
-	}
-	if len(a.agentInstallCodes) >= 4096 {
-		for existing := range a.agentInstallCodes {
-			delete(a.agentInstallCodes, existing)
-			if len(a.agentInstallCodes) < 4096 {
-				break
+		if entry.ServerID == serverID && entry.Expires.Sub(now) >= agentInstallCodeTTL/2 {
+			if reusedCode == "" || entry.Expires.After(reusedExpires) {
+				reusedCode = existing
+				reusedExpires = entry.Expires
 			}
 		}
 	}
+	if reusedCode != "" {
+		a.agentInstallMu.Unlock()
+		return installCommand(a.baseURL(), reusedCode)
+	}
+	for len(a.agentInstallCodes) >= 4096 {
+		var oldestCode string
+		var oldestExpires time.Time
+		for existing, entry := range a.agentInstallCodes {
+			if oldestCode == "" || entry.Expires.Before(oldestExpires) {
+				oldestCode = existing
+				oldestExpires = entry.Expires
+			}
+		}
+		if oldestCode == "" {
+			break
+		}
+		delete(a.agentInstallCodes, oldestCode)
+	}
+	code := randHex(24)
 	a.agentInstallCodes[code] = agentInstallCode{ServerID: serverID, Expires: now.Add(agentInstallCodeTTL)}
 	a.agentInstallMu.Unlock()
 	return installCommand(a.baseURL(), code)
@@ -81,8 +110,17 @@ func (a *App) invalidateAgentInstallCodes(serverID uint) {
 }
 
 func (a *App) exchangeAgentInstallCode(c *gin.Context) {
+	peerKey := "agentreg:" + rateLimitPeerKey(clientIP(c))
+	limiter := a.agentRegisterGuard()
+	if wait := limiter.retryAfter(peerKey); wait > 0 {
+		secs := int(wait.Seconds()) + 1
+		c.Header("Retry-After", strconv.Itoa(secs))
+		c.String(http.StatusTooManyRequests, "too many invalid registration attempts, retry after %d seconds", secs)
+		return
+	}
 	c.Request.Body = http.MaxBytesReader(c.Writer, c.Request.Body, 4<<10)
 	if err := c.Request.ParseForm(); err != nil {
+		limiter.fail(peerKey)
 		c.String(http.StatusBadRequest, "invalid registration request")
 		return
 	}
@@ -96,6 +134,7 @@ func (a *App) exchangeAgentInstallCode(c *gin.Context) {
 	}
 	a.agentInstallMu.Unlock()
 	if !ok {
+		limiter.fail(peerKey)
 		c.String(http.StatusUnauthorized, "invalid or expired registration code")
 		return
 	}
@@ -114,6 +153,7 @@ func (a *App) exchangeAgentInstallCode(c *gin.Context) {
 	}
 	a.agentInstallMu.Unlock()
 	if !ok {
+		limiter.fail(peerKey)
 		c.String(http.StatusUnauthorized, "invalid or expired registration code")
 		return
 	}
@@ -125,6 +165,7 @@ func (a *App) exchangeAgentInstallCode(c *gin.Context) {
 		c.String(http.StatusUnauthorized, "registration target no longer exists")
 		return
 	}
+	limiter.succeed(peerKey)
 	c.Header("Cache-Control", "no-store")
 	c.Data(http.StatusOK, "text/plain; charset=utf-8", []byte(token))
 }

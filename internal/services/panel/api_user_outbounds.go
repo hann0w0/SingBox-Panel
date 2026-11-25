@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log"
 	"net/http"
 	"strings"
 
@@ -48,7 +49,8 @@ func (a *App) listUserInbounds(c *gin.Context) {
 	}
 	var servers []model.Server
 	if err := a.db.Select("id", "name", "config_mode", "raw_config").Where("id IN ?", normalizedIDs(u.ServerIDs)).Find(&servers).Error; err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		log.Printf("list user inbounds servers: %v", err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "读取可用服务器失败"})
 		return
 	}
 	names := make(map[uint]string, len(servers))
@@ -59,7 +61,8 @@ func (a *App) listUserInbounds(c *gin.Context) {
 	}
 	var inbounds []model.Inbound
 	if err := a.db.Where("server_id IN ? AND enabled = ?", normalizedIDs(u.ServerIDs), true).Order("server_id, id").Find(&inbounds).Error; err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		log.Printf("list user inbounds: %v", err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "读取可用入口失败"})
 		return
 	}
 	out := make([]UserInboundOption, 0, len(inbounds))
@@ -93,7 +96,8 @@ func (a *App) listUserOutbounds(c *gin.Context) {
 	}
 	var rows []model.Outbound
 	if err := a.db.Where("owner_user_id = ?", u.ID).Order("sort, id").Find(&rows).Error; err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		log.Printf("list user outbounds: %v", err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "读取专属出站失败"})
 		return
 	}
 	out := make([]UserPrivateOutbound, 0, len(rows))
@@ -128,7 +132,8 @@ func (a *App) listAdminUserOutbounds(c *gin.Context) {
 	}
 	var rows []model.Outbound
 	if err := a.db.Where("owner_user_id = ?", uid).Order("sort, id").Find(&rows).Error; err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		log.Printf("list admin user outbounds: %v", err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "读取专属出站失败"})
 		return
 	}
 	out := make([]adminPrivateOutbound, 0, len(rows))
@@ -276,6 +281,11 @@ func (a *App) importUserOutbound(c *gin.Context) {
 	})
 	a.userAccessMu.Unlock()
 	if err != nil {
+		if statusCode == http.StatusInternalServerError {
+			log.Printf("import user outbounds: %v", err)
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "保存专属出站失败"})
+			return
+		}
 		c.JSON(statusCode, gin.H{"error": err.Error()})
 		return
 	}
@@ -308,7 +318,8 @@ func (a *App) deleteUserOutbound(c *gin.Context) {
 	}
 	var using int64
 	if err := a.db.Model(&model.UserForward{}).Where("outbound_id = ?", ob.ID).Count(&using).Error; err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		log.Printf("check user outbound forward refs: %v", err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "删除专属出站失败"})
 		return
 	}
 	if using > 0 {
@@ -316,7 +327,8 @@ func (a *App) deleteUserOutbound(c *gin.Context) {
 		return
 	}
 	if err := a.db.Model(&model.RouteRule{}).Where("outbound = ?", ob.Tag).Count(&using).Error; err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		log.Printf("check user outbound route refs: %v", err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "删除专属出站失败"})
 		return
 	}
 	if using > 0 {
@@ -324,7 +336,8 @@ func (a *App) deleteUserOutbound(c *gin.Context) {
 		return
 	}
 	if err := a.db.Where("id = ? AND owner_user_id = ?", ob.ID, u.ID).Delete(&model.Outbound{}).Error; err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		log.Printf("delete user outbound: %v", err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "删除专属出站失败"})
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"ok": true})
@@ -476,7 +489,8 @@ func (a *App) listUserForwards(c *gin.Context) {
 	}
 	var rows []model.UserForward
 	if err := a.db.Where("user_id = ?", u.ID).Order("id").Find(&rows).Error; err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		log.Printf("list user forwards: %v", err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "读取转发节点失败"})
 		return
 	}
 	if len(rows) == 0 {
@@ -485,17 +499,20 @@ func (a *App) listUserForwards(c *gin.Context) {
 	}
 	var servers []model.Server
 	if err := a.db.Select("id", "name").Where("id IN ?", normalizedIDs(u.ServerIDs)).Find(&servers).Error; err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		log.Printf("list user forwards servers: %v", err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "读取转发节点失败"})
 		return
 	}
 	var inbounds []model.Inbound
 	if err := a.db.Select("id", "server_id", "tag", "enabled", "type", "settings").Where("id IN ?", forwardInboundIDs(rows)).Find(&inbounds).Error; err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		log.Printf("list user forwards inbounds: %v", err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "读取转发节点失败"})
 		return
 	}
 	var outbounds []model.Outbound
 	if err := a.db.Select("id", "tag").Where("id IN ?", forwardOutboundIDs(rows)).Find(&outbounds).Error; err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		log.Printf("list user forwards outbounds: %v", err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "读取转发节点失败"})
 		return
 	}
 	serverNames := make(map[uint]string, len(servers))
@@ -598,7 +615,8 @@ func (a *App) createUserForward(c *gin.Context) {
 	} else {
 		var candidates []model.Inbound
 		if err := inboundQuery.Find(&candidates).Error; err != nil {
-			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+			log.Printf("create user forward candidates: %v", err)
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "读取入口节点失败"})
 			return
 		}
 		var accessible []model.Inbound
@@ -672,7 +690,8 @@ func (a *App) createUserForward(c *gin.Context) {
 		Where("user_id = ? AND server_id = ? AND inbound_id = ? AND outbound_id = ?", u.ID, inbound.ServerID, inbound.ID, outbound.ID).
 		Count(&duplicate).Error; err != nil {
 		a.userAccessMu.Unlock()
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		log.Printf("create user forward duplicate check: %v", err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "创建转发节点失败"})
 		return
 	}
 	if duplicate > 0 {
@@ -697,11 +716,12 @@ func (a *App) createUserForward(c *gin.Context) {
 	})
 	a.userAccessMu.Unlock()
 	if err != nil {
-		status := http.StatusInternalServerError
 		if duplicateDatabaseError(err) {
-			status = http.StatusConflict
+			c.JSON(http.StatusConflict, gin.H{"error": "该入口与出站的转发已存在"})
+			return
 		}
-		c.JSON(status, gin.H{"error": err.Error()})
+		log.Printf("create user forward: %v", err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "创建转发节点失败"})
 		return
 	}
 	a.applyConfigAndRespond(c, inbound.ServerID, gin.H{"forward": forward})
@@ -731,11 +751,12 @@ func (a *App) deleteUserForward(c *gin.Context) {
 	})
 	a.userAccessMu.Unlock()
 	if err != nil {
-		status := http.StatusInternalServerError
 		if errors.Is(err, gorm.ErrRecordNotFound) {
-			status = http.StatusNotFound
+			c.JSON(http.StatusNotFound, gin.H{"error": "转发不存在"})
+			return
 		}
-		c.JSON(status, gin.H{"error": err.Error()})
+		log.Printf("delete user forward: %v", err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "删除转发节点失败"})
 		return
 	}
 	a.applyConfigAndRespond(c, forward.ServerID, gin.H{"ok": true})
@@ -846,7 +867,8 @@ func (a *App) createAdminUserOutbound(c *gin.Context) {
 		ob.Remark = *req.Remark
 	}
 	if err := a.db.Create(ob).Error; err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		log.Printf("create admin user outbound: %v", err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "创建专属出站失败"})
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"outbound": adminPrivateOutbound{ID: ob.ID}})
@@ -876,7 +898,8 @@ func (a *App) deleteAdminUserOutbound(c *gin.Context) {
 	serverIDs := owner.ServerIDs
 	var using int64
 	if err := a.db.Model(&model.UserForward{}).Where("outbound_id = ?", ob.ID).Count(&using).Error; err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		log.Printf("check admin user outbound forward refs: %v", err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "删除专属出站失败"})
 		return
 	}
 	if using > 0 {
@@ -884,7 +907,8 @@ func (a *App) deleteAdminUserOutbound(c *gin.Context) {
 		return
 	}
 	if err := a.db.Model(&model.RouteRule{}).Where("outbound = ?", ob.Tag).Count(&using).Error; err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		log.Printf("check admin user outbound route refs: %v", err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "删除专属出站失败"})
 		return
 	}
 	if using > 0 {
@@ -897,7 +921,8 @@ func (a *App) deleteAdminUserOutbound(c *gin.Context) {
 		}
 		return nil
 	}); err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		log.Printf("delete admin user outbound: %v", err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "删除专属出站失败"})
 		return
 	}
 	a.refreshUserProxyAccess(serverIDs)

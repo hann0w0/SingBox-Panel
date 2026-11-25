@@ -158,3 +158,15 @@ func TestIsQUICVersionNegotiationRequiresEchoedConnectionIDs(t *testing.T) {
 		t.Fatal("truncated packet accepted")
 	}
 }
+
+func TestTestOutboundRejectsTunnelAndSpecialUsePrefixes(t *testing.T) {
+	for _, host := range []string{"2002:7f00:1::1", "2001::1", "64:ff9b::127.0.0.1", "192.0.0.1", "240.0.0.1", "fec0::1"} {
+		res := TestOutbound(context.Background(), protocol.TestOutboundCmd{Host: host, Port: 443})
+		if res.OK || !strings.Contains(res.Error, "回环") {
+			t.Fatalf("tunnel/special-use host %q not rejected cleanly: %+v", host, res)
+		}
+	}
+	if isDisallowedProbeHost("10.0.0.1") || isDisallowedProbeHost("192.168.1.1") {
+		t.Fatal("RFC1918 probe host unexpectedly blocked")
+	}
+}

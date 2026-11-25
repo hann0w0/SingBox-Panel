@@ -409,6 +409,10 @@ func (a *App) createBackupArchive() (archivePath, archiveName string, cleanup fu
 		cleanup()
 		return "", "", func() {}, fmt.Errorf("生成数据库快照失败：%w", err)
 	}
+	if err := os.Chmod(snapPath, 0o600); err != nil {
+		cleanup()
+		return "", "", func() {}, fmt.Errorf("保护数据库快照失败：%w", err)
+	}
 
 	archiveName = fmt.Sprintf("singbox-panel-backup-%s.tar.gz", time.Now().Format("20060102-150405"))
 	archivePath = filepath.Join(snapDir, archiveName)
@@ -416,6 +420,11 @@ func (a *App) createBackupArchive() (archivePath, archiveName string, cleanup fu
 	if err != nil {
 		cleanup()
 		return "", "", func() {}, fmt.Errorf("创建备份归档失败：%w", err)
+	}
+	if err := f.Chmod(0o600); err != nil {
+		_ = f.Close()
+		cleanup()
+		return "", "", func() {}, fmt.Errorf("保护备份归档失败：%w", err)
 	}
 	gz := gzip.NewWriter(f)
 	tw := tar.NewWriter(gz)

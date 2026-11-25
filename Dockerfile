@@ -33,7 +33,7 @@ RUN --mount=type=cache,target=/root/.cache/go-build \
 FROM alpine:3.23 AS runtime
 RUN apk add --no-cache ca-certificates && \
     addgroup -g 10001 panel && adduser -D -H -u 10001 -G panel panel && \
-    mkdir -p /app/data && chown 10001:10001 /app/data
+    mkdir -p -m 0700 /app/data && chown 10001:10001 /app/data
 WORKDIR /app
 COPY --from=backend /out/singbox-panel /usr/local/bin/singbox-panel
 ENV SINGBOX_PANEL_DEPLOYMENT=docker \

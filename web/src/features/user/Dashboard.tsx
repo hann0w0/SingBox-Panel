@@ -31,7 +31,7 @@ const REGIONS = regionData as unknown as Record<string, RegionInfo>
 const userNodeKey = (node: UserNode) => node.id || `${node.type}:${node.name}:${node.server}:${node.port}`
 const labelOf = (code: string): string => REGIONS[code]?.label || (code === 'Other' ? '其他' : code)
 
-const SENSITIVE_PARAM_KEYS = new Set(['UUID', '密码', 'Obfs密码', 'PSK', '认证', '公钥', 'Short ID'])
+const SENSITIVE_PARAM_KEYS = new Set(['UUID', '密码', 'Obfs密码', 'PSK', '认证', '公钥', 'PublicKey', 'Short ID', 'ShortID', 'Obfs'])
 const maskSecretValue = (val: string) => (val ? '••••••••' : '—')
 
 function useDashboardRequest<T>(request: (signal: AbortSignal) => Promise<T>, initialData: T, enabled = true) {
@@ -391,7 +391,7 @@ export default function Dashboard() {
                 {watchedManualType === 'snell' && (
                   <>
                     <Form.Item name="snell_version" label="版本">
-                      <Select aria-label="版本" disabled={importing} options={[{ value: 4, label: 'v4' }, { value: 5, label: 'v5' }, { value: 6, label: 'v6' }]} />
+                      <Select aria-label="版本" disabled={importing} options={[{ value: 4, label: 'v4' }, { value: 6, label: 'v6' }]} />
                     </Form.Item>
                     {watchedSnellVer === 4 && (
                       <Form.Item name="snell_obfs_mode" label="混淆">

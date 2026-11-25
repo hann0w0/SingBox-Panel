@@ -187,8 +187,11 @@ export interface TLSSettings {
 }
 
 export interface TransportSettings {
-  type?: string // '' (tcp) | ws | httpupgrade
+  type?: string // '' (tcp) | ws | httpupgrade | grpc | http | quic
   path?: string
+  method?: string
+  service_name?: string
+  host?: string | string[]
   headers?: Record<string, string | string[]>
   max_early_data?: number
   early_data_header?: string

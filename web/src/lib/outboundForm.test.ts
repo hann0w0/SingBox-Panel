@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 
 import { buildOutboundBody } from './outboundForm'
+import { inboundSettingsToNativeJson, nativeJsonToInboundSettings } from './singboxSchema'
 import type { Outbound } from './types'
 
 describe('buildOutboundBody', () => {
@@ -149,4 +150,70 @@ it('encodes non-Latin1 HTTP password-only auth safely and keeps it when extraRaw
   }, { path: '/proxy', headers: { 'X-Custom': '1' } })
   expect(body.settings.settings?.http_headers?.['X-Custom']).toBe('1')
   expect(body.settings.settings?.http_headers?.['Proxy-Authorization']).toMatch(/^Basic /)
+})
+
+it('preserves HTTP and gRPC outbound transport fields and drops stale WS keys when switching', () => {
+  const httpBody = buildOutboundBody(null, {
+    type: 'vless', tag: 'vless-h2', server: 'h2.example.com', server_port: 443,
+    uuid: '11111111-2222-4333-8444-555555555555', tls_mode: 'tls', sni: 'h2.example.com',
+    transport_type: 'http',
+  }, {
+    transport: { type: 'http', path: '/h2', host: ['h2.example.com'], headers: { 'X-Test': 'ok' } },
+  })
+  expect(httpBody.settings.settings?.transport?.type).toBe('http')
+  expect(httpBody.settings.settings?.transport?.path).toBe('/h2')
+  expect(httpBody.settings.settings?.transport?.host).toEqual(['h2.example.com'])
+  expect((httpBody.settings.settings?.raw?.transport as Record<string, unknown>)?.path).toBe('/h2')
+  expect((httpBody.settings.settings?.raw?.transport as Record<string, unknown>)?.headers).toEqual({ 'X-Test': 'ok' })
+
+  const oldWs: Outbound = {
+    id: 2, server_id: 1, tag: 'vless-ws', type: 'vless', remark: '', sort: 0,
+    settings: {
+      server: 'old.example.com', server_port: 443, uuid: '11111111-2222-4333-8444-555555555555',
+      settings: {
+        transport: { type: 'ws', path: '/ws', headers: { Host: 'old.example.com' }, max_early_data: 2048 },
+        raw: { type: 'vless', transport: { type: 'ws', path: '/ws', headers: { Host: 'old.example.com' }, max_early_data: 2048 } },
+      },
+    },
+  }
+  const grpcBody = buildOutboundBody(oldWs, {
+    type: 'vless', tag: 'vless-grpc', server: 'grpc.example.com', server_port: 443,
+    uuid: '11111111-2222-4333-8444-555555555555', tls_mode: 'tls', sni: 'grpc.example.com',
+    transport_type: 'grpc',
+  }, {
+    transport: { type: 'grpc', service_name: 'gunSvc' },
+  })
+  expect(grpcBody.settings.settings?.transport).toEqual({ type: 'grpc', service_name: 'gunSvc' })
+  expect(grpcBody.settings.settings?.raw?.transport).toEqual({ type: 'grpc', service_name: 'gunSvc' })
+})
+
+it('syncs TUIC udp_relay_mode from schema extra fields and preserves inline inbound TLS PEM across JSON mode', () => {
+  const tuicBody = buildOutboundBody(null, {
+    type: 'tuic', tag: 'tuic-out', server: 'tuic.example.com', server_port: 443,
+    uuid: '11111111-2222-4333-8444-555555555555', password: 'secret', congestion_control: 'bbr',
+    tls: true, sni: 'tuic.example.com',
+  }, {
+    udp_relay_mode: 'quic',
+  })
+  expect(tuicBody.settings.settings?.tuic_udp_relay_mode).toBe('quic')
+  expect(tuicBody.settings.settings?.raw?.udp_relay_mode).toBe('quic')
+
+  const inlineSettings = {
+    tls: {
+      enabled: true,
+      self_signed: true,
+      server_name: 'self.example.com',
+      certificate: '-----BEGIN CERTIFICATE-----\nMIIB\n-----END CERTIFICATE-----',
+      key: '-----BEGIN PRIVATE KEY-----\nMIIE\n-----END PRIVATE KEY-----',
+    },
+  }
+  const nativeJson = inboundSettingsToNativeJson('hysteria2', 'hy2-in', 443, inlineSettings)
+  const tlsJson = nativeJson.tls as Record<string, unknown>
+  expect(tlsJson.certificate).toContain('BEGIN CERTIFICATE')
+  expect(tlsJson.key).toContain('BEGIN PRIVATE KEY')
+
+  const roundtripped = nativeJsonToInboundSettings(inlineSettings, nativeJson)
+  expect(roundtripped.tls?.certificate).toBe(inlineSettings.tls.certificate)
+  expect(roundtripped.tls?.key).toBe(inlineSettings.tls.key)
+  expect(roundtripped.tls?.self_signed).toBe(true)
 })

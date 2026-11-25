@@ -1198,7 +1198,7 @@ export default function InboundForm({
             <SchemaFieldList
               properties={protocolExtraSchemaProps}
               value={rawExtra}
-              onChange={setRawExtra}
+              onChange={updateRawExtra}
               idPrefix="inbound-proto"
               onJsonErrorChange={handleSchemaJsonError}
             />

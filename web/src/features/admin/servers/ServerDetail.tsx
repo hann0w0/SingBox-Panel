@@ -302,9 +302,10 @@ export default function ServerDetail() {
   const commitRuleMove = useCallback((from: number, to: number) => {
     const current = ruleOrderRef.current
     if (from < 0 || to < 0 || from >= current.length || to >= current.length || from === to) return
-    const next = [...current]
-    const [moved] = next.splice(from, 1)
-    next.splice(to, 0, moved)
+    const reordered = [...current]
+    const [moved] = reordered.splice(from, 1)
+    reordered.splice(to, 0, moved)
+    const next = reordered.map((rule, idx) => ({ ...rule, sort: idx * 10 }))
     ruleOrderRef.current = next
     ruleOrderGenerationRef.current += 1
     setRules(next)

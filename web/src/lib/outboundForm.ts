@@ -99,6 +99,8 @@ export function buildOutboundBody(
       else delete inner.heartbeat
       if (typeof extraRaw.zero_rtt_handshake === 'boolean') inner.zero_rtt_handshake = extraRaw.zero_rtt_handshake
       else delete inner.zero_rtt_handshake
+      if (typeof extraRaw.udp_relay_mode === 'string' && extraRaw.udp_relay_mode) inner.tuic_udp_relay_mode = extraRaw.udp_relay_mode
+      else delete inner.tuic_udp_relay_mode
     }
   }
   if (type === 'hysteria2') {
@@ -155,14 +157,39 @@ export function buildOutboundBody(
 
   if (TRANSPORT_OUT.has(type)) {
     if (values.transport_type === 'ws' || values.transport_type === 'httpupgrade') {
-      const transport: TransportSettings = sameProtocol ? cloneJSON(inner.transport ?? {}) : {}
+      const transport: TransportSettings = sameProtocol && inner.transport?.type === values.transport_type ? cloneJSON(inner.transport ?? {}) : {}
+      delete transport.service_name
+      delete transport.host
+      delete transport.method
       transport.type = values.transport_type
       transport.path = values.ws_path || ''
       setHostHeader(transport, values.ws_host)
+      if (values.transport_type !== 'ws') {
+        delete transport.max_early_data
+        delete transport.early_data_header
+      }
       inner.transport = transport
     } else if (EXTENDED_TRANSPORT_OUT.has(values.transport_type)) {
-      const transport: TransportSettings = sameProtocol ? cloneJSON(inner.transport ?? {}) : {}
-      transport.type = values.transport_type
+      const rawTr = (extraRaw?.transport && typeof extraRaw.transport === 'object' && !Array.isArray(extraRaw.transport)
+        ? extraRaw.transport
+        : undefined) as Record<string, unknown> | undefined
+      const transport: TransportSettings = { type: values.transport_type }
+      if (values.transport_type === 'grpc') {
+        const svc = typeof rawTr?.service_name === 'string' ? rawTr.service_name : (sameProtocol && inner.transport?.type === 'grpc' ? inner.transport.service_name : undefined)
+        if (svc) transport.service_name = svc
+      } else if (values.transport_type === 'http') {
+        const path = rawTr && 'path' in rawTr ? rawTr.path : (sameProtocol && inner.transport?.type === 'http' ? inner.transport.path : undefined)
+        const host = rawTr && 'host' in rawTr ? rawTr.host : (sameProtocol && inner.transport?.type === 'http' ? inner.transport.host : undefined)
+        const method = rawTr && 'method' in rawTr ? rawTr.method : (sameProtocol && inner.transport?.type === 'http' ? inner.transport.method : undefined)
+        const headers = rawTr && 'headers' in rawTr ? rawTr.headers : (sameProtocol && inner.transport?.type === 'http' ? inner.transport.headers : undefined)
+        if (typeof path === 'string' && path) transport.path = path
+        if (typeof host === 'string' && host) transport.host = host
+        else if (Array.isArray(host) && host.length > 0) transport.host = host.map(String)
+        if (typeof method === 'string' && method) transport.method = method
+        if (headers && typeof headers === 'object' && !Array.isArray(headers) && Object.keys(headers).length > 0) {
+          transport.headers = cloneJSON(headers as Record<string, string | string[]>)
+        }
+      }
       inner.transport = transport
     } else {
       delete inner.transport

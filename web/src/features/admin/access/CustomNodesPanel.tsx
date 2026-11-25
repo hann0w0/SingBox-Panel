@@ -907,8 +907,11 @@ export function CustomNodesPanel({ nodes, loading, error, onNodesChange }: {
                   <Select
                     placeholder="选择协议"
                     onChange={(protocol) => {
+                      const curTls = nodeForm.getFieldValue('tls_mode')
                       if (protocol === 'http') {
                         nodeForm.setFieldValue('tls_mode', 'none')
+                      } else if (protocol === 'trojan') {
+                        if (curTls !== 'tls' && curTls !== 'reality') nodeForm.setFieldValue('tls_mode', 'tls')
                       } else if (TLS_REALITY.includes(protocol)) {
                         if (nodeProtocol === 'http' && !['vless', 'vmess'].includes(protocol)) nodeForm.setFieldValue('tls_mode', 'tls')
                       } else if (HAS_TLS.includes(protocol)) {
@@ -1055,20 +1058,25 @@ export function CustomNodesPanel({ nodes, loading, error, onNodesChange }: {
                   <Form.Item name="tls_mode" label="TLS 模式">
                     <Select
                       options={
-                        TLS_REALITY.includes(nodeProtocol)
+                        nodeProtocol === 'trojan'
                           ? [
-                              { value: 'none', label: '无' },
                               { value: 'tls', label: 'TLS' },
                               { value: 'reality', label: 'REALITY' },
                             ]
-                          : nodeProtocol === 'http'
+                          : TLS_REALITY.includes(nodeProtocol)
                             ? [
                                 { value: 'none', label: '无' },
                                 { value: 'tls', label: 'TLS' },
+                                { value: 'reality', label: 'REALITY' },
                               ]
-                            : [
-                                { value: 'tls', label: 'TLS' },
-                              ]
+                            : nodeProtocol === 'http'
+                              ? [
+                                  { value: 'none', label: '无' },
+                                  { value: 'tls', label: 'TLS' },
+                                ]
+                              : [
+                                  { value: 'tls', label: 'TLS' },
+                                ]
                       }
                     />
                   </Form.Item>

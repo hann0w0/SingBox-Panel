@@ -310,6 +310,7 @@ export function OutboundForm({
     if (inner?.down_mbps && seededRaw.down_mbps === undefined) seededRaw.down_mbps = inner.down_mbps
     if (inner?.heartbeat && seededRaw.heartbeat === undefined) seededRaw.heartbeat = inner.heartbeat
     if (inner?.zero_rtt_handshake !== undefined && seededRaw.zero_rtt_handshake === undefined) seededRaw.zero_rtt_handshake = inner.zero_rtt_handshake
+    if (inner?.tuic_udp_relay_mode && seededRaw.udp_relay_mode === undefined) seededRaw.udp_relay_mode = inner.tuic_udp_relay_mode
     if (inner?.http_path && seededRaw.path === undefined) seededRaw.path = inner.http_path
     if (inner?.http_headers && Object.keys(inner.http_headers).length > 0 && seededRaw.headers === undefined) seededRaw.headers = cloneJson(inner.http_headers)
     setRawExtra(seededRaw)
@@ -659,7 +660,7 @@ export function OutboundForm({
               <SchemaFieldList
                 properties={protocolExtraSchemaProps}
                 value={rawExtra}
-                onChange={setRawExtra}
+                onChange={updateRawExtra}
                 idPrefix="outbound-proto"
                 onJsonErrorChange={handleSchemaJsonError}
               />
@@ -670,14 +671,29 @@ export function OutboundForm({
         {TRANSPORT_OUT.has(type) && (
           <FormGroup title="传输">
             <Form.Item name="transport_type" label="传输层" className="fm-full">
-              <Select options={[
-                { value: 'tcp', label: 'TCP' },
-                { value: 'ws', label: 'WebSocket' },
-                { value: 'httpupgrade', label: 'HTTPUpgrade' },
-                { value: 'grpc', label: 'gRPC' },
-                { value: 'http', label: 'HTTP' },
-                { value: 'quic', label: 'QUIC' },
-              ]} />
+              <Select
+                options={[
+                  { value: 'tcp', label: 'TCP' },
+                  { value: 'ws', label: 'WebSocket' },
+                  { value: 'httpupgrade', label: 'HTTPUpgrade' },
+                  { value: 'grpc', label: 'gRPC' },
+                  { value: 'http', label: 'HTTP' },
+                  { value: 'quic', label: 'QUIC' },
+                ]}
+                onChange={(nextType: string) => {
+                  setDirty(true)
+                  setStickyTransportKeys(new Set())
+                  setRawExtra((prev) => {
+                    const next = { ...prev }
+                    if (!nextType || nextType === 'tcp') {
+                      delete next.transport
+                    } else {
+                      next.transport = { type: nextType }
+                    }
+                    return next
+                  })
+                }}
+              />
             </Form.Item>
             {(transportType === 'ws' || transportType === 'httpupgrade') && (
               <>

@@ -755,24 +755,50 @@ export function inboundSettingsToNativeJson(
       type: settings.transport.type,
     }
     if (settings.transport.type === 'ws' || settings.transport.type === 'httpupgrade') {
+      delete nextTr.service_name
+      delete nextTr.host
+      delete nextTr.method
+      delete nextTr.idle_timeout
+      delete nextTr.ping_timeout
       if (settings.transport.path) nextTr.path = settings.transport.path
       else delete nextTr.path
       if (settings.transport.headers && Object.keys(settings.transport.headers).length > 0) nextTr.headers = settings.transport.headers
       else delete nextTr.headers
-      if (settings.transport.max_early_data) nextTr.max_early_data = settings.transport.max_early_data
+      if (settings.transport.type === 'ws' && settings.transport.max_early_data) nextTr.max_early_data = settings.transport.max_early_data
       else delete nextTr.max_early_data
-      if (settings.transport.early_data_header) nextTr.early_data_header_name = settings.transport.early_data_header
+      if (settings.transport.type === 'ws' && settings.transport.early_data_header) nextTr.early_data_header_name = settings.transport.early_data_header
       else delete nextTr.early_data_header_name
-    } else {
+    } else if (settings.transport.type === 'grpc') {
+      delete nextTr.path
+      delete nextTr.headers
+      delete nextTr.host
+      delete nextTr.method
+      delete nextTr.max_early_data
+      delete nextTr.early_data_header_name
+      if (settings.transport.service_name) nextTr.service_name = settings.transport.service_name
+    } else if (settings.transport.type === 'http') {
+      delete nextTr.service_name
+      delete nextTr.max_early_data
+      delete nextTr.early_data_header_name
       if (settings.transport.path) nextTr.path = settings.transport.path
+      if (settings.transport.host) nextTr.host = settings.transport.host
+      if (settings.transport.method) nextTr.method = settings.transport.method
       if (settings.transport.headers) nextTr.headers = settings.transport.headers
+    } else if (settings.transport.type === 'quic') {
+      delete nextTr.path
+      delete nextTr.headers
+      delete nextTr.host
+      delete nextTr.method
+      delete nextTr.service_name
+      delete nextTr.max_early_data
+      delete nextTr.early_data_header_name
     }
     base.transport = nextTr
   } else {
     delete base.transport
   }
 
-  if (settings.tls?.enabled || settings.tls?.reality?.enabled || settings.tls?.acme_domain) {
+  if (settings.tls?.enabled || settings.tls?.self_signed || settings.tls?.reality?.enabled || settings.tls?.acme_domain) {
     const prevTls = (base.tls && typeof base.tls === 'object' ? base.tls : {}) as Record<string, unknown>
     const tlsObj: Record<string, unknown> = { ...prevTls, enabled: true }
     // Client-only fields must never appear inside server inbound TLS JSON.
@@ -786,6 +812,11 @@ export function inboundSettingsToNativeJson(
     else delete tlsObj.certificate_path
     if (settings.tls.key_path) tlsObj.key_path = settings.tls.key_path
     else delete tlsObj.key_path
+    const usesInlinePem = !settings.tls.reality?.enabled && !settings.tls.acme_domain && !settings.tls.certificate_path && !settings.tls.key_path
+    if (usesInlinePem && settings.tls.certificate) tlsObj.certificate = settings.tls.certificate
+    else delete tlsObj.certificate
+    if (usesInlinePem && settings.tls.key) tlsObj.key = settings.tls.key
+    else delete tlsObj.key
     if (settings.tls.acme_domain) {
       tlsObj.certificate_provider = {
         ...(typeof prevTls.certificate_provider === 'object' && prevTls.certificate_provider ? (prevTls.certificate_provider as Record<string, unknown>) : {}),
@@ -925,6 +956,9 @@ export function nativeJsonToInboundSettings(prev: InboundSettings, rawObj: Recor
     if (typeof tr.type === 'string' && tr.type !== 'tcp') {
       const nextTr: TransportSettings = { type: tr.type }
       if (typeof tr.path === 'string') nextTr.path = tr.path
+      if (typeof tr.service_name === 'string') nextTr.service_name = tr.service_name
+      if (typeof tr.method === 'string') nextTr.method = tr.method
+      if (typeof tr.host === 'string' || Array.isArray(tr.host)) nextTr.host = tr.host as string | string[]
       if (tr.headers && typeof tr.headers === 'object') nextTr.headers = tr.headers as Record<string, string | string[]>
       if (typeof tr.max_early_data === 'number') nextTr.max_early_data = tr.max_early_data
       if (typeof tr.early_data_header_name === 'string') nextTr.early_data_header = tr.early_data_header_name
@@ -938,12 +972,24 @@ export function nativeJsonToInboundSettings(prev: InboundSettings, rawObj: Recor
 
   if (rawObj.tls && typeof rawObj.tls === 'object' && !Array.isArray(rawObj.tls)) {
     const t = rawObj.tls as Record<string, unknown>
+    const inlineCert = typeof t.certificate === 'string'
+      ? t.certificate
+      : Array.isArray(t.certificate)
+        ? t.certificate.map(String).join('\n')
+        : undefined
+    const inlineKey = typeof t.key === 'string'
+      ? t.key
+      : Array.isArray(t.key)
+        ? t.key.map(String).join('\n')
+        : undefined
     const nextTls: TLSSettings = {
       enabled: t.enabled !== false,
       ...(typeof t.server_name === 'string' ? { server_name: t.server_name } : {}),
       ...(Array.isArray(t.alpn) ? { alpn: t.alpn.map(String) } : {}),
       ...(typeof t.certificate_path === 'string' ? { certificate_path: t.certificate_path } : {}),
       ...(typeof t.key_path === 'string' ? { key_path: t.key_path } : {}),
+      ...(inlineCert ? { certificate: inlineCert } : {}),
+      ...(inlineKey ? { key: inlineKey } : {}),
       ...(prev.tls?.self_signed ? { self_signed: true } : {}),
       ...(prev.tls?.insecure !== undefined ? { insecure: prev.tls.insecure } : {}),
       ...(prev.tls?.fingerprint ? { fingerprint: prev.tls.fingerprint } : {}),
@@ -964,7 +1010,7 @@ export function nativeJsonToInboundSettings(prev: InboundSettings, rawObj: Recor
           handshake_server: typeof hs.server === 'string' ? hs.server : '',
           handshake_server_port: typeof hs.server_port === 'number' ? hs.server_port : 443,
           private_key: typeof r.private_key === 'string' ? r.private_key : (prev.tls?.reality?.private_key ?? ''),
-          ...(prev.tls?.reality?.public_key ? { public_key: prev.tls.reality.public_key } : {}),
+          ...(prev.tls?.reality?.public_key ? { public_key: prev.tls.reality?.public_key } : {}),
           ...(Array.isArray(r.short_id) ? { short_id: r.short_id.map(String) } : {}),
           ...(typeof r.max_time_difference === 'string' ? { max_time_difference: r.max_time_difference } : {}),
         }
@@ -972,6 +1018,8 @@ export function nativeJsonToInboundSettings(prev: InboundSettings, rawObj: Recor
     }
     if (nextTls.reality?.enabled || nextTls.acme_domain || nextTls.certificate_path) {
       delete nextTls.self_signed
+      delete nextTls.certificate
+      delete nextTls.key
     }
     next.tls = nextTls
   } else {
@@ -1034,6 +1082,8 @@ export function outboundSettingsToNativeJson(
     if (inner.zero_rtt_handshake !== undefined) base.zero_rtt_handshake = inner.zero_rtt_handshake
     if (inner.heartbeat) base.heartbeat = inner.heartbeat
     else delete base.heartbeat
+    if (inner.tuic_udp_relay_mode) base.udp_relay_mode = inner.tuic_udp_relay_mode
+    else delete base.udp_relay_mode
   } else if (type === 'anytls') {
     if (settings.password) base.password = settings.password
   } else if (type === 'snell') {
@@ -1067,10 +1117,57 @@ export function outboundSettingsToNativeJson(
   if (inner.transport?.type && inner.transport.type !== 'tcp') {
     const prevTr = (base.transport && typeof base.transport === 'object' ? base.transport : {}) as Record<string, unknown>
     const nextTr: Record<string, unknown> = { ...prevTr, type: inner.transport.type }
-    if (inner.transport.path) nextTr.path = inner.transport.path
-    else delete nextTr.path
-    if (inner.transport.headers && Object.keys(inner.transport.headers).length > 0) nextTr.headers = inner.transport.headers
-    else delete nextTr.headers
+    if (inner.transport.type === 'ws' || inner.transport.type === 'httpupgrade') {
+      delete nextTr.service_name
+      delete nextTr.host
+      delete nextTr.method
+      delete nextTr.idle_timeout
+      delete nextTr.ping_timeout
+      if (inner.transport.path) nextTr.path = inner.transport.path
+      else delete nextTr.path
+      if (inner.transport.headers && Object.keys(inner.transport.headers).length > 0) nextTr.headers = inner.transport.headers
+      else delete nextTr.headers
+      if (inner.transport.type !== 'ws') {
+        delete nextTr.max_early_data
+        delete nextTr.early_data_header_name
+      }
+    } else if (inner.transport.type === 'grpc') {
+      delete nextTr.path
+      delete nextTr.headers
+      delete nextTr.host
+      delete nextTr.method
+      delete nextTr.max_early_data
+      delete nextTr.early_data_header_name
+      if (inner.transport.service_name) nextTr.service_name = inner.transport.service_name
+    } else if (inner.transport.type === 'http') {
+      delete nextTr.service_name
+      delete nextTr.max_early_data
+      delete nextTr.early_data_header_name
+      if (inner.transport.path !== undefined) {
+        if (inner.transport.path) nextTr.path = inner.transport.path
+        else delete nextTr.path
+      }
+      if (inner.transport.host !== undefined) {
+        if (Array.isArray(inner.transport.host) ? inner.transport.host.length > 0 : Boolean(inner.transport.host)) nextTr.host = inner.transport.host
+        else delete nextTr.host
+      }
+      if (inner.transport.method !== undefined) {
+        if (inner.transport.method) nextTr.method = inner.transport.method
+        else delete nextTr.method
+      }
+      if (inner.transport.headers !== undefined) {
+        if (Object.keys(inner.transport.headers).length > 0) nextTr.headers = inner.transport.headers
+        else delete nextTr.headers
+      }
+    } else if (inner.transport.type === 'quic') {
+      delete nextTr.path
+      delete nextTr.headers
+      delete nextTr.host
+      delete nextTr.method
+      delete nextTr.service_name
+      delete nextTr.max_early_data
+      delete nextTr.early_data_header_name
+    }
     base.transport = nextTr
   } else {
     delete base.transport
@@ -1161,6 +1258,8 @@ export function nativeJsonToOutboundSettings(prev: OutboundSettings, rawObj: Rec
   else delete inner.zero_rtt_handshake
   if (typeof rawObj.heartbeat === 'string') inner.heartbeat = rawObj.heartbeat
   else delete inner.heartbeat
+  if (typeof rawObj.udp_relay_mode === 'string') inner.tuic_udp_relay_mode = rawObj.udp_relay_mode
+  else delete inner.tuic_udp_relay_mode
   if (typeof rawObj.up_mbps === 'number') inner.up_mbps = rawObj.up_mbps
   else delete inner.up_mbps
   if (typeof rawObj.down_mbps === 'number') inner.down_mbps = rawObj.down_mbps
@@ -1206,6 +1305,9 @@ export function nativeJsonToOutboundSettings(prev: OutboundSettings, rawObj: Rec
       inner.transport = {
         type: tr.type,
         ...(typeof tr.path === 'string' ? { path: tr.path } : {}),
+        ...(typeof tr.service_name === 'string' ? { service_name: tr.service_name } : {}),
+        ...(typeof tr.method === 'string' ? { method: tr.method } : {}),
+        ...(typeof tr.host === 'string' || Array.isArray(tr.host) ? { host: tr.host as string | string[] } : {}),
         ...(tr.headers && typeof tr.headers === 'object' ? { headers: tr.headers as Record<string, string | string[]> } : {}),
       }
     } else {

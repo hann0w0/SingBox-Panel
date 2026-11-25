@@ -16,37 +16,12 @@
 </p>
 
 <p align="center">
-  <a href="#工作模式">工作模式</a> ·
   <a href="#安装">安装</a> ·
   <a href="#卸载">卸载</a> ·
+  <a href="#工作模式">工作模式</a> ·
   <a href="docs/docker.md">Docker 部署说明</a> ·
   <a href="#开源许可">开源许可</a>
 </p>
-
-## 工作模式
-
-```mermaid
-flowchart LR
-    Browser["浏览器 / 订阅客户端"]
-    Proxy["反向代理"]
-
-    subgraph Control["主控 · Binary / Docker"]
-        Panel["主控面板"] --- Database[("数据库")]
-    end
-
-    subgraph Node["节点宿主机"]
-        Agent["节点 Agent"] -->|配置下发 · 服务管理 · 数据采集| SingBox["官方 sing-box"]
-    end
-
-    Browser -->|HTTPS| Proxy
-    Agent -->|主动建立 WSS 连接| Proxy
-    Proxy -->|HTTP / WebSocket| Panel
-    Browser -->|代理连接| SingBox
-```
-
-- **部署边界**：主控支持 Binary 或 Docker 运行；Agent 与官方 `sing-box` 运行在节点宿主机。
-- **主动建连**：Agent 主动向主控建立 WSS 连接，节点无需额外开放管理端口。
-- **流量直连**：代理流量由节点上的官方 `sing-box` 直接处理。
 
 ## 安装
 
@@ -146,6 +121,31 @@ rm -rf /etc/singbox-panel-agent
 ```
 
 如需同时卸载 `sing-box`，请先在面板执行「卸载 sing-box」，再卸载 Agent。
+
+## 工作模式
+
+```mermaid
+flowchart LR
+    Browser["浏览器 / 订阅客户端"]
+    Proxy["反向代理"]
+
+    subgraph Control["主控 · Binary / Docker"]
+        Panel["主控面板"] --- Database[("数据库")]
+    end
+
+    subgraph Node["节点宿主机"]
+        Agent["节点 Agent"] -->|配置下发 · 服务管理 · 数据采集| SingBox["官方 sing-box"]
+    end
+
+    Browser -->|HTTPS| Proxy
+    Agent -->|主动建立 WSS 连接| Proxy
+    Proxy -->|HTTP / WebSocket| Panel
+    Browser -->|代理连接| SingBox
+```
+
+- **部署边界**：主控支持 Binary 或 Docker 运行；Agent 与官方 `sing-box` 运行在节点宿主机。
+- **主动建连**：Agent 主动向主控建立 WSS 连接，节点无需额外开放管理端口。
+- **流量直连**：代理流量由节点上的官方 `sing-box` 直接处理。
 
 ## 开源许可
 

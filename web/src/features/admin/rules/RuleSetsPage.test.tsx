@@ -17,6 +17,8 @@ vi.mock('../../../lib/api', async (importOriginal) => ({
 beforeEach(() => {
   vi.resetAllMocks()
   vi.stubGlobal('innerWidth', 1024)
+  vi.stubGlobal('ResizeObserver', class { observe() {} unobserve() {} disconnect() {} })
+  Object.defineProperty(Element.prototype, 'scrollIntoView', { configurable: true, writable: true, value: vi.fn() })
   vi.mocked(listSharedRuleSets).mockResolvedValue([{
     id: 1, tag: 'geosite-cn', type: 'remote', format: 'binary',
     url: 'https://example.com/cn.srs', server_ids: [2],
@@ -95,5 +97,25 @@ it('keeps full rule-set details and editing available across mobile and desktop 
   expect(screen.queryByRole('list', { name: '规则集', hidden: true })).toBeNull()
   expect((within(dialog).getByRole('textbox', { name: /^URL/ }) as HTMLInputElement).value).toBe('https://example.com/updated.srs')
   fireEvent.click(within(dialog).getByRole('button', { name: '确定' }))
-  await waitFor(() => expect(updateSharedRuleSet).toHaveBeenCalledWith(1, expect.objectContaining({ tag, url: 'https://example.com/updated.srs' })))
+  await waitFor(() => expect(updateSharedRuleSet).toHaveBeenCalledWith(1, expect.objectContaining({ tag, url: 'https://example.com/updated.srs', update_interval: '1440m' })))
+})
+
+it('normalizes legacy rule-set update_interval into minutes and submits preset minutes', async () => {
+  vi.mocked(listSharedRuleSets).mockResolvedValue([{
+    id: 5, tag: 'geosite-ads', type: 'remote', format: 'binary',
+    url: 'https://example.com/ads.srs', update_interval: '12h', server_ids: [],
+  }])
+  vi.mocked(updateSharedRuleSet).mockResolvedValue({
+    ruleset: { id: 5, tag: 'geosite-ads', type: 'remote', format: 'binary', url: 'https://example.com/ads.srs', update_interval: '60m' },
+  })
+  render(<MemoryRouter><RuleSetsPage /></MemoryRouter>)
+  await screen.findByText('geosite-ads')
+  fireEvent.click(screen.getByRole('button', { name: '编辑规则集 geosite-ads' }))
+  const dialog = screen.getByRole('dialog', { name: '编辑规则集' })
+  const intervalSelect = within(dialog).getByLabelText('更新间隔')
+  expect(intervalSelect.textContent).toContain('720 分钟')
+  await act(async () => { fireEvent.click(intervalSelect) })
+  await act(async () => { fireEvent.click(screen.getByRole('option', { name: '60 分钟' })) })
+  fireEvent.click(within(dialog).getByRole('button', { name: '确定' }))
+  await waitFor(() => expect(updateSharedRuleSet).toHaveBeenCalledWith(5, expect.objectContaining({ update_interval: '60m' })))
 })

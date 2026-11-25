@@ -228,6 +228,26 @@ describe('subscription editor', () => {
       name_rewrite_rules: [{ action: 'rename', pattern: '旧名称', replacement: '新名称', match_mode: 'text' }],
     })
   })
+
+  it('allows choosing update interval in minutes when automatic update is enabled', async () => {
+    vi.mocked(createCustomNodeSubscription).mockResolvedValue({
+      subscription: {} as CustomNodeSubscription,
+      sync: { created: 0, updated: 0, deleted: 0, total: 0, skipped: 0, filtered: 0 },
+    })
+    render(<CustomNodesPanel nodes={[]} loading={false} onNodesChange={vi.fn()} />)
+    fireEvent.click(screen.getByRole('button', { name: '新增订阅' }))
+    fireEvent.change(screen.getByLabelText(/^名称/), { target: { value: '定时订阅' } })
+    fireEvent.change(screen.getByLabelText(/^订阅链接/), { target: { value: 'https://provider.example.com/sub' } })
+    expect(screen.getByLabelText('更新间隔').textContent).toContain('60 分钟')
+    await select('更新间隔', '180 分钟')
+    fireEvent.click(screen.getByRole('button', { name: '保存并同步' }))
+    await waitFor(() => expect(createCustomNodeSubscription).toHaveBeenCalledOnce())
+    expect(vi.mocked(createCustomNodeSubscription).mock.calls[0][0]).toMatchObject({
+      name: '定时订阅',
+      auto_update: true,
+      update_interval_minutes: 180,
+    })
+  })
 })
 
 describe('新增节点 dialog', () => {

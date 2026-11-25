@@ -805,8 +805,63 @@ func normalizeRuleSetReq(req *ruleSetReq) error {
 	if err != nil || (parsedURL.Scheme != "http" && parsedURL.Scheme != "https") || parsedURL.Host == "" {
 		return fmt.Errorf("远程规则集 URL 必须是有效的 http(s):// 地址")
 	}
+	normalizedInterval, err := normalizeRuleSetUpdateInterval(req.UpdateInterval)
+	if err != nil {
+		return err
+	}
+	req.UpdateInterval = normalizedInterval
 	req.Path = ""
 	return nil
+}
+
+func normalizeRuleSetUpdateInterval(raw string) (string, error) {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return "", nil
+	}
+	const (
+		minInterval = time.Minute
+		maxInterval = 30 * 24 * time.Hour
+	)
+	if mins, err := strconv.Atoi(raw); err == nil {
+		if mins < 1 || time.Duration(mins)*time.Minute > maxInterval {
+			return "", fmt.Errorf("更新间隔必须在 1 分钟至 43200 分钟之间")
+		}
+		return fmt.Sprintf("%dm", mins), nil
+	}
+	d, err := parseRuleSetDuration(raw)
+	if err != nil || d < minInterval || d > maxInterval {
+		return "", fmt.Errorf("更新间隔格式无效，请设置在 1 分钟至 43200 分钟之间（如 60m）")
+	}
+	return raw, nil
+}
+
+func parseRuleSetDuration(raw string) (time.Duration, error) {
+	if raw == "" || raw[0] == '-' || raw[0] == '+' {
+		return 0, fmt.Errorf("invalid duration")
+	}
+	if !strings.ContainsAny(raw, "dD") {
+		return time.ParseDuration(raw)
+	}
+	var total time.Duration
+	rest := strings.ToLower(raw)
+	for len(rest) > 0 {
+		idx := strings.IndexByte(rest, 'd')
+		if idx < 0 {
+			tail, err := time.ParseDuration(rest)
+			if err != nil {
+				return 0, err
+			}
+			return total + tail, nil
+		}
+		days, err := strconv.Atoi(rest[:idx])
+		if err != nil || days < 0 {
+			return 0, fmt.Errorf("invalid day duration")
+		}
+		total += time.Duration(days) * 24 * time.Hour
+		rest = rest[idx+1:]
+	}
+	return total, nil
 }
 
 func (a *App) createSharedRuleSet(c *gin.Context) {

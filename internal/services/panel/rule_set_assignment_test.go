@@ -177,3 +177,30 @@ func countServerRuleSets(t *testing.T, db *gorm.DB, serverID uint) int64 {
 	}
 	return count
 }
+
+func TestRuleSetUpdateIntervalValidationAndMinuteNormalization(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	db := testDB(t)
+	app := &App{db: db}
+	router := gin.New()
+	router.POST("/rulesets", app.createSharedRuleSet)
+
+	for _, bad := range []string{"abc", "0m", "-5m", "1s", "59s", "50000m"} {
+		resp := serveJSONRequest(t, router, http.MethodPost, "/rulesets", fmt.Sprintf(`{"tag":"rs-bad","type":"remote","format":"binary","url":"https://example.com/a.srs","update_interval":%q}`, bad))
+		if resp.Code != http.StatusBadRequest {
+			t.Fatalf("expected 400 for update_interval=%q, got %d %s", bad, resp.Code, resp.Body.String())
+		}
+	}
+
+	okResp := serveJSONRequest(t, router, http.MethodPost, "/rulesets", `{"tag":"rs-mins","type":"remote","format":"binary","url":"https://example.com/a.srs","update_interval":"120"}`)
+	if okResp.Code != http.StatusOK {
+		t.Fatalf("create ruleset with integer minutes: %d %s", okResp.Code, okResp.Body.String())
+	}
+	var saved model.RuleSet
+	if err := db.Where("tag = ?", "rs-mins").First(&saved).Error; err != nil {
+		t.Fatal(err)
+	}
+	if saved.UpdateInterval != "120m" {
+		t.Fatalf("UpdateInterval = %q, want 120m", saved.UpdateInterval)
+	}
+}

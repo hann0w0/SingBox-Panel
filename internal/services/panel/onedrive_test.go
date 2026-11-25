@@ -2,6 +2,7 @@ package panel
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"errors"
 	"io"
@@ -859,5 +860,120 @@ func TestOneDriveRestoreFollowsRedirectAndMigratesV43BackupWithCursors(t *testin
 	}
 	if cursor.Sequence != 42 || cursor.UpdatedAt.IsZero() {
 		t.Fatalf("restored cursor = %+v, want sequence=42 with backfilled updated_at", cursor)
+	}
+}
+
+func TestOneDriveInitialAutoSyncSkipsOverwriteWhenRemoteBackupExists(t *testing.T) {
+	oldOAuthURL, oldGraphURL := oneDriveOAuthBaseURL, oneDriveGraphBaseURL
+	defer func() {
+		oneDriveOAuthBaseURL = oldOAuthURL
+		oneDriveGraphBaseURL = oldGraphURL
+	}()
+
+	uploadAttempted := false
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.URL.Path == "/token":
+			_ = json.NewEncoder(w).Encode(oneDriveTokenResponse{AccessToken: "access-token", RefreshToken: "refresh-token"})
+		case r.URL.Path == "/me/drive/root:/singbox-panel-backups:":
+			_ = json.NewEncoder(w).Encode(oneDriveFile{ID: "folder-id", Name: oneDriveBackupFolder, Folder: &struct{}{}})
+		case r.URL.Path == "/me/drive/items/folder-id/children":
+			_ = json.NewEncoder(w).Encode(map[string]any{"value": []map[string]any{{
+				"id": "existing-backup", "name": oneDriveBackupName, "size": 1024, "file": map[string]any{},
+			}}})
+		case strings.Contains(r.URL.Path, "createUploadSession") || r.URL.Path == "/upload":
+			uploadAttempted = true
+			http.Error(w, "must not overwrite existing backup on initial auto-sync", http.StatusInternalServerError)
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer server.Close()
+	oneDriveOAuthBaseURL = server.URL
+	oneDriveGraphBaseURL = server.URL
+
+	dir := t.TempDir()
+	dbPath := filepath.Join(dir, "singbox-panel.db")
+	a := &App{
+		cfg: config.PanelConfig{
+			JWTSecret: testLiveJWTSecret,
+			Database:  config.DatabaseConfig{Driver: "sqlite", DSN: dbPath},
+		},
+		db: testDBAt(t, dbPath),
+	}
+	if err := a.saveOneDriveSettings(oneDriveSettings{RefreshToken: "refresh-token", AutoSync: true}); err != nil {
+		t.Fatal(err)
+	}
+
+	a.runOneDriveSchedulerTick(context.Background(), time.Now())
+	if uploadAttempted {
+		t.Fatal("initial auto-sync attempted to overwrite existing remote backup")
+	}
+	settings, err := a.loadOneDriveSettings()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if settings.AutoSync {
+		t.Fatalf("AutoSync = %v, want false when remote backup already exists on fresh host", settings.AutoSync)
+	}
+	if settings.LastSyncAt != nil {
+		t.Fatalf("LastSyncAt = %v, want nil", settings.LastSyncAt)
+	}
+}
+
+func TestOneDriveInitialAutoSyncUploadsWhenRemoteFolderEmpty(t *testing.T) {
+	oldOAuthURL, oldGraphURL := oneDriveOAuthBaseURL, oneDriveGraphBaseURL
+	defer func() {
+		oneDriveOAuthBaseURL = oldOAuthURL
+		oneDriveGraphBaseURL = oldGraphURL
+	}()
+
+	uploaded := false
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.URL.Path == "/token":
+			_ = json.NewEncoder(w).Encode(oneDriveTokenResponse{AccessToken: "access-token", RefreshToken: "refresh-token"})
+		case r.Method == http.MethodGet && r.URL.Path == "/me/drive/root:/singbox-panel-backups:":
+			http.NotFound(w, r)
+		case r.Method == http.MethodPost && r.URL.Path == "/me/drive/root/children":
+			_ = json.NewEncoder(w).Encode(oneDriveFile{ID: "folder-id", Name: oneDriveBackupFolder, Folder: &struct{}{}})
+		case r.URL.Path == "/me/drive/items/folder-id:/singbox-panel-backup.tar.gz:/createUploadSession":
+			_ = json.NewEncoder(w).Encode(map[string]string{"uploadUrl": serverURL(r) + "/upload"})
+		case r.URL.Path == "/upload":
+			_, _ = io.Copy(io.Discard, r.Body)
+			uploaded = true
+			w.WriteHeader(http.StatusCreated)
+			_, _ = w.Write([]byte(`{"id":"backup-id"}`))
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer server.Close()
+	oneDriveOAuthBaseURL = server.URL
+	oneDriveGraphBaseURL = server.URL
+
+	dir := t.TempDir()
+	dbPath := filepath.Join(dir, "singbox-panel.db")
+	a := &App{
+		cfg: config.PanelConfig{
+			JWTSecret: testLiveJWTSecret,
+			Database:  config.DatabaseConfig{Driver: "sqlite", DSN: dbPath},
+		},
+		db: testDBAt(t, dbPath),
+	}
+	if err := a.saveOneDriveSettings(oneDriveSettings{RefreshToken: "refresh-token", AutoSync: true}); err != nil {
+		t.Fatal(err)
+	}
+
+	a.runOneDriveSchedulerTick(context.Background(), time.Now())
+	if !uploaded {
+		t.Fatal("initial auto-sync did not upload when remote backup folder was empty")
+	}
+	settings, err := a.loadOneDriveSettings()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !settings.AutoSync || settings.LastSyncAt == nil {
+		t.Fatalf("settings after initial upload = %#v", settings)
 	}
 }

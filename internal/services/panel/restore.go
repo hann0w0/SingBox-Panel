@@ -15,15 +15,14 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
-	"regexp"
 	"sort"
-	"strconv"
 	"strings"
 	"time"
 
 	"github.com/gin-gonic/gin"
 	"github.com/glebarez/sqlite"
 	"golang.org/x/crypto/bcrypt"
+	"gopkg.in/yaml.v3"
 	"gorm.io/gorm"
 	"gorm.io/gorm/logger"
 
@@ -91,6 +90,11 @@ func (a *App) restoreBackup(c *gin.Context) {
 			a.selfUpdating.Unlock()
 		}
 	}()
+	if !a.oneDriveSyncMu.TryLock() {
+		c.JSON(http.StatusConflict, gin.H{"error": "已有 OneDrive 备份任务正在进行"})
+		return
+	}
+	defer a.oneDriveSyncMu.Unlock()
 
 	// The general HTTP read timeout is intentionally short for JSON APIs. A
 	// legitimate data-only backup can be hundreds of MiB, so extend only this
@@ -896,10 +900,9 @@ func validateSQLiteFile(path string) error {
 	return nil
 }
 
-var jwtSecretLine = regexp.MustCompile(`(?m)^jwt_secret:.*$`)
-
-// rewriteJWTSecret replaces (or appends) the jwt_secret line in panel.yaml,
-// preserving the rest of the file and encoding arbitrary values safely.
+// rewriteJWTSecret updates (or adds) the top-level jwt_secret key in panel.yaml
+// via the YAML AST, preserving comments and formatting while handling arbitrary
+// valid YAML layouts (including spaces before colons and multiline scalars).
 func rewriteJWTSecret(cfgPath, secret string) error {
 	raw, err := os.ReadFile(cfgPath)
 	if err != nil {
@@ -909,23 +912,92 @@ func rewriteJWTSecret(cfgPath, secret string) error {
 	if err != nil {
 		return err
 	}
-	line := "jwt_secret: " + strconv.Quote(secret)
-	var out string
-	if jwtSecretLine.Match(raw) {
-		out = jwtSecretLine.ReplaceAllStringFunc(string(raw), func(string) string { return line })
-	} else {
-		out = strings.TrimRight(string(raw), "\n") + "\n" + line + "\n"
+	out, err := updateYAMLJWTSecret(raw, secret)
+	if err != nil {
+		return err
 	}
 	mode := info.Mode().Perm()
 	if mode == 0 {
 		mode = 0o600
 	}
-	if atomicErr := writeFileAtomic(cfgPath, []byte(out), mode); atomicErr == nil {
+	if atomicErr := writeFileAtomic(cfgPath, out, mode); atomicErr == nil {
 		return nil
-	} else if inPlaceErr := rewriteFileInPlace(cfgPath, raw, []byte(out)); inPlaceErr != nil {
+	} else if inPlaceErr := rewriteFileInPlace(cfgPath, raw, out); inPlaceErr != nil {
 		return fmt.Errorf("atomic rewrite failed: %v; in-place rewrite failed: %w", atomicErr, inPlaceErr)
 	}
 	return nil
+}
+
+func updateYAMLJWTSecret(raw []byte, secret string) ([]byte, error) {
+	var doc yaml.Node
+	if err := yaml.Unmarshal(raw, &doc); err != nil {
+		return nil, fmt.Errorf("parse panel.yaml: %w", err)
+	}
+	valueNode := &yaml.Node{
+		Kind:  yaml.ScalarNode,
+		Tag:   "!!str",
+		Style: yaml.DoubleQuotedStyle,
+		Value: secret,
+	}
+	if doc.Kind == 0 || len(doc.Content) == 0 {
+		doc = yaml.Node{
+			Kind:        yaml.DocumentNode,
+			HeadComment: doc.HeadComment,
+			FootComment: doc.FootComment,
+			Content: []*yaml.Node{{
+				Kind: yaml.MappingNode,
+				Tag:  "!!map",
+				Content: []*yaml.Node{
+					{Kind: yaml.ScalarNode, Tag: "!!str", Value: "jwt_secret"},
+					valueNode,
+				},
+			}},
+		}
+	} else {
+		if doc.Kind != yaml.DocumentNode || len(doc.Content) != 1 || doc.Content[0].Kind != yaml.MappingNode {
+			return nil, errors.New("panel.yaml root must be a YAML mapping")
+		}
+		mapping := doc.Content[0]
+		updated := false
+		filtered := make([]*yaml.Node, 0, len(mapping.Content)+2)
+		for i := 0; i+1 < len(mapping.Content); i += 2 {
+			k, v := mapping.Content[i], mapping.Content[i+1]
+			if k.Kind == yaml.ScalarNode && k.Value == "jwt_secret" {
+				if !updated {
+					replacement := *valueNode
+					replacement.HeadComment = v.HeadComment
+					replacement.LineComment = v.LineComment
+					replacement.FootComment = v.FootComment
+					filtered = append(filtered, k, &replacement)
+					updated = true
+				}
+				continue
+			}
+			filtered = append(filtered, k, v)
+		}
+		if !updated {
+			filtered = append(filtered, &yaml.Node{Kind: yaml.ScalarNode, Tag: "!!str", Value: "jwt_secret"}, valueNode)
+		}
+		mapping.Content = filtered
+	}
+	var buf bytes.Buffer
+	enc := yaml.NewEncoder(&buf)
+	enc.SetIndent(2)
+	if err := enc.Encode(&doc); err != nil {
+		_ = enc.Close()
+		return nil, fmt.Errorf("encode panel.yaml: %w", err)
+	}
+	if err := enc.Close(); err != nil {
+		return nil, fmt.Errorf("encode panel.yaml: %w", err)
+	}
+	out := buf.Bytes()
+	var verify config.PanelConfig
+	dec := yaml.NewDecoder(bytes.NewReader(out))
+	dec.KnownFields(true)
+	if err := dec.Decode(&verify); err != nil && !errors.Is(err, io.EOF) {
+		return nil, fmt.Errorf("verify rewritten panel.yaml: %w", err)
+	}
+	return out, nil
 }
 
 // rewriteFileInPlace is the fallback for hardened systemd installs where the

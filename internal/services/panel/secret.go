@@ -30,7 +30,11 @@ func ResolveJWTSecret(cfg config.PanelConfig) (string, error) {
 		return "", fmt.Errorf("jwt_secret is required for %s databases", cfg.Database.Driver)
 	}
 
-	dir := filepath.Dir(cfg.Database.DSN)
+	dbPath := sqliteFilePath(cfg.Database.DSN)
+	if dbPath == "" {
+		return randHex(32), nil
+	}
+	dir := filepath.Dir(dbPath)
 	if dir == "" {
 		dir = "."
 	}

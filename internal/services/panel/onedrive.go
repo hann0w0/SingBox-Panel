@@ -1016,6 +1016,7 @@ func (a *App) syncOneDriveBackupWithRelease(ctx context.Context, releaseMaintena
 	a.removeLegacyEncryptedOneDriveBackup(ctx)
 	now := time.Now()
 	if err := a.mutateOneDriveSettings(func(current *oneDriveSettings) error {
+		current.AutoSync = true
 		current.LastSyncAt = &now
 		current.LastAttemptAt = &now
 		current.FailedAttempts = 0
@@ -1190,6 +1191,19 @@ func (a *App) restoreOneDriveBackup(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
+	// If this fresh recovery host paused auto-sync to protect an existing cloud
+	// backup before restore, re-arm hourly sync starting from this restore point.
+	_ = a.mutateOneDriveSettings(func(s *oneDriveSettings) error {
+		if s.LastSyncAt == nil {
+			now := time.Now()
+			s.AutoSync = true
+			s.LastSyncAt = &now
+			if s.LastBackupName == "" {
+				s.LastBackupName = file.Name
+			}
+		}
+		return nil
+	})
 	restartScheduled := a.restoreBackupReader(c, plain)
 	releaseMaintenanceLock = !restartScheduled
 }
@@ -1253,6 +1267,28 @@ func oneDriveSyncDue(now time.Time, lastSyncAt *time.Time) bool {
 	return elapsed < 0 || elapsed >= oneDriveSyncInterval
 }
 
+// allowAutomaticInitialOneDriveSync guards disaster-recovery setups where an
+// administrator connects OneDrive on a brand-new host (LastSyncAt == nil) in
+// order to restore an existing cloud backup. Automatically uploading before the
+// first manual sync or restore would overwrite that cloud backup with an empty
+// database.
+func (a *App) allowAutomaticInitialOneDriveSync(ctx context.Context) bool {
+	files, err := a.listOneDriveBackupsContext(ctx)
+	if err != nil {
+		return false
+	}
+	if len(files) == 0 {
+		return true
+	}
+	_ = a.mutateOneDriveSettings(func(current *oneDriveSettings) error {
+		if current.LastSyncAt == nil {
+			current.AutoSync = false
+		}
+		return nil
+	})
+	return false
+}
+
 func (a *App) runOneDriveBackupScheduler(ctx context.Context) {
 	ticker := time.NewTicker(time.Minute)
 	defer ticker.Stop()
@@ -1261,38 +1297,43 @@ func (a *App) runOneDriveBackupScheduler(ctx context.Context) {
 		case <-ctx.Done():
 			return
 		case <-ticker.C:
-			now := time.Now()
-			a.pruneOneDrivePending(now)
-			settings, err := a.loadOneDriveSettings()
-			if err != nil || !settings.AutoSync || settings.RefreshToken == "" {
-				continue
-			}
-			if !oneDriveSyncDue(now, settings.LastSyncAt) {
-				continue
-			}
-			if settings.LastAttemptAt != nil && settings.FailedAttempts > 0 {
-				elapsed := now.Sub(*settings.LastAttemptAt)
-				if elapsed >= 0 && elapsed < oneDriveRetryDelay(settings.FailedAttempts) {
-					continue
-				}
-			}
-			if !a.oneDriveSyncMu.TryLock() {
-				continue
-			}
-			if !a.tryMaintenanceLock() {
-				a.oneDriveSyncMu.Unlock()
-				continue
-			}
-			releaseMaintenanceLock := func() { a.selfUpdating.Unlock() }
-			_, err = a.syncOneDriveBackupWithRelease(ctx, &releaseMaintenanceLock)
-			if releaseMaintenanceLock != nil {
-				releaseMaintenanceLock()
-			}
-			a.oneDriveSyncMu.Unlock()
-			if err != nil {
-				log.Printf("OneDrive 自动备份失败: %v", err)
-			}
+			a.runOneDriveSchedulerTick(ctx, time.Now())
 		}
+	}
+}
+
+func (a *App) runOneDriveSchedulerTick(ctx context.Context, now time.Time) {
+	a.pruneOneDrivePending(now)
+	settings, err := a.loadOneDriveSettings()
+	if err != nil || !settings.AutoSync || settings.RefreshToken == "" {
+		return
+	}
+	if !oneDriveSyncDue(now, settings.LastSyncAt) {
+		return
+	}
+	if settings.LastAttemptAt != nil && settings.FailedAttempts > 0 {
+		elapsed := now.Sub(*settings.LastAttemptAt)
+		if elapsed >= 0 && elapsed < oneDriveRetryDelay(settings.FailedAttempts) {
+			return
+		}
+	}
+	if !a.oneDriveSyncMu.TryLock() {
+		return
+	}
+	defer a.oneDriveSyncMu.Unlock()
+	if settings.LastSyncAt == nil && !a.allowAutomaticInitialOneDriveSync(ctx) {
+		return
+	}
+	if !a.tryMaintenanceLock() {
+		return
+	}
+	releaseMaintenanceLock := func() { a.selfUpdating.Unlock() }
+	_, err = a.syncOneDriveBackupWithRelease(ctx, &releaseMaintenanceLock)
+	if releaseMaintenanceLock != nil {
+		releaseMaintenanceLock()
+	}
+	if err != nil {
+		log.Printf("OneDrive 自动备份失败: %v", err)
 	}
 }
 

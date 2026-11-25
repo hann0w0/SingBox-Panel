@@ -68,3 +68,49 @@ func TestResolveJWTSecretRequiresExplicitSecretForNetworkDatabase(t *testing.T) 
 		}
 	}
 }
+
+func TestResolveJWTSecretParsesFileURIAndInMemoryDSN(t *testing.T) {
+	dir := t.TempDir()
+	dbPath := filepath.Join(dir, "singbox-panel.db")
+	uriCfg := config.PanelConfig{
+		Database: config.DatabaseConfig{
+			Driver: "sqlite",
+			DSN:    "file:" + filepath.ToSlash(dbPath) + "?cache=shared&_pragma=busy_timeout(5000)",
+		},
+	}
+	secret, err := ResolveJWTSecret(uriCfg)
+	if err != nil {
+		t.Fatalf("ResolveJWTSecret(file URI): %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(dir, jwtSecretFile)); err != nil {
+		t.Fatalf("expected sidecar in %s: %v", dir, err)
+	}
+	if _, err := os.Stat("file:"); err == nil {
+		t.Fatalf("unexpected literal file: directory created")
+	}
+	again, err := ResolveJWTSecret(uriCfg)
+	if err != nil || again != secret {
+		t.Fatalf("second ResolveJWTSecret(file URI) = %q, err = %v; want %q", again, err, secret)
+	}
+
+	wd := t.TempDir()
+	origWD, err := os.Getwd()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chdir(wd); err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = os.Chdir(origWD) }()
+
+	memCfg := config.PanelConfig{
+		Database: config.DatabaseConfig{Driver: "sqlite", DSN: ":memory:"},
+	}
+	memSecret, err := ResolveJWTSecret(memCfg)
+	if err != nil || len(memSecret) < minSecretLen {
+		t.Fatalf("ResolveJWTSecret(:memory:) = %q, err = %v", memSecret, err)
+	}
+	if _, err := os.Stat(filepath.Join(wd, jwtSecretFile)); !os.IsNotExist(err) {
+		t.Fatalf(":memory: DSN must not write sidecar into cwd: %v", err)
+	}
+}

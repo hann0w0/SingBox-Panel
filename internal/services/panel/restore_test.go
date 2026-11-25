@@ -16,6 +16,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"golang.org/x/crypto/bcrypt"
+	"gopkg.in/yaml.v3"
 	"gorm.io/gorm"
 
 	"github.com/hann0w0/singbox-panel/internal/config"
@@ -925,5 +926,69 @@ func TestRestoreAcceptsEncryptedBackupWithPassphrase(t *testing.T) {
 	restored.Model(&model.Server{}).Pluck("name", &names)
 	if len(names) != 1 || names[0] != "new" {
 		t.Fatalf("restored servers = %v, want [new]", names)
+	}
+}
+
+func TestRestoreRejectsConcurrentOneDriveSync(t *testing.T) {
+	dir := t.TempDir()
+	dbPath := filepath.Join(dir, "singbox-panel.db")
+	live := testDBAt(t, dbPath)
+	archive := makeBackupArchive(t, testRestoredJWTSecret, nil)
+	a := &App{
+		cfg: config.PanelConfig{JWTSecret: testLiveJWTSecret, Database: config.DatabaseConfig{Driver: "sqlite", DSN: dbPath}},
+		db:  live,
+	}
+	a.oneDriveSyncMu.Lock()
+	defer a.oneDriveSyncMu.Unlock()
+
+	w := uploadRestore(t, a, archive)
+	if w.Code != http.StatusConflict || !strings.Contains(w.Body.String(), "OneDrive") {
+		t.Fatalf("status = %d body = %s, want 409 OneDrive conflict", w.Code, w.Body.String())
+	}
+}
+
+func TestRewriteJWTSecretHandlesSpacingAndMultilineScalars(t *testing.T) {
+	cases := []struct {
+		name    string
+		initial string
+	}{
+		{
+			name:    "space-before-colon",
+			initial: "# header comment\nlisten: \"127.0.0.1:32334\"\njwt_secret : \"old-secret-value\"\nbase_url: \"https://panel.example.com\"\n",
+		},
+		{
+			name:    "folded-multiline-scalar",
+			initial: "# header comment\nlisten: \"127.0.0.1:32334\"\njwt_secret: >-\n  old-multiline-secret-value\nbase_url: \"https://panel.example.com\"\n",
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			p := filepath.Join(t.TempDir(), "panel.yaml")
+			if err := os.WriteFile(p, []byte(tc.initial), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			if err := rewriteJWTSecret(p, testRestoredJWTSecret); err != nil {
+				t.Fatalf("rewriteJWTSecret failed: %v", err)
+			}
+			raw, err := os.ReadFile(p)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if !strings.Contains(string(raw), "# header comment") {
+				t.Fatalf("comment lost in rewritten YAML:\n%s", raw)
+			}
+			if strings.Count(string(raw), "jwt_secret") != 1 {
+				t.Fatalf("expected exactly 1 jwt_secret key, got:\n%s", raw)
+			}
+			var parsed config.PanelConfig
+			dec := yaml.NewDecoder(bytes.NewReader(raw))
+			dec.KnownFields(true)
+			if err := dec.Decode(&parsed); err != nil {
+				t.Fatalf("rewritten YAML failed strict decode: %v\n%s", err, raw)
+			}
+			if parsed.JWTSecret != testRestoredJWTSecret || parsed.BaseURL != "https://panel.example.com" {
+				t.Fatalf("parsed config = %+v", parsed)
+			}
+		})
 	}
 }

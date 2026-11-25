@@ -214,6 +214,7 @@ func (a *App) importUserOutbound(c *gin.Context) {
 		return
 	}
 	prepared := make([]outboundReq, 0, len(nodes))
+	var lastValidationErr error
 	for _, imported := range nodes {
 		client, ok := a.importedNodeClient(imported)
 		if !ok {
@@ -223,6 +224,7 @@ func (a *App) importUserOutbound(c *gin.Context) {
 		if err != nil {
 			continue
 		}
+		body.Settings = normalizeOutboundSettingsJSON(body.Settings)
 		tag := strings.TrimSpace(req.Tag)
 		if tag == "" {
 			tag = body.Tag
@@ -231,6 +233,10 @@ func (a *App) importUserOutbound(c *gin.Context) {
 			tag = fmt.Sprintf("%s-%d", tag, len(prepared)+1)
 		}
 		if err := a.validatePrivateOutbound(tag, body.Type, body.Settings); err != nil {
+			lastValidationErr = err
+			if urlText != "" {
+				continue
+			}
 			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 			return
 		}
@@ -242,7 +248,11 @@ func (a *App) importUserOutbound(c *gin.Context) {
 		}
 	}
 	if len(prepared) == 0 {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "该订阅没有可转换为出站的节点"})
+		msg := "该订阅没有可转换为出站的节点"
+		if lastValidationErr != nil {
+			msg += "：" + lastValidationErr.Error()
+		}
+		c.JSON(http.StatusBadRequest, gin.H{"error": msg})
 		return
 	}
 	a.userAccessMu.Lock()
@@ -331,6 +341,7 @@ func (a *App) previewUserOutbound(c *gin.Context) {
 	}
 	body, err := outboundFromClientNode(client)
 	if err == nil {
+		body.Settings = normalizeOutboundSettingsJSON(body.Settings)
 		body.Tag, err = availablePrivateOutboundTag(a.db, body.Tag)
 	}
 	if err == nil {
@@ -355,6 +366,7 @@ func (a *App) createUserOutbound(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "出站名称必填"})
 		return
 	}
+	req.Settings = normalizeOutboundSettingsJSON(req.Settings)
 	if err := a.validatePrivateOutbound(req.Tag, req.Type, req.Settings); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
@@ -470,6 +482,19 @@ func (a *App) availablePrivateOutboundTag(tag string) (string, error) {
 	return availablePrivateOutboundTag(a.db, tag)
 }
 
+func overlayOutboundTagExistsAnywhere(db *gorm.DB, tag string) (bool, error) {
+	var servers []model.Server
+	if err := db.Select("id", "config_overlay").Where("config_overlay IS NOT NULL AND config_overlay <> ''").Find(&servers).Error; err != nil {
+		return false, err
+	}
+	for i := range servers {
+		if singbox.OverlayHasOutbound(servers[i].ConfigOverlay, tag) {
+			return true, nil
+		}
+	}
+	return false, nil
+}
+
 func availablePrivateOutboundTag(db *gorm.DB, tag string) (string, error) {
 	if strings.TrimSpace(tag) == "" {
 		return "", fmt.Errorf("出站名称必填")
@@ -484,7 +509,11 @@ func availablePrivateOutboundTag(db *gorm.DB, tag string) (string, error) {
 			Where("tag = ?", tag).Count(&count).Error; err != nil {
 			return "", err
 		}
-		if count == 0 {
+		overlayConflict, err := overlayOutboundTagExistsAnywhere(db, tag)
+		if err != nil {
+			return "", err
+		}
+		if count == 0 && !overlayConflict {
 			return tag, nil
 		}
 		tag = fmt.Sprintf("%s-%d", trimRunes(base, 58), suffix)
@@ -497,7 +526,11 @@ func availablePrivateOutboundTag(db *gorm.DB, tag string) (string, error) {
 		if err := db.Model(&model.Outbound{}).Where("tag = ?", candidate).Count(&count).Error; err != nil {
 			return "", err
 		}
-		if count == 0 {
+		overlayConflict, err := overlayOutboundTagExistsAnywhere(db, candidate)
+		if err != nil {
+			return "", err
+		}
+		if count == 0 && !overlayConflict {
 			return candidate, nil
 		}
 	}
@@ -791,6 +824,26 @@ func (a *App) createUserForward(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
+	var entryServer model.Server
+	if err := a.db.Select("id", "config_overlay").First(&entryServer, inbound.ServerID).Error; err != nil {
+		a.userAccessMu.Unlock()
+		c.JSON(http.StatusNotFound, gin.H{"error": "server not found"})
+		return
+	}
+	var sharedCollision int64
+	if err := a.db.Model(&model.Outbound{}).
+		Where("server_id = ? AND owner_user_id = 0 AND tag = ?", inbound.ServerID, outbound.Tag).
+		Count(&sharedCollision).Error; err != nil {
+		a.userAccessMu.Unlock()
+		log.Printf("create user forward shared outbound collision check: %v", err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "创建转发节点失败"})
+		return
+	}
+	if sharedCollision > 0 || singbox.OverlayHasOutbound(entryServer.ConfigOverlay, outbound.Tag) {
+		a.userAccessMu.Unlock()
+		c.JSON(http.StatusConflict, gin.H{"error": fmt.Sprintf("专属出站标签 %q 与入口服务器已有出站冲突，请重命名后重试", outbound.Tag)})
+		return
+	}
 	var st singbox.InboundSettings
 	if len(inbound.Settings) > 0 {
 		if err := json.Unmarshal(inbound.Settings, &st); err != nil {
@@ -843,7 +896,45 @@ func (a *App) createUserForward(c *gin.Context) {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "创建转发节点失败"})
 		return
 	}
-	a.applyConfigAndRespond(c, inbound.ServerID, gin.H{"forward": forward})
+	result := a.orch.ApplyDesiredConfig(c.Request.Context(), inbound.ServerID)
+	if result.ApplyState == ConfigFailed {
+		a.userAccessMu.Lock()
+		rollbackErr := a.db.Transaction(func(tx *gorm.DB) error {
+			if err := deleteForwardState(tx, []model.UserForward{forward}); err != nil {
+				return err
+			}
+			return queueProxyAccessSync(tx, []uint{inbound.ServerID})
+		})
+		a.userAccessMu.Unlock()
+		if rollbackErr != nil {
+			log.Printf("rollback failed user forward %d: %v", forward.ID, rollbackErr)
+		} else {
+			a.orch.PushConfigIfManaged(inbound.ServerID)
+		}
+		errMsg := "下发转发配置失败"
+		if result.ApplyError != "" {
+			errMsg += "：" + result.ApplyError
+		}
+		c.JSON(http.StatusBadGateway, gin.H{
+			"error":       errMsg,
+			"apply_state": result.ApplyState,
+			"apply_error": result.ApplyError,
+		})
+		return
+	}
+	a.reconcileNodeConsumers(inbound.ServerID)
+	payload := gin.H{
+		"forward":     forward,
+		"apply_state": result.ApplyState,
+	}
+	if result.ApplyError != "" {
+		payload["apply_error"] = result.ApplyError
+	}
+	var srv model.Server
+	if err := a.db.Select("config_revision", "config_applied_revision").First(&srv, inbound.ServerID).Error; err == nil {
+		payload["config_dirty"] = srv.ConfigRevision > srv.ConfigAppliedRevision
+	}
+	c.JSON(http.StatusOK, payload)
 }
 
 func (a *App) deleteUserForward(c *gin.Context) {
@@ -969,6 +1060,7 @@ func (a *App) createAdminUserOutbound(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "标签必填"})
 		return
 	}
+	req.Settings = normalizeOutboundSettingsJSON(req.Settings)
 	if err := a.validatePrivateOutbound(req.Tag, req.Type, req.Settings); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return

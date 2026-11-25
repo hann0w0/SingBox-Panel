@@ -314,31 +314,23 @@ func (a *App) outboundSourceLink(targetServerID uint, kind string, id uint) (str
 	return normalized, id, nil
 }
 
-// pushRoutingSourceChanges rebuilds the source server's config so its new or
-// revoked routing credential takes effect. The target server is re-applied by
-// the caller.
-func (a *App) pushRoutingSourceChanges(ob *model.Outbound) {
-	if a.orch == nil {
+// recordStagedRoutingSourceAdd marks a cross-server source inbound as newly
+// staged on consumerServerID without pushing the source server prematurely.
+func (a *App) recordStagedRoutingSourceAdd(consumerServerID, sourceInboundID uint) {
+	if a == nil || a.orch == nil {
 		return
 	}
-	var sourceServerID uint
-	switch ob.SourceKind {
-	case model.OutboundSourceInbound:
-		var ib model.Inbound
-		if err := a.db.Select("id", "server_id").First(&ib, ob.SourceID).Error; err != nil {
-			return
-		}
-		sourceServerID = ib.ServerID
-	case model.OutboundSourceCustomNode:
-		// External nodes carry their own credential; nothing to issue.
-		return
-	default:
+	a.orch.routingTracker().recordAdd(consumerServerID, sourceInboundID)
+}
+
+// recordStagedRoutingSourceRemove retains a source inbound's routing credential
+// while consumerServerID still has unapplied staged edits, so live traffic is
+// not broken before the consumer applies its updated config.
+func (a *App) recordStagedRoutingSourceRemove(consumerServerID, sourceInboundID uint) {
+	if a == nil || a.orch == nil {
 		return
 	}
-	if sourceServerID == 0 || sourceServerID == ob.ServerID {
-		return
-	}
-	a.orch.PushConfigAsync(sourceServerID)
+	a.orch.routingTracker().recordRemove(a.db, consumerServerID, sourceInboundID)
 }
 
 // normalizeSourceKind validates the kind reported by the client.
@@ -363,22 +355,14 @@ func routingConsumers(db *gorm.DB, kind string, sourceID uint) ([]uint, error) {
 	return ids, nil
 }
 
-// routingIdentitySource is the config-build helper for a source inbound: the
-// consuming servers' dedicated identities, sorted for a stable config.
-func routingIdentitiesForInbound(db *gorm.DB, srv *model.Server, inboundID uint) ([]singbox.ProxyUser, error) {
-	consumers, err := routingConsumers(db, model.OutboundSourceInbound, inboundID)
-	if err != nil {
-		return nil, err
-	}
-	return routingIdentitiesFromConsumers(srv, inboundID, consumers)
-}
-
 func routingIdentitiesFromConsumers(srv *model.Server, inboundID uint, consumers []uint) ([]singbox.ProxyUser, error) {
 	identities := make([]singbox.ProxyUser, 0, len(consumers))
+	seen := make(map[uint]bool, len(consumers))
 	for _, consumer := range consumers {
-		if consumer == 0 || consumer == srv.ID {
+		if consumer == 0 || consumer == srv.ID || seen[consumer] {
 			continue
 		}
+		seen[consumer] = true
 		identity, err := routingOutboundIdentity(srv, inboundID, consumer)
 		if err != nil {
 			return nil, err
@@ -389,10 +373,17 @@ func routingIdentitiesFromConsumers(srv *model.Server, inboundID uint, consumers
 	return identities, nil
 }
 
-// outboundSourceReference counts outbounds that follow a source node, used to
-// refuse deleting or re-keying a node that is still routed to.
-func outboundSourceReference(db *gorm.DB, kind string, sourceID uint) (int64, error) {
+// outboundSourceReferenceCount counts outbounds (plus unapplied staged consumer
+// removals) that still depend on a source node, refusing deletion or disabling
+// while live traffic may still route through it.
+func (a *App) outboundSourceReferenceCount(db *gorm.DB, kind string, sourceID uint) (int64, error) {
 	var n int64
-	err := db.Model(&model.Outbound{}).Where("source_kind = ? AND source_id = ?", kind, sourceID).Count(&n).Error
-	return n, err
+	if err := db.Model(&model.Outbound{}).Where("source_kind = ? AND source_id = ?", kind, sourceID).Count(&n).Error; err != nil {
+		return 0, err
+	}
+	if kind == model.OutboundSourceInbound && a != nil && a.orch != nil {
+		retained := a.orch.routingTracker().activeRetainedConsumers(db, []uint{sourceID})
+		n += int64(len(retained[sourceID]))
+	}
+	return n, nil
 }

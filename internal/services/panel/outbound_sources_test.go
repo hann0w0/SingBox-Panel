@@ -337,3 +337,79 @@ func TestOutboundImportRejectsSameServerSelfReference(t *testing.T) {
 		t.Fatalf("same-server create should fail with 400, got %d: %s", w.Code, w.Body.String())
 	}
 }
+
+func TestStagedOutboundDeleteRetainsSourceCredentialUntilConsumerApplies(t *testing.T) {
+	f := newNodeImportFixture(t)
+	f.router.DELETE("/servers/:id/outbounds/:outboundID", f.app.deleteOutbound)
+	f.router.DELETE("/servers/:id/inbounds/:inboundID", f.app.deleteInbound)
+	f.router.POST("/servers/:id/routes/apply", func(c *gin.Context) {
+		sid, ok := uintParam(c, "id")
+		if !ok {
+			return
+		}
+		f.app.applyConfigAndRespond(c, sid, gin.H{"ok": true})
+	})
+
+	// Create and apply target's outbound routing through sourceIB.
+	saved := f.call(t, http.MethodPost, fmt.Sprint(f.target.ID), "outbounds", gin.H{
+		"tag": "via-hk", "type": "vless",
+		"settings":    gin.H{"server": "hk.example.com", "server_port": 443, "uuid": "11111111-2222-4333-8444-555555555555"},
+		"source_kind": model.OutboundSourceInbound, "source_id": f.sourceIB.ID,
+	})
+	if saved.Code != http.StatusOK {
+		t.Fatalf("create outbound: %d %s", saved.Code, saved.Body.String())
+	}
+	var ob model.Outbound
+	if err := f.db.Where("server_id = ?", f.target.ID).First(&ob).Error; err != nil {
+		t.Fatal(err)
+	}
+	// Mark target as having applied this revision.
+	if err := f.db.Model(&model.Server{}).Where("id = ?", f.target.ID).Updates(map[string]any{
+		"config_initialized":      true,
+		"config_applied_revision": gorm.Expr("config_revision"),
+	}).Error; err != nil {
+		t.Fatal(err)
+	}
+	f.app.orch.routingTracker().popApplied(f.target.ID)
+
+	// Stage deletion on target (without applying target yet).
+	del := f.call(t, http.MethodDelete, fmt.Sprint(f.target.ID), fmt.Sprintf("outbounds/%d", ob.ID), nil)
+	if del.Code != http.StatusOK {
+		t.Fatalf("delete outbound: %d %s", del.Code, del.Body.String())
+	}
+
+	// While target has unapplied staged deletion, source config MUST still retain target's routing credential,
+	// and deleting sourceIB MUST still return 409 Conflict!
+	if err := f.db.First(&f.source, f.source.ID).Error; err != nil {
+		t.Fatal(err)
+	}
+	rawWhileStaged, err := f.app.orch.BuildServerConfig(&f.source)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(rawWhileStaged), routingOutboundUsername(f.target.ID)) {
+		t.Fatalf("source dropped consumer routing credential while consumer removal was only staged: %s", rawWhileStaged)
+	}
+	if w := f.call(t, http.MethodDelete, fmt.Sprint(f.source.ID), fmt.Sprintf("inbounds/%d", f.sourceIB.ID), nil); w.Code != http.StatusConflict {
+		t.Fatalf("expected 409 deleting source inbound while consumer removal is staged, got %d %s", w.Code, w.Body.String())
+	}
+
+	// Once target applies its config (mark applied), source drops the routing credential and sourceIB can be deleted.
+	if err := f.db.Model(&model.Server{}).Where("id = ?", f.target.ID).Updates(map[string]any{
+		"config_applied_revision": gorm.Expr("config_revision"),
+	}).Error; err != nil {
+		t.Fatal(err)
+	}
+	f.app.orch.finishConsumerRoutingSync(f.target.ID)
+
+	rawAfterApply, err := f.app.orch.BuildServerConfig(&f.source)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(rawAfterApply), routingOutboundUsername(f.target.ID)) {
+		t.Fatalf("source still retained routing credential after consumer applied removal: %s", rawAfterApply)
+	}
+	if w := f.call(t, http.MethodDelete, fmt.Sprint(f.source.ID), fmt.Sprintf("inbounds/%d", f.sourceIB.ID), nil); w.Code != http.StatusOK {
+		t.Fatalf("expected 200 deleting source inbound after consumer applied removal, got %d %s", w.Code, w.Body.String())
+	}
+}

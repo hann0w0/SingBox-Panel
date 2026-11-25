@@ -191,7 +191,7 @@ func (a *App) updateInbound(c *gin.Context) {
 		if !*req.Enabled && ib.Enabled {
 			// Disabling would revoke a credential another server routes through,
 			// silently breaking that route. Refuse until the outbound is re-pointed.
-			if n, err := outboundSourceReference(a.db, model.OutboundSourceInbound, ib.ID); err != nil {
+			if n, err := a.outboundSourceReferenceCount(a.db, model.OutboundSourceInbound, ib.ID); err != nil {
 				c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 				return
 			} else if n > 0 {
@@ -331,7 +331,7 @@ func (a *App) deleteInbound(c *gin.Context) {
 		c.JSON(http.StatusConflict, gin.H{"error": "该入站仍被分流规则引用，请先修改或删除相关规则"})
 		return
 	}
-	if n, err := outboundSourceReference(a.db, model.OutboundSourceInbound, ib.ID); err != nil {
+	if n, err := a.outboundSourceReferenceCount(a.db, model.OutboundSourceInbound, ib.ID); err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	} else if n > 0 {

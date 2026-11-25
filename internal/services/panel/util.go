@@ -5,6 +5,7 @@ package panel
 import (
 	"crypto/rand"
 	"encoding/hex"
+	"encoding/json"
 	"fmt"
 	"net/netip"
 	"strings"
@@ -77,6 +78,9 @@ func normalizeNodeAddress(raw string) (string, error) {
 	if host == "" || len(host) > 253 {
 		return "", fmt.Errorf("无效的域名")
 	}
+	if isAmbiguousNumericHost(host) {
+		return "", fmt.Errorf("无效的 IPv4 地址")
+	}
 	allDigitsAndDots := true
 	for _, r := range host {
 		if (r < '0' || r > '9') && r != '.' {
@@ -98,4 +102,48 @@ func normalizeNodeAddress(raw string) (string, error) {
 		}
 	}
 	return host, nil
+}
+
+// stripIPv6Brackets removes surrounding square brackets when raw is a valid
+// bracketed IPv6 literal without a zone identifier.
+func stripIPv6Brackets(raw string) string {
+	trimmed := strings.TrimSpace(raw)
+	if strings.HasPrefix(trimmed, "[") && strings.HasSuffix(trimmed, "]") {
+		if addr, err := netip.ParseAddr(strings.TrimSuffix(strings.TrimPrefix(trimmed, "["), "]")); err == nil && addr.Is6() && addr.Zone() == "" {
+			return addr.String()
+		}
+	}
+	return raw
+}
+
+func normalizeOutboundSettingsJSON(raw json.RawMessage) json.RawMessage {
+	if len(raw) == 0 {
+		return raw
+	}
+	var fields map[string]json.RawMessage
+	if err := json.Unmarshal(raw, &fields); err != nil {
+		return raw
+	}
+	rawServer, ok := fields["server"]
+	if !ok {
+		return raw
+	}
+	var server string
+	if err := json.Unmarshal(rawServer, &server); err != nil {
+		return raw
+	}
+	normalized := stripIPv6Brackets(strings.TrimSpace(server))
+	if normalized == server {
+		return raw
+	}
+	encoded, err := json.Marshal(normalized)
+	if err != nil {
+		return raw
+	}
+	fields["server"] = encoded
+	out, err := json.Marshal(fields)
+	if err != nil {
+		return raw
+	}
+	return out
 }

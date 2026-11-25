@@ -20,6 +20,7 @@ func outboundFromClientNode(cn singbox.ClientNode) (outboundReq, error) {
 	}
 	name := cn.Name
 	cn.Name = "imported-outbound"
+	cn.Server = stripIPv6Brackets(strings.TrimSpace(cn.Server))
 	raw, err := singbox.BuildClientOutbound(cn)
 	if err != nil {
 		return outboundReq{}, err
@@ -35,10 +36,10 @@ func outboundFromClientNode(cn singbox.ClientNode) (outboundReq, error) {
 	o := parsed.Outbounds[0]
 	o.Settings.PacketEncoding = cn.Settings.PacketEncoding
 	settings, err := json.Marshal(outboundStoredSettings{
-		Server: o.Server, ServerPort: o.ServerPort, UUID: o.UUID,
+		Server: stripIPv6Brackets(strings.TrimSpace(o.Server)), ServerPort: o.ServerPort, UUID: o.UUID,
 		Username: o.Username, Password: o.Password, Settings: o.Settings,
 	})
-	return outboundReq{Tag: name, Type: o.Type, Settings: settings}, err
+	return outboundReq{Tag: name, Type: o.Type, Settings: normalizeOutboundSettingsJSON(settings)}, err
 }
 
 func (a *App) availableOutboundTag(serverID uint, name string) (string, error) {
@@ -50,6 +51,10 @@ func (a *App) availableOutboundTag(serverID uint, name string) (string, error) {
 	if err := a.db.Model(&model.Outbound{}).Where("server_id = ? OR owner_user_id <> 0", serverID).Pluck("tag", &tags).Error; err != nil {
 		return "", err
 	}
+	var srv model.Server
+	if serverID != 0 {
+		_ = a.db.Select("id", "config_overlay").First(&srv, serverID).Error
+	}
 	used := make(map[string]bool, len(builtinOutboundTags)+len(tags))
 	for k, v := range builtinOutboundTags {
 		used[k] = v
@@ -58,7 +63,7 @@ func (a *App) availableOutboundTag(serverID uint, name string) (string, error) {
 		used[tag] = true
 	}
 	tag := base
-	for i := 2; used[tag]; i++ {
+	for i := 2; used[tag] || singbox.OverlayHasOutbound(srv.ConfigOverlay, tag); i++ {
 		tag = fmt.Sprintf("%s-%d", base, i)
 	}
 	return tag, nil

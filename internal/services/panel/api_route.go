@@ -5,9 +5,11 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net"
 	"net/http"
 	"net/url"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 
@@ -94,6 +96,7 @@ func (a *App) createOutbound(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
+	req.Settings = normalizeOutboundSettingsJSON(req.Settings)
 	if err := a.validateOutbound(a.db, id, 0, req.Tag, req.Type, req.OwnerUserID, req.Settings); err != nil {
 		a.userAccessMu.Unlock()
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
@@ -118,8 +121,8 @@ func (a *App) createOutbound(c *gin.Context) {
 		return
 	}
 	a.userAccessMu.Unlock()
-	if ob.Referenced() {
-		a.pushRoutingSourceChanges(ob)
+	if ob.SourceKind == model.OutboundSourceInbound && ob.SourceID != 0 {
+		a.recordStagedRoutingSourceAdd(id, ob.SourceID)
 	}
 	a.stageConfigAndRespond(c, id, gin.H{"outbound": ob})
 }
@@ -170,11 +173,19 @@ func (a *App) updateOutbound(c *gin.Context) {
 	if len(req.Settings) > 0 {
 		nextSettings = req.Settings
 	}
+	nextSettings = normalizeOutboundSettingsJSON(nextSettings)
 	// Editing a node-imported outbound through the manual form freezes it: the
 	// edited parameters are the administrator's, so it stops following the node.
 	previous := ob
 	if req.SourceKind == "" && req.SourceID == 0 {
 		ob.SourceKind, ob.SourceID = "", 0
+	} else {
+		sourceKind, sourceID, err := a.outboundSourceLink(sid, req.SourceKind, req.SourceID)
+		if err != nil {
+			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+			return
+		}
+		ob.SourceKind, ob.SourceID = sourceKind, sourceID
 	}
 	if err := a.validateOutbound(a.db, sid, ob.ID, nextTag, nextType, ob.OwnerUserID, nextSettings); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
@@ -236,13 +247,13 @@ func (a *App) updateOutbound(c *gin.Context) {
 	}
 	a.userAccessMu.Unlock()
 	accessLocked = false
-	// Losing or changing the source revokes the previous source server's
-	// credential, so rebuild that config as well.
-	if previous.Referenced() && (previous.SourceKind != ob.SourceKind || previous.SourceID != ob.SourceID) {
-		a.pushRoutingSourceChanges(&previous)
+	if previous.SourceKind == model.OutboundSourceInbound && previous.SourceID != 0 &&
+		(previous.SourceKind != ob.SourceKind || previous.SourceID != ob.SourceID) {
+		a.recordStagedRoutingSourceRemove(sid, previous.SourceID)
 	}
-	if ob.Referenced() {
-		a.pushRoutingSourceChanges(&ob)
+	if ob.SourceKind == model.OutboundSourceInbound && ob.SourceID != 0 &&
+		(previous.SourceKind != ob.SourceKind || previous.SourceID != ob.SourceID) {
+		a.recordStagedRoutingSourceAdd(sid, ob.SourceID)
 	}
 	a.stageConfigAndRespond(c, sid, gin.H{"outbound": ob})
 }
@@ -300,8 +311,8 @@ func (a *App) deleteOutbound(c *gin.Context) {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
-	if ob.Referenced() {
-		a.pushRoutingSourceChanges(&ob)
+	if ob.SourceKind == model.OutboundSourceInbound && ob.SourceID != 0 {
+		a.recordStagedRoutingSourceRemove(sid, ob.SourceID)
 	}
 	a.stageConfigAndRespond(c, sid, gin.H{"ok": true})
 }
@@ -364,10 +375,11 @@ func (a *App) testOutbound(c *gin.Context) {
 		c.JSON(http.StatusBadGateway, gin.H{"error": "解析测试结果失败"})
 		return
 	}
+	targetHost := strings.Trim(strings.TrimSpace(st.Server), "[]")
 	c.JSON(http.StatusOK, gin.H{
 		"ok": data.OK, "latency_ms": data.LatencyMS, "error": data.Error,
 		"inconclusive": data.Inconclusive, "note": data.Note,
-		"target": fmt.Sprintf("%s:%d", st.Server, st.ServerPort),
+		"target": net.JoinHostPort(targetHost, strconv.Itoa(st.ServerPort)),
 	})
 }
 
@@ -375,7 +387,7 @@ func (a *App) testOutbound(c *gin.Context) {
 // hysteria2 and tuic run over QUIC and never listen on TCP, so a TCP connect
 // would report every healthy QUIC landing as down.
 func outboundTestCommand(typ string, st outboundStoredSettings) protocol.TestOutboundCmd {
-	cmd := protocol.TestOutboundCmd{Host: st.Server, Port: st.ServerPort}
+	cmd := protocol.TestOutboundCmd{Host: strings.Trim(strings.TrimSpace(st.Server), "[]"), Port: st.ServerPort}
 	switch typ {
 	case "hysteria2", "hysteria", "tuic":
 		cmd.Network = "quic"

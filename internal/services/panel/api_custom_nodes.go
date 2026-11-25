@@ -58,6 +58,7 @@ type customNodeDetail struct {
 func validateCustomNode(req *customNodeReq) (parsedName string, err error) {
 	req.Link = strings.TrimSpace(req.Link)
 	if req.Link != "" {
+		req.Address = stripIPv6Brackets(strings.TrimSpace(req.Address))
 		cn, perr := singbox.ParseShareLink(req.Link)
 		if perr != nil {
 			return "", errors.New("链接解析失败: " + perr.Error())
@@ -73,6 +74,11 @@ func validateCustomNode(req *customNodeReq) (parsedName string, err error) {
 	if req.Protocol == "" || req.Address == "" || req.Port < 1 || req.Port > 65535 {
 		return "", errors.New("请填写协议、地址和端口（1-65535）")
 	}
+	normalizedAddr, addrErr := normalizeNodeAddress(req.Address)
+	if addrErr != nil {
+		return "", errors.New("节点地址无效: " + addrErr.Error())
+	}
+	req.Address = normalizedAddr
 	raw := map[string]json.RawMessage{}
 	if len(req.Params) > 0 {
 		if err := json.Unmarshal(req.Params, &raw); err != nil {
@@ -324,7 +330,7 @@ func (a *App) updateCustomNode(c *gin.Context) {
 	}
 	if node.SubscriptionID != nil {
 		if nextName != node.Name || req.Link != node.Link || req.Protocol != node.Protocol ||
-			req.Address != node.Address || req.Port != node.Port || nextGroup != node.Group ||
+			req.Address != stripIPv6Brackets(strings.TrimSpace(node.Address)) || req.Port != node.Port || nextGroup != node.Group ||
 			!equivalentOptionalJSON(req.Params, []byte(node.Params)) ||
 			(req.SortOrder != nil && *req.SortOrder != node.SortOrder) {
 			c.JSON(http.StatusConflict, gin.H{"error": "该节点由外部订阅托管，无法修改节点本身配置（下次同步会被覆盖），仅支持调整可见用户范围"})
@@ -453,7 +459,7 @@ func (a *App) deleteCustomNode(c *gin.Context) {
 	defer unlock()
 	unlockAudience := a.subscriptionManager().lockAudience()
 	defer unlockAudience()
-	if n, err := outboundSourceReference(a.db, model.OutboundSourceCustomNode, id); err != nil {
+	if n, err := a.outboundSourceReferenceCount(a.db, model.OutboundSourceCustomNode, id); err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	} else if n > 0 {

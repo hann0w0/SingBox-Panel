@@ -20,6 +20,154 @@ import (
 	"github.com/hann0w0/singbox-panel/internal/domain/singbox"
 )
 
+type stagedRoutingTracker struct {
+	mu      sync.Mutex
+	added   map[uint]map[uint]bool // consumerServerID -> sourceInboundID -> true
+	removed map[uint]map[uint]bool // consumerServerID -> sourceInboundID -> true
+}
+
+func (t *stagedRoutingTracker) recordAdd(consumerServerID, sourceInboundID uint) {
+	if consumerServerID == 0 || sourceInboundID == 0 {
+		return
+	}
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	if t.removed != nil && t.removed[consumerServerID][sourceInboundID] {
+		delete(t.removed[consumerServerID], sourceInboundID)
+		if len(t.removed[consumerServerID]) == 0 {
+			delete(t.removed, consumerServerID)
+		}
+		return
+	}
+	if t.added == nil {
+		t.added = make(map[uint]map[uint]bool)
+	}
+	if t.added[consumerServerID] == nil {
+		t.added[consumerServerID] = make(map[uint]bool)
+	}
+	t.added[consumerServerID][sourceInboundID] = true
+}
+
+func (t *stagedRoutingTracker) recordRemove(db *gorm.DB, consumerServerID, sourceInboundID uint) {
+	if consumerServerID == 0 || sourceInboundID == 0 {
+		return
+	}
+	if db != nil {
+		var remaining int64
+		if err := db.Model(&model.Outbound{}).
+			Where("server_id = ? AND source_kind = ? AND source_id = ?", consumerServerID, model.OutboundSourceInbound, sourceInboundID).
+			Count(&remaining).Error; err == nil && remaining > 0 {
+			return
+		}
+	}
+	var applied bool
+	if db != nil {
+		var srv model.Server
+		if err := db.Select("id", "config_initialized", "config_applied_revision").First(&srv, consumerServerID).Error; err == nil {
+			applied = srv.ConfigInitialized || srv.ConfigAppliedRevision > 0
+		}
+	}
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	if t.added != nil && t.added[consumerServerID][sourceInboundID] {
+		delete(t.added[consumerServerID], sourceInboundID)
+		if len(t.added[consumerServerID]) == 0 {
+			delete(t.added, consumerServerID)
+		}
+		return
+	}
+	if !applied {
+		return
+	}
+	if t.removed == nil {
+		t.removed = make(map[uint]map[uint]bool)
+	}
+	if t.removed[consumerServerID] == nil {
+		t.removed[consumerServerID] = make(map[uint]bool)
+	}
+	t.removed[consumerServerID][sourceInboundID] = true
+}
+
+func (t *stagedRoutingTracker) activeRetainedConsumers(db *gorm.DB, inboundIDs []uint) map[uint][]uint {
+	if len(inboundIDs) == 0 || db == nil {
+		return nil
+	}
+	wanted := make(map[uint]bool, len(inboundIDs))
+	for _, id := range inboundIDs {
+		wanted[id] = true
+	}
+	t.mu.Lock()
+	var candidateConsumers []uint
+	byConsumer := make(map[uint][]uint)
+	for consumerID, sources := range t.removed {
+		for inboundID := range sources {
+			if wanted[inboundID] {
+				byConsumer[consumerID] = append(byConsumer[consumerID], inboundID)
+			}
+		}
+		if len(byConsumer[consumerID]) > 0 {
+			candidateConsumers = append(candidateConsumers, consumerID)
+		}
+	}
+	t.mu.Unlock()
+	if len(candidateConsumers) == 0 {
+		return nil
+	}
+	var servers []model.Server
+	if err := db.Select("id", "config_mode", "raw_config", "config_revision", "config_applied_revision").
+		Where("id IN ?", candidateConsumers).Find(&servers).Error; err != nil {
+		return nil
+	}
+	dirtyConsumers := make(map[uint]bool, len(servers))
+	var cleanConsumers []uint
+	for i := range servers {
+		if servers[i].EffectiveConfigMode() == model.ConfigModeManaged && servers[i].ConfigRevision > servers[i].ConfigAppliedRevision {
+			dirtyConsumers[servers[i].ID] = true
+		} else {
+			cleanConsumers = append(cleanConsumers, servers[i].ID)
+		}
+	}
+	if len(cleanConsumers) > 0 {
+		t.mu.Lock()
+		for _, consumerID := range cleanConsumers {
+			delete(t.removed, consumerID)
+			delete(t.added, consumerID)
+		}
+		t.mu.Unlock()
+	}
+	out := make(map[uint][]uint)
+	for consumerID, inbounds := range byConsumer {
+		if !dirtyConsumers[consumerID] {
+			continue
+		}
+		for _, inboundID := range inbounds {
+			out[inboundID] = append(out[inboundID], consumerID)
+		}
+	}
+	return out
+}
+
+func (t *stagedRoutingTracker) popApplied(consumerServerID uint) []uint {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	if t.added != nil {
+		delete(t.added, consumerServerID)
+	}
+	if t.removed == nil {
+		return nil
+	}
+	sources := t.removed[consumerServerID]
+	delete(t.removed, consumerServerID)
+	if len(sources) == 0 {
+		return nil
+	}
+	out := make([]uint, 0, len(sources))
+	for inboundID := range sources {
+		out = append(out, inboundID)
+	}
+	return out
+}
+
 // Orchestrator builds server configs from the database and pushes them to agents.
 type Orchestrator struct {
 	db    *gorm.DB
@@ -30,10 +178,18 @@ type Orchestrator struct {
 	// outbounds keep their imported snapshot.
 	app *App
 
-	ctx          context.Context
-	asyncMu      sync.Mutex
-	asyncRunning map[uint]bool
-	asyncPending map[uint]bool
+	ctx           context.Context
+	asyncMu       sync.Mutex
+	asyncRunning  map[uint]bool
+	asyncPending  map[uint]bool
+	stagedRouting stagedRoutingTracker
+}
+
+func (o *Orchestrator) routingTracker() *stagedRoutingTracker {
+	if o.app != nil && o.app.orch != nil {
+		return &o.app.orch.stagedRouting
+	}
+	return &o.stagedRouting
 }
 
 var errDryRunRollback = errors.New("dry-run rollback")
@@ -161,6 +317,9 @@ func (o *Orchestrator) buildServerConfigWithMode(srv *model.Server, projection *
 			}
 			for _, cr := range consumerRows {
 				consumersByIn[cr.SourceID] = append(consumersByIn[cr.SourceID], cr.ServerID)
+			}
+			for inboundID, retainedConsumers := range o.routingTracker().activeRetainedConsumers(db, multiInboundIDs) {
+				consumersByIn[inboundID] = append(consumersByIn[inboundID], retainedConsumers...)
 			}
 		}
 
@@ -490,6 +649,7 @@ func (o *Orchestrator) ApplyDesiredConfig(ctx context.Context, serverID uint) Co
 	if err := o.db.Model(&model.Server{}).Where("id = ?", serverID).Update("config_initialized", true).Error; err != nil {
 		return ConfigApplyResult{ApplyState: ConfigFailed, ApplyError: "mark desired config initialized: " + err.Error()}
 	}
+	o.syncCleanSourceServersBeforeApply(ctx, serverID)
 	err := o.PushConfigWithTimeout(ctx, serverID, 55*time.Second)
 	if err == nil {
 		return ConfigApplyResult{ApplyState: ConfigApplied}
@@ -498,6 +658,65 @@ func (o *Orchestrator) ApplyDesiredConfig(ctx context.Context, serverID uint) Co
 		return ConfigApplyResult{ApplyState: ConfigPending}
 	}
 	return ConfigApplyResult{ApplyState: ConfigFailed, ApplyError: err.Error()}
+}
+
+func (o *Orchestrator) syncCleanSourceServersBeforeApply(ctx context.Context, consumerServerID uint) {
+	var inboundIDs []uint
+	if err := o.db.Model(&model.Outbound{}).
+		Where("server_id = ? AND source_kind = ?", consumerServerID, model.OutboundSourceInbound).
+		Distinct().Pluck("source_id", &inboundIDs).Error; err != nil || len(inboundIDs) == 0 {
+		return
+	}
+	var sourceServerIDs []uint
+	if err := o.db.Model(&model.Inbound{}).
+		Where("id IN ?", inboundIDs).
+		Distinct().Pluck("server_id", &sourceServerIDs).Error; err != nil || len(sourceServerIDs) == 0 {
+		return
+	}
+	for _, sourceServerID := range sourceServerIDs {
+		if sourceServerID == 0 || sourceServerID == consumerServerID {
+			continue
+		}
+		var sourceSrv model.Server
+		if err := o.db.Select("id", "config_mode", "raw_config", "config_revision", "config_applied_revision").
+			First(&sourceSrv, sourceServerID).Error; err != nil {
+			continue
+		}
+		// Never auto-push a source server that has unapplied staged edits.
+		if sourceSrv.EffectiveConfigMode() != model.ConfigModeManaged || sourceSrv.ConfigRevision > sourceSrv.ConfigAppliedRevision {
+			continue
+		}
+		if err := o.PushConfigWithTimeout(ctx, sourceServerID, 15*time.Second); err != nil && !errors.Is(err, ErrAgentOffline) {
+			log.Printf("orchestrator: pre-sync routing source server %d for consumer %d: %v", sourceServerID, consumerServerID, err)
+		}
+	}
+}
+
+func (o *Orchestrator) finishConsumerRoutingSync(consumerServerID uint) {
+	removedInboundIDs := o.routingTracker().popApplied(consumerServerID)
+	if len(removedInboundIDs) == 0 {
+		return
+	}
+	var sourceServerIDs []uint
+	if err := o.db.Model(&model.Inbound{}).
+		Where("id IN ?", removedInboundIDs).
+		Distinct().Pluck("server_id", &sourceServerIDs).Error; err != nil || len(sourceServerIDs) == 0 {
+		return
+	}
+	for _, sourceServerID := range sourceServerIDs {
+		if sourceServerID == 0 || sourceServerID == consumerServerID {
+			continue
+		}
+		var sourceSrv model.Server
+		if err := o.db.Select("id", "config_mode", "raw_config", "config_revision", "config_applied_revision").
+			First(&sourceSrv, sourceServerID).Error; err != nil {
+			continue
+		}
+		if sourceSrv.EffectiveConfigMode() != model.ConfigModeManaged || sourceSrv.ConfigRevision > sourceSrv.ConfigAppliedRevision {
+			continue
+		}
+		o.PushConfigIfManaged(sourceServerID)
+	}
 }
 
 // PushConfig builds and applies a server's config, blocking on the agent's ack.
@@ -563,6 +782,9 @@ func (o *Orchestrator) pushConfigSnapshotUnlocked(ctx context.Context, srv *mode
 			return fmt.Errorf("record applied configuration revision: %w", saveErr)
 		}
 	}
+	if err == nil {
+		o.finishConsumerRoutingSync(serverID)
+	}
 	return err
 }
 
@@ -596,6 +818,7 @@ func (o *Orchestrator) applyRawConfigUnlocked(ctx context.Context, serverID uint
 	}).Error; err != nil {
 		return res, err
 	}
+	o.finishConsumerRoutingSync(serverID)
 	return res, nil
 }
 
@@ -716,6 +939,7 @@ func (o *Orchestrator) SwitchToManagedConfig(ctx context.Context, serverID uint)
 			return fmt.Errorf("record credential synchronization: %w", saveErr)
 		}
 	}
+	o.finishConsumerRoutingSync(serverID)
 	return nil
 }
 

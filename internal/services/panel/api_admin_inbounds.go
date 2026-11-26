@@ -3,6 +3,7 @@ package panel
 import (
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 	"strings"
 
@@ -45,6 +46,14 @@ func inboundTag(typ, tag string) string {
 	return tag
 }
 
+func inboundSubscriptionServer(raw string) (string, error) {
+	host, err := normalizeNodeAddress(strings.TrimSpace(raw))
+	if err != nil {
+		return "", fmt.Errorf("订阅节点地址无效：%w", err)
+	}
+	return host, nil
+}
+
 func (a *App) createInbound(c *gin.Context) {
 	id, ok := uintParam(c, "id")
 	if !ok {
@@ -79,6 +88,12 @@ func (a *App) createInbound(c *gin.Context) {
 			return
 		}
 	}
+	host, err := inboundSubscriptionServer(st.SubscriptionServer)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+	st.SubscriptionServer = host
 	st.SyncFromRaw(req.Type)
 	if err := st.ValidateMultiUser(req.Type); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
@@ -158,6 +173,13 @@ func (a *App) updateInbound(c *gin.Context) {
 	if !bindJSON(c, &req) {
 		return
 	}
+	if len(req.Settings) > 0 && req.Tag == "" && req.ListenPort == 0 && req.Remark == nil && req.Enabled == nil {
+		var fields map[string]json.RawMessage
+		if json.Unmarshal(req.Settings, &fields) == nil && len(fields) == 1 && fields["server"] != nil {
+			a.updateInboundSubscriptionServer(c, &ib, fields["server"])
+			return
+		}
+	}
 	nextTag := ib.Tag
 	if req.Tag != "" {
 		nextTag = strings.TrimSpace(req.Tag)
@@ -206,11 +228,17 @@ func (a *App) updateInbound(c *gin.Context) {
 		if len(ib.Settings) > 0 {
 			_ = json.Unmarshal(ib.Settings, &oldSettings)
 		}
-		var st singbox.InboundSettings
+		st := singbox.InboundSettings{SubscriptionServer: oldSettings.SubscriptionServer}
 		if err := json.Unmarshal(req.Settings, &st); err != nil {
 			c.JSON(http.StatusBadRequest, gin.H{"error": "invalid settings: " + err.Error()})
 			return
 		}
+		host, err := inboundSubscriptionServer(st.SubscriptionServer)
+		if err != nil {
+			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+			return
+		}
+		st.SubscriptionServer = host
 		st.SyncFromRaw(string(ib.Type))
 		preserveInboundSecrets(&oldSettings, &st)
 		if ib.Type == model.InboundSocks {
@@ -301,6 +329,46 @@ func (a *App) updateInbound(c *gin.Context) {
 		return
 	}
 	a.stageConfigAndRespond(c, sid, gin.H{"inbound": ib})
+}
+
+// Save a subscription-only edit without decoding or rewriting the listener settings.
+func (a *App) updateInboundSubscriptionServer(c *gin.Context, ib *model.Inbound, address json.RawMessage) {
+	var value string
+	if err := json.Unmarshal(address, &value); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "订阅节点地址必须是字符串"})
+		return
+	}
+	host, err := inboundSubscriptionServer(value)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+	var settings map[string]json.RawMessage
+	if len(ib.Settings) > 0 {
+		if err := json.Unmarshal(ib.Settings, &settings); err != nil {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "invalid settings: " + err.Error()})
+			return
+		}
+	}
+	if settings == nil {
+		settings = make(map[string]json.RawMessage)
+	}
+	if host == "" {
+		delete(settings, "server")
+	} else {
+		settings["server"], _ = json.Marshal(host)
+	}
+	raw, err := json.Marshal(settings)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+	ib.Settings = model.JSONText(raw)
+	if err := a.db.Model(ib).Update("settings", ib.Settings).Error; err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"inbound": ib})
 }
 
 func (a *App) deleteInbound(c *gin.Context) {

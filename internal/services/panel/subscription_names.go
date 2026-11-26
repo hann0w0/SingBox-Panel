@@ -81,14 +81,22 @@ func (n node) getUserIdentity() singbox.ProxyUser {
 	return identity
 }
 
+func (n node) sniHost() string {
+	if n.sniFallback != "" {
+		return n.sniFallback
+	}
+	return n.server
+}
+
 func (n node) clientNode() singbox.ClientNode {
 	return singbox.ClientNode{
-		Name:       n.name,
-		Server:     n.server,
-		ServerPort: n.port,
-		Type:       n.typ,
-		Settings:   n.settings,
-		User:       n.getUserIdentity(),
+		Name:        n.name,
+		Server:      n.server,
+		ServerPort:  n.port,
+		Type:        n.typ,
+		Settings:    n.settings,
+		User:        n.getUserIdentity(),
+		SNIFallback: n.sniFallback,
 	}
 }
 

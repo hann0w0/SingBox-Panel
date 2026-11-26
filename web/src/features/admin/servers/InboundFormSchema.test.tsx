@@ -170,9 +170,10 @@ describe('InboundForm JSON Schema integration', () => {
     expect(validateObjectBySchema(DEFAULT_INBOUND_SCHEMA, { type: 'mixed', listen_port: 1080, set_system_proxy: false })).toBeNull()
   })
 
-  it('submits separate connection and service ports and preserves client_port across JSON mode', async () => {
+  it('keeps subscription address and port separate from the native inbound across JSON mode', async () => {
     render(<InboundForm serverId={1} inbound={null} open onClose={vi.fn()} onSaved={vi.fn()} />)
 
+    fireEvent.change(screen.getByLabelText('订阅节点地址'), { target: { value: '  edge.example.com  ' } })
     fireEvent.change(screen.getByLabelText('连接端口'), { target: { value: '443' } })
     fireEvent.change(screen.getByLabelText('监听端口'), { target: { value: '1443' } })
 
@@ -182,17 +183,56 @@ describe('InboundForm JSON Schema integration', () => {
     const native = JSON.parse(editor.value)
     expect(native.listen_port).toBe(1443)
     expect(native.client_port).toBeUndefined()
+    expect(native.server).toBeUndefined()
+    fireEvent.change(editor, { target: { value: JSON.stringify({ ...native, listen_port: 2443 }) } })
 
     // Returning to form preserves client_port=443.
     fireEvent.click(screen.getByRole('radio', { name: 'Form' }))
     expect((screen.getByLabelText('连接端口') as HTMLInputElement).value).toBe('443')
-    expect((screen.getByLabelText('监听端口') as HTMLInputElement).value).toBe('1443')
+    expect((screen.getByLabelText('监听端口') as HTMLInputElement).value).toBe('2443')
+    expect((screen.getByLabelText('订阅节点地址') as HTMLInputElement).value).toBe('edge.example.com')
 
     fireEvent.click(screen.getByRole('button', { name: '保存' }))
     await waitFor(() => expect(createInbound).toHaveBeenCalledOnce())
     const body = vi.mocked(createInbound).mock.calls[0][1]
-    expect(body.listen_port).toBe(1443)
+    expect(body.listen_port).toBe(2443)
     expect(body.settings?.client_port).toBe(443)
+    expect(body.settings?.server).toBe('edge.example.com')
+    expect(body.settings?.raw?.server).toBeUndefined()
+  })
+
+  it('preloads the subscription address and saves a cleared override from JSON mode', async () => {
+    const existing: Inbound = {
+      id: 8, server_id: 1, tag: 'socks-in', type: 'socks', listen_port: 1080, enabled: true,
+      remark: '', created_at: '', updated_at: '', settings: { server: 'edge.example.com' },
+    }
+    render(<InboundForm serverId={1} inbound={existing} open onClose={vi.fn()} onSaved={vi.fn()} />)
+
+    const server = screen.getByLabelText<HTMLInputElement>('订阅节点地址')
+    expect(server.value).toBe('edge.example.com')
+    fireEvent.change(server, { target: { value: '' } })
+    fireEvent.click(screen.getByRole('radio', { name: 'JSON' }))
+    fireEvent.click(screen.getByRole('button', { name: '保存' }))
+
+    await waitFor(() => expect(updateInbound).toHaveBeenCalledOnce())
+    expect(updateInbound).toHaveBeenCalledWith(1, 8, { settings: { server: '' } })
+  })
+
+  it.each([true, false])('saves listener edits and only sends a changed subscription address (%s)', async (changeAddress) => {
+    const existing: Inbound = {
+      id: 8, server_id: 1, tag: 'socks-in', type: 'socks', listen_port: 1080, enabled: true,
+      remark: '', created_at: '', updated_at: '', settings: { server: 'edge.example.com' },
+    }
+    render(<InboundForm serverId={1} inbound={existing} open onClose={vi.fn()} onSaved={vi.fn()} />)
+
+    fireEvent.change(screen.getByLabelText('监听端口'), { target: { value: '2080' } })
+    if (changeAddress) fireEvent.change(screen.getByLabelText('订阅节点地址'), { target: { value: 'new.example.com' } })
+    fireEvent.click(screen.getByRole('button', { name: '保存' }))
+
+    await waitFor(() => expect(updateInbound).toHaveBeenCalledOnce())
+    const body = vi.mocked(updateInbound).mock.calls[0][2]
+    expect(body.listen_port).toBe(2080)
+    expect(body.settings?.server).toBe(changeAddress ? 'new.example.com' : undefined)
   })
 
   it('preserves VLESS packet_encoding=none across JSON mode and blocks mutating type on existing inbound', async () => {

@@ -270,6 +270,8 @@ type InboundSettings struct {
 	// continues listening on model.Inbound.ListenPort (e.g. Nginx SNI routing
 	// or port-forwarding 443 -> 1443). Zero means use ListenPort.
 	ClientPort int `json:"client_port,omitempty"`
+	// SubscriptionServer overrides the host clients dial in a subscription.
+	SubscriptionServer string `json:"server,omitempty"`
 	// shadowsocks
 	Method      string `json:"method,omitempty"`        // e.g. 2022-blake3-aes-128-gcm
 	SSServerPSK string `json:"ss_server_psk,omitempty"` // top-level server PSK (base64), generated on create

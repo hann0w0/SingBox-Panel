@@ -51,7 +51,7 @@ func nodeParams(n node) map[string]string {
 	case "ws", "httpupgrade":
 		net = st.Transport.Type
 	}
-	sni := sniOf(st, n.server)
+	sni := sniOf(st, n.sniHost())
 	if nodeTLSOn(st) && st.TLS.ClientInsecure() {
 		p["跳过证书验证"] = "true"
 	}

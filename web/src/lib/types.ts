@@ -205,6 +205,7 @@ export interface FallbackSettings {
 export interface InboundSettings {
   listen?: string
   ipv6_only?: boolean
+  server?: string
   client_port?: number
   method?: string
   ss_server_psk?: string

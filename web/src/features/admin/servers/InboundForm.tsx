@@ -104,6 +104,7 @@ export function toForm(ib: Inbound | null): FormVals {
     return {
       type: 'shadowsocks',
       listen_port: randomPort(),
+      server: '',
       client_port: undefined,
       listen_mode: 'all',
       enabled: true,
@@ -139,6 +140,7 @@ export function toForm(ib: Inbound | null): FormVals {
     type: ib.type,
     tag: ib.tag,
     listen_port: ib.listen_port,
+    server: s.server ?? '',
     client_port: s.client_port || undefined,
     listen_mode: s.ipv6_only ? 'ipv6' : s.listen === '0.0.0.0' ? 'ipv4' : s.listen === '127.0.0.1' || s.listen === '::1' ? 'local' : 'all',
     enabled: ib.enabled,
@@ -216,8 +218,10 @@ export function assembleSettings(
     s.listen = extraRaw.listen
   }
   if (type === 'tun') {
+    delete s.server
     delete s.client_port
   } else {
+    if (typeof v.server === 'string') s.server = v.server.trim()
     const clientPort = Number(v.client_port)
     if (Number.isInteger(clientPort) && clientPort >= 1 && clientPort <= 65535) {
       s.client_port = clientPort
@@ -394,6 +398,15 @@ export function assembleSettings(
   return s
 }
 
+function isSubscriptionServerOnlyEdit(inbound: Inbound, values: FormVals, raw: Record<string, unknown>): boolean {
+  if (values.type !== inbound.type || values.tag !== inbound.tag || values.listen_port !== inbound.listen_port) return false
+  const base = inbound.settings || {}
+  const originalValues = toForm(inbound)
+  const original = assembleSettings(base, originalValues, inbound.type)
+  const draft = assembleSettings(base, { ...values, server: originalValues.server }, inbound.type, raw)
+  return JSON.stringify(original) === JSON.stringify(draft)
+}
+
 export default function InboundForm({
   serverId,
   ipv6Available = false,
@@ -428,6 +441,7 @@ export default function InboundForm({
   const schemas = useSingboxSchemas(open)
   const submitLock = useRef(false)
   const submitSessionRef = useRef(0)
+  const initialJsonText = useRef('')
   const [dirty, setDirty] = useState(false)
   const type: InboundType = Form.useWatch('type', form) ?? 'shadowsocks'
   const showTLS = !NO_TLS.has(type)
@@ -615,8 +629,13 @@ export default function InboundForm({
       const activeType = (v.type || type) as InboundType
       const settings = assembleSettings(inbound?.settings || {}, v, activeType, rawExtra)
       const nativeObj = inboundSettingsToNativeJson(activeType, String(v.tag || ''), Number(v.listen_port || 0) || undefined, settings)
-      setJsonText(JSON.stringify(nativeObj, null, 2))
+      initialJsonText.current = JSON.stringify(nativeObj, null, 2)
+      setJsonText(initialJsonText.current)
       setEditorMode('json')
+      return
+    }
+    if (jsonText === initialJsonText.current) {
+      setEditorMode('form')
       return
     }
     try {
@@ -702,6 +721,21 @@ export default function InboundForm({
     const session = submitSessionRef.current
     setSubmitting(true)
     try {
+      const values = form.getFieldsValue()
+      const subscriptionServer = String(values.server ?? '')
+      if (
+        inbound && !preview && !prefill && subscriptionServer !== (inbound.settings?.server ?? '') &&
+        (editorMode === 'form' || jsonText === initialJsonText.current) && !Object.keys(schemaJsonErrors).length &&
+        isSubscriptionServerOnlyEdit(inbound, values, rawExtra)
+      ) {
+        const saved = await applyWithToast(`inbound-${inbound.id}`, () =>
+          updateInbound(serverId, inbound.id, { settings: { server: subscriptionServer.trim() } }), '正在保存')
+        if (saved && session === submitSessionRef.current) {
+          onClose()
+          onSaved()
+        }
+        return
+      }
       let body: {
         type: InboundType
         tag: string
@@ -778,8 +812,12 @@ export default function InboundForm({
         return
       }
       const editing = inbound
+      if (editing && (body.settings.server ?? '') === (editing.settings?.server ?? '')) {
+        delete body.settings.server
+      }
       const saved = await applyWithToast(`inbound-${editing ? editing.id : 'new'}`, () =>
         editing ? updateInbound(serverId, editing.id, body) : createInbound(serverId, { ...body, enabled: true }),
+        '正在保存',
       )
       if (!saved || session !== submitSessionRef.current) return
       onClose()
@@ -919,9 +957,12 @@ export default function InboundForm({
                   <InputNumber precision={0} min={1} max={65535} className="mono" />
                 </Form.Item>
               </TooltipProvider>
+              <Form.Item name="server" label="订阅节点地址">
+                <Input allowClear spellCheck={false} placeholder="域名或 IP，留空使用默认地址" className="mono" />
+              </Form.Item>
             </>
           )}
-          <Form.Item name="tag" label="标签" className={type !== 'tun' ? 'fm-full' : undefined}>
+          <Form.Item name="tag" label="标签">
             <Input />
           </Form.Item>
           {type === 'shadowsocks' && (

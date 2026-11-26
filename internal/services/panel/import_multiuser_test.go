@@ -14,6 +14,10 @@ import (
 func TestManagedMultiUserImportSuppressesBogusSkippedWarning(t *testing.T) {
 	fixture := newForwardFixture(t)
 	fixture.router.POST("/servers/:id/import-config", fixture.app.importRemoteConfig)
+	const subscriptionServer = "subscribe.example.com"
+	if err := fixture.db.Model(&fixture.inbound).Update("settings", model.JSONText(`{"multi_user":true,"server":"`+subscriptionServer+`"}`)).Error; err != nil {
+		t.Fatal(err)
+	}
 
 	// Add a second panel user so the multi-user inbound has 2 panel-generated users.
 	second := model.User{
@@ -80,6 +84,9 @@ func TestManagedMultiUserImportSuppressesBogusSkippedWarning(t *testing.T) {
 	}
 	if !savedSettings.MultiUser || savedSettings.SingleUser {
 		t.Fatalf("expected multi-user mode preserved, got %+v", savedSettings)
+	}
+	if savedSettings.SubscriptionServer != subscriptionServer {
+		t.Fatalf("import dropped subscription address: %q", savedSettings.SubscriptionServer)
 	}
 
 	// Changing VLESS flow across the same panel-managed users should still be

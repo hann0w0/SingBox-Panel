@@ -157,7 +157,7 @@ func surgeHasUnquotableValue(n node) bool {
 	for _, v := range []string{
 		n.server, st.Method, st.Username, st.Password, u.Password, u.UUID,
 		st.Flow, st.TLS.Reality.PublicKey, firstOf(st.TLS.Reality.ShortID),
-		st.ObfsPassword, st.SnellObfsHost, st.Transport.Path, st.Transport.Host(), sniOf(st, n.server),
+		st.ObfsPassword, st.SnellObfsHost, st.Transport.Path, st.Transport.Host(), sniOf(st, n.sniHost()),
 		singbox.SSClientPassword(st, u.Password), singbox.SnellClientPSK(st, u.Password),
 	} {
 		if strings.Contains(v, `"`) {
@@ -181,7 +181,7 @@ func surgeProxyUnchecked(n node, name string) string {
 	n.server = strings.Trim(strings.TrimSpace(n.server), "[]")
 	st := n.settings
 	u := n.getUserIdentity()
-	sni := sniOf(st, n.server)
+	sni := sniOf(st, n.sniHost())
 	switch n.typ {
 	case "shadowsocks":
 		pass := singbox.SSClientPassword(st, u.Password)

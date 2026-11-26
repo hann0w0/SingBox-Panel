@@ -575,6 +575,12 @@ func syncImportedInbounds(tx *gorm.DB, serverID uint, parsed []singbox.ParsedInb
 	keepIDs := make([]uint, 0, len(parsed))
 	for _, in := range parsed {
 		row := byTag[in.Tag]
+		if row != nil && string(row.Type) == in.Type {
+			var previous singbox.InboundSettings
+			if json.Unmarshal(row.Settings, &previous) == nil {
+				in.Settings.SubscriptionServer = previous.SubscriptionServer
+			}
+		}
 		settings, err := json.Marshal(in.Settings)
 		if err != nil {
 			return err

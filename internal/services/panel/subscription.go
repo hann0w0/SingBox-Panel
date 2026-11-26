@@ -19,17 +19,18 @@ import (
 
 // node bundles a server+inbound for a subscriber.
 type node struct {
-	orderType string
-	orderID   uint
-	tag       string
-	name      string
-	server    string
-	port      int
-	typ       string
-	region    string // ISO-ish region code (US/HK/JP…) for the dashboard map; may be empty
-	settings  singbox.InboundSettings
-	user      singbox.ProxyUser
-	udp       *bool // nil keeps the historical default: UDP enabled
+	orderType   string
+	orderID     uint
+	tag         string
+	name        string
+	server      string
+	port        int
+	typ         string
+	region      string // ISO-ish region code (US/HK/JP…) for the dashboard map; may be empty
+	settings    singbox.InboundSettings
+	user        singbox.ProxyUser
+	udp         *bool  // nil keeps the historical default: UDP enabled
+	sniFallback string // default host for TLS name inference when server is overridden
 }
 
 func (n node) udpEnabled() bool {
@@ -37,6 +38,18 @@ func (n node) udpEnabled() bool {
 		return false
 	}
 	return n.udp == nil || *n.udp
+}
+
+func subscriptionNodeAddress(server *model.Server, settings *singbox.InboundSettings) (string, string, error) {
+	defaultHost, err := inboundNodeAddress(server, settings)
+	if settings.SubscriptionServer == "" || errors.Is(err, errLocalInbound) {
+		return defaultHost, "", err
+	}
+	if settings.SubscriptionServer == defaultHost {
+		return defaultHost, "", nil
+	}
+	// An explicit subscription host remains usable before the server reports a public address.
+	return settings.SubscriptionServer, defaultHost, nil
 }
 
 // userActive reports whether an account may still pull config from the panel.
@@ -169,7 +182,7 @@ func (a *App) gatherNodesWithError(user *model.User) ([]node, error) {
 						continue
 					}
 				}
-				host, err := inboundNodeAddress(srv, &st)
+				host, sniFallback, err := subscriptionNodeAddress(srv, &st)
 				if errors.Is(err, errLocalInbound) {
 					continue
 				}
@@ -191,15 +204,16 @@ func (a *App) gatherNodesWithError(user *model.User) ([]node, error) {
 					identity = st.SingleUserIdentity()
 				}
 				out = append(out, node{
-					orderType: userNodeTypeManaged,
-					orderID:   ib.ID,
-					tag:       ib.Tag,
-					server:    host,
-					port:      st.EffectiveClientPort(ib.ListenPort),
-					typ:       string(ib.Type),
-					region:    srv.Region,
-					settings:  st,
-					user:      identity,
+					orderType:   userNodeTypeManaged,
+					orderID:     ib.ID,
+					tag:         ib.Tag,
+					server:      host,
+					port:        st.EffectiveClientPort(ib.ListenPort),
+					typ:         string(ib.Type),
+					region:      srv.Region,
+					settings:    st,
+					user:        identity,
+					sniFallback: sniFallback,
 				})
 			}
 			nameServerNodes(srv.Name, out[first:])
@@ -255,7 +269,7 @@ func (a *App) gatherNodesWithError(user *model.User) ([]node, error) {
 				if !st.UseMultiUser(string(ib.Type)) {
 					continue
 				}
-				host, err := inboundNodeAddress(srv, &st)
+				host, sniFallback, err := subscriptionNodeAddress(srv, &st)
 				if errors.Is(err, errLocalInbound) {
 					continue
 				}
@@ -267,16 +281,17 @@ func (a *App) gatherNodesWithError(user *model.User) ([]node, error) {
 				st.MultiUser = true
 				name := forwardNodeName(srv.Name, ib.Tag, outbound.Tag, forward.Remark)
 				out = append(out, node{
-					orderType: userNodeTypeForward,
-					orderID:   forward.ID,
-					tag:       ib.Tag,
-					name:      name,
-					server:    host,
-					port:      st.EffectiveClientPort(ib.ListenPort),
-					typ:       string(ib.Type),
-					region:    srv.Region,
-					settings:  st,
-					user:      forwardProxyIdentity(user, forward.ID, ib.ID),
+					orderType:   userNodeTypeForward,
+					orderID:     forward.ID,
+					tag:         ib.Tag,
+					name:        name,
+					server:      host,
+					port:        st.EffectiveClientPort(ib.ListenPort),
+					typ:         string(ib.Type),
+					region:      srv.Region,
+					settings:    st,
+					user:        forwardProxyIdentity(user, forward.ID, ib.ID),
+					sniFallback: sniFallback,
 				})
 			}
 		}

@@ -12,12 +12,20 @@ import (
 
 // ClientNode is a single (server-inbound, user) pair to render for a client.
 type ClientNode struct {
-	Name       string // display name shown in the client
-	Server     string // public host clients dial
-	ServerPort int
-	Type       string
-	Settings   InboundSettings
-	User       ProxyUser
+	Name        string // display name shown in the client
+	Server      string // public host clients dial
+	ServerPort  int
+	Type        string
+	Settings    InboundSettings
+	User        ProxyUser
+	SNIFallback string // original host for implicit TLS names when Server is overridden
+}
+
+func (n ClientNode) sniHost() string {
+	if n.SNIFallback != "" {
+		return n.SNIFallback
+	}
+	return n.Server
 }
 
 func firstShortID(ids []string) string {
@@ -122,7 +130,7 @@ func BuildClientOutbound(n ClientNode) (json.RawMessage, error) {
 		"server":      serverHost,
 		"server_port": n.ServerPort,
 	}
-	tls := buildClientTLS(n.Settings.TLS, clientSNIWithTransport(n.Settings.TLS, n.Settings.Transport, serverHost), n.Type)
+	tls := buildClientTLS(n.Settings.TLS, clientSNIWithTransport(n.Settings.TLS, n.Settings.Transport, n.sniHost()), n.Type)
 	tr := buildTransport(n.Settings.Transport)
 
 	switch n.Type {
@@ -322,6 +330,7 @@ func BuildShareLink(n ClientNode) (string, error) {
 	hostPort := net.JoinHostPort(host, port)
 	name := url.PathEscape(n.Name)
 	t := n.Settings.TLS
+	sniHost := n.sniHost()
 
 	switch n.Type {
 	case "vless":
@@ -336,11 +345,11 @@ func BuildShareLink(n ClientNode) (string, error) {
 				q.Set("sid", sid)
 			}
 			q.Set("fp", fingerprintOf(t))
-			q.Set("sni", clientSNIWithTransport(t, n.Settings.Transport, host))
+			q.Set("sni", clientSNIWithTransport(t, n.Settings.Transport, sniHost))
 		case t.tlsEnabled():
 			q.Set("security", "tls")
 			q.Set("fp", fingerprintOf(t))
-			q.Set("sni", clientSNIWithTransport(t, n.Settings.Transport, host))
+			q.Set("sni", clientSNIWithTransport(t, n.Settings.Transport, sniHost))
 		default:
 			q.Set("security", "none")
 		}
@@ -404,13 +413,13 @@ func BuildShareLink(n ClientNode) (string, error) {
 		}
 		if t.Reality.Enabled {
 			obj["tls"] = "reality"
-			obj["sni"] = clientSNIWithTransport(t, n.Settings.Transport, host)
+			obj["sni"] = clientSNIWithTransport(t, n.Settings.Transport, sniHost)
 			obj["fp"] = fingerprintOf(t)
 			obj["pbk"] = t.Reality.PublicKey
 			obj["sid"] = firstShortID(t.Reality.ShortID)
 		} else if t.tlsEnabled() {
 			obj["tls"] = "tls"
-			obj["sni"] = clientSNIWithTransport(t, n.Settings.Transport, host)
+			obj["sni"] = clientSNIWithTransport(t, n.Settings.Transport, sniHost)
 			obj["fp"] = fingerprintOf(t)
 		}
 		if len(t.ALPN) > 0 {
@@ -442,7 +451,7 @@ func BuildShareLink(n ClientNode) (string, error) {
 				q.Set("allowInsecure", "1")
 			}
 		}
-		q.Set("sni", clientSNIWithTransport(t, n.Settings.Transport, host))
+		q.Set("sni", clientSNIWithTransport(t, n.Settings.Transport, sniHost))
 		if len(t.ALPN) > 0 {
 			q.Set("alpn", strings.Join(t.ALPN, ","))
 		}
@@ -506,6 +515,8 @@ func BuildShareLink(n ClientNode) (string, error) {
 			q := url.Values{}
 			if t.ServerName != "" {
 				q.Set("sni", t.ServerName)
+			} else if n.SNIFallback != "" {
+				q.Set("sni", n.SNIFallback)
 			}
 			if t.ClientInsecure() {
 				q.Set("insecure", "1")
@@ -552,7 +563,7 @@ func BuildShareLink(n ClientNode) (string, error) {
 
 	case "hysteria2":
 		q := url.Values{}
-		q.Set("sni", clientSNI(t, host))
+		q.Set("sni", clientSNI(t, sniHost))
 		if n.Settings.ObfsPassword != "" {
 			obfsType := n.Settings.ObfsType
 			if obfsType == "" {
@@ -593,7 +604,7 @@ func BuildShareLink(n ClientNode) (string, error) {
 		if v := n.Settings.TUICRelayModeValue(); v != "" {
 			q.Set("udp_relay_mode", v)
 		}
-		q.Set("sni", clientSNI(t, host))
+		q.Set("sni", clientSNI(t, sniHost))
 		if len(t.ALPN) > 0 {
 			q.Set("alpn", strings.Join(t.ALPN, ","))
 		}
@@ -605,7 +616,7 @@ func BuildShareLink(n ClientNode) (string, error) {
 
 	case "anytls":
 		q := url.Values{}
-		q.Set("sni", clientSNI(t, host))
+		q.Set("sni", clientSNI(t, sniHost))
 		if len(t.ALPN) > 0 {
 			q.Set("alpn", strings.Join(t.ALPN, ","))
 		}
@@ -625,7 +636,7 @@ func BuildShareLink(n ClientNode) (string, error) {
 		q := url.Values{}
 		q.Set("protocol", "udp")
 		q.Set("auth", n.User.Password)
-		q.Set("peer", clientSNI(t, host))
+		q.Set("peer", clientSNI(t, sniHost))
 		up, down := HysteriaBandwidth(n.Settings)
 		q.Set("upmbps", strconv.Itoa(up))
 		q.Set("downmbps", strconv.Itoa(down))

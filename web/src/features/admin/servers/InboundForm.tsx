@@ -956,10 +956,20 @@ export default function InboundForm({
                 >
                   <InputNumber precision={0} min={1} max={65535} className="mono" />
                 </Form.Item>
+                <Form.Item
+                  name="server"
+                  label={(
+                    <span className="inbound-label-hint">
+                      连接地址
+                      <Tooltip title="客户端订阅与节点链接使用的域名或 IP，留空则使用服务器默认地址">
+                        <Info className="inbound-hint-icon" aria-hidden="true" />
+                      </Tooltip>
+                    </span>
+                  )}
+                >
+                  <Input allowClear spellCheck={false} className="mono" />
+                </Form.Item>
               </TooltipProvider>
-              <Form.Item name="server" label="订阅节点地址">
-                <Input allowClear spellCheck={false} placeholder="域名或 IP，留空使用默认地址" className="mono" />
-              </Form.Item>
             </>
           )}
           <Form.Item name="tag" label="标签">

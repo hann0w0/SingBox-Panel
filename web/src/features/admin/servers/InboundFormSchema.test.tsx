@@ -173,7 +173,7 @@ describe('InboundForm JSON Schema integration', () => {
   it('keeps subscription address and port separate from the native inbound across JSON mode', async () => {
     render(<InboundForm serverId={1} inbound={null} open onClose={vi.fn()} onSaved={vi.fn()} />)
 
-    fireEvent.change(screen.getByLabelText('订阅节点地址'), { target: { value: '  edge.example.com  ' } })
+    fireEvent.change(screen.getByLabelText('连接地址'), { target: { value: '  edge.example.com  ' } })
     fireEvent.change(screen.getByLabelText('连接端口'), { target: { value: '443' } })
     fireEvent.change(screen.getByLabelText('监听端口'), { target: { value: '1443' } })
 
@@ -190,7 +190,7 @@ describe('InboundForm JSON Schema integration', () => {
     fireEvent.click(screen.getByRole('radio', { name: 'Form' }))
     expect((screen.getByLabelText('连接端口') as HTMLInputElement).value).toBe('443')
     expect((screen.getByLabelText('监听端口') as HTMLInputElement).value).toBe('2443')
-    expect((screen.getByLabelText('订阅节点地址') as HTMLInputElement).value).toBe('edge.example.com')
+    expect((screen.getByLabelText('连接地址') as HTMLInputElement).value).toBe('edge.example.com')
 
     fireEvent.click(screen.getByRole('button', { name: '保存' }))
     await waitFor(() => expect(createInbound).toHaveBeenCalledOnce())
@@ -208,7 +208,7 @@ describe('InboundForm JSON Schema integration', () => {
     }
     render(<InboundForm serverId={1} inbound={existing} open onClose={vi.fn()} onSaved={vi.fn()} />)
 
-    const server = screen.getByLabelText<HTMLInputElement>('订阅节点地址')
+    const server = screen.getByLabelText<HTMLInputElement>('连接地址')
     expect(server.value).toBe('edge.example.com')
     fireEvent.change(server, { target: { value: '' } })
     fireEvent.click(screen.getByRole('radio', { name: 'JSON' }))
@@ -226,7 +226,7 @@ describe('InboundForm JSON Schema integration', () => {
     render(<InboundForm serverId={1} inbound={existing} open onClose={vi.fn()} onSaved={vi.fn()} />)
 
     fireEvent.change(screen.getByLabelText('监听端口'), { target: { value: '2080' } })
-    if (changeAddress) fireEvent.change(screen.getByLabelText('订阅节点地址'), { target: { value: 'new.example.com' } })
+    if (changeAddress) fireEvent.change(screen.getByLabelText('连接地址'), { target: { value: 'new.example.com' } })
     fireEvent.click(screen.getByRole('button', { name: '保存' }))
 
     await waitFor(() => expect(updateInbound).toHaveBeenCalledOnce())

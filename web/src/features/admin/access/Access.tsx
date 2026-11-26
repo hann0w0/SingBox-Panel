@@ -1,4 +1,4 @@
-import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
+import { memo, useCallback, useEffect, useId, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import {
   AutoComplete,
   Button,
@@ -111,12 +111,14 @@ const AccessItem = memo(function AccessItem({ item, checked, disabled, onToggle 
   disabled: boolean
   onToggle: (item: AccessNodeItem, checked: boolean) => void
 }) {
+  const statusId = useId()
   return (
     <Checkbox className={`um-access-chip${checked ? ' checked' : ''}${disabled ? ' disabled' : ''}`} title={item.detail}
-      aria-label={`分配 ${item.name}`} checked={checked} disabled={disabled} onChange={(event) => onToggle(item, event.target.checked)}>
+      aria-label={`分配 ${item.name}`} aria-describedby={item.enabled ? undefined : statusId}
+      checked={checked} disabled={disabled} onChange={(event) => onToggle(item, event.target.checked)}>
       <span className="um-access-chip-name">{item.name}</span>
       <span className="um-access-chip-proto">{nodeTypeLabel[item.protocol] || item.protocol || '-'}</span>
-      {!item.enabled ? <span className="um-access-chip-off">停用</span> : null}
+      {!item.enabled ? <span id={statusId} className="um-access-node-off">停用</span> : null}
     </Checkbox>
   )
 })
@@ -232,7 +234,7 @@ export function UserAccessEditor({ userId, onStateChange }: {
         serverName: server.name,
         detail: formatHostPort(inboundConnectionHost(server, inbound.settings), inboundConnectionPort(inbound), '-'),
         protocol: inbound.type,
-        enabled: inbound.enabled,
+        enabled: inbound.enabled !== false,
       })),
     })).filter((group) => group.items.length > 0), [servers])
 
@@ -642,6 +644,7 @@ export function UserAccessEditor({ userId, onStateChange }: {
                 ? `${item.serverName} · ${item.name} · ${item.detail}`
                 : item.detail)
               : (orderItem.node_type === 'managed' ? '面板节点' : '节点')
+            const displayName = (orderItem.custom_name ?? '').trim() || defaultName
             const dropClass = dropTargetKey === key
               ? (dropTargetAfter ? ' sort-drop-after' : ' sort-drop-before')
               : ''
@@ -680,7 +683,10 @@ export function UserAccessEditor({ userId, onStateChange }: {
                   </button>
                 <span className="um-access-order-number">{index + 1}</span>
                 <div className="um-access-order-content">
-                  <strong title={(orderItem.custom_name ?? '').trim() || defaultName}>{(orderItem.custom_name ?? '').trim() || defaultName}</strong>
+                  <div className="um-access-order-title">
+                    <strong title={displayName}>{displayName}</strong>
+                    {item?.enabled === false ? <span className="um-access-node-off">停用</span> : null}
+                  </div>
                   <small title={subtitle}><span className="um-access-order-mobile-meta">{index + 1} · {orderItem.node_type === 'managed' ? '面板' : '外部'} · </span>{subtitle}</small>
                 </div>
                 <div className="um-access-order-name-editor" id={`user-node-name-${userId}-${key}`}>

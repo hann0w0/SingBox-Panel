@@ -706,7 +706,6 @@ export default function InboundForm({
         type: InboundType
         tag: string
         listen_port: number
-        enabled: boolean
         settings: InboundSettings
       }
       if (editorMode === 'json') {
@@ -745,7 +744,6 @@ export default function InboundForm({
           type: nextType,
           tag: typeof parsed.tag === 'string' ? parsed.tag : '',
           listen_port: nextType === 'tun' ? Number(parsed.listen_port || 0) : (Number(parsed.listen_port || 0) || randomPort()),
-          enabled: true,
           settings: nextSettings,
         }
       } else {
@@ -772,18 +770,16 @@ export default function InboundForm({
           type: v.type as InboundType,
           tag: v.tag,
           listen_port: listenPort,
-          // Inbounds are always active; remove one instead of pausing it.
-          enabled: true,
           settings,
         }
       }
       if (preview) {
-        onPreview?.(body)
+        onPreview?.({ ...body, enabled: inbound?.enabled ?? true })
         return
       }
       const editing = inbound
       const saved = await applyWithToast(`inbound-${editing ? editing.id : 'new'}`, () =>
-        editing ? updateInbound(serverId, editing.id, body) : createInbound(serverId, body),
+        editing ? updateInbound(serverId, editing.id, body) : createInbound(serverId, { ...body, enabled: true }),
       )
       if (!saved || session !== submitSessionRef.current) return
       onClose()

@@ -282,6 +282,31 @@ describe('editing a selected user subscription', () => {
     await waitFor(() => expect(updateUserAccess).toHaveBeenCalledWith(2, { server_ids: [], inbound_ids: [10], custom_node_ids: [], node_order: [{ node_type: 'managed', node_id: 10 }] }))
   })
 
+  it('marks disabled panel nodes while retaining their assignments and selection controls', async () => {
+    const nodeOrder = [{ ...access.node_order[0], custom_name: 'Personal' }, access.node_order[1]]
+    vi.mocked(getUserAccess).mockResolvedValue({ ...access, node_order: nodeOrder })
+    vi.mocked(listServers).mockResolvedValue([{ ...server, inbounds: server.inbounds!.map((inbound) => ({ ...inbound, enabled: false })) }])
+
+    mount('/admin/users/2')
+    const assigned = (await screen.findByText('Personal')).closest<HTMLElement>('[data-node-key]')!
+    expect(within(assigned).getByText('停用')).toBeTruthy()
+    expect(screen.getByRole('button', { name: '保存更改' }).hasAttribute('disabled')).toBe(true)
+
+    selectTab(/面板节点/)
+    fireEvent.click(screen.getByRole('button', { name: '展开 Tokyo' }))
+    const primary = screen.getByRole('checkbox', { name: '分配 vless-main', description: '停用' })
+    expect(primary.getAttribute('aria-checked')).toBe('true')
+    const backup = screen.getByRole('checkbox', { name: '分配 trojan-backup', description: '停用' })
+    fireEvent.click(backup)
+    expect(backup.getAttribute('aria-checked')).toBe('true')
+
+    fireEvent.click(screen.getByRole('button', { name: '保存更改' }))
+    await waitFor(() => expect(updateUserAccess).toHaveBeenCalledWith(2, {
+      server_ids: [], inbound_ids: [10, 11], custom_node_ids: [30],
+      node_order: [...nodeOrder, { node_type: 'managed', node_id: 11 }],
+    }))
+  })
+
   it('preserves whole-server grants when only the personal display name changes', async () => {
     vi.mocked(listServers).mockResolvedValue([{ ...server, inbounds: server.inbounds!.slice(0, 1) }])
     vi.mocked(getUserAccess).mockResolvedValue({ ...structuredClone(access), server_wide: true })

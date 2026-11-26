@@ -98,8 +98,8 @@
 .um-access-chip.checked { border-color: var(--console-border-strong); background: var(--console-selected); }
 .um-access-chip.disabled { cursor: not-allowed; opacity: .6; }
 .um-access-chip-name { flex: 1; min-width: 0; font-size: 13px; color: var(--console-ink); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.um-access-chip-proto, .um-access-chip-off { flex: none; color: var(--console-faint); font-size: 11.5px; }
-.um-access-chip-off { color: var(--console-warning-text); }
+.um-access-chip-proto { flex: none; color: var(--console-faint); font-size: 11.5px; }
+.um-access-node-off { flex: none; color: var(--console-warning-text); font-size: 11.5px; }
 
 .um-access-order-list { display: flex; flex-direction: column; max-height: min(calc(56 * var(--dvh)), 520px); overflow-y: auto; overscroll-behavior: contain; border: 1px solid var(--console-border); border-radius: var(--app-radius); }
 .um-access-order-item { position: relative; flex: none; display: grid; grid-template-columns: 28px 24px minmax(0, 1fr) minmax(130px, 200px) 36px 80px 60px; align-items: center; gap: 8px; min-height: 58px; padding: 6px 14px 6px 6px; background: var(--console-container); }
@@ -113,6 +113,7 @@
 .um-access-order-handle:disabled { cursor: not-allowed; opacity: .5; }
 .um-access-order-number { color: var(--console-faint); font-family: var(--app-mono); font-size: 12px; text-align: center; font-variant-numeric: tabular-nums; }
 .um-access-order-content { display: flex; flex-direction: column; min-width: 0; }
+.um-access-order-title { display: flex; align-items: center; gap: 8px; }
 .um-access-order-content strong, .um-access-order-content small { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .um-access-order-content strong { min-width: 0; font-weight: 500; font-size: 13px; color: var(--console-ink); }
 .um-access-order-content small { color: var(--console-faint); font-size: 12px; }

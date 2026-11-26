@@ -46,7 +46,7 @@ describe('InboundForm JSON Schema integration', () => {
       type: 'vless',
       tag: 'vless-grpc',
       listen_port: 8443,
-      enabled: true,
+      enabled: false,
       remark: '',
       created_at: '2026-11-18T00:00:00Z',
       updated_at: '2026-11-18T00:00:00Z',
@@ -78,6 +78,7 @@ describe('InboundForm JSON Schema integration', () => {
 
     await waitFor(() => expect(updateInbound).toHaveBeenCalledOnce())
     const payload = vi.mocked(updateInbound).mock.calls[0][2]
+    expect(payload).not.toHaveProperty('enabled')
     expect(payload.settings?.raw).toMatchObject({
       tcp_fast_open: true,
       transport: { type: 'grpc', service_name: 'GunService', idle_timeout: '15s' },
@@ -121,6 +122,7 @@ describe('InboundForm JSON Schema integration', () => {
     expect(body.type).toBe('tun')
     expect(body.tag).toBe('tun-in')
     expect(body.listen_port).toBe(0)
+    expect(body.enabled).toBe(true)
     expect(body.settings?.raw).toMatchObject({
       type: 'tun',
       tag: 'tun-in',
@@ -200,7 +202,7 @@ describe('InboundForm JSON Schema integration', () => {
       tag: 'vless-in',
       type: 'vless',
       listen_port: 443,
-      enabled: true,
+      enabled: false,
       remark: '',
       created_at: '',
       updated_at: '',
@@ -227,6 +229,8 @@ describe('InboundForm JSON Schema integration', () => {
     fireEvent.change(editor, { target: { value: JSON.stringify(valid) } })
     fireEvent.click(screen.getByRole('button', { name: '保存' }))
     await waitFor(() => expect(updateInbound).toHaveBeenCalledOnce())
-    expect(vi.mocked(updateInbound).mock.calls[0][2].settings?.packet_encoding).toBe('none')
+    const payload = vi.mocked(updateInbound).mock.calls[0][2]
+    expect(payload).not.toHaveProperty('enabled')
+    expect(payload.settings?.packet_encoding).toBe('none')
   })
 })

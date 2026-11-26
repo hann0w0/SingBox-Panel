@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"slices"
 	"testing"
 
 	"github.com/gin-gonic/gin"
@@ -240,6 +241,58 @@ func TestUserAccessPreservesServerWideGrant(t *testing.T) {
 	}
 	if !user.HasInbound(server.ID, third.ID) {
 		t.Fatal("server-wide grant did not include a newly-created inbound")
+	}
+}
+
+func TestToggleInboundPreservesUserAccess(t *testing.T) {
+	db := testDB(t)
+	server := model.Server{Name: "node", Address: "node.example.com", AgentToken: "inbound-toggle-agent", ConfigMode: model.ConfigModeManaged}
+	mustCreate(t, db, &server)
+	inbound := model.Inbound{ServerID: server.ID, Tag: "socks-in", Type: model.InboundSocks, ListenPort: 10080, Enabled: true}
+	mustCreate(t, db, &inbound)
+	user := model.User{
+		Email: "inbound-toggle", Role: model.RoleUser, Enabled: true, SubToken: "inbound-toggle-token",
+		ServerIDs: []uint{server.ID}, InboundIDs: []uint{inbound.ID},
+	}
+	mustCreate(t, db, &user)
+	mustCreate(t, db, &model.UserNodeOrder{UserID: user.ID, NodeType: userNodeTypeManaged, NodeID: inbound.ID, CustomName: "Personal"})
+	wantOrder := []userNodeOrderItem{{NodeType: userNodeTypeManaged, NodeID: inbound.ID, CustomName: "Personal"}}
+
+	app := &App{db: db, orch: NewOrchestrator(db, NewHub(db))}
+	router := gin.New()
+	router.PUT("/servers/:id/inbounds/:inboundID", app.updateInbound)
+	path := fmt.Sprintf("/servers/%d/inbounds/%d", server.ID, inbound.ID)
+	for _, enabled := range []bool{false, true} {
+		res := serveJSONRequest(t, router, http.MethodPut, path, fmt.Sprintf(`{"enabled":%t}`, enabled))
+		if res.Code != http.StatusOK {
+			t.Fatalf("toggle enabled=%t: status %d, body %s", enabled, res.Code, res.Body.String())
+		}
+		var savedUser model.User
+		if err := db.First(&savedUser, user.ID).Error; err != nil {
+			t.Fatal(err)
+		}
+		access, err := effectiveUserAccess(db, &savedUser)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !slices.Equal(savedUser.InboundIDs, user.InboundIDs) || !slices.Equal(access.ServerIDs, user.ServerIDs) || !slices.Equal(access.NodeOrder, wantOrder) {
+			t.Fatalf("enabled=%t: changed assignment or node order: %+v", enabled, access)
+		}
+
+		nodes, err := app.gatherNodesWithError(&savedUser)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if (!enabled && len(nodes) != 0) || (enabled && (len(nodes) != 1 || nodes[0].name != wantOrder[0].CustomName)) {
+			t.Fatalf("enabled=%t: unexpected subscription nodes: %+v", enabled, nodes)
+		}
+		config, err := app.orch.BuildServerConfig(&server)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if bytes.Contains(config, []byte(`"tag": "socks-in"`)) != enabled {
+			t.Fatalf("enabled=%t: unexpected generated config: %s", enabled, config)
+		}
 	}
 }
 

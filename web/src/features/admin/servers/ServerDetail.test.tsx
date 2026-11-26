@@ -2,14 +2,17 @@ import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testi
 import { MemoryRouter, Route, Routes, useNavigate } from 'react-router-dom'
 import { afterEach, beforeEach, expect, it, vi } from 'vitest'
 import { useSSE, type SSEMessage } from '../../../hooks/useSSE'
-import { applyServerConfig, getServer, listOutbounds, listRules, listServerAuthUsers } from '../../../lib/api'
+import { applyServerConfig, getServer, listOutbounds, listRules, listServerAuthUsers, updateInbound } from '../../../lib/api'
 import type { ServerAuthUser } from '../../../lib/api'
-import type { Server } from '../../../lib/types'
+import type { Inbound, Server } from '../../../lib/types'
 import ServerDetail from './ServerDetail'
 import { TooltipProvider } from '../../../components/ui/tooltip'
 
 vi.mock('../../../hooks/useSSE', () => ({ useSSE: vi.fn(() => ({ connected: true })) }))
-vi.mock('../../../lib/api', async (original) => ({ ...await original<typeof import('../../../lib/api')>(), applyServerConfig: vi.fn(), getServer: vi.fn(), listOutbounds: vi.fn(), listRules: vi.fn(), listServerAuthUsers: vi.fn() }))
+vi.mock('../../../lib/api', async (original) => ({
+  ...await original<typeof import('../../../lib/api')>(),
+  applyServerConfig: vi.fn(), getServer: vi.fn(), listOutbounds: vi.fn(), listRules: vi.fn(), listServerAuthUsers: vi.fn(), updateInbound: vi.fn(),
+}))
 vi.mock('./InboundForm', () => ({ default: () => null }))
 vi.mock('./RoutingForms', () => ({
   OutboundForm: () => null,
@@ -31,7 +34,7 @@ function SwitchServer() {
   const navigate = useNavigate()
   return <button onClick={() => navigate('/admin/servers/2/rules')}>切换服务器</button>
 }
-const mount = () => render(<MemoryRouter initialEntries={['/admin/servers/1/rules']}><TooltipProvider><SwitchServer /><Routes><Route path="/admin/servers/:id/:section" element={<ServerDetail />} /></Routes></TooltipProvider></MemoryRouter>)
+const mount = (path = '/admin/servers/1/rules') => render(<MemoryRouter initialEntries={[path]}><TooltipProvider><SwitchServer /><Routes><Route path="/admin/servers/:id/:section?" element={<ServerDetail />} /></Routes></TooltipProvider></MemoryRouter>)
 const alice: ServerAuthUser = { id: 1, name: 'alice', auth_user: 'auth-alice' }
 const bob: ServerAuthUser = { id: 2, name: 'bob', auth_user: 'auth-bob' }
 
@@ -48,6 +51,49 @@ beforeEach(() => {
   vi.mocked(listServerAuthUsers).mockResolvedValue([bob])
 })
 afterEach(() => { cleanup(); vi.unstubAllGlobals() })
+
+it('stages inbound toggles and shows the saved state after reloading', async () => {
+  const inbound: Inbound = {
+    id: 5, server_id: 1, tag: 'socks-in', type: 'socks', listen_port: 1080, enabled: true,
+    settings: {}, remark: '', created_at: '', updated_at: '',
+  }
+  const disabled = { ...inbound, enabled: false }
+  const response = {
+    server: { id: 1, name: 'Server 1', inbounds: [inbound], config_mode: 'managed' } as Server,
+    install_command: '', public_url: '',
+  }
+  const reload = deferred<typeof response>()
+  vi.mocked(getServer).mockResolvedValueOnce(response).mockReturnValueOnce(reload.promise)
+  vi.mocked(updateInbound).mockResolvedValueOnce({ inbound: disabled, apply_state: 'staged', config_dirty: true })
+
+  mount('/admin/servers/1')
+  const toggle = await screen.findByRole<HTMLButtonElement>('switch', { name: '启用入站 socks-in' })
+  expect(toggle.getAttribute('aria-checked')).toBe('true')
+  await waitFor(() => expect(toggle.disabled).toBe(false))
+  fireEvent.click(toggle)
+  await waitFor(() => expect(getServer).toHaveBeenCalledTimes(2))
+  expect(toggle.disabled).toBe(true)
+  expect(updateInbound).toHaveBeenCalledWith(1, 5, { enabled: false })
+  expect(toggle.getAttribute('aria-checked')).toBe('false')
+  expect(toggle.closest('tr')?.classList.contains('is-disabled')).toBe(true)
+  expect(screen.getByRole('button', { name: '应用配置' })).toBeTruthy()
+
+  await act(async () => reload.resolve({ ...response, server: { ...response.server, inbounds: [disabled], config_dirty: true } }))
+  expect(toggle.getAttribute('aria-checked')).toBe('false')
+
+  vi.mocked(updateInbound).mockRejectedValueOnce(new Error('请求失败'))
+  fireEvent.click(toggle)
+  await waitFor(() => expect(toggle.disabled).toBe(false))
+  expect(toggle.getAttribute('aria-checked')).toBe('false')
+  expect(getServer).toHaveBeenCalledTimes(2)
+
+  vi.mocked(updateInbound).mockResolvedValueOnce({ inbound, apply_state: 'staged', config_dirty: true })
+  vi.mocked(getServer).mockResolvedValueOnce({ ...response, server: { ...response.server, config_dirty: true } })
+  fireEvent.click(toggle)
+  expect(updateInbound).toHaveBeenLastCalledWith(1, 5, { enabled: true })
+  await waitFor(() => expect(toggle.getAttribute('aria-checked')).toBe('true'))
+  expect(toggle.closest('tr')?.classList.contains('is-disabled')).toBe(false)
+})
 
 it('keeps form controls editable for an imported raw configuration without a lock banner', async () => {
   vi.mocked(getServer).mockResolvedValue({ server: { id: 1, name: 'Imported', address: 'example.com', inbounds: [], config_mode: 'raw' } as unknown as Server, install_command: '', public_url: '' })

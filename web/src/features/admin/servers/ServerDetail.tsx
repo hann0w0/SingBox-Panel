@@ -45,6 +45,7 @@ import {
   uninstallAgent,
   uninstallSingbox,
   updateAgent,
+  updateInbound,
   updateRule,
 } from '../../../lib/api'
 import type { ImportSummary, OutboundTest } from '../../../lib/api'
@@ -646,6 +647,29 @@ export default function ServerDetail() {
     })
   }
 
+  const onToggleInbound = async (inbound: Inbound, enabled: boolean) => {
+    const targetSID = sid
+    if (currentSIDRef.current !== targetSID || busy || pageLoading) return
+    const key = `inbound-toggle-${inbound.id}`
+    setBusy(key)
+    try {
+      const saved = await applyWithToast(key, async () => {
+        const result = await updateInbound(targetSID, inbound.id, { enabled })
+        if (currentSIDRef.current === targetSID) {
+          setServer((previous) => previous?.id === targetSID ? {
+            ...previous,
+            inbounds: previous.inbounds?.map((item) => item.id === inbound.id ? result.inbound : item),
+            config_dirty: result.config_dirty ?? previous.config_dirty,
+          } : previous)
+        }
+        return result
+      }, '正在保存')
+      if (saved) loadCurrentServer()
+    } finally {
+      if (currentSIDRef.current === targetSID) setBusy((current) => current === key ? '' : current)
+    }
+  }
+
   const onDeleteOutbound = (o: Outbound) => {
     const targetSID = sid
     return Modal.confirm({
@@ -829,7 +853,7 @@ export default function ServerDetail() {
   const inboundTable = (
     <Table
       rowKey="id"
-      scroll={{ x: 560 }}
+      scroll={{ x: 640 }}
       dataSource={server.inbounds || []}
       locale={{ emptyText: '暂无入站' }}
       rowClassName={(ib: Inbound) => (ib.enabled === false ? 'is-disabled' : '')}
@@ -856,6 +880,20 @@ export default function ServerDetail() {
           },
         },
         { title: '用户', render: (_, ib: Inbound) => <span className="muted">{ib.settings?.multi_user ? '多用户' : '单用户'}</span> },
+        {
+          title: '启用',
+          dataIndex: 'enabled',
+          width: 72,
+          render: (enabled: boolean, ib: Inbound) => (
+            <Switch
+              size="small"
+              checked={enabled !== false}
+              disabled={!!busy || pageLoading}
+              aria-label={`启用入站 ${ib.tag}`}
+              onChange={(checked) => void onToggleInbound(ib, checked)}
+            />
+          ),
+        },
         { title: '', width: 88, align: 'right', render: (_, ib: Inbound) => rowActions(() => { setEditing(ib); setFormOpen(true) }, () => onDeleteInbound(ib), `入站 ${ib.tag}`) },
       ]}
     />
@@ -1091,7 +1129,7 @@ export default function ServerDetail() {
                 type="primary"
                 size="small"
                 loading={busy === 'apply-config'}
-                disabled={!!busy && busy !== 'apply-config'}
+                disabled={pageLoading || (!!busy && busy !== 'apply-config')}
                 onClick={() => void onApplyConfig()}
               >
                 应用配置

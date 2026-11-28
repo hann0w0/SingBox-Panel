@@ -76,9 +76,9 @@ describe('OutboundForm JSON Schema integration', () => {
 
     render(<OutboundForm serverId={1} outbound={complexOutbound} open onClose={vi.fn()} onSaved={vi.fn()} />)
 
-    expect(await screen.findByText('其他参数')).toBeTruthy()
-    expect(screen.getByDisplayValue('RelayGun')).toBeTruthy()
+    expect(await screen.findByDisplayValue('RelayGun')).toBeTruthy()
     expect(screen.getByDisplayValue('5s')).toBeTruthy()
+    expect(screen.queryByRole('heading', { level: 3 })).toBeNull()
 
     fireEvent.click(screen.getByRole('button', { name: '保存' }))
 
@@ -103,6 +103,7 @@ describe('OutboundForm JSON Schema integration', () => {
     expect(screen.getByRole('tab', { name: 'URI 导入' })).toBeTruthy()
     expect(screen.queryByRole('radiogroup', { name: '出站编辑模式' })).toBeNull()
     expect(screen.queryByText('认证')).toBeNull()
+    expect(screen.queryByRole('heading', { level: 3 })).toBeNull()
     expect(screen.queryByText('其他参数')).toBeNull()
     expect(screen.queryByRole('combobox', { name: '添加出站参数' })).toBeNull()
 

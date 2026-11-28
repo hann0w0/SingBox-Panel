@@ -435,7 +435,7 @@ export function OutboundForm({
       ) : <fieldset disabled={submitting} aria-busy={submitting} className="inbound-compact-fieldset">
       <Form form={form} layout="vertical" className="fm-form inbound-compact-form" onFinish={submit} onChange={() => setDirty(true)} onInput={() => setDirty(true)}>
         {extraJsonErrorMsg && <Alert type="error" showIcon message={extraJsonErrorMsg} className="mb-3" />}
-        <FormGroup title="基本">
+        <div className="fm-grid" data-panel="outbound">
           <Form.Item name="type" label="协议" rules={[{ required: true }]}>
             <Select
               options={OUT_TYPES}
@@ -552,11 +552,10 @@ export function OutboundForm({
               </Form.Item>
             </>
           )}
-        </FormGroup>
 
-        {hasParams && (
-          <FormGroup title="协议参数">
-            {type === 'vless' && (
+          {hasParams && (
+            <>
+              {type === 'vless' && (
               <>
                 <Form.Item name="flow" label="Flow">
                   <Select
@@ -659,12 +658,12 @@ export function OutboundForm({
                 onJsonErrorChange={handleSchemaJsonError}
               />
             )}
-          </FormGroup>
-        )}
+            </>
+          )}
 
-        {TRANSPORT_OUT.has(type) && (
-          <FormGroup title="传输">
-            <Form.Item name="transport_type" label="传输层" className="fm-full">
+          {TRANSPORT_OUT.has(type) && (
+            <>
+              <Form.Item name="transport_type" label="传输层" className="fm-full">
               <Select
                 options={[
                   { value: 'tcp', label: 'TCP' },
@@ -708,12 +707,12 @@ export function OutboundForm({
                 onJsonErrorChange={handleSchemaJsonError}
               />
             )}
-          </FormGroup>
-        )}
+            </>
+          )}
 
-        {type === 'vless' && (
-          <FormGroup title="TLS">
-            <Form.Item name="tls_mode" label="模式" className={tlsMode === 'none' ? 'fm-full' : undefined}>
+          {type === 'vless' && (
+            <>
+              <Form.Item name="tls_mode" label="TLS 模式" className={tlsMode === 'none' ? 'fm-full' : undefined}>
               <Select
                 options={[
                   { value: 'none', label: '不使用 TLS' },
@@ -761,12 +760,12 @@ export function OutboundForm({
                 </div>
               </>
             )}
-          </FormGroup>
-        )}
+            </>
+          )}
 
-        {showGenericTLS && (
-          <FormGroup title="TLS">
-            <Form.Item name="sni" label="SNI">
+          {showGenericTLS && (
+            <>
+              <Form.Item name="sni" label="SNI">
               <Input className="mono" />
             </Form.Item>
             <Form.Item name="tls_alpn" label="ALPN">
@@ -783,30 +782,27 @@ export function OutboundForm({
                 <Switch />
               </Form.Item>
             </div>
-          </FormGroup>
-        )}
-        {(Object.keys(otherParamsSchemaProps).length > 0 || Object.keys(tlsAdvSchemaProps).length > 0) && (
-          <FormGroup title="其他参数">
-            {Object.keys(tlsAdvSchemaProps).length > 0 && (
-              <SchemaFieldList
-                properties={tlsAdvSchemaProps}
-                value={(rawExtra.tls && typeof rawExtra.tls === 'object' ? rawExtra.tls : {}) as Record<string, unknown>}
-                onChange={updateRawTls}
-                idPrefix="outbound-tls"
-                onJsonErrorChange={handleSchemaJsonError}
-              />
-            )}
-            {Object.keys(otherParamsSchemaProps).length > 0 && (
-              <SchemaFieldList
-                properties={otherParamsSchemaProps}
-                value={rawExtra}
-                onChange={updateRawExtra}
-                idPrefix="outbound-other"
-                onJsonErrorChange={handleSchemaJsonError}
-              />
-            )}
-          </FormGroup>
-        )}
+            </>
+          )}
+          {Object.keys(tlsAdvSchemaProps).length > 0 && (
+            <SchemaFieldList
+              properties={tlsAdvSchemaProps}
+              value={(rawExtra.tls && typeof rawExtra.tls === 'object' ? rawExtra.tls : {}) as Record<string, unknown>}
+              onChange={updateRawTls}
+              idPrefix="outbound-tls"
+              onJsonErrorChange={handleSchemaJsonError}
+            />
+          )}
+          {Object.keys(otherParamsSchemaProps).length > 0 && (
+            <SchemaFieldList
+              properties={otherParamsSchemaProps}
+              value={rawExtra}
+              onChange={updateRawExtra}
+              idPrefix="outbound-other"
+              onJsonErrorChange={handleSchemaJsonError}
+            />
+          )}
+        </div>
       </Form>
       </fieldset>}
     </Modal>

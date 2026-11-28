@@ -133,7 +133,7 @@ describe('Node 6 form & schema regressions', () => {
     expect(vi.mocked(updateInbound).mock.calls[0][2].settings?.uuid).toBe('dddddddd-dddd-dddd-dddd-dddddddddddd')
   })
 
-  it('allows adding extra OutboundForm parameters, keeps them when cleared, and validates Go durations', async () => {
+  it('keeps populated extra OutboundForm parameters mounted when cleared and validates Go durations', async () => {
     const outbound: Outbound = {
       id: 21,
       server_id: 1,
@@ -141,15 +141,16 @@ describe('Node 6 form & schema regressions', () => {
       type: 'http',
       remark: '',
       sort: 0,
-      settings: { server: 'proxy.example.com', server_port: 8443 },
+      settings: {
+        server: 'proxy.example.com',
+        server_port: 8443,
+        settings: { raw: { type: 'http', tag: 'corp-http', server: 'proxy.example.com', server_port: 8443, connect_timeout: '5s' } },
+      },
     }
     render(<OutboundForm serverId={1} outbound={outbound} open onClose={vi.fn()} onSaved={vi.fn()} />)
 
-    fireEvent.click(screen.getByRole('combobox', { name: '添加出站参数' }))
-    fireEvent.click(await screen.findByRole('option', { name: /connect_timeout|连接超时/ }))
-
-    const timeoutInput = screen.getByLabelText('连接超时') as HTMLInputElement
-    expect(timeoutInput).toBeTruthy()
+    const timeoutInput = await screen.findByLabelText('连接超时') as HTMLInputElement
+    expect(timeoutInput.value).toBe('5s')
 
     fireEvent.change(timeoutInput, { target: { value: 'abc' } })
     fireEvent.click(screen.getByRole('button', { name: '保存' }))

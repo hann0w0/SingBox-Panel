@@ -201,12 +201,6 @@ export function OutboundForm({
     () => pickPopulatedSchemaProps(topSchemaCandidates, rawExtra, stickyTopKeys),
     [topSchemaCandidates, rawExtra, stickyTopKeys],
   )
-  const availableTopParamOptions = useMemo(
-    () => Object.entries(topSchemaCandidates)
-      .filter(([k]) => !(k in otherParamsSchemaProps))
-      .map(([k, schema]) => ({ value: k, label: schema['x-ui']?.label ? `${k} · ${schema['x-ui'].label}` : k })),
-    [topSchemaCandidates, otherParamsSchemaProps],
-  )
   const transportSchemaProps = useMemo(() => {
     const trProps = variantProps.transport?.properties ?? {}
     const trRaw = (rawExtra.transport && typeof rawExtra.transport === 'object' ? rawExtra.transport : {}) as Record<string, unknown>
@@ -442,10 +436,7 @@ export function OutboundForm({
       <Form form={form} layout="vertical" className="fm-form inbound-compact-form" onFinish={submit} onChange={() => setDirty(true)} onInput={() => setDirty(true)}>
         {extraJsonErrorMsg && <Alert type="error" showIcon message={extraJsonErrorMsg} className="mb-3" />}
         <FormGroup title="基本">
-          <Form.Item name="tag" label="标签" rules={[{ required: true }]}>
-            <Input />
-          </Form.Item>
-          <Form.Item name="type" label="类型" rules={[{ required: true }]}>
+          <Form.Item name="type" label="协议" rules={[{ required: true }]}>
             <Select
               options={OUT_TYPES}
               onChange={(next: OutboundType) => {
@@ -459,11 +450,14 @@ export function OutboundForm({
               }}
             />
           </Form.Item>
-          <Form.Item name="server" label="服务器地址" rules={[{ required: true }]}>
-            <Input className="mono" />
-          </Form.Item>
           <Form.Item name="server_port" label="端口" rules={[{ required: true, message: '请填写落地服务器的端口' }]}>
             <InputNumber precision={0} min={1} max={65535} className="mono" />
+          </Form.Item>
+          <Form.Item name="server" label="地址" rules={[{ required: true }]}>
+            <Input className="mono" />
+          </Form.Item>
+          <Form.Item name="tag" label="标签" rules={[{ required: true }]}>
+            <Input />
           </Form.Item>
           {type === 'shadowsocks' && (
             <>
@@ -791,24 +785,8 @@ export function OutboundForm({
             </div>
           </FormGroup>
         )}
-        {(Object.keys(otherParamsSchemaProps).length > 0 || Object.keys(tlsAdvSchemaProps).length > 0 || availableTopParamOptions.length > 0) && (
-          <FormGroup
-            title="其他参数"
-            extra={availableTopParamOptions.length > 0 ? (
-              <Select
-                size="small"
-                aria-label="添加出站参数"
-                placeholder="+ 添加参数"
-                value={undefined}
-                options={availableTopParamOptions}
-                onChange={(key: string) => {
-                  if (!key) return
-                  setDirty(true)
-                  setStickyTopKeys((prev) => new Set([...prev, key]))
-                }}
-              />
-            ) : undefined}
-          >
+        {(Object.keys(otherParamsSchemaProps).length > 0 || Object.keys(tlsAdvSchemaProps).length > 0) && (
+          <FormGroup title="其他参数">
             {Object.keys(tlsAdvSchemaProps).length > 0 && (
               <SchemaFieldList
                 properties={tlsAdvSchemaProps}

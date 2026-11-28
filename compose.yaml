@@ -1,6 +1,6 @@
 services:
   panel:
-    image: ${PANEL_IMAGE:-ghcr.io/hann0w0/singbox-panel:v1.0.19}
+    image: ${PANEL_IMAGE:-ghcr.io/hann0w0/singbox-panel:v1.0.20}
     restart: unless-stopped
     stop_grace_period: 30s
     pids_limit: 256
